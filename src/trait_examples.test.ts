@@ -8,7 +8,14 @@ import {
 import { List } from "./list.ts";
 import { Option } from "./option.ts";
 import { Result } from "./result.ts";
-import { Equal, Format } from "./trait.ts";
+import {
+  Applicative,
+  Equal,
+  Foldable,
+  Format,
+  Functor,
+  Monad,
+} from "./trait.ts";
 
 Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () => {
   assert_equals(Format.fmt(Option, Option.some(42)), "Some(42)");
@@ -25,11 +32,25 @@ Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () =>
 });
 
 Deno.test("Functor maps values without leaving the context", () => {
-  const some = Option.map(Option.some(2), (value) => value + 1);
-  const none = Option.map(Option.none<number>(), (value) => value + 1);
-  const list = List.map(List.from_array([1, 2, 3]), (value) => value * 2);
-  const ok = Result.map(Result.ok(20), (value) => value + 1);
-  const err = Result.map(Result.err<number>("missing"), (value) => value + 1);
+  const some = Functor.map(Option, Option.some(2), (value: number) => {
+    return value + 1;
+  });
+  const none = Functor.map(
+    Option,
+    Option.none<number>(),
+    (value: number) => value + 1,
+  );
+  const list = Functor.map(
+    List,
+    List.from_array([1, 2, 3]),
+    (value: number) => value * 2,
+  );
+  const ok = Functor.map(Result, Result.ok(20), (value: number) => value + 1);
+  const err = Functor.map(
+    Result,
+    Result.err<number>("missing"),
+    (value: number) => value + 1,
+  );
 
   assert_equals(some, Option.some(3));
   assert_equals(none, Option.none());
@@ -39,15 +60,18 @@ Deno.test("Functor maps values without leaving the context", () => {
 });
 
 Deno.test("Applicative applies contextual functions", () => {
-  const option = Option.ap(
+  const option = Applicative.ap(
+    Option,
     Option.some((value: number) => value * 2),
     Option.some(21),
   );
-  const none = Option.ap(
+  const none = Applicative.ap(
+    Option,
     Option.none<(value: number) => number>(),
     Option.some(21),
   );
-  const list = List.ap(
+  const list = Applicative.ap(
+    List,
     List.from_array([
       (value: number) => value + 1,
       (value: number) => value * 10,
@@ -60,6 +84,87 @@ Deno.test("Applicative applies contextual functions", () => {
   assert_equals(List.to_array(list), [2, 3, 10, 20]);
 });
 
+Deno.test("Option callable wrapper traits option values for fluent methods", () => {
+  const value = Option(Option.some(41))
+    .map((item) => item + 1);
+  const none = Option(Option.none<number>())
+    .map((item) => item + 1);
+
+  assert_equals(value.value(), Option.some(42));
+  assert_equals(none.value(), Option.none());
+  assert_equals(value.fmt(), "Some(42)");
+  assert_true(value.eq(Option.some(42)), "static option compares");
+  assert_true(value.eq(Option(Option.some(42))), "wrapped option compares");
+  assert_true(Option(Option.none()).eq(Option.none()), "None compares");
+});
+
+Deno.test("Option callable wrapper chains applicative ap through this", () => {
+  const sum = Option(Option.some((left: number) => {
+    return (right: number) => left + right;
+  }))
+    .ap(Option.some(20))
+    .ap(Option.some(22));
+
+  const missing = Option(Option.some((left: number) => {
+    return (right: number) => left + right;
+  }))
+    .ap(Option.none<number>())
+    .ap(Option.some(22));
+
+  assert_equals(sum.value(), Option.some(42));
+  assert_equals(missing.value(), Option.none());
+});
+
+Deno.test("Trait dictionary methods assert a missing receiver at runtime", () => {
+  const map = Option.map;
+
+  assert_trait_receiver_error(
+    () => map((value: number) => value + 1),
+    "Option.map requires a trait receiver",
+  );
+});
+
+Deno.test("Result callable wrapper derives fluent methods from its dictionary", () => {
+  const value = Result(Result.ok(40))
+    .map((item) => item + 2);
+  const sum = Result(Result.ok((left: number) => {
+    return (right: number) => left + right;
+  }))
+    .ap(Result.ok(40))
+    .ap(Result(Result.ok(2)));
+  const missing = Result(Result.err<number>("missing"))
+    .map((item) => item + 1);
+
+  assert_equals(value.value(), Result.ok(42));
+  assert_equals(value.fmt(), "Ok(42)");
+  assert_true(value.eq(Result.ok(42)), "static result compares");
+  assert_true(value.eq(Result(Result.ok(42))), "wrapped result compares");
+  assert_equals(sum.value(), Result.ok(42));
+  assert_equals(missing.value(), Result.err("missing"));
+});
+
+Deno.test("List callable wrapper derives fluent methods from its dictionary", () => {
+  const values = List(List.from_array([1, 2, 3]))
+    .map((item) => item * 2);
+  const applied = List(
+    List.from_array([
+      (value: number) => value + 1,
+      (value: number) => value * 10,
+    ]),
+  )
+    .ap(List(List.from_array([1, 2])));
+  const total = values.fold(0, (state, item) => state + item);
+
+  assert_equals(values.value(), List.from_array([2, 4, 6]));
+  assert_equals(values.fmt(), "[2, 4, 6]");
+  assert_true(
+    values.eq(List(List.from_array([2, 4, 6]))),
+    "wrapped list compares",
+  );
+  assert_equals(List.to_array(applied.value()), [2, 3, 10, 20]);
+  assert_equals(total, 12);
+});
+
 Deno.test("Monad chains computations that choose the next context", () => {
   function positive(value: number) {
     if (value > 0) {
@@ -69,11 +174,12 @@ Deno.test("Monad chains computations that choose the next context", () => {
     return Option.none<number>();
   }
 
-  const kept = Option.flat_map(Option.some(4), positive);
-  const dropped = Option.flat_map(Option.some(-1), positive);
-  const parsed = Result.flat_map(
+  const kept = Monad.flat_map(Option, Option.some(4), positive);
+  const dropped = Monad.flat_map(Option, Option.some(-1), positive);
+  const parsed = Monad.flat_map(
+    Result,
     Result.ok("42"),
-    (text) => Result.from_number(Number.parseInt(text, 10)),
+    (text: string) => Result.from_number(Number.parseInt(text, 10)),
   );
 
   assert_equals(kept, Option.some(4));
@@ -88,11 +194,46 @@ Deno.test("Foldable reduces values inside different contexts", () => {
   const ok = Result.ok(9);
   const err = Result.err<number>("no value");
 
-  assert_equals(List.fold(list, 0, (state, item) => state + item), 10);
-  assert_equals(Option.fold(some, 1, (state, item) => state * item), 7);
-  assert_equals(Option.fold(none, 1, (state, item) => state * item), 1);
-  assert_equals(Result.fold(ok, 1, (state, item) => state + item), 10);
-  assert_equals(Result.fold(err, 1, (state, item) => state + item), 1);
+  assert_equals(
+    Foldable.fold(List, list, 0, (state: number, item: number) => state + item),
+    10,
+  );
+  assert_equals(
+    Foldable.fold(
+      Option,
+      some,
+      1,
+      (state: number, item: number) => state * item,
+    ),
+    7,
+  );
+  assert_equals(
+    Foldable.fold(
+      Option,
+      none,
+      1,
+      (state: number, item: number) => state * item,
+    ),
+    1,
+  );
+  assert_equals(
+    Foldable.fold(
+      Result,
+      ok,
+      1,
+      (state: number, item: number) => state + item,
+    ),
+    10,
+  );
+  assert_equals(
+    Foldable.fold(
+      Result,
+      err,
+      1,
+      (state: number, item: number) => state + item,
+    ),
+    1,
+  );
 });
 
 Deno.test("Generic helpers work against trait interfaces", () => {
@@ -145,3 +286,21 @@ Deno.test("Generic monad helper lets each context define failure", () => {
   assert_equals(result, Result.err("negative: -1"));
   assert_equals(List.to_array(list), [2, 3]);
 });
+
+function assert_trait_receiver_error(
+  fn: () => unknown,
+  message: string,
+): void {
+  try {
+    fn();
+  } catch (error) {
+    if (!(error instanceof TypeError)) {
+      throw new Error("Expected TypeError");
+    }
+
+    assert_equals(error.message, message);
+    return;
+  }
+
+  throw new Error("Expected a missing trait receiver error");
+}

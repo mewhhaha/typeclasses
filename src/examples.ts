@@ -1,37 +1,45 @@
-import type {
+import {
   Applicative,
   Foldable,
   Functor,
-  Kind,
+  type Kind,
   Monad,
-  TypeName,
+  type TypeId,
 } from "./trait.ts";
 
-export function label_values<uri extends TypeName>(
-  impl: Functor<uri>,
-  value: Kind<uri, number>,
-): Kind<uri, string> {
-  return impl.map(value, (item: number) => "value:" + item.toString());
+export function label_values<type_id extends TypeId>(
+  impl: Functor<type_id>,
+  value: Kind<type_id, number>,
+): Kind<type_id, string> {
+  return Functor.map(
+    impl,
+    value,
+    (item: number) => "value:" + item.toString(),
+  );
 }
 
-export function add_values<uri extends TypeName>(
-  impl: Applicative<uri>,
-  left: Kind<uri, number>,
-  right: Kind<uri, number>,
-): Kind<uri, number> {
-  const add_right = impl.map(left, (left_value: number) => {
-    return (right_value: number) => left_value + right_value;
-  });
+export function add_values<type_id extends TypeId>(
+  impl: Applicative<type_id>,
+  left: Kind<type_id, number>,
+  right: Kind<type_id, number>,
+): Kind<type_id, number> {
+  const add_right = Functor.map(
+    impl,
+    left,
+    (left_value: number) => {
+      return (right_value: number) => left_value + right_value;
+    },
+  );
 
-  return impl.ap(add_right, right);
+  return Applicative.ap(impl, add_right, right);
 }
 
-export function keep_positive<uri extends TypeName>(
-  impl: Monad<uri>,
-  value: Kind<uri, number>,
-  reject: (value: number) => Kind<uri, number>,
-): Kind<uri, number> {
-  return impl.flat_map(value, (item: number) => {
+export function keep_positive<type_id extends TypeId>(
+  impl: Monad<type_id>,
+  value: Kind<type_id, number>,
+  reject: (value: number) => Kind<type_id, number>,
+): Kind<type_id, number> {
+  return Monad.flat_map(impl, value, (item: number) => {
     if (item >= 0) {
       return impl.pure(item);
     }
@@ -40,11 +48,12 @@ export function keep_positive<uri extends TypeName>(
   });
 }
 
-export function sum_values<uri extends TypeName>(
-  impl: Foldable<uri>,
-  value: Kind<uri, number>,
+export function sum_values<type_id extends TypeId>(
+  impl: Foldable<type_id>,
+  value: Kind<type_id, number>,
 ): number {
-  return impl.fold(
+  return Foldable.fold(
+    impl,
     value,
     0,
     (state: number, item: number) => state + item,
