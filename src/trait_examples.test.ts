@@ -127,6 +127,8 @@ Deno.test("Trait dictionary methods assert a missing receiver at runtime", () =>
 Deno.test("Result callable wrapper derives fluent methods from its dictionary", () => {
   const value = Result(Result.ok(40))
     .map((item) => item + 2);
+  const parsed = Result(Result.ok("42"))
+    .flat_map((text) => Result.from_number(Number.parseInt(text, 10)));
   const sum = Result(Result.ok((left: number) => {
     return (right: number) => left + right;
   }))
@@ -139,6 +141,8 @@ Deno.test("Result callable wrapper derives fluent methods from its dictionary", 
   assert_equals(value.fmt(), "Ok(42)");
   assert_true(value.eq(Result.ok(42)), "static result compares");
   assert_true(value.eq(Result(Result.ok(42))), "wrapped result compares");
+  assert_equals(parsed.value(), Result.ok(42));
+  assert_equals(parsed.fmt(), "Ok(42)");
   assert_equals(sum.value(), Result.ok(42));
   assert_equals(missing.value(), Result.err("missing"));
 });
@@ -153,6 +157,13 @@ Deno.test("List callable wrapper derives fluent methods from its dictionary", ()
     ]),
   )
     .ap(List(List.from_array([1, 2])));
+  const raw_applied = List(
+    List.from_array([
+      (value: number) => value + 1,
+      (value: number) => value * 10,
+    ]),
+  )
+    .ap(List.from_array([1, 2]));
   const total = values.fold(0, (state, item) => state + item);
 
   assert_equals(values.value(), List.from_array([2, 4, 6]));
@@ -162,6 +173,7 @@ Deno.test("List callable wrapper derives fluent methods from its dictionary", ()
     "wrapped list compares",
   );
   assert_equals(List.to_array(applied.value()), [2, 3, 10, 20]);
+  assert_equals(List.to_array(raw_applied.value()), [2, 3, 10, 20]);
   assert_equals(total, 12);
 });
 
