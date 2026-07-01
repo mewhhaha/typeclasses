@@ -66,6 +66,12 @@ Result.fmt = function fmt(
   return "Ok(" + Deno.inspect(result.value) + ")";
 };
 
+declare module "./trait.ts" {
+  interface FormatImpl {
+    [result_kind]: Format<typeof Result>;
+  }
+}
+
 Result.eq = function eq<item>(
   this: BoxedResult<item> | void,
   right: ResultInput<item>,
@@ -84,6 +90,12 @@ Result.eq = function eq<item>(
   return false;
 };
 
+declare module "./trait.ts" {
+  interface EqualImpl {
+    [result_kind]: Equal<typeof Result>;
+  }
+}
+
 Result.map = function map<from, to>(
   this: BoxedResult<from> | void,
   fn: (value: from) => to,
@@ -96,6 +108,12 @@ Result.map = function map<from, to>(
 
   return ok(fn(result.value));
 };
+
+declare module "./trait.ts" {
+  interface FunctorImpl {
+    [result_kind]: Functor<typeof Result>;
+  }
+}
 
 Result.pure = function pure<item>(
   value: item,
@@ -121,6 +139,12 @@ Result.ap = function ap<from, to>(
   return ok(fn.value(result.value));
 };
 
+declare module "./trait.ts" {
+  interface ApplicativeImpl {
+    [result_kind]: Applicative<typeof Result>;
+  }
+}
+
 Result.flat_map = function flat_map<from, to>(
   this: BoxedResult<from> | void,
   fn: (value: from) => TraitInput<typeof Result, Result<to, string>, to>,
@@ -133,6 +157,12 @@ Result.flat_map = function flat_map<from, to>(
 
   return Result(fn(result.value));
 };
+
+declare module "./trait.ts" {
+  interface MonadImpl {
+    [result_kind]: Monad<typeof Result>;
+  }
+}
 
 Result.fold = function fold<item, out>(
   this: BoxedResult<item> | void,
@@ -147,6 +177,12 @@ Result.fold = function fold<item, out>(
 
   return fn(initial, result.value);
 };
+
+declare module "./trait.ts" {
+  interface FoldableImpl {
+    [result_kind]: Foldable<typeof Result>;
+  }
+}
 
 function is_result<item>(value: unknown): value is Result<item, string> {
   if (typeof value !== "object") {
@@ -181,14 +217,3 @@ function result_ok<item>(value: item): Ok<item> {
 function result_err<item = never>(error: string): Result<item> {
   return { tag: "err", error };
 }
-
-interface ResultTraits
-  extends
-    Format<typeof Result>,
-    Equal<typeof Result>,
-    Functor<typeof Result>,
-    Applicative<typeof Result>,
-    Monad<typeof Result>,
-    Foldable<typeof Result> {}
-
-Result satisfies ResultTraits;

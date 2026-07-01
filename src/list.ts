@@ -83,6 +83,12 @@ List.fmt = function fmt(
   return "[" + items.join(", ") + "]";
 };
 
+declare module "./trait.ts" {
+  interface FormatImpl {
+    [list_kind]: Format<typeof List>;
+  }
+}
+
 List.eq = function eq<item>(
   this: BoxedList<item> | void,
   right: ListInput<item>,
@@ -103,6 +109,12 @@ List.eq = function eq<item>(
   return left_rest.tag === "nil" && right_rest.tag === "nil";
 };
 
+declare module "./trait.ts" {
+  interface EqualImpl {
+    [list_kind]: Equal<typeof List>;
+  }
+}
+
 List.map = function map<from, to>(
   this: BoxedList<from> | void,
   fn: (value: from) => to,
@@ -117,6 +129,12 @@ List.map = function map<from, to>(
 
   return List(list_from_array(mapped));
 };
+
+declare module "./trait.ts" {
+  interface FunctorImpl {
+    [list_kind]: Functor<typeof List>;
+  }
+}
 
 List.pure = function pure<item>(
   value: item,
@@ -140,6 +158,12 @@ List.ap = function ap<from, to>(
   return List(list_from_array(out));
 };
 
+declare module "./trait.ts" {
+  interface ApplicativeImpl {
+    [list_kind]: Applicative<typeof List>;
+  }
+}
+
 List.flat_map = function flat_map<from, to>(
   this: BoxedList<from> | void,
   fn: (value: from) => TraitInput<typeof List, List<to>, to>,
@@ -158,6 +182,12 @@ List.flat_map = function flat_map<from, to>(
   return List(list_from_array(out));
 };
 
+declare module "./trait.ts" {
+  interface MonadImpl {
+    [list_kind]: Monad<typeof List>;
+  }
+}
+
 List.fold = function fold<item, out>(
   this: BoxedList<item> | void,
   initial: out,
@@ -172,6 +202,12 @@ List.fold = function fold<item, out>(
 
   return state;
 };
+
+declare module "./trait.ts" {
+  interface FoldableImpl {
+    [list_kind]: Foldable<typeof List>;
+  }
+}
 
 function is_list<item>(value: unknown): value is List<item> {
   if (typeof value !== "object") {
@@ -204,14 +240,3 @@ function list_nil<item>(): List<item> {
 function list_cons<item>(head: item, tail: List<item>): List<item> {
   return { tag: "cons", head, tail };
 }
-
-interface ListTraits
-  extends
-    Format<typeof List>,
-    Equal<typeof List>,
-    Functor<typeof List>,
-    Applicative<typeof List>,
-    Monad<typeof List>,
-    Foldable<typeof List> {}
-
-List satisfies ListTraits;

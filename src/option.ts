@@ -72,6 +72,12 @@ Option.fmt = function fmt(
   return "Some(" + Deno.inspect(option.value) + ")";
 };
 
+declare module "./trait.ts" {
+  interface FormatImpl {
+    [option_kind]: Format<typeof Option>;
+  }
+}
+
 Option.eq = function eq<item>(
   this: BoxedOption<item> | void,
   right: OptionInput<item>,
@@ -90,6 +96,12 @@ Option.eq = function eq<item>(
   return false;
 };
 
+declare module "./trait.ts" {
+  interface EqualImpl {
+    [option_kind]: Equal<typeof Option>;
+  }
+}
+
 Option.map = function map<from, to>(
   this: BoxedOption<from> | void,
   fn: (value: from) => to,
@@ -102,6 +114,12 @@ Option.map = function map<from, to>(
 
   return some(fn(option.value));
 };
+
+declare module "./trait.ts" {
+  interface FunctorImpl {
+    [option_kind]: Functor<typeof Option>;
+  }
+}
 
 Option.pure = function pure<item>(
   value: item,
@@ -127,6 +145,12 @@ Option.ap = function ap<from, to>(
   return some(fn.value(option.value));
 };
 
+declare module "./trait.ts" {
+  interface ApplicativeImpl {
+    [option_kind]: Applicative<typeof Option>;
+  }
+}
+
 Option.flat_map = function flat_map<from, to>(
   this: BoxedOption<from> | void,
   fn: (value: from) => TraitInput<typeof Option, Option<to>, to>,
@@ -139,6 +163,12 @@ Option.flat_map = function flat_map<from, to>(
 
   return Option(fn(option.value));
 };
+
+declare module "./trait.ts" {
+  interface MonadImpl {
+    [option_kind]: Monad<typeof Option>;
+  }
+}
 
 Option.fold = function fold<item, out>(
   this: BoxedOption<item> | void,
@@ -153,6 +183,12 @@ Option.fold = function fold<item, out>(
 
   return fn(initial, option.value);
 };
+
+declare module "./trait.ts" {
+  interface FoldableImpl {
+    [option_kind]: Foldable<typeof Option>;
+  }
+}
 
 function is_option<item>(value: unknown): value is Option<item> {
   if (typeof value !== "object") {
@@ -183,14 +219,3 @@ function option_some<item>(value: item): Some<item> {
 function option_none<item = never>(): Option<item> {
   return { tag: "none" };
 }
-
-interface OptionTraits
-  extends
-    Format<typeof Option>,
-    Equal<typeof Option>,
-    Functor<typeof Option>,
-    Applicative<typeof Option>,
-    Monad<typeof Option>,
-    Foldable<typeof Option> {}
-
-Option satisfies OptionTraits;

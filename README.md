@@ -63,6 +63,19 @@ export function none<item = never>(): Trait<typeof Option, Option<item>, item> {
   return Option({ tag: "none" });
 }
 
+Option.fmt = function fmt(
+  this: Trait<typeof Option, Option<unknown>, unknown> | void,
+): string {
+  const option = require_this(this, "Option.fmt").value();
+  return option.tag === "none" ? "None" : "Some(" + option.value + ")";
+};
+
+declare module "./trait.ts" {
+  interface FormatImpl {
+    [option_kind]: Format<typeof Option>;
+  }
+}
+
 Option.map = function map<from, to>(
   this: Trait<typeof Option, Option<from>, from> | void,
   fn: (value: from) => to,
@@ -76,14 +89,11 @@ Option.map = function map<from, to>(
   return some(fn(option.value));
 };
 
-interface OptionTraits
-  extends
-    Functor<typeof Option>,
-    Applicative<typeof Option>,
-    Monad<typeof Option>,
-    Foldable<typeof Option> {}
-
-Option satisfies OptionTraits;
+declare module "./trait.ts" {
+  interface FunctorImpl {
+    [option_kind]: Functor<typeof Option>;
+  }
+}
 ```
 
 See `src/option.ts`, `src/result.ts`, and `src/list.ts` for complete examples.
@@ -121,3 +131,8 @@ that preserve the context return boxed values directly.
 
 There is no `OptionBox` or `OptionTrait` type. The fluent methods are derived
 from the dictionary shape plus the wrapped value and item type.
+
+Each trait has an open implementation registry such as `FormatImpl` or
+`FunctorImpl`. Entries are added one trait at a time next to the implementation.
+Because `Format<typeof Option>` is self-constrained, registering it also proves
+that `typeof Option` has the required `fmt` implementation.

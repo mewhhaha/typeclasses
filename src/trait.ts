@@ -81,9 +81,11 @@ type BoundFoldable = BoxedTrait & {
   fold: (initial: any, fn: any) => any;
 };
 
-export type Format<dictionary extends Dictionary> = {
+export interface Format<dictionary extends Dictionary & Format<dictionary>> {
   fmt: (this: TraitThis<Boxed<dictionary, unknown>>) => string;
-};
+}
+
+export interface FormatImpl {}
 
 export function Format() {}
 
@@ -93,12 +95,14 @@ Format.fmt = function fmt<value extends BoundFormat>(
   return value.fmt() as ReturnType<value["fmt"]>;
 };
 
-export type Equal<dictionary extends Dictionary> = {
+export interface Equal<dictionary extends Dictionary & Equal<dictionary>> {
   eq: <item>(
     this: TraitThis<Boxed<dictionary, item>>,
     right: BoxedInput<dictionary, item>,
   ) => boolean;
-};
+}
+
+export interface EqualImpl {}
 
 export function Equal() {}
 
@@ -109,13 +113,15 @@ Equal.eq = function eq<left extends BoundEqual>(
   return left.eq(right);
 };
 
-export type Functor<dictionary extends Dictionary> = {
+export interface Functor<dictionary extends Dictionary & Functor<dictionary>> {
   readonly [kind]: KindOf<dictionary>;
   map: <from, to>(
     this: TraitThis<Boxed<dictionary, from>>,
     fn: (value: from) => to,
   ) => Boxed<dictionary, to>;
-};
+}
+
+export interface FunctorImpl {}
 
 export function Functor() {}
 
@@ -126,15 +132,17 @@ Functor.map = function map<value extends BoundFunctor, to>(
   return value.map(fn) as Reboxed<value, to>;
 };
 
-export type Applicative<dictionary extends Dictionary> =
-  & Functor<dictionary>
-  & {
-    pure: <item>(value: item) => Boxed<dictionary, item>;
-    ap: <from, to>(
-      this: TraitThis<Boxed<dictionary, (value: NoInfer<from>) => to>>,
-      value: BoxedInput<dictionary, from>,
-    ) => Boxed<dictionary, to>;
-  };
+export interface Applicative<
+  dictionary extends Dictionary & Applicative<dictionary>,
+> extends Functor<dictionary> {
+  pure: <item>(value: item) => Boxed<dictionary, item>;
+  ap: <from, to>(
+    this: TraitThis<Boxed<dictionary, (value: NoInfer<from>) => to>>,
+    value: BoxedInput<dictionary, from>,
+  ) => Boxed<dictionary, to>;
+}
+
+export interface ApplicativeImpl {}
 
 export function Applicative() {}
 
@@ -152,14 +160,15 @@ Applicative.ap = function ap<value extends BoundApplicative>(
   return value.ap(item) as AppliedReturn<value>;
 };
 
-export type Monad<dictionary extends Dictionary> =
-  & Applicative<dictionary>
-  & {
-    flat_map: <from, to>(
-      this: TraitThis<Boxed<dictionary, from>>,
-      fn: (value: from) => BoxedInput<dictionary, to>,
-    ) => Boxed<dictionary, to>;
-  };
+export interface Monad<dictionary extends Dictionary & Monad<dictionary>>
+  extends Applicative<dictionary> {
+  flat_map: <from, to>(
+    this: TraitThis<Boxed<dictionary, from>>,
+    fn: (value: from) => BoxedInput<dictionary, to>,
+  ) => Boxed<dictionary, to>;
+}
+
+export interface MonadImpl {}
 
 export function Monad() {}
 
@@ -170,14 +179,18 @@ Monad.flat_map = function flat_map<value extends BoundMonad, to>(
   return value.flat_map(fn) as Reboxed<value, to>;
 };
 
-export type Foldable<dictionary extends Dictionary> = {
+export interface Foldable<
+  dictionary extends Dictionary & Foldable<dictionary>,
+> {
   readonly [kind]: KindOf<dictionary>;
   fold: <item, out>(
     this: TraitThis<Boxed<dictionary, item>>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) => out;
-};
+}
+
+export interface FoldableImpl {}
 
 export function Foldable() {}
 
