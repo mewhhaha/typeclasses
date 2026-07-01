@@ -8,14 +8,13 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
+import { type Trait, trait } from "./trait_value.ts";
 
 export type List<item> =
   | { tag: "nil" }
   | { tag: "cons"; head: item; tail: List<item> };
 
 type ListValue<item> = Trait<typeof List, List<item>, item>;
-type ListInput<item> = TraitInput<typeof List, List<item>, item>;
 
 export const list_kind: unique symbol = Symbol("List");
 
@@ -26,11 +25,11 @@ declare module "./registry.ts" {
 }
 
 export function List<item>(
-  value: ListInput<item>,
+  value: List<item>,
 ): ListValue<item> {
   return trait<typeof List, List<item>, item>(
     List,
-    untrait(value) as List<item>,
+    value,
     is_list,
   );
 }
@@ -43,18 +42,18 @@ export function nil<item>(): ListValue<item> {
 
 export function cons<item>(
   head: item,
-  tail: ListInput<item>,
+  tail: ListValue<item>,
 ): ListValue<item> {
-  return List(list_cons(head, untrait(tail) as List<item>));
+  return List(list_cons(head, tail.value()));
 }
 
 export function from_array<item>(items: item[]): ListValue<item> {
   return List(list_from_array(items));
 }
 
-export function to_array<item>(list: ListInput<item>): item[] {
+export function to_array<item>(list: ListValue<item>): item[] {
   const items: item[] = [];
-  let rest = untrait(list) as List<item>;
+  let rest = list.value();
 
   while (rest.tag === "cons") {
     items.push(rest.head);

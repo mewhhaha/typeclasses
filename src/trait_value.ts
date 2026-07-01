@@ -3,10 +3,6 @@ const trait_dictionary: unique symbol = Symbol("Trait.dictionary");
 const trait_item: unique symbol = Symbol("Trait.item");
 const trait_value: unique symbol = Symbol("Trait.value");
 
-export type TraitInput<dictionary, value, item = unknown> =
-  | value
-  | Trait<dictionary, value, item>;
-
 type TraitBase<dictionary, value, item> = {
   readonly [trait_brand]: true;
   readonly [trait_dictionary]: dictionary;
@@ -103,12 +99,4 @@ export function is_trait(
 
   const candidate = value as { [trait_brand]?: unknown };
   return candidate[trait_brand] === true;
-}
-
-export function untrait(value: unknown): unknown {
-  if (is_trait(value)) {
-    return value.value();
-  }
-
-  return value;
 }

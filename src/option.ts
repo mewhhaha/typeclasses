@@ -8,7 +8,7 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
+import { type Trait, trait } from "./trait_value.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
@@ -16,7 +16,6 @@ export type Option<item> =
 
 type Some<item> = { tag: "some"; value: item };
 type OptionValue<item> = Trait<typeof Option, Option<item>, item>;
-type OptionInput<item> = TraitInput<typeof Option, Option<item>, item>;
 
 export const option_kind: unique symbol = Symbol("Option");
 
@@ -27,11 +26,11 @@ declare module "./registry.ts" {
 }
 
 export function Option<item>(
-  value: OptionInput<item>,
+  value: Option<item>,
 ): OptionValue<item> {
   return trait<typeof Option, Option<item>, item>(
     Option,
-    untrait(value) as Option<item>,
+    value,
     is_option,
   );
 }

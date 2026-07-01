@@ -1,10 +1,9 @@
-import { from_array as list_from_array, List } from "../src/list.ts";
-import { Option, some as option_some } from "../src/option.ts";
+import { from_array as list_from_array } from "../src/list.ts";
+import { some as option_some } from "../src/option.ts";
 import {
   err as result_err,
   from_number as result_from_number,
   ok as result_ok,
-  Result,
 } from "../src/result.ts";
 import {
   add_values,
@@ -20,22 +19,20 @@ const doubled_option = option.map((value: number) => {
 });
 
 const list = list_from_array([1, 2, 3]);
-const labeled_list = label_values(List(list));
+const labeled_list = label_values(list);
 
 const result = result_ok("42")
   .flat_map((text: string) => result_from_number(Number.parseInt(text, 10)));
 
-const applicative_list = List(
-  list_from_array([
-    (value: number) => value + 1,
-    (value: number) => value * 10,
-  ]),
-)
+const applicative_list = list_from_array([
+  (value: number) => value + 1,
+  (value: number) => value * 10,
+])
   .ap(list_from_array([1, 2]));
 
 const generic_option_sum = add_values(option_some(20), option_some(22));
 const generic_list_sum = add_values(
-  List(list_from_array([1, 10])),
+  list_from_array([1, 10]),
   list_from_array([2, 20]),
 );
 const positive_result = keep_positive(
@@ -50,12 +47,12 @@ const fluent_option = option_some((left: number) => {
 const fluent_result = result_ok("42")
   .flat_map((text) => result_from_number(Number.parseInt(text, 10)))
   .map((value) => value + 1);
-const fluent_list = List(list_from_array([1, 2, 3]))
+const fluent_list = list_from_array([1, 2, 3])
   .map((value) => value * 2);
 
 console.log("option", doubled_option.fmt());
 console.log("list labels", Format.fmt(labeled_list));
-console.log("list sum", sum_values(List(list)));
+console.log("list sum", sum_values(list));
 console.log("result", result.fmt());
 console.log("applicative list", applicative_list.fmt());
 console.log("generic option sum", Format.fmt(generic_option_sum));

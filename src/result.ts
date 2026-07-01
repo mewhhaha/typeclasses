@@ -8,7 +8,7 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
+import { type Trait, trait } from "./trait_value.ts";
 
 export type Result<item, error = string> =
   | { tag: "ok"; value: item }
@@ -16,7 +16,6 @@ export type Result<item, error = string> =
 
 type Ok<item> = { tag: "ok"; value: item };
 type ResultValue<item> = Trait<typeof Result, Result<item, string>, item>;
-type ResultInput<item> = TraitInput<typeof Result, Result<item, string>, item>;
 
 export const result_kind: unique symbol = Symbol("Result");
 
@@ -27,11 +26,11 @@ declare module "./registry.ts" {
 }
 
 export function Result<item>(
-  value: ResultInput<item>,
+  value: Result<item, string>,
 ): ResultValue<item> {
   return trait<typeof Result, Result<item, string>, item>(
     Result,
-    untrait(value) as Result<item, string>,
+    value,
     is_result,
   );
 }
