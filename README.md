@@ -23,10 +23,10 @@ deno task example
 ## Shape
 
 Each data type exports a type and a same-named function. That function can wrap
-an existing value as `Trait<dictionary, value, item>`, while static helpers and
-trait methods stay attached to the same dictionary object. Trait methods use
-`this` as their receiver and assert it at runtime, so they can be rebound by the
-generic fluent wrapper.
+an existing value as `Trait<dictionary, value, item>`. Constructors and other
+helpers are normal exported functions; the same-named function object is kept as
+the trait dictionary. Dictionary functions use `this` as their receiver and
+assert it at runtime, so they can be rebound by the generic fluent wrapper.
 
 ```ts
 export type Option<item> =
@@ -53,18 +53,37 @@ export function Option<item>(
 
 Option[kind] = option_kind;
 
-Option.map = impl(function map<from, to>(
+export function some<item>(
+  value: item,
+): Trait<typeof Option, Option<item>, item> {
+  return Option({ tag: "some", value });
+}
+
+export function none<item = never>(): Trait<typeof Option, Option<item>, item> {
+  return Option({ tag: "none" });
+}
+
+Option.map = function map<from, to>(
   this: Trait<typeof Option, Option<from>, from> | void,
   fn: (value: from) => to,
 ): Trait<typeof Option, Option<to>, to> {
   const option = require_this(this, "Option.map").value();
 
   if (option.tag === "none") {
-    return Option.none<to>();
+    return none<to>();
   }
 
-  return Option.some(fn(option.value));
-});
+  return some(fn(option.value));
+};
+
+interface OptionTraits
+  extends
+    Functor<typeof Option>,
+    Applicative<typeof Option>,
+    Monad<typeof Option>,
+    Foldable<typeof Option> {}
+
+Option satisfies OptionTraits;
 ```
 
 See `src/option.ts`, `src/result.ts`, and `src/list.ts` for complete examples.
@@ -76,14 +95,14 @@ value. This keeps the static trait dictionary while experimenting with method
 chaining:
 
 ```ts
-const sum = Option(Option.some((left: number) => {
+const sum = Option(some((left: number) => {
   return (right: number) => left + right;
 }))
-  .ap(Option.some(20))
-  .ap(Option.some(22));
+  .ap(some(20))
+  .ap(some(22));
 
 sum.value(); // Some(42)
-sum.eq(Option.some(42)); // true
+sum.eq(some(42)); // true
 ```
 
 The public trait-wrapped value protocol is `Trait<dictionary, value, item>` from
@@ -93,12 +112,12 @@ The public trait-wrapped value protocol is `Trait<dictionary, value, item>` from
 type TraitOption<T> = Trait<typeof Option, Option<T>, T>;
 ```
 
-The generic `trait(...)` wrapper stores the dictionary internally. `impl(...)`
-marks dictionary functions as fluent methods. When a method is read from a
-wrapped value, the wrapper looks that method up on `typeof Option` and calls it
-with the wrapped option as `this`. Methods that accept contextual values use
-`TraitInput<dictionary, value, item>`, and methods that preserve the context
-return boxed values directly.
+The generic `trait(...)` wrapper stores the dictionary internally. Any function
+on that dictionary becomes a fluent method on the boxed value. When a function
+is read from a wrapped value, the wrapper looks that function up on
+`typeof Option` and calls it with the wrapped option as `this`. Methods that
+accept contextual values use `TraitInput<dictionary, value, item>`, and methods
+that preserve the context return boxed values directly.
 
 There is no `OptionBox` or `OptionTrait` type. The fluent methods are derived
 from the dictionary shape plus the wrapped value and item type.

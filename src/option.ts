@@ -4,7 +4,6 @@ import {
   Foldable,
   Format,
   Functor,
-  impl,
   kind,
   Monad,
   require_this,
@@ -39,29 +38,29 @@ export function Option<item>(
 
 Option[kind] = option_kind;
 
-Option.some = function some<item>(value: item): BoxedOption<item> {
+export function some<item>(value: item): BoxedOption<item> {
   return Option(option_some(value));
-};
+}
 
-Option.none = function none<item = never>(): BoxedOption<item> {
+export function none<item = never>(): BoxedOption<item> {
   return Option(option_none<item>());
-};
+}
 
-Option.from_nullable = function from_nullable<item>(
+export function from_nullable<item>(
   value: item | null | undefined,
 ): BoxedOption<item> {
   if (value === null) {
-    return Option.none<item>();
+    return none<item>();
   }
 
   if (value === undefined) {
-    return Option.none<item>();
+    return none<item>();
   }
 
   return Option(option_some<item>(value));
-};
+}
 
-Option.fmt = impl(function fmt(
+Option.fmt = function fmt(
   this: BoxedOption<unknown> | void,
 ): string {
   const option = require_this(this, "Option.fmt").value();
@@ -71,9 +70,9 @@ Option.fmt = impl(function fmt(
   }
 
   return "Some(" + Deno.inspect(option.value) + ")";
-});
+};
 
-Option.eq = impl(function eq<item>(
+Option.eq = function eq<item>(
   this: BoxedOption<item> | void,
   right: OptionInput<item>,
 ): boolean {
@@ -89,28 +88,28 @@ Option.eq = impl(function eq<item>(
   }
 
   return false;
-});
+};
 
-Option.map = impl(function map<from, to>(
+Option.map = function map<from, to>(
   this: BoxedOption<from> | void,
   fn: (value: from) => to,
 ): BoxedOption<to> {
   const option = require_this(this, "Option.map").value();
 
   if (option.tag === "none") {
-    return Option.none<to>();
+    return none<to>();
   }
 
-  return Option.some(fn(option.value));
-});
+  return some(fn(option.value));
+};
 
-Option.pure = impl(function pure<item>(
+Option.pure = function pure<item>(
   value: item,
 ): BoxedOption<item> {
-  return Option.some(value);
-});
+  return some(value);
+};
 
-Option.ap = impl(function ap<from, to>(
+Option.ap = function ap<from, to>(
   this: BoxedOption<(value: from) => to> | void,
   value: OptionInput<from>,
 ): BoxedOption<to> {
@@ -118,30 +117,30 @@ Option.ap = impl(function ap<from, to>(
   const option = untrait(value) as Option<from>;
 
   if (fn.tag === "none") {
-    return Option.none<to>();
+    return none<to>();
   }
 
   if (option.tag === "none") {
-    return Option.none<to>();
+    return none<to>();
   }
 
-  return Option.some(fn.value(option.value));
-});
+  return some(fn.value(option.value));
+};
 
-Option.flat_map = impl(function flat_map<from, to>(
+Option.flat_map = function flat_map<from, to>(
   this: BoxedOption<from> | void,
   fn: (value: from) => TraitInput<typeof Option, Option<to>, to>,
 ): BoxedOption<to> {
   const option = require_this(this, "Option.flat_map").value();
 
   if (option.tag === "none") {
-    return Option.none<to>();
+    return none<to>();
   }
 
   return Option(fn(option.value));
-});
+};
 
-Option.fold = impl(function fold<item, out>(
+Option.fold = function fold<item, out>(
   this: BoxedOption<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
@@ -153,7 +152,7 @@ Option.fold = impl(function fold<item, out>(
   }
 
   return fn(initial, option.value);
-});
+};
 
 function is_option<item>(value: unknown): value is Option<item> {
   if (typeof value !== "object") {
@@ -185,10 +184,13 @@ function option_none<item = never>(): Option<item> {
   return { tag: "none" };
 }
 
-Option satisfies
-  & Format<BoxedOption<unknown>>
-  & Equal<BoxedOption<unknown>>
-  & Functor<typeof Option>
-  & Applicative<typeof Option>
-  & Monad<typeof Option>
-  & Foldable<typeof Option>;
+interface OptionTraits
+  extends
+    Format<typeof Option>,
+    Equal<typeof Option>,
+    Functor<typeof Option>,
+    Applicative<typeof Option>,
+    Monad<typeof Option>,
+    Foldable<typeof Option> {}
+
+Option satisfies OptionTraits;

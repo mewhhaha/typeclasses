@@ -4,7 +4,6 @@ import {
   Foldable,
   Format,
   Functor,
-  impl,
   kind,
   Monad,
   require_this,
@@ -39,23 +38,23 @@ export function Result<item>(
 
 Result[kind] = result_kind;
 
-Result.ok = function ok<item>(value: item): BoxedResult<item> {
+export function ok<item>(value: item): BoxedResult<item> {
   return Result(result_ok(value));
-};
+}
 
-Result.err = function err<item = never>(error: string): BoxedResult<item> {
+export function err<item = never>(error: string): BoxedResult<item> {
   return Result(result_err<item>(error));
-};
+}
 
-Result.from_number = function from_number(value: number): BoxedResult<number> {
+export function from_number(value: number): BoxedResult<number> {
   if (Number.isFinite(value)) {
-    return Result.ok(value);
+    return ok(value);
   }
 
-  return Result.err("Expected a finite number");
-};
+  return err("Expected a finite number");
+}
 
-Result.fmt = impl(function fmt(
+Result.fmt = function fmt(
   this: BoxedResult<unknown> | void,
 ): string {
   const result = require_this(this, "Result.fmt").value();
@@ -65,9 +64,9 @@ Result.fmt = impl(function fmt(
   }
 
   return "Ok(" + Deno.inspect(result.value) + ")";
-});
+};
 
-Result.eq = impl(function eq<item>(
+Result.eq = function eq<item>(
   this: BoxedResult<item> | void,
   right: ResultInput<item>,
 ): boolean {
@@ -83,28 +82,28 @@ Result.eq = impl(function eq<item>(
   }
 
   return false;
-});
+};
 
-Result.map = impl(function map<from, to>(
+Result.map = function map<from, to>(
   this: BoxedResult<from> | void,
   fn: (value: from) => to,
 ): BoxedResult<to> {
   const result = require_this(this, "Result.map").value();
 
   if (result.tag === "err") {
-    return Result.err<to>(result.error);
+    return err<to>(result.error);
   }
 
-  return Result.ok(fn(result.value));
-});
+  return ok(fn(result.value));
+};
 
-Result.pure = impl(function pure<item>(
+Result.pure = function pure<item>(
   value: item,
 ): BoxedResult<item> {
-  return Result.ok(value);
-});
+  return ok(value);
+};
 
-Result.ap = impl(function ap<from, to>(
+Result.ap = function ap<from, to>(
   this: BoxedResult<(value: from) => to> | void,
   value: ResultInput<from>,
 ): BoxedResult<to> {
@@ -112,30 +111,30 @@ Result.ap = impl(function ap<from, to>(
   const result = untrait(value) as Result<from, string>;
 
   if (fn.tag === "err") {
-    return Result.err<to>(fn.error);
+    return err<to>(fn.error);
   }
 
   if (result.tag === "err") {
-    return Result.err<to>(result.error);
+    return err<to>(result.error);
   }
 
-  return Result.ok(fn.value(result.value));
-});
+  return ok(fn.value(result.value));
+};
 
-Result.flat_map = impl(function flat_map<from, to>(
+Result.flat_map = function flat_map<from, to>(
   this: BoxedResult<from> | void,
   fn: (value: from) => TraitInput<typeof Result, Result<to, string>, to>,
 ): BoxedResult<to> {
   const result = require_this(this, "Result.flat_map").value();
 
   if (result.tag === "err") {
-    return Result.err<to>(result.error);
+    return err<to>(result.error);
   }
 
   return Result(fn(result.value));
-});
+};
 
-Result.fold = impl(function fold<item, out>(
+Result.fold = function fold<item, out>(
   this: BoxedResult<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
@@ -147,7 +146,7 @@ Result.fold = impl(function fold<item, out>(
   }
 
   return fn(initial, result.value);
-});
+};
 
 function is_result<item>(value: unknown): value is Result<item, string> {
   if (typeof value !== "object") {
@@ -183,10 +182,13 @@ function result_err<item = never>(error: string): Result<item> {
   return { tag: "err", error };
 }
 
-Result satisfies
-  & Format<BoxedResult<unknown>>
-  & Equal<BoxedResult<unknown>>
-  & Functor<typeof Result>
-  & Applicative<typeof Result>
-  & Monad<typeof Result>
-  & Foldable<typeof Result>;
+interface ResultTraits
+  extends
+    Format<typeof Result>,
+    Equal<typeof Result>,
+    Functor<typeof Result>,
+    Applicative<typeof Result>,
+    Monad<typeof Result>,
+    Foldable<typeof Result> {}
+
+Result satisfies ResultTraits;

@@ -4,7 +4,6 @@ import {
   Foldable,
   Format,
   Functor,
-  impl,
   kind,
   Monad,
   require_this,
@@ -38,22 +37,22 @@ export function List<item>(
 
 List[kind] = list_kind;
 
-List.nil = function nil<item>(): BoxedList<item> {
+export function nil<item>(): BoxedList<item> {
   return List(list_nil<item>());
-};
+}
 
-List.cons = function cons<item>(
+export function cons<item>(
   head: item,
   tail: ListInput<item>,
 ): BoxedList<item> {
   return List(list_cons(head, untrait(tail) as List<item>));
-};
+}
 
-List.from_array = function from_array<item>(items: item[]): BoxedList<item> {
+export function from_array<item>(items: item[]): BoxedList<item> {
   return List(list_from_array(items));
-};
+}
 
-List.to_array = function to_array<item>(list: ListInput<item>): item[] {
+export function to_array<item>(list: ListInput<item>): item[] {
   const items: item[] = [];
   let rest = untrait(list) as List<item>;
 
@@ -63,7 +62,7 @@ List.to_array = function to_array<item>(list: ListInput<item>): item[] {
   }
 
   return items;
-};
+}
 
 function list_from_array<item>(items: item[]): List<item> {
   let list = list_nil<item>();
@@ -76,15 +75,15 @@ function list_from_array<item>(items: item[]): List<item> {
   return list;
 }
 
-List.fmt = impl(function fmt(
+List.fmt = function fmt(
   this: BoxedList<unknown> | void,
 ): string {
   const list = require_this(this, "List.fmt");
-  const items = List.to_array(list).map((item) => Deno.inspect(item));
+  const items = to_array(list).map((item) => Deno.inspect(item));
   return "[" + items.join(", ") + "]";
-});
+};
 
-List.eq = impl(function eq<item>(
+List.eq = function eq<item>(
   this: BoxedList<item> | void,
   right: ListInput<item>,
 ): boolean {
@@ -102,14 +101,14 @@ List.eq = impl(function eq<item>(
   }
 
   return left_rest.tag === "nil" && right_rest.tag === "nil";
-});
+};
 
-List.map = impl(function map<from, to>(
+List.map = function map<from, to>(
   this: BoxedList<from> | void,
   fn: (value: from) => to,
 ): BoxedList<to> {
   const list = require_this(this, "List.map");
-  const items = List.to_array(list);
+  const items = to_array(list);
   const mapped: to[] = [];
 
   for (const item of items) {
@@ -117,49 +116,49 @@ List.map = impl(function map<from, to>(
   }
 
   return List(list_from_array(mapped));
-});
+};
 
-List.pure = impl(function pure<item>(
+List.pure = function pure<item>(
   value: item,
 ): BoxedList<item> {
   return List(list_cons(value, list_nil()));
-});
+};
 
-List.ap = impl(function ap<from, to>(
+List.ap = function ap<from, to>(
   this: BoxedList<(value: from) => to> | void,
   values: ListInput<from>,
 ): BoxedList<to> {
   const fns = require_this(this, "List.ap");
   const out: to[] = [];
 
-  for (const fn of List.to_array(fns)) {
-    for (const value of List.to_array(values)) {
+  for (const fn of to_array(fns)) {
+    for (const value of to_array(values)) {
       out.push(fn(value));
     }
   }
 
   return List(list_from_array(out));
-});
+};
 
-List.flat_map = impl(function flat_map<from, to>(
+List.flat_map = function flat_map<from, to>(
   this: BoxedList<from> | void,
   fn: (value: from) => TraitInput<typeof List, List<to>, to>,
 ): BoxedList<to> {
   const list = require_this(this, "List.flat_map");
   const out: to[] = [];
 
-  for (const item of List.to_array(list)) {
+  for (const item of to_array(list)) {
     const values = untrait(fn(item)) as List<to>;
 
-    for (const value of List.to_array(values)) {
+    for (const value of to_array(values)) {
       out.push(value);
     }
   }
 
   return List(list_from_array(out));
-});
+};
 
-List.fold = impl(function fold<item, out>(
+List.fold = function fold<item, out>(
   this: BoxedList<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
@@ -167,12 +166,12 @@ List.fold = impl(function fold<item, out>(
   const list = require_this(this, "List.fold");
   let state = initial;
 
-  for (const item of List.to_array(list)) {
+  for (const item of to_array(list)) {
     state = fn(state, item);
   }
 
   return state;
-});
+};
 
 function is_list<item>(value: unknown): value is List<item> {
   if (typeof value !== "object") {
@@ -206,10 +205,13 @@ function list_cons<item>(head: item, tail: List<item>): List<item> {
   return { tag: "cons", head, tail };
 }
 
-List satisfies
-  & Format<BoxedList<unknown>>
-  & Equal<BoxedList<unknown>>
-  & Functor<typeof List>
-  & Applicative<typeof List>
-  & Monad<typeof List>
-  & Foldable<typeof List>;
+interface ListTraits
+  extends
+    Format<typeof List>,
+    Equal<typeof List>,
+    Functor<typeof List>,
+    Applicative<typeof List>,
+    Monad<typeof List>,
+    Foldable<typeof List> {}
+
+List satisfies ListTraits;

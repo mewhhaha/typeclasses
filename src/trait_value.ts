@@ -7,19 +7,6 @@ export type TraitInput<dictionary, value, item = unknown> =
   | value
   | Trait<dictionary, value, item>;
 
-const trait_impl: unique symbol = Symbol("Trait.impl");
-
-export type TraitImpl<fn> = fn & {
-  readonly [trait_impl]: true;
-};
-
-export function impl<fn extends (this: any, ...args: any[]) => any>(
-  fn: fn,
-): TraitImpl<fn> {
-  Object.defineProperty(fn, trait_impl, { value: true });
-  return fn as TraitImpl<fn>;
-}
-
 type TraitBase<dictionary, value, item> = {
   readonly [trait_brand]: true;
   readonly [trait_dictionary]: dictionary;
@@ -30,9 +17,8 @@ type TraitBase<dictionary, value, item> = {
 
 type BoundDictionary<dictionary> = {
   [
-    key in keyof dictionary as dictionary[key] extends {
-      readonly [trait_impl]: true;
-    } ? key
+    key in keyof dictionary as dictionary[key] extends
+      (this: any, ...args: any[]) => any ? key
       : never
   ]: dictionary[key];
 };
@@ -88,11 +74,11 @@ export function trait<dictionary extends object, value, item = unknown>(
         property as keyof dictionary
       ];
 
-      if (!is_trait_impl(dictionary_value)) {
+      if (typeof dictionary_value !== "function") {
         return dictionary_value;
       }
 
-      return function trait_impl(...args: unknown[]) {
+      return function trait_function(...args: unknown[]) {
         const result = dictionary_value.call(
           receiver,
           ...args,
@@ -110,16 +96,6 @@ export function trait<dictionary extends object, value, item = unknown>(
       };
     },
   }) as unknown as Trait<dictionary, value, item>;
-}
-
-function is_trait_impl(value: unknown): value is TraitImpl<
-  (this: any, ...args: any[]) => any
-> {
-  if (typeof value !== "function") {
-    return false;
-  }
-
-  return (value as { [trait_impl]?: unknown })[trait_impl] === true;
 }
 
 export function is_trait(

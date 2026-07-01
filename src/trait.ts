@@ -1,6 +1,5 @@
 export { kind } from "./registry.ts";
 export type { Kind, Registry, TypeId } from "./registry.ts";
-export { impl } from "./trait_value.ts";
 import { type Kind, kind, type TypeId } from "./registry.ts";
 import type { Trait, TraitInput } from "./trait_value.ts";
 
@@ -51,6 +50,10 @@ type AppliedReturn<value> = TraitItem<value> extends (value: any) => infer item
   ? Reboxed<value, item>
   : never;
 
+type Dictionary = {
+  readonly [kind]: TypeId;
+};
+
 type BoxedTrait = Trait<any, any, any>;
 
 type BoundFormat = BoxedTrait & {
@@ -78,8 +81,8 @@ type BoundFoldable = BoxedTrait & {
   fold: (initial: any, fn: any) => any;
 };
 
-export type Format<self> = {
-  fmt: (this: TraitThis<self>) => string;
+export type Format<dictionary extends Dictionary> = {
+  fmt: (this: TraitThis<Boxed<dictionary, unknown>>) => string;
 };
 
 export function Format() {}
@@ -90,8 +93,11 @@ Format.fmt = function fmt<value extends BoundFormat>(
   return value.fmt() as ReturnType<value["fmt"]>;
 };
 
-export type Equal<self> = {
-  eq: (this: TraitThis<self>, right: self) => boolean;
+export type Equal<dictionary extends Dictionary> = {
+  eq: <item>(
+    this: TraitThis<Boxed<dictionary, item>>,
+    right: BoxedInput<dictionary, item>,
+  ) => boolean;
 };
 
 export function Equal() {}
@@ -101,10 +107,6 @@ Equal.eq = function eq<left extends BoundEqual>(
   right: TraitInput<TraitDictionary<left>, TraitValue<left>, TraitItem<left>>,
 ): boolean {
   return left.eq(right);
-};
-
-type Dictionary = {
-  readonly [kind]: TypeId;
 };
 
 export type Functor<dictionary extends Dictionary> = {
