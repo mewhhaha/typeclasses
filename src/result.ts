@@ -8,13 +8,15 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
 
 export type Result<item, error = string> =
   | { tag: "ok"; value: item }
   | { tag: "err"; error: error };
 
 type Ok<item> = { tag: "ok"; value: item };
+type BoxedResult<item> = Trait<typeof Result, Result<item, string>, item>;
+type ResultInput<item> = TraitInput<typeof Result, Result<item, string>, item>;
 
 export const result_kind: unique symbol = Symbol("Result");
 
@@ -25,26 +27,26 @@ declare module "./registry.ts" {
 }
 
 export function Result<item>(
-  value: Result<item, string>,
-): Trait<typeof Result, Result<item, string>, item> {
+  value: ResultInput<item>,
+): BoxedResult<item> {
   return trait<typeof Result, Result<item, string>, item>(
     Result,
-    value,
+    untrait(value) as Result<item, string>,
     is_result,
   );
 }
 
 Result[kind] = result_kind;
 
-Result.ok = function ok<item>(value: item): Ok<item> {
-  return { tag: "ok", value };
+Result.ok = function ok<item>(value: item): BoxedResult<item> {
+  return Result(result_ok(value));
 };
 
-Result.err = function err<item = never>(error: string): Result<item> {
-  return { tag: "err", error };
+Result.err = function err<item = never>(error: string): BoxedResult<item> {
+  return Result(result_err<item>(error));
 };
 
-Result.from_number = function from_number(value: number): Result<number> {
+Result.from_number = function from_number(value: number): BoxedResult<number> {
   if (Number.isFinite(value)) {
     return Result.ok(value);
   }
@@ -91,12 +93,14 @@ Result.map = Functor.method(function map<from, to>(
     return result;
   }
 
-  return Result.ok(fn(result.value));
+  return result_ok(fn(result.value));
 });
 
-Result.pure = function pure<item>(value: item): Result<item> {
-  return Result.ok(value);
-};
+Result.pure = Applicative.pure_method(function pure<item>(
+  value: item,
+): Result<item> {
+  return result_ok(value);
+});
 
 Result.ap = Applicative.method(function ap<from, to>(
   this: Result<(value: from) => to> | void,
@@ -112,12 +116,12 @@ Result.ap = Applicative.method(function ap<from, to>(
     return value;
   }
 
-  return Result.ok(fn.value(value.value));
+  return result_ok(fn.value(value.value));
 });
 
 Result.flat_map = Monad.method(function flat_map<from, to>(
   this: Result<from> | void,
-  fn: (value: from) => Result<to>,
+  fn: (value: from) => TraitInput<typeof Result, Result<to, string>, to>,
 ): Result<to> {
   const result = require_this(this, "Result.flat_map");
 
@@ -125,7 +129,7 @@ Result.flat_map = Monad.method(function flat_map<from, to>(
     return result;
   }
 
-  return fn(result.value);
+  return untrait(fn(result.value)) as Result<to>;
 });
 
 Result.fold = Foldable.method(function fold<item, out>(
@@ -166,6 +170,14 @@ function is_result<item>(value: unknown): value is Result<item, string> {
   }
 
   return false;
+}
+
+function result_ok<item>(value: item): Ok<item> {
+  return { tag: "ok", value };
+}
+
+function result_err<item = never>(error: string): Result<item> {
+  return { tag: "err", error };
 }
 
 Result satisfies

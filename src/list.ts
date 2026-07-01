@@ -8,11 +8,14 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
 
 export type List<item> =
   | { tag: "nil" }
   | { tag: "cons"; head: item; tail: List<item> };
+
+type BoxedList<item> = Trait<typeof List, List<item>, item>;
+type ListInput<item> = TraitInput<typeof List, List<item>, item>;
 
 export const list_kind: unique symbol = Symbol("List");
 
@@ -23,35 +26,35 @@ declare module "./registry.ts" {
 }
 
 export function List<item>(
-  value: List<item>,
-): Trait<typeof List, List<item>, item> {
-  return trait<typeof List, List<item>, item>(List, value, is_list);
+  value: ListInput<item>,
+): BoxedList<item> {
+  return trait<typeof List, List<item>, item>(
+    List,
+    untrait(value) as List<item>,
+    is_list,
+  );
 }
 
 List[kind] = list_kind;
 
-List.nil = function nil<item>(): List<item> {
-  return { tag: "nil" };
+List.nil = function nil<item>(): BoxedList<item> {
+  return List(list_nil<item>());
 };
 
-List.cons = function cons<item>(head: item, tail: List<item>): List<item> {
-  return { tag: "cons", head, tail };
+List.cons = function cons<item>(
+  head: item,
+  tail: ListInput<item>,
+): BoxedList<item> {
+  return List(list_cons(head, untrait(tail) as List<item>));
 };
 
-List.from_array = function from_array<item>(items: item[]): List<item> {
-  let list = List.nil<item>();
-
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    list = List.cons(item, list);
-  }
-
-  return list;
+List.from_array = function from_array<item>(items: item[]): BoxedList<item> {
+  return List(list_from_array(items));
 };
 
-List.to_array = function to_array<item>(list: List<item>): item[] {
+List.to_array = function to_array<item>(list: ListInput<item>): item[] {
   const items: item[] = [];
-  let rest = list;
+  let rest = untrait(list) as List<item>;
 
   while (rest.tag === "cons") {
     items.push(rest.head);
@@ -60,6 +63,17 @@ List.to_array = function to_array<item>(list: List<item>): item[] {
 
   return items;
 };
+
+function list_from_array<item>(items: item[]): List<item> {
+  let list = list_nil<item>();
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    list = list_cons(item, list);
+  }
+
+  return list;
+}
 
 List.fmt = Format.method(function fmt(
   this: List<unknown> | void,
@@ -101,12 +115,14 @@ List.map = Functor.method(function map<from, to>(
     mapped.push(fn(item));
   }
 
-  return List.from_array(mapped);
+  return list_from_array(mapped);
 });
 
-List.pure = function pure<item>(value: item): List<item> {
-  return List.cons(value, List.nil());
-};
+List.pure = Applicative.pure_method(function pure<item>(
+  value: item,
+): List<item> {
+  return list_cons(value, list_nil());
+});
 
 List.ap = Applicative.method(function ap<from, to>(
   this: List<(value: from) => to> | void,
@@ -121,23 +137,25 @@ List.ap = Applicative.method(function ap<from, to>(
     }
   }
 
-  return List.from_array(out);
+  return list_from_array(out);
 });
 
 List.flat_map = Monad.method(function flat_map<from, to>(
   this: List<from> | void,
-  fn: (value: from) => List<to>,
+  fn: (value: from) => TraitInput<typeof List, List<to>, to>,
 ): List<to> {
   const list = require_this(this, "List.flat_map");
   const out: to[] = [];
 
   for (const item of List.to_array(list)) {
-    for (const value of List.to_array(fn(item))) {
+    const values = untrait(fn(item)) as List<to>;
+
+    for (const value of List.to_array(values)) {
       out.push(value);
     }
   }
 
-  return List.from_array(out);
+  return list_from_array(out);
 });
 
 List.fold = Foldable.method(function fold<item, out>(
@@ -177,6 +195,14 @@ function is_list<item>(value: unknown): value is List<item> {
   }
 
   return false;
+}
+
+function list_nil<item>(): List<item> {
+  return { tag: "nil" };
+}
+
+function list_cons<item>(head: item, tail: List<item>): List<item> {
+  return { tag: "cons", head, tail };
 }
 
 List satisfies

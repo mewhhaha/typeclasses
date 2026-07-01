@@ -16,7 +16,7 @@ export interface TraitBinding {
   readonly bound: unknown;
 }
 
-type TraitArg<dictionary, value, item> =
+export type TraitInput<dictionary, value, item = unknown> =
   | value
   | Trait<dictionary, value, item>;
 
@@ -42,7 +42,7 @@ type BoundReturn<dictionary, value> = value extends
 const trait_binding: unique symbol = Symbol("Trait.binding");
 
 export type TraitMethod<fn, binding extends TraitBinding> = fn & {
-  readonly [trait_binding]?: binding;
+  readonly [trait_binding]: binding;
 };
 
 export interface FormatBinding extends TraitBinding {
@@ -51,7 +51,7 @@ export interface FormatBinding extends TraitBinding {
 
 export interface EqualBinding extends TraitBinding {
   readonly bound: (
-    right: TraitArg<this["dictionary"], this["value"], this["item"]>,
+    right: TraitInput<this["dictionary"], this["value"], this["item"]>,
   ) => boolean;
 }
 
@@ -63,7 +63,7 @@ export interface FunctorMapBinding extends TraitBinding {
 
 export interface ApplicativeApBinding extends TraitBinding {
   readonly bound: this["item"] extends (value: infer from) => infer to ? (
-      value: TraitArg<
+      value: TraitInput<
         this["dictionary"],
         Kind<KindOf<this["dictionary"]>, from>,
         from
@@ -72,9 +72,19 @@ export interface ApplicativeApBinding extends TraitBinding {
     : never;
 }
 
+export interface ApplicativePureBinding extends TraitBinding {
+  readonly bound: <to>(
+    value: to,
+  ) => Trait<this["dictionary"], Kind<KindOf<this["dictionary"]>, to>, to>;
+}
+
 export interface MonadFlatMapBinding extends TraitBinding {
   readonly bound: <to>(
-    fn: (value: this["item"]) => Kind<KindOf<this["dictionary"]>, to>,
+    fn: (value: this["item"]) => TraitInput<
+      this["dictionary"],
+      Kind<KindOf<this["dictionary"]>, to>,
+      to
+    >,
   ) => Trait<this["dictionary"], Kind<KindOf<this["dictionary"]>, to>, to>;
 }
 
@@ -106,7 +116,7 @@ type BoundMethod<
   item,
   key extends keyof dictionary,
 > = dictionary[key] extends {
-  readonly [trait_binding]?: infer binding extends TraitBinding;
+  readonly [trait_binding]: infer binding extends TraitBinding;
 } ? BindingValue<binding, dictionary, value, item>
   : dictionary[key] extends
     (this: value | void, ...args: infer args) => infer out ? (
@@ -116,8 +126,9 @@ type BoundMethod<
 
 type BoundDictionary<dictionary, value, item> = {
   [
-    key in keyof dictionary as dictionary[key] extends
-      (this: any, ...args: any[]) => any ? key
+    key in keyof dictionary as dictionary[key] extends {
+      readonly [trait_binding]: TraitBinding;
+    } ? key
       : never
   ]: BoundMethod<dictionary, value, item, key>;
 };

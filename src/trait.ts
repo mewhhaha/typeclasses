@@ -1,5 +1,6 @@
 import {
   type ApplicativeApBinding,
+  type ApplicativePureBinding,
   type EqualBinding,
   type FoldableFoldBinding,
   type FormatBinding,
@@ -22,6 +23,31 @@ export function require_this<self>(value: TraitThis<self>, name: string): self {
   return value;
 }
 
+type BoundFormat = {
+  fmt: () => string;
+};
+
+type BoundEqual = {
+  eq: (right: any) => boolean;
+};
+
+type BoundFunctor = {
+  map: (fn: any) => any;
+};
+
+type BoundApplicative = {
+  pure: (value: any) => any;
+  ap: (value: any) => any;
+};
+
+type BoundMonad = {
+  flat_map: (fn: any) => any;
+};
+
+type BoundFoldable = {
+  fold: (initial: any, fn: any) => any;
+};
+
 export type Format<self> = {
   fmt: (this: TraitThis<self>) => string;
 };
@@ -30,8 +56,10 @@ export function Format() {}
 
 Format.method = trait_method<FormatBinding>();
 
-Format.fmt = function fmt<self>(impl: Format<self>, value: self): string {
-  return impl.fmt.call(value);
+Format.fmt = function fmt<value extends BoundFormat>(
+  value: value,
+): ReturnType<value["fmt"]> {
+  return value.fmt() as ReturnType<value["fmt"]>;
 };
 
 export type Equal<self> = {
@@ -42,12 +70,11 @@ export function Equal() {}
 
 Equal.method = trait_method<EqualBinding>();
 
-Equal.eq = function eq<self>(
-  impl: Equal<self>,
-  left: self,
-  right: self,
-): boolean {
-  return impl.eq.call(left, right);
+Equal.eq = function eq<left extends BoundEqual>(
+  left: left,
+  right: Parameters<left["eq"]>[0],
+): ReturnType<left["eq"]> {
+  return left.eq(right) as ReturnType<left["eq"]>;
 };
 
 export type Functor<type_id extends TypeId> = {
@@ -62,17 +89,11 @@ export function Functor() {}
 
 Functor.method = trait_method<FunctorMapBinding>();
 
-Functor.map = function map<type_id extends TypeId, from, to>(
-  impl: Functor<type_id>,
-  value: Kind<type_id, from>,
-  fn: (value: from) => to,
-): Kind<type_id, to> {
-  const map = impl.map as (
-    this: TraitThis<Kind<type_id, from>>,
-    fn: (value: from) => to,
-  ) => Kind<type_id, to>;
-
-  return map.call(value, fn);
+Functor.map = function map<value extends BoundFunctor>(
+  value: value,
+  fn: Parameters<value["map"]>[0],
+): ReturnType<value["map"]> {
+  return value.map(fn) as ReturnType<value["map"]>;
 };
 
 export type Applicative<type_id extends TypeId> =
@@ -88,25 +109,20 @@ export type Applicative<type_id extends TypeId> =
 export function Applicative() {}
 
 Applicative.method = trait_method<ApplicativeApBinding>();
+Applicative.pure_method = trait_method<ApplicativePureBinding>();
 
-Applicative.pure = function pure<type_id extends TypeId, item>(
-  impl: Applicative<type_id>,
-  value: item,
-): Kind<type_id, item> {
-  return impl.pure(value);
+Applicative.pure = function pure<value extends BoundApplicative>(
+  value: value,
+  item: Parameters<value["pure"]>[0],
+): ReturnType<value["pure"]> {
+  return value.pure(item) as ReturnType<value["pure"]>;
 };
 
-Applicative.ap = function ap<type_id extends TypeId, to>(
-  impl: Applicative<type_id>,
-  fn: Kind<type_id, (value: any) => to>,
-  value: Kind<type_id, any>,
-): Kind<type_id, to> {
-  const ap = impl.ap as (
-    this: TraitThis<Kind<type_id, (value: any) => to>>,
-    value: Kind<type_id, any>,
-  ) => Kind<type_id, to>;
-
-  return ap.call(fn, value);
+Applicative.ap = function ap<value extends BoundApplicative>(
+  value: value,
+  item: Parameters<value["ap"]>[0],
+): ReturnType<value["ap"]> {
+  return value.ap(item) as ReturnType<value["ap"]>;
 };
 
 export type Monad<type_id extends TypeId> =
@@ -122,17 +138,11 @@ export function Monad() {}
 
 Monad.method = trait_method<MonadFlatMapBinding>();
 
-Monad.flat_map = function flat_map<type_id extends TypeId, from, to>(
-  impl: Monad<type_id>,
-  value: Kind<type_id, from>,
-  fn: (value: from) => Kind<type_id, to>,
-): Kind<type_id, to> {
-  const flat_map = impl.flat_map as (
-    this: TraitThis<Kind<type_id, from>>,
-    fn: (value: from) => Kind<type_id, to>,
-  ) => Kind<type_id, to>;
-
-  return flat_map.call(value, fn);
+Monad.flat_map = function flat_map<value extends BoundMonad>(
+  value: value,
+  fn: any,
+): any {
+  return value.flat_map(fn);
 };
 
 export type Foldable<type_id extends TypeId> = {
@@ -148,17 +158,10 @@ export function Foldable() {}
 
 Foldable.method = trait_method<FoldableFoldBinding>();
 
-Foldable.fold = function fold<type_id extends TypeId, item, out>(
-  impl: Foldable<type_id>,
-  value: Kind<type_id, item>,
-  initial: out,
-  fn: (state: out, item: item) => out,
-): out {
-  const fold = impl.fold as (
-    this: TraitThis<Kind<type_id, item>>,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) => out;
-
-  return fold.call(value, initial, fn);
+Foldable.fold = function fold<value extends BoundFoldable>(
+  value: value,
+  initial: any,
+  fn: any,
+): any {
+  return value.fold(initial, fn);
 };

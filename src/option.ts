@@ -8,13 +8,15 @@ import {
   Monad,
   require_this,
 } from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+import { type Trait, trait, type TraitInput, untrait } from "./trait_value.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
   | { tag: "none" };
 
 type Some<item> = { tag: "some"; value: item };
+type BoxedOption<item> = Trait<typeof Option, Option<item>, item>;
+type OptionInput<item> = TraitInput<typeof Option, Option<item>, item>;
 
 export const option_kind: unique symbol = Symbol("Option");
 
@@ -25,33 +27,37 @@ declare module "./registry.ts" {
 }
 
 export function Option<item>(
-  value: Option<item>,
-): Trait<typeof Option, Option<item>, item> {
-  return trait<typeof Option, Option<item>, item>(Option, value, is_option);
+  value: OptionInput<item>,
+): BoxedOption<item> {
+  return trait<typeof Option, Option<item>, item>(
+    Option,
+    untrait(value) as Option<item>,
+    is_option,
+  );
 }
 
 Option[kind] = option_kind;
 
-Option.some = function some<item>(value: item): Some<item> {
-  return { tag: "some", value };
+Option.some = function some<item>(value: item): BoxedOption<item> {
+  return Option(option_some(value));
 };
 
-Option.none = function none<item = never>(): Option<item> {
-  return { tag: "none" };
+Option.none = function none<item = never>(): BoxedOption<item> {
+  return Option(option_none<item>());
 };
 
 Option.from_nullable = function from_nullable<item>(
   value: item | null | undefined,
-): Option<item> {
+): BoxedOption<item> {
   if (value === null) {
-    return Option.none();
+    return Option.none<item>();
   }
 
   if (value === undefined) {
-    return Option.none();
+    return Option.none<item>();
   }
 
-  return Option.some(value);
+  return Option(option_some<item>(value));
 };
 
 Option.fmt = Format.method(function fmt(
@@ -93,12 +99,14 @@ Option.map = Functor.method(function map<from, to>(
     return option;
   }
 
-  return Option.some(fn(option.value));
+  return option_some(fn(option.value));
 });
 
-Option.pure = function pure<item>(value: item): Option<item> {
-  return Option.some(value);
-};
+Option.pure = Applicative.pure_method(function pure<item>(
+  value: item,
+): Option<item> {
+  return option_some(value);
+});
 
 Option.ap = Applicative.method(function ap<from, to>(
   this: Option<(value: from) => to> | void,
@@ -114,12 +122,12 @@ Option.ap = Applicative.method(function ap<from, to>(
     return value;
   }
 
-  return Option.some(fn.value(value.value));
+  return option_some(fn.value(value.value));
 });
 
 Option.flat_map = Monad.method(function flat_map<from, to>(
   this: Option<from> | void,
-  fn: (value: from) => Option<to>,
+  fn: (value: from) => TraitInput<typeof Option, Option<to>, to>,
 ): Option<to> {
   const option = require_this(this, "Option.flat_map");
 
@@ -127,7 +135,7 @@ Option.flat_map = Monad.method(function flat_map<from, to>(
     return option;
   }
 
-  return fn(option.value);
+  return untrait(fn(option.value)) as Option<to>;
 });
 
 Option.fold = Foldable.method(function fold<item, out>(
@@ -164,6 +172,14 @@ function is_option<item>(value: unknown): value is Option<item> {
   }
 
   return false;
+}
+
+function option_some<item>(value: item): Some<item> {
+  return { tag: "some", value };
+}
+
+function option_none<item = never>(): Option<item> {
+  return { tag: "none" };
 }
 
 Option satisfies
