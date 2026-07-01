@@ -24,7 +24,7 @@ import {
   Format,
   Functor,
   Monad,
-} from "./trait.ts";
+} from "./traits.ts";
 
 Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () => {
   assert_equals(Format.fmt(option_some(42)), "Some(42)");

@@ -11,7 +11,7 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Format } from "../src/trait.ts";
+import { Format } from "../src/traits.ts";
 
 const option = option_some(21);
 const doubled_option = option.map((value: number) => {

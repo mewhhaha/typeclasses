@@ -1,14 +1,12 @@
+import { kind, require_this, type Trait, trait } from "./trait.ts";
 import {
   Applicative,
   Equal,
   Foldable,
   Format,
   Functor,
-  kind,
   Monad,
-  require_this,
-} from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+} from "./traits.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
@@ -71,7 +69,7 @@ Option.fmt = function fmt(
   return "Some(" + Deno.inspect(option.value) + ")";
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FormatImpl {
     [option_kind]: Format<typeof Option>;
   }
@@ -95,7 +93,7 @@ Option.eq = function eq<item>(
   return false;
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface EqualImpl {
     [option_kind]: Equal<typeof Option>;
   }
@@ -114,7 +112,7 @@ Option.map = function map<from, to>(
   return some(fn(option.value));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FunctorImpl {
     [option_kind]: Functor<typeof Option>;
   }
@@ -144,7 +142,7 @@ Option.ap = function ap<from, to>(
   return some(fn.value(option.value));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface ApplicativeImpl {
     [option_kind]: Applicative<typeof Option>;
   }
@@ -163,7 +161,7 @@ Option.flat_map = function flat_map<from, to>(
   return fn(option.value);
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface MonadImpl {
     [option_kind]: Monad<typeof Option>;
   }
@@ -183,7 +181,7 @@ Option.fold = function fold<item, out>(
   return fn(initial, option.value);
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FoldableImpl {
     [option_kind]: Foldable<typeof Option>;
   }

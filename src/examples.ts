@@ -1,11 +1,5 @@
-import type {
-  Applicative,
-  Dictionary,
-  Foldable,
-  Functor,
-  Monad,
-  Value,
-} from "./trait.ts";
+import type { Dictionary, Value } from "./trait.ts";
+import type { Applicative, Foldable, Functor, Monad } from "./traits.ts";
 
 export function label_values<
   dictionary extends Dictionary & Functor<dictionary>,

@@ -1,14 +1,12 @@
+import { kind, require_this, type Trait, trait } from "./trait.ts";
 import {
   Applicative,
   Equal,
   Foldable,
   Format,
   Functor,
-  kind,
   Monad,
-  require_this,
-} from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+} from "./traits.ts";
 
 export type List<item> =
   | { tag: "nil" }
@@ -82,7 +80,7 @@ List.fmt = function fmt(
   return "[" + items.join(", ") + "]";
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FormatImpl {
     [list_kind]: Format<typeof List>;
   }
@@ -108,7 +106,7 @@ List.eq = function eq<item>(
   return left_rest.tag === "nil" && right_rest.tag === "nil";
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface EqualImpl {
     [list_kind]: Equal<typeof List>;
   }
@@ -129,7 +127,7 @@ List.map = function map<from, to>(
   return List(list_from_array(mapped));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FunctorImpl {
     [list_kind]: Functor<typeof List>;
   }
@@ -157,7 +155,7 @@ List.ap = function ap<from, to>(
   return List(list_from_array(out));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface ApplicativeImpl {
     [list_kind]: Applicative<typeof List>;
   }
@@ -181,7 +179,7 @@ List.flat_map = function flat_map<from, to>(
   return List(list_from_array(out));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface MonadImpl {
     [list_kind]: Monad<typeof List>;
   }
@@ -202,7 +200,7 @@ List.fold = function fold<item, out>(
   return state;
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FoldableImpl {
     [list_kind]: Foldable<typeof List>;
   }

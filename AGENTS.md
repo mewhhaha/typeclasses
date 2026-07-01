@@ -27,7 +27,8 @@ machinery, add it only when it improves the examples.
 
 ## Style
 
-- Keep trait definitions in `src/trait.ts`.
+- Keep core trait machinery in `src/trait.ts`.
+- Keep application/sublibrary trait definitions in `src/traits.ts`.
 - Keep each data type and its trait implementations in one file.
 - Keep `satisfies` checks in the implementation file, not in tests.
 - Prefer explicit `if` blocks when a branch matters.

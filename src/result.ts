@@ -1,14 +1,12 @@
+import { kind, require_this, type Trait, trait } from "./trait.ts";
 import {
   Applicative,
   Equal,
   Foldable,
   Format,
   Functor,
-  kind,
   Monad,
-  require_this,
-} from "./trait.ts";
-import { type Trait, trait } from "./trait_value.ts";
+} from "./traits.ts";
 
 export type Result<item, error = string> =
   | { tag: "ok"; value: item }
@@ -65,7 +63,7 @@ Result.fmt = function fmt(
   return "Ok(" + Deno.inspect(result.value) + ")";
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FormatImpl {
     [result_kind]: Format<typeof Result>;
   }
@@ -89,7 +87,7 @@ Result.eq = function eq<item>(
   return false;
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface EqualImpl {
     [result_kind]: Equal<typeof Result>;
   }
@@ -108,7 +106,7 @@ Result.map = function map<from, to>(
   return ok(fn(result.value));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FunctorImpl {
     [result_kind]: Functor<typeof Result>;
   }
@@ -138,7 +136,7 @@ Result.ap = function ap<from, to>(
   return ok(fn.value(result.value));
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface ApplicativeImpl {
     [result_kind]: Applicative<typeof Result>;
   }
@@ -157,7 +155,7 @@ Result.flat_map = function flat_map<from, to>(
   return fn(result.value);
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface MonadImpl {
     [result_kind]: Monad<typeof Result>;
   }
@@ -177,7 +175,7 @@ Result.fold = function fold<item, out>(
   return fn(initial, result.value);
 };
 
-declare module "./trait.ts" {
+declare module "./traits.ts" {
   interface FoldableImpl {
     [result_kind]: Foldable<typeof Result>;
   }
