@@ -15,17 +15,9 @@ type TraitBase<dictionary, value, item> = {
   value: () => value;
 };
 
-type BoundDictionary<dictionary> = {
-  [
-    key in keyof dictionary as dictionary[key] extends
-      (this: any, ...args: any[]) => any ? key
-      : never
-  ]: dictionary[key];
-};
-
 export type Trait<dictionary, value, item = unknown> =
   & TraitBase<dictionary, value, item>
-  & BoundDictionary<dictionary>;
+  & dictionary;
 
 type TraitTarget<dictionary, value, item> = {
   readonly [trait_brand]: true;

@@ -107,7 +107,7 @@ Deno.test("Option callable wrapper traits option values for fluent methods", () 
   assert_equals(value.value(), option_some(42).value());
   assert_equals(none.value(), option_none().value());
   assert_equals(value.fmt(), "Some(42)");
-  assert_true(value.eq(option_some(42)), "static option compares");
+  assert_true(value.eq(option_some(42)), "option compares");
   assert_true(value.eq(Option(option_some(42))), "wrapped option compares");
   assert_true(Option(option_none()).eq(option_none()), "None compares");
 });
@@ -156,8 +156,8 @@ Deno.test("Result callable wrapper derives fluent methods from its dictionary", 
 
   assert_equals(value.value(), result_ok(42).value());
   assert_equals(value.fmt(), "Ok(42)");
-  assert_true(value.eq(result_ok(42)), "static result compares");
-  assert_true(value.eq(result_ok(42)), "wrapped result compares");
+  assert_true(value.eq(result_ok(42)), "result compares");
+  assert_true(value.eq(Result(result_ok(42))), "wrapped result compares");
   assert_equals(parsed.value(), result_ok(42).value());
   assert_equals(parsed.fmt(), "Ok(42)");
   assert_equals(sum.value(), result_ok(42).value());
@@ -174,7 +174,7 @@ Deno.test("List callable wrapper derives fluent methods from its dictionary", ()
     ]),
   )
     .ap(List(list_from_array([1, 2])));
-  const raw_applied = List(
+  const direct_applied = List(
     list_from_array([
       (value: number) => value + 1,
       (value: number) => value * 10,
@@ -190,7 +190,7 @@ Deno.test("List callable wrapper derives fluent methods from its dictionary", ()
     "wrapped list compares",
   );
   assert_equals(list_to_array(applied.value()), [2, 3, 10, 20]);
-  assert_equals(list_to_array(raw_applied.value()), [2, 3, 10, 20]);
+  assert_equals(list_to_array(direct_applied.value()), [2, 3, 10, 20]);
   assert_equals(total, 12);
 });
 

@@ -14,7 +14,7 @@ export type List<item> =
   | { tag: "nil" }
   | { tag: "cons"; head: item; tail: List<item> };
 
-type BoxedList<item> = Trait<typeof List, List<item>, item>;
+type ListValue<item> = Trait<typeof List, List<item>, item>;
 type ListInput<item> = TraitInput<typeof List, List<item>, item>;
 
 export const list_kind: unique symbol = Symbol("List");
@@ -27,7 +27,7 @@ declare module "./registry.ts" {
 
 export function List<item>(
   value: ListInput<item>,
-): BoxedList<item> {
+): ListValue<item> {
   return trait<typeof List, List<item>, item>(
     List,
     untrait(value) as List<item>,
@@ -37,18 +37,18 @@ export function List<item>(
 
 List[kind] = list_kind;
 
-export function nil<item>(): BoxedList<item> {
+export function nil<item>(): ListValue<item> {
   return List(list_nil<item>());
 }
 
 export function cons<item>(
   head: item,
   tail: ListInput<item>,
-): BoxedList<item> {
+): ListValue<item> {
   return List(list_cons(head, untrait(tail) as List<item>));
 }
 
-export function from_array<item>(items: item[]): BoxedList<item> {
+export function from_array<item>(items: item[]): ListValue<item> {
   return List(list_from_array(items));
 }
 
@@ -76,7 +76,7 @@ function list_from_array<item>(items: item[]): List<item> {
 }
 
 List.fmt = function fmt(
-  this: BoxedList<unknown> | void,
+  this: ListValue<unknown> | void,
 ): string {
   const list = require_this(this, "List.fmt");
   const items = to_array(list).map((item) => Deno.inspect(item));
@@ -90,12 +90,12 @@ declare module "./trait.ts" {
 }
 
 List.eq = function eq<item>(
-  this: BoxedList<item> | void,
-  right: ListInput<item>,
+  this: ListValue<item> | void,
+  right: ListValue<item>,
 ): boolean {
   const left = require_this(this, "List.eq");
   let left_rest = left.value();
-  let right_rest = untrait(right) as List<item>;
+  let right_rest = right.value();
 
   while (left_rest.tag === "cons" && right_rest.tag === "cons") {
     if (!Object.is(left_rest.head, right_rest.head)) {
@@ -116,9 +116,9 @@ declare module "./trait.ts" {
 }
 
 List.map = function map<from, to>(
-  this: BoxedList<from> | void,
+  this: ListValue<from> | void,
   fn: (value: from) => to,
-): BoxedList<to> {
+): ListValue<to> {
   const list = require_this(this, "List.map");
   const items = to_array(list);
   const mapped: to[] = [];
@@ -138,14 +138,14 @@ declare module "./trait.ts" {
 
 List.pure = function pure<item>(
   value: item,
-): BoxedList<item> {
+): ListValue<item> {
   return List(list_cons(value, list_nil()));
 };
 
 List.ap = function ap<from, to>(
-  this: BoxedList<(value: from) => to> | void,
-  values: ListInput<from>,
-): BoxedList<to> {
+  this: ListValue<(value: from) => to> | void,
+  values: ListValue<from>,
+): ListValue<to> {
   const fns = require_this(this, "List.ap");
   const out: to[] = [];
 
@@ -165,14 +165,14 @@ declare module "./trait.ts" {
 }
 
 List.flat_map = function flat_map<from, to>(
-  this: BoxedList<from> | void,
-  fn: (value: from) => TraitInput<typeof List, List<to>, to>,
-): BoxedList<to> {
+  this: ListValue<from> | void,
+  fn: (value: from) => ListValue<to>,
+): ListValue<to> {
   const list = require_this(this, "List.flat_map");
   const out: to[] = [];
 
   for (const item of to_array(list)) {
-    const values = untrait(fn(item)) as List<to>;
+    const values = fn(item);
 
     for (const value of to_array(values)) {
       out.push(value);
@@ -189,7 +189,7 @@ declare module "./trait.ts" {
 }
 
 List.fold = function fold<item, out>(
-  this: BoxedList<item> | void,
+  this: ListValue<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
 ): out {

@@ -15,7 +15,7 @@ export type Result<item, error = string> =
   | { tag: "err"; error: error };
 
 type Ok<item> = { tag: "ok"; value: item };
-type BoxedResult<item> = Trait<typeof Result, Result<item, string>, item>;
+type ResultValue<item> = Trait<typeof Result, Result<item, string>, item>;
 type ResultInput<item> = TraitInput<typeof Result, Result<item, string>, item>;
 
 export const result_kind: unique symbol = Symbol("Result");
@@ -28,7 +28,7 @@ declare module "./registry.ts" {
 
 export function Result<item>(
   value: ResultInput<item>,
-): BoxedResult<item> {
+): ResultValue<item> {
   return trait<typeof Result, Result<item, string>, item>(
     Result,
     untrait(value) as Result<item, string>,
@@ -38,15 +38,15 @@ export function Result<item>(
 
 Result[kind] = result_kind;
 
-export function ok<item>(value: item): BoxedResult<item> {
+export function ok<item>(value: item): ResultValue<item> {
   return Result(result_ok(value));
 }
 
-export function err<item = never>(error: string): BoxedResult<item> {
+export function err<item = never>(error: string): ResultValue<item> {
   return Result(result_err<item>(error));
 }
 
-export function from_number(value: number): BoxedResult<number> {
+export function from_number(value: number): ResultValue<number> {
   if (Number.isFinite(value)) {
     return ok(value);
   }
@@ -55,7 +55,7 @@ export function from_number(value: number): BoxedResult<number> {
 }
 
 Result.fmt = function fmt(
-  this: BoxedResult<unknown> | void,
+  this: ResultValue<unknown> | void,
 ): string {
   const result = require_this(this, "Result.fmt").value();
 
@@ -73,11 +73,11 @@ declare module "./trait.ts" {
 }
 
 Result.eq = function eq<item>(
-  this: BoxedResult<item> | void,
-  right: ResultInput<item>,
+  this: ResultValue<item> | void,
+  right: ResultValue<item>,
 ): boolean {
   const left = require_this(this, "Result.eq").value();
-  const right_value = untrait(right) as Result<item, string>;
+  const right_value = right.value();
 
   if (left.tag === "err" && right_value.tag === "err") {
     return Object.is(left.error, right_value.error);
@@ -97,9 +97,9 @@ declare module "./trait.ts" {
 }
 
 Result.map = function map<from, to>(
-  this: BoxedResult<from> | void,
+  this: ResultValue<from> | void,
   fn: (value: from) => to,
-): BoxedResult<to> {
+): ResultValue<to> {
   const result = require_this(this, "Result.map").value();
 
   if (result.tag === "err") {
@@ -117,16 +117,16 @@ declare module "./trait.ts" {
 
 Result.pure = function pure<item>(
   value: item,
-): BoxedResult<item> {
+): ResultValue<item> {
   return ok(value);
 };
 
 Result.ap = function ap<from, to>(
-  this: BoxedResult<(value: from) => to> | void,
-  value: ResultInput<from>,
-): BoxedResult<to> {
+  this: ResultValue<(value: from) => to> | void,
+  value: ResultValue<from>,
+): ResultValue<to> {
   const fn = require_this(this, "Result.ap").value();
-  const result = untrait(value) as Result<from, string>;
+  const result = value.value();
 
   if (fn.tag === "err") {
     return err<to>(fn.error);
@@ -146,16 +146,16 @@ declare module "./trait.ts" {
 }
 
 Result.flat_map = function flat_map<from, to>(
-  this: BoxedResult<from> | void,
-  fn: (value: from) => TraitInput<typeof Result, Result<to, string>, to>,
-): BoxedResult<to> {
+  this: ResultValue<from> | void,
+  fn: (value: from) => ResultValue<to>,
+): ResultValue<to> {
   const result = require_this(this, "Result.flat_map").value();
 
   if (result.tag === "err") {
     return err<to>(result.error);
   }
 
-  return Result(fn(result.value));
+  return fn(result.value);
 };
 
 declare module "./trait.ts" {
@@ -165,7 +165,7 @@ declare module "./trait.ts" {
 }
 
 Result.fold = function fold<item, out>(
-  this: BoxedResult<item> | void,
+  this: ResultValue<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
 ): out {

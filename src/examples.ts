@@ -1,31 +1,28 @@
-type BoxedFunctor<item> = {
-  map: (fn: (item: item) => unknown) => any;
-};
+import type {
+  Applicative,
+  Dictionary,
+  Foldable,
+  Functor,
+  Monad,
+  Value,
+} from "./trait.ts";
 
-type BoxedMonad<item> = {
-  pure: (item: item) => any;
-  flat_map: (fn: (item: item) => any) => any;
-};
-
-type BoxedFoldable<item, out> = {
-  fold: (
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) => out;
-};
-
-export function label_values(
-  value: BoxedFunctor<number>,
-): any {
+export function label_values<
+  dictionary extends Dictionary & Functor<dictionary>,
+>(
+  value: Value<dictionary, number>,
+): Value<dictionary, string> {
   return value.map((item: number) => {
     return "value:" + item.toString();
   });
 }
 
-export function add_values<right>(
-  left: BoxedFunctor<number>,
-  right: right,
-): any {
+export function add_values<
+  dictionary extends Dictionary & Applicative<dictionary>,
+>(
+  left: Value<dictionary, number>,
+  right: Value<dictionary, number>,
+): Value<dictionary, number> {
   const add_right = left.map((left_value: number) => {
     return (right_value: number) => left_value + right_value;
   });
@@ -33,10 +30,12 @@ export function add_values<right>(
   return add_right.ap(right);
 }
 
-export function keep_positive(
-  value: BoxedMonad<number>,
-  reject: (value: number) => any,
-): any {
+export function keep_positive<
+  dictionary extends Dictionary & Monad<dictionary>,
+>(
+  value: Value<dictionary, number>,
+  reject: (value: number) => Value<dictionary, number>,
+): Value<dictionary, number> {
   return value.flat_map((item: number) => {
     if (item >= 0) {
       return value.pure(item);
@@ -46,8 +45,10 @@ export function keep_positive(
   });
 }
 
-export function sum_values(
-  value: BoxedFoldable<number, number>,
+export function sum_values<
+  dictionary extends Dictionary & Foldable<dictionary>,
+>(
+  value: Value<dictionary, number>,
 ): number {
   return value.fold(0, (state: number, item: number) => state + item);
 }

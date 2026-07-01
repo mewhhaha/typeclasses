@@ -15,7 +15,7 @@ export type Option<item> =
   | { tag: "none" };
 
 type Some<item> = { tag: "some"; value: item };
-type BoxedOption<item> = Trait<typeof Option, Option<item>, item>;
+type OptionValue<item> = Trait<typeof Option, Option<item>, item>;
 type OptionInput<item> = TraitInput<typeof Option, Option<item>, item>;
 
 export const option_kind: unique symbol = Symbol("Option");
@@ -28,7 +28,7 @@ declare module "./registry.ts" {
 
 export function Option<item>(
   value: OptionInput<item>,
-): BoxedOption<item> {
+): OptionValue<item> {
   return trait<typeof Option, Option<item>, item>(
     Option,
     untrait(value) as Option<item>,
@@ -38,17 +38,17 @@ export function Option<item>(
 
 Option[kind] = option_kind;
 
-export function some<item>(value: item): BoxedOption<item> {
+export function some<item>(value: item): OptionValue<item> {
   return Option(option_some(value));
 }
 
-export function none<item = never>(): BoxedOption<item> {
+export function none<item = never>(): OptionValue<item> {
   return Option(option_none<item>());
 }
 
 export function from_nullable<item>(
   value: item | null | undefined,
-): BoxedOption<item> {
+): OptionValue<item> {
   if (value === null) {
     return none<item>();
   }
@@ -61,7 +61,7 @@ export function from_nullable<item>(
 }
 
 Option.fmt = function fmt(
-  this: BoxedOption<unknown> | void,
+  this: OptionValue<unknown> | void,
 ): string {
   const option = require_this(this, "Option.fmt").value();
 
@@ -79,11 +79,11 @@ declare module "./trait.ts" {
 }
 
 Option.eq = function eq<item>(
-  this: BoxedOption<item> | void,
-  right: OptionInput<item>,
+  this: OptionValue<item> | void,
+  right: OptionValue<item>,
 ): boolean {
   const left = require_this(this, "Option.eq").value();
-  const right_value = untrait(right) as Option<item>;
+  const right_value = right.value();
 
   if (left.tag === "none" && right_value.tag === "none") {
     return true;
@@ -103,9 +103,9 @@ declare module "./trait.ts" {
 }
 
 Option.map = function map<from, to>(
-  this: BoxedOption<from> | void,
+  this: OptionValue<from> | void,
   fn: (value: from) => to,
-): BoxedOption<to> {
+): OptionValue<to> {
   const option = require_this(this, "Option.map").value();
 
   if (option.tag === "none") {
@@ -123,16 +123,16 @@ declare module "./trait.ts" {
 
 Option.pure = function pure<item>(
   value: item,
-): BoxedOption<item> {
+): OptionValue<item> {
   return some(value);
 };
 
 Option.ap = function ap<from, to>(
-  this: BoxedOption<(value: from) => to> | void,
-  value: OptionInput<from>,
-): BoxedOption<to> {
+  this: OptionValue<(value: from) => to> | void,
+  value: OptionValue<from>,
+): OptionValue<to> {
   const fn = require_this(this, "Option.ap").value();
-  const option = untrait(value) as Option<from>;
+  const option = value.value();
 
   if (fn.tag === "none") {
     return none<to>();
@@ -152,16 +152,16 @@ declare module "./trait.ts" {
 }
 
 Option.flat_map = function flat_map<from, to>(
-  this: BoxedOption<from> | void,
-  fn: (value: from) => TraitInput<typeof Option, Option<to>, to>,
-): BoxedOption<to> {
+  this: OptionValue<from> | void,
+  fn: (value: from) => OptionValue<to>,
+): OptionValue<to> {
   const option = require_this(this, "Option.flat_map").value();
 
   if (option.tag === "none") {
     return none<to>();
   }
 
-  return Option(fn(option.value));
+  return fn(option.value);
 };
 
 declare module "./trait.ts" {
@@ -171,7 +171,7 @@ declare module "./trait.ts" {
 }
 
 Option.fold = function fold<item, out>(
-  this: BoxedOption<item> | void,
+  this: OptionValue<item> | void,
   initial: out,
   fn: (state: out, item: item) => out,
 ): out {
