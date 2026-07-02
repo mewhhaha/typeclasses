@@ -1,13 +1,22 @@
+import { from_array as array_from_array } from "../src/array.ts";
 import { from_array, List, to_array } from "../src/list.ts";
+import {
+  from_entries as map_from_entries,
+  to_record as map_to_record,
+} from "../src/map.ts";
 import { some } from "../src/option.ts";
+import {
+  from_entries as record_from_entries,
+  to_record as record_to_record,
+} from "../src/record.ts";
 import { err, from_number, ok } from "../src/result.ts";
 import { from_fn, run } from "../src/task.ts";
 import {
   type Dictionary,
-  implement,
   type Receiver,
   require_this,
   trait_constructor,
+  type Value,
 } from "../src/trait.ts";
 import {
   add_values,
@@ -15,24 +24,41 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Format, perform } from "../src/traits.ts";
+import { Alternative, Format, perform, Traversable } from "../src/traits.ts";
+
+const size_trait: unique symbol = Symbol("Size");
+
+interface SizeImplementation<dictionary extends Dictionary> {
+  size: <item>(this: Receiver<dictionary, item>) => number;
+}
 
 interface Size<dictionary extends Dictionary> {
-  size: <item>(this: Receiver<dictionary, item>) => number;
+  [size_trait]: SizeImplementation<dictionary>;
+}
+
+declare module "../src/list.ts" {
+  interface ListDictionary
+    extends Size<typeof List>, SizeImplementation<typeof List> {}
 }
 
 function Size() {}
 
-Size.size = function size(value: { size: () => number }): number {
-  return value.size();
+Size.size = function size<
+  dictionary extends Dictionary & Size<dictionary>,
+  item,
+>(value: Value<dictionary, item>): number {
+  return value[size_trait].size.call(value);
 };
 
-const SizedList = implement(List, {
+const list_size = {
   size<item>(this: Receiver<typeof List, item>): number {
-    const list = require_this(this, "List.size");
+    const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
-}) satisfies typeof List & Size<typeof List>;
+} satisfies SizeImplementation<typeof List>;
+
+List[size_trait] = list_size;
+List.size = list_size.size;
 
 const option = some(21);
 const doubled_option = option.map((value: number) => {
@@ -40,7 +66,7 @@ const doubled_option = option.map((value: number) => {
 });
 
 const list = from_array([1, 2, 3]);
-const sized_list = trait_constructor(SizedList)(list.value());
+const sized_list = trait_constructor(List)(list.value());
 const labeled_list = label_values(list);
 
 const result = ok("42")
@@ -71,6 +97,27 @@ const fluent_result = ok("42")
   .map((value) => value + 1);
 const fluent_list = from_array([1, 2, 3])
   .map((value) => value * 2);
+const array_monad = array_from_array([1, 2, 3])
+  .bind((value) => array_from_array([value, value * 10]));
+const array_alternative = Alternative.alt(
+  array_from_array([1]),
+  array_from_array([2, 3]),
+);
+const mapped_map = map_from_entries<number>([["left", 1], ["right", 2]])
+  .map((value) => "value:" + value.toString());
+const mapped_record = record_from_entries<number>([["x", 4], ["y", 5]])
+  .map((value) => value * 2);
+const traversed_record = Traversable.traverse(
+  record_from_entries<number>([["id", 42], ["limit", 10]]),
+  ok(undefined),
+  (value) => {
+    if (value > 0) {
+      return ok(value.toString());
+    }
+
+    return err<string>("expected positive value");
+  },
+).map((record) => record_to_record(record));
 const decoded_account = decode_account_payload({
   account: { id: "42", active: true },
 });
@@ -94,6 +141,11 @@ console.log("generic positive result", Format.fmt(positive_result));
 console.log("fluent option", fluent_option.fmt());
 console.log("fluent result", fluent_result.fmt());
 console.log("fluent list", fluent_list.fmt());
+console.log("array monad", array_monad.fmt());
+console.log("array alternative", Format.fmt(array_alternative));
+console.log("map functor", Deno.inspect(map_to_record(mapped_map)));
+console.log("record functor", Deno.inspect(record_to_record(mapped_record)));
+console.log("record traverse result", traversed_record.fmt());
 console.log("decoded account", decoded_account.fmt());
 console.log("task perform result", await run(task_result));
 

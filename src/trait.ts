@@ -46,14 +46,3 @@ export function trait_constructor<dictionary extends object>(
 ): <value, item = unknown>(value: value) => Trait<dictionary, value, item> {
   return raw_trait_constructor(dictionary);
 }
-
-export function implement<
-  dictionary extends object,
-  implementation extends object,
->(
-  dictionary: dictionary,
-  implementation: implementation,
-): dictionary & implementation {
-  Object.assign(dictionary, implementation);
-  return dictionary as dictionary & implementation;
-}

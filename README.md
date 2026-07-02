@@ -10,6 +10,9 @@ complete functional programming library:
 - `Applicative` for `pure` and `ap`
 - `Monad` for `bind` and `perform`
 - `Foldable` for `fold`
+- `Traversable` for flipping structures through an applicative
+- `Semigroup` and `Monoid` for appendable/empty structures
+- `Alternative` for empty/fallback list-like contexts
 - `Format` and `Equal` as small utility traits
 
 ## Run
@@ -35,19 +38,26 @@ The `Registry` interface in `src/registry.ts` is the type-level map from a data
 type's unique symbol to its contextual shape. That lets the short
 `Value<typeof Option, item>` type recover that `Option` stores `Option<item>`.
 
-Dictionary functions use `this` as their receiver and assert it at runtime, so
-the generic wrapper can rebind dictionary functions as methods on wrapped
-values.
+Trait implementation functions use `this` as their receiver and assert it at
+runtime. The canonical trait slot is a unique symbol, so two traits can both
+have a method named `fmt` without sharing a runtime property. Data types can
+also expose direct fluent aliases like `.fmt()` or `.map()` when those names are
+useful for examples.
 
 ```ts
 import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
-import { Format, Monad } from "./traits.ts";
+import {
+  Format,
+  format_trait,
+  type FormatImplementation,
+  Monad,
+  monad_trait,
+  type MonadImplementation,
+} from "./traits.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
   | { tag: "none" };
-
-type OptionValue<item> = Value<typeof Option, item>;
 
 export const option_kind: unique symbol = Symbol("Option");
 
@@ -57,11 +67,18 @@ declare module "./registry.ts" {
   }
 }
 
-export function Option<item>(
+export interface OptionDictionary {
+  <item>(value: Option<item>): OptionValue<item>;
+  [kind]: typeof option_kind;
+}
+
+type OptionValue<item> = Value<OptionDictionary, item>;
+
+export const Option = function Option<item>(
   value: Option<item>,
 ): OptionValue<item> {
   return option_trait(value);
-}
+} as OptionDictionary;
 
 Option[kind] = option_kind;
 
@@ -77,41 +94,43 @@ export function none<item = never>(): OptionValue<item> {
   return Option({ tag: "none" });
 }
 
-Option.fmt = function fmt(
-  this: OptionValue<unknown> | void,
-): string {
-  const option = require_this(this, "Option.fmt").value();
-  return option.tag === "none" ? "None" : "Some(" + option.value + ")";
-};
+const option_format = {
+  fmt(this: OptionValue<unknown> | void): string {
+    const option = require_this(this, "Option.Format.fmt").value();
+    return option.tag === "none" ? "None" : "Some(" + option.value + ")";
+  },
+} satisfies FormatImplementation<typeof Option>;
 
-declare module "./traits.ts" {
-  interface FormatImpl {
-    [option_kind]: Format<typeof Option>;
-  }
-}
+Option[format_trait] = option_format;
+Option.fmt = option_format.fmt;
 
-Option.bind = function bind<from, to>(
-  this: OptionValue<from> | void,
-  fn: (value: from) => OptionValue<to>,
-): OptionValue<to> {
-  const option = require_this(this, "Option.bind").value();
+export interface OptionDictionary
+  extends Format<typeof Option>, FormatImplementation<typeof Option> {}
 
-  if (option.tag === "none") {
-    return none<to>();
-  }
+const option_monad = {
+  bind<from, to>(
+    this: OptionValue<from> | void,
+    fn: (value: from) => OptionValue<to>,
+  ): OptionValue<to> {
+    const option = require_this(this, "Option.Monad.bind").value();
 
-  return fn(option.value);
-};
+    if (option.tag === "none") {
+      return none<to>();
+    }
 
-declare module "./traits.ts" {
-  interface MonadImpl {
-    [option_kind]: Monad<typeof Option>;
-  }
-}
+    return fn(option.value);
+  },
+} satisfies MonadImplementation<typeof Option>;
+
+Option[monad_trait] = option_monad;
+Option.bind = option_monad.bind;
+
+export interface OptionDictionary
+  extends Monad<typeof Option>, MonadImplementation<typeof Option> {}
 ```
 
-See `src/option.ts`, `src/result.ts`, `src/list.ts`, and `src/task.ts` for
-complete examples.
+See `src/option.ts`, `src/result.ts`, `src/list.ts`, `src/task.ts`,
+`src/array.ts`, `src/map.ts`, and `src/record.ts` for complete examples.
 
 ## Fluent Experiment
 
@@ -143,34 +162,50 @@ type WrappedOption<item> = Value<typeof Option, item>;
 
 `trait(dictionary, value)` stores the dictionary internally. The wrapped value's
 prototype points at a shared trait prototype, which delegates to the dictionary.
-Any function on that dictionary becomes a fluent method through normal prototype
-dispatch, with the wrapped value as `this`. Methods that preserve the context
-return wrapped values directly.
+Symbol-scoped implementations are inherited through that prototype. Direct
+aliases are inherited the same way, so fluent calls still use the wrapped value
+as `this`.
 
 Data type constructors can use `trait_constructor(dictionary)` to cache the
 shared prototype once instead of looking it up for every value.
 
-External experiments can use `implement(dictionary, methods)` to attach methods
-to an existing dictionary and get back a widened dictionary type. `Receiver`
-keeps custom trait method receivers short:
+Each data type exports an open dictionary interface. Trait implementations are
+validated as objects with `satisfies`, attached under their symbol token, and
+optionally exposed as direct fluent aliases. Outside the declaring module, use
+the same extension point through module augmentation. `Receiver` keeps custom
+trait method receivers short:
 
 ```ts
-interface Size<dictionary extends Dictionary> {
+const size_trait: unique symbol = Symbol("Size");
+
+interface SizeImplementation<dictionary extends Dictionary> {
   size: <item>(this: Receiver<dictionary, item>) => number;
 }
 
-const SizedList = implement(List, {
+interface Size<dictionary extends Dictionary> {
+  [size_trait]: SizeImplementation<dictionary>;
+}
+
+declare module "./list.ts" {
+  interface ListDictionary
+    extends Size<typeof List>, SizeImplementation<typeof List> {}
+}
+
+const list_size = {
   size<item>(this: Receiver<typeof List, item>): number {
-    const list = require_this(this, "List.size");
+    const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
-}) satisfies typeof List & Size<typeof List>;
+} satisfies SizeImplementation<typeof List>;
+
+List[size_trait] = list_size;
+List.size = list_size.size;
 ```
 
 There is no `OptionBox` or `OptionTrait` type. The fluent methods are derived
 from the dictionary shape plus the wrapped value and item type.
 
-Generic trait helper functions delegate to those wrapped methods:
+Direct fluent aliases still work when a data type opts into them:
 
 ```ts
 const parsed = ok("42").bind((text) => {
@@ -207,10 +242,37 @@ const greeting = perform(function* () {
 await run(greeting); // "hello Ada #7"
 ```
 
-Each trait has an open implementation registry such as `FormatImpl` or
-`FunctorImpl`. Entries are added one trait at a time next to the implementation.
-Because `Format<typeof Option>` is self-constrained, registering it also proves
-that `typeof Option` has the required `fmt` implementation.
+## Built-In Shapes
+
+`src/array.ts`, `src/map.ts`, and `src/record.ts` wrap familiar JavaScript data
+shapes without replacing them:
+
+- `ArrayT<item>` wraps `readonly item[]` and implements list-like `Functor`,
+  `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, and
+  `Alternative`.
+- `MapT<item>` wraps `ReadonlyMap<string, item>` and implements value-focused
+  `Functor`, `Foldable`, `Traversable`, `Semigroup`, and `Monoid`.
+- `RecordT<item>` wraps `Readonly<Record<string, item>>` with the same
+  value-focused traits as `MapT`.
+
+Maps and records use right-biased `concat`, where values from the right side
+replace matching keys from the left side. They intentionally do not implement
+`Applicative` or `Monad`, because there is no obvious lawful `pure` for an
+arbitrary key space.
+
+The root module exports these built-in-shaped modules under namespaces to avoid
+helper-name collisions:
+
+```ts
+import { array, map, record } from "./src/mod.ts";
+```
+
+Each data type has an open dictionary interface such as `OptionDictionary` or
+`ListDictionary`. Entries are added one trait at a time next to the
+implementation. The `satisfies FormatImplementation<typeof Option>` check proves
+that the implementation object supplies every method that `Format` requires,
+while `Option[format_trait] = option_format` installs the collision-free
+canonical slot.
 
 ## Benchmarks
 

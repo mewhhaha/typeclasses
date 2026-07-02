@@ -4,4 +4,7 @@ export * from "./option.ts";
 export * from "./result.ts";
 export * from "./list.ts";
 export * from "./task.ts";
+export * as array from "./array.ts";
+export * as map from "./map.ts";
+export * as record from "./record.ts";
 export * from "./examples.ts";
