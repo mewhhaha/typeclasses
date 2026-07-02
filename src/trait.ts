@@ -1,6 +1,9 @@
-export { is_trait, trait } from "./trait_value.ts";
+export { is_trait } from "./trait_value.ts";
 export type { Trait } from "./trait_value.ts";
-import { trait_constructor as raw_trait_constructor } from "./trait_value.ts";
+import {
+  trait as raw_as_trait,
+  trait_constructor as raw_as_trait_cached,
+} from "./trait_value.ts";
 import type { Trait } from "./trait_value.ts";
 
 export const kind: unique symbol = Symbol("Trait.kind");
@@ -17,9 +20,10 @@ export function require_this<self>(value: This<self>, name: string): self {
   return value;
 }
 
-export type ContextValue<dictionary extends Dictionary, item> = NonNullable<
-  (dictionary & { readonly [item_type]: item })[typeof value_type]
->;
+export type ContextValue<dictionary extends Dictionary, item> =
+  dictionary extends { readonly [value_type]: unknown }
+    ? (dictionary & { readonly [item_type]: item })[typeof value_type]
+    : never;
 
 export type Value<dictionary extends Dictionary, item> = Trait<
   dictionary,
@@ -31,29 +35,44 @@ export type Receiver<dictionary extends Dictionary, item> = This<
   Value<dictionary, item>
 >;
 
-export type Dictionary = {
-  readonly [kind]: PropertyKey;
+export type Dictionary<type_id = unknown> = {
+  [kind]: type_id;
   readonly [item_type]?: unknown;
-  readonly [value_type]?: unknown;
 };
 
-export function trait_constructor<dictionary extends Dictionary>(
+export function as_trait<dictionary extends Dictionary, item>(
+  dictionary: dictionary,
+  value: ContextValue<dictionary, item>,
+): Value<dictionary, item>;
+export function as_trait<dictionary extends object, value, item = unknown>(
+  dictionary: dictionary,
+  value: value,
+): Trait<dictionary, value, item>;
+export function as_trait<dictionary extends object, value, item = unknown>(
+  dictionary: dictionary,
+  value: value,
+): Trait<dictionary, value, item> {
+  return raw_as_trait(dictionary, value);
+}
+
+export function as_trait_cached<dictionary extends Dictionary>(
   dictionary: dictionary,
 ): <item>(value: ContextValue<dictionary, item>) => Value<dictionary, item>;
-export function trait_constructor<dictionary extends object>(
+export function as_trait_cached<dictionary extends object>(
   dictionary: dictionary,
 ): <value, item = unknown>(value: value) => Trait<dictionary, value, item>;
-export function trait_constructor<dictionary extends object>(
+export function as_trait_cached<dictionary extends object>(
   dictionary: dictionary,
 ): <value, item = unknown>(value: value) => Trait<dictionary, value, item> {
-  return raw_trait_constructor(dictionary);
+  return raw_as_trait_cached(dictionary);
 }
 
 export type TraitDictionary<
+  dictionary extends Dictionary,
   token extends PropertyKey,
   implementation extends object,
 > =
-  & Dictionary
+  & Dictionary<dictionary[typeof kind]>
   & { [key in token]: implementation }
   & implementation;
 
@@ -68,8 +87,10 @@ export function implement_trait<implementation extends object>(
   return implementation;
 }
 
+type Callable = (this: unknown, ...args: unknown[]) => unknown;
+
 function call_trait_method<out>(
-  method: Function,
+  method: Callable,
   receiver: unknown,
   args: readonly unknown[],
 ): out {
@@ -110,7 +131,7 @@ export abstract class TraitDefinition {
     args: readonly unknown[] = [],
   ): out {
     const implementation = (receiver as {
-      [key: PropertyKey]: { [key: PropertyKey]: Function };
+      [key: PropertyKey]: { [key: PropertyKey]: Callable };
     })[this.token];
 
     return call_trait_method(implementation[method], receiver, args);

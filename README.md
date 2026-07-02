@@ -47,11 +47,11 @@ useful for examples.
 
 ```ts
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -63,23 +63,20 @@ export type Option<item> =
 
 export const option_kind: unique symbol = Symbol("Option");
 
-export interface OptionDictionary extends Dictionary {
+export interface OptionDictionary extends Dictionary<typeof option_kind> {
   <item>(value: Option<item>): OptionValue<item>;
-  [kind]: typeof option_kind;
-  readonly [value_type]?: Option<this[typeof item_type]>;
+  readonly [value_type]: Option<this[typeof item_type]>;
 }
 
 type OptionValue<item> = Value<OptionDictionary, item>;
 
-export const Option = function Option<item>(
+export const Option: OptionDictionary = function <item>(
   value: Option<item>,
-): OptionValue<item> {
-  return option_trait(value);
+) {
+  return as_trait(Option, value);
 } as OptionDictionary;
 
 Option[kind] = option_kind;
-
-const option_trait = trait_constructor(Option);
 
 export function some<item>(
   value: item,
@@ -92,7 +89,7 @@ export function none<item = never>(): OptionValue<item> {
 }
 
 Format.implement(Option, {
-  fmt(this: OptionValue<unknown> | void): string {
+  fmt() {
     const option = require_this(this, "Option.Format.fmt").value();
     return option.tag === "none" ? "None" : "Some(" + option.value + ")";
   },
@@ -104,7 +101,7 @@ Monad.implement(Option, {
   bind<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => OptionValue<to>,
-  ): OptionValue<to> {
+  ) {
     const option = require_this(this, "Option.Monad.bind").value();
 
     if (option.tag === "none") {
@@ -149,14 +146,18 @@ Most code can use the shorter `Value<dictionary, item>` helper:
 type WrappedOption<item> = Value<typeof Option, item>;
 ```
 
-`trait(dictionary, value)` stores the dictionary internally. The wrapped value's
-prototype points at a shared trait prototype, which delegates to the dictionary.
-Symbol-scoped implementations are inherited through that prototype. Direct
-aliases are inherited the same way, so fluent calls still use the wrapped value
-as `this`.
+`as_trait(dictionary, value)` stores the dictionary internally. The first call
+for a dictionary builds a shared constructor and stores it under a hidden symbol
+on the dictionary. Later calls reuse that constructor, so data type constructors
+can usually call the simple two-argument form directly.
 
-Data type constructors can use `trait_constructor(dictionary)` to cache the
-shared prototype once instead of looking it up for every value.
+The wrapped value's prototype points at a shared trait prototype, which
+delegates to the dictionary. Symbol-scoped implementations are inherited through
+that prototype. Direct aliases are inherited the same way, so fluent calls still
+use the wrapped value as `this`.
+
+Hot paths can still hoist `as_trait_cached(dictionary)` manually, but the normal
+examples avoid that extra ceremony.
 
 Each data type exports an open dictionary interface. Trait implementations are
 validated and installed through trait-level installers like `Format.implement`.
@@ -181,6 +182,7 @@ const size_trait: unique symbol = Symbol("Size");
 
 interface Size<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof size_trait,
     {
       size: <item>(this: Receiver<dictionary, item>) => number;
@@ -193,7 +195,7 @@ abstract class Size<dictionary extends Dictionary> extends TraitDefinition {
   static size<
     dictionary extends Size<dictionary>,
     item,
-  >(value: Value<dictionary, item>): number {
+  >(value: Value<dictionary, item>) {
     return this.invoke<number>(value, "size");
   }
 }
@@ -203,7 +205,7 @@ declare module "./list.ts" {
 }
 
 Size.implement(List, {
-  size<item>(this: Receiver<typeof List, item>): number {
+  size() {
     const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
@@ -284,13 +286,16 @@ copies direct fluent aliases onto the dictionary.
 ## Benchmarks
 
 `bench/value_construction.bench.ts` compares the current prototype-chain wrapper
-against the previous proxy-style baseline and cheaper construction shapes. Each
-benchmark iteration performs 10,000 inner-loop constructions or read cycles:
+against the previous proxy-style baseline, constructor-cache variants, and
+cheaper construction shapes. Each benchmark iteration performs 10,000 inner-loop
+constructions or read cycles:
 
 - raw option payload construction
-- current `some(...)`, `Option(raw)`, and `trait(dictionary, raw)` construction
-- cached `trait_constructor(dictionary)` construction
-- legacy proxy-style `trait(dictionary, raw)` construction
+- current `some(...)`, `Option(raw)`, and `as_trait(dictionary, raw)`
+  construction
+- cached `as_trait_cached(dictionary)(raw)` construction
+- WeakMap, hidden-symbol, and lazy self-replacing constructor-cache variants
+- legacy proxy-style trait construction
 - tuple `[dictionary, raw]` construction
 - record `{ dictionary, raw }` construction
 - prototype-backed symbol object construction

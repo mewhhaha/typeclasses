@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -26,23 +26,20 @@ export type List<item> =
 
 export const list_kind: unique symbol = Symbol("List");
 
-export interface ListDictionary extends Dictionary {
+export interface ListDictionary extends Dictionary<typeof list_kind> {
   <item>(value: List<item>): ListValue<item>;
-  [kind]: typeof list_kind;
-  readonly [value_type]?: List<this[typeof item_type]>;
+  readonly [value_type]: List<this[typeof item_type]>;
 }
 
 type ListValue<item> = Value<ListDictionary, item>;
 
-export const List = function List<item>(
+export const List: ListDictionary = function <item>(
   value: List<item>,
-): ListValue<item> {
-  return list_trait(value);
+) {
+  return as_trait(List, value);
 } as ListDictionary;
 
 List[kind] = list_kind;
-
-const list_trait = trait_constructor(List);
 
 export function nil<item>(): ListValue<item> {
   return List(list_nil<item>());
@@ -83,7 +80,7 @@ function list_from_array<item>(items: item[]): List<item> {
 }
 
 Format.implement(List, {
-  fmt(this: ListValue<unknown> | void): string {
+  fmt() {
     const list = require_this(this, "List.Format.fmt");
     const items = to_array(list).map((item) => Deno.inspect(item));
     return "[" + items.join(", ") + "]";
@@ -96,7 +93,7 @@ Equal.implement(List, {
   eq<item>(
     this: ListValue<item> | void,
     right: ListValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "List.Equal.eq");
     let left_rest = left.value();
     let right_rest = right.value();
@@ -120,7 +117,7 @@ Functor.implement(List, {
   map<from, to>(
     this: ListValue<from> | void,
     fn: (value: from) => to,
-  ): ListValue<to> {
+  ) {
     const list = require_this(this, "List.Functor.map");
     const items = to_array(list);
     const mapped: to[] = [];
@@ -138,14 +135,14 @@ export interface ListDictionary extends Functor<typeof List> {}
 Applicative.implement(List, {
   pure<item>(
     value: item,
-  ): ListValue<item> {
+  ) {
     return List(list_cons(value, list_nil()));
   },
 
   ap<from, to>(
     this: ListValue<(value: from) => to> | void,
     values: ListValue<from>,
-  ): ListValue<to> {
+  ) {
     const fns = require_this(this, "List.Applicative.ap");
     const out: to[] = [];
 
@@ -165,7 +162,7 @@ Semigroup.implement(List, {
   concat<item>(
     this: ListValue<item> | void,
     right: ListValue<item>,
-  ): ListValue<item> {
+  ) {
     const left = require_this(this, "List.Semigroup.concat");
     return from_array([...to_array(left), ...to_array(right)]);
   },
@@ -174,7 +171,7 @@ Semigroup.implement(List, {
 export interface ListDictionary extends Semigroup<typeof List> {}
 
 Monoid.implement(List, {
-  empty<item>(): ListValue<item> {
+  empty<item>() {
     return nil<item>();
   },
 });
@@ -182,14 +179,14 @@ Monoid.implement(List, {
 export interface ListDictionary extends Monoid<typeof List> {}
 
 Alternative.implement(List, {
-  empty<item>(): ListValue<item> {
+  empty<item>() {
     return nil<item>();
   },
 
   alt<item>(
     this: ListValue<item> | void,
     right: ListValue<item>,
-  ): ListValue<item> {
+  ) {
     const left = require_this(this, "List.Alternative.alt");
     return from_array([...to_array(left), ...to_array(right)]);
   },
@@ -201,7 +198,7 @@ Monad.implement(List, {
   bind<from, to>(
     this: ListValue<from> | void,
     fn: (value: from) => ListValue<to>,
-  ): ListValue<to> {
+  ) {
     const list = require_this(this, "List.Monad.bind");
     const out: to[] = [];
 
@@ -224,7 +221,7 @@ Foldable.implement(List, {
     this: ListValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const list = require_this(this, "List.Foldable.fold");
     let state = initial;
 
@@ -243,7 +240,7 @@ Traversable.implement(List, {
     this: ListValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, ListValue<to>> {
+  ) {
     const list = require_this(this, "List.Traversable.traverse");
     const items = to_array(list);
     let out = Applicative.pure(applicative, nil<to>());

@@ -47,7 +47,7 @@ import {
   Semigroup,
   Traversable,
 } from "./traits.ts";
-import { type Trait, trait } from "./trait.ts";
+import { as_trait, type Trait } from "./trait.ts";
 
 Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () => {
   assert_equals(Format.fmt(option_some(42)), "Some(42)");
@@ -71,22 +71,22 @@ Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () =>
 });
 
 Deno.test("Functor maps values without leaving the context", () => {
-  const some = Functor.map(option_some(2), (value: number) => value + 1);
+  const some = Functor.map(option_some(2), (value) => value + 1);
   const none = Functor.map(
     option_none<number>(),
-    (value: number) => value + 1,
+    (value) => value + 1,
   );
   const list = Functor.map(
     list_from_array([1, 2, 3]),
-    (value: number) => value * 2,
+    (value) => value * 2,
   );
   const ok = Functor.map(
     result_ok(20),
-    (value: number) => value + 1,
+    (value) => value + 1,
   );
   const err = Functor.map(
     result_err<number>("missing"),
-    (value: number) => value + 1,
+    (value) => value + 1,
   );
 
   assert_equals(some.value(), option_some(3).value());
@@ -168,7 +168,7 @@ Deno.test("Trait helpers use symbol-scoped implementations", () => {
   const original = Option.fmt;
 
   try {
-    Option.fmt = function fmt(): string {
+    Option.fmt = function fmt() {
       return "alias";
     };
 
@@ -190,11 +190,11 @@ Deno.test("Trait values inherit methods added after construction", () => {
   const extended = dictionary as DynamicDictionary & {
     inc: (this: Trait<DynamicDictionary, number, number>) => number;
   };
-  const value = trait<DynamicDictionary, number, number>(extended, 41);
+  const value = as_trait<DynamicDictionary, number, number>(extended, 41);
 
   extended.inc = function inc(
     this: Trait<DynamicDictionary, number, number>,
-  ): number {
+  ) {
     return this.value() + 1;
   };
 
@@ -264,7 +264,7 @@ Deno.test("Monad chains computations that choose the next context", () => {
   const dropped = Monad.bind(option_some(-1), positive);
   const parsed = Monad.bind(
     result_ok("42"),
-    (text: string) => result_from_number(Number.parseInt(text, 10)),
+    (text) => result_from_number(Number.parseInt(text, 10)),
   );
 
   assert_equals(kept.value(), option_some(4).value());
@@ -309,19 +309,19 @@ Deno.test("perform chains monadic generator yields with bind", () => {
 
 Deno.test("Task monad defers and chains async work", async () => {
   const events: string[] = [];
-  const task = task_from_fn(async () => {
+  const task = task_from_fn(() => {
     events.push("read");
-    return "21";
+    return Promise.resolve("21");
   }).bind((text) =>
-    task_from_fn(async () => {
+    task_from_fn(() => {
       events.push("parse");
-      return Number.parseInt(text, 10) * 2;
+      return Promise.resolve(Number.parseInt(text, 10) * 2);
     })
   );
   const applied = task_succeed((value: number) => value + 1)
     .ap(task_succeed(41));
   const computed = perform(function* () {
-    const text = yield* task_from_fn(async () => "40");
+    const text = yield* task_from_fn(() => Promise.resolve("40"));
     const right = yield* task_succeed(2);
 
     return Number.parseInt(text, 10) + right;
@@ -346,27 +346,27 @@ Deno.test("Foldable reduces values inside different contexts", () => {
     Foldable.fold(
       list,
       0,
-      (state: number, item: number) => state + item,
+      (state, item) => state + item,
     ),
     10,
   );
   assert_equals(
-    Foldable.fold(some, 1, (state: number, item: number) => state * item),
+    Foldable.fold(some, 1, (state, item) => state * item),
     7,
   );
   assert_equals(
-    Foldable.fold(none, 1, (state: number, item: number) => state * item),
+    Foldable.fold(none, 1, (state, item) => state * item),
     1,
   );
   assert_equals(
-    Foldable.fold(ok, 1, (state: number, item: number) => state + item),
+    Foldable.fold(ok, 1, (state, item) => state + item),
     10,
   );
   assert_equals(
     Foldable.fold(
       err,
       1,
-      (state: number, item: number) => state + item,
+      (state, item) => state + item,
     ),
     1,
   );
@@ -431,12 +431,12 @@ Deno.test("Traversable flips structures through an applicative", () => {
   const array = Traversable.traverse(
     array_from_array([1, 2, 3]),
     result_ok(undefined),
-    (value: number) => result_ok("value:" + value.toString()),
+    (value) => result_ok("value:" + value.toString()),
   );
   const record = Traversable.traverse(
     record_from_entries<number>([["a", 1], ["b", -1]]),
     result_ok(undefined),
-    (value: number) => {
+    (value) => {
       if (value > 0) {
         return result_ok(value * 2);
       }
@@ -447,12 +447,12 @@ Deno.test("Traversable flips structures through an applicative", () => {
   const option = Traversable.traverse(
     option_some(21),
     array_from_array<unknown>([]),
-    (value: number) => array_from_array([value, value * 2]),
+    (value) => array_from_array([value, value * 2]),
   );
   const map = Traversable.traverse(
     map_from_entries<number>([["x", 1], ["y", 2]]),
     result_ok(undefined),
-    (value: number) => result_ok(value + 1),
+    (value) => result_ok(value + 1),
   );
 
   const array_result = array.value();

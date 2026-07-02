@@ -4,7 +4,7 @@ import { Applicative, Foldable, Functor, Monad } from "./traits.ts";
 export function label_values<dictionary extends Functor<dictionary>>(
   value: Value<dictionary, number>,
 ): Value<dictionary, string> {
-  return Functor.map(value, (item: number) => {
+  return Functor.map(value, (item) => {
     return "value:" + item.toString();
   });
 }
@@ -13,7 +13,7 @@ export function add_values<dictionary extends Applicative<dictionary>>(
   left: Value<dictionary, number>,
   right: Value<dictionary, number>,
 ): Value<dictionary, number> {
-  const add_right = Functor.map(left, (left_value: number) => {
+  const add_right = Functor.map(left, (left_value) => {
     return (right_value: number) => left_value + right_value;
   });
 
@@ -24,7 +24,7 @@ export function keep_positive<dictionary extends Monad<dictionary>>(
   value: Value<dictionary, number>,
   reject: (value: number) => Value<dictionary, number>,
 ): Value<dictionary, number> {
-  return Monad.bind(value, (item: number) => {
+  return Monad.bind(value, (item) => {
     if (item >= 0) {
       return Applicative.pure(value, item);
     }
@@ -36,7 +36,7 @@ export function keep_positive<dictionary extends Monad<dictionary>>(
 export function sum_values<dictionary extends Foldable<dictionary>>(
   value: Value<dictionary, number>,
 ): number {
-  return Foldable.fold(value, 0, (state: number, item: number) => {
+  return Foldable.fold(value, 0, (state, item) => {
     return state + item;
   });
 }

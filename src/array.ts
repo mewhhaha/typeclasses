@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -24,23 +24,20 @@ export type ArrayT<item> = readonly item[];
 
 export const array_kind: unique symbol = Symbol("ArrayT");
 
-export interface ArrayDictionary extends Dictionary {
+export interface ArrayDictionary extends Dictionary<typeof array_kind> {
   <item>(items: ArrayT<item>): ArrayValue<item>;
-  [kind]: typeof array_kind;
-  readonly [value_type]?: ArrayT<this[typeof item_type]>;
+  readonly [value_type]: ArrayT<this[typeof item_type]>;
 }
 
 type ArrayValue<item> = Value<ArrayDictionary, item>;
 
-export const ArrayT = function ArrayT<item>(
+export const ArrayT: ArrayDictionary = function <item>(
   items: ArrayT<item>,
-): ArrayValue<item> {
-  return array_trait(items);
+) {
+  return as_trait(ArrayT, items);
 } as ArrayDictionary;
 
 ArrayT[kind] = array_kind;
-
-const array_trait = trait_constructor(ArrayT);
 
 export function from_array<item>(items: readonly item[]): ArrayValue<item> {
   return ArrayT([...items]);
@@ -51,7 +48,7 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
 }
 
 Format.implement(ArrayT, {
-  fmt(this: ArrayValue<unknown> | void): string {
+  fmt() {
     const array = require_this(this, "ArrayT.Format.fmt").value();
     return Deno.inspect(array);
   },
@@ -63,7 +60,7 @@ Equal.implement(ArrayT, {
   eq<item>(
     this: ArrayValue<item> | void,
     right: ArrayValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "ArrayT.Equal.eq").value();
     const right_value = right.value();
 
@@ -87,7 +84,7 @@ Functor.implement(ArrayT, {
   map<from, to>(
     this: ArrayValue<from> | void,
     fn: (value: from) => to,
-  ): ArrayValue<to> {
+  ) {
     const array = require_this(this, "ArrayT.Functor.map").value();
     const out: to[] = [];
 
@@ -102,14 +99,14 @@ Functor.implement(ArrayT, {
 export interface ArrayDictionary extends Functor<typeof ArrayT> {}
 
 Applicative.implement(ArrayT, {
-  pure<item>(value: item): ArrayValue<item> {
+  pure<item>(value: item) {
     return ArrayT([value]);
   },
 
   ap<from, to>(
     this: ArrayValue<(value: from) => to> | void,
     values: ArrayValue<from>,
-  ): ArrayValue<to> {
+  ) {
     const fns = require_this(this, "ArrayT.Applicative.ap").value();
     const out: to[] = [];
 
@@ -129,7 +126,7 @@ Semigroup.implement(ArrayT, {
   concat<item>(
     this: ArrayValue<item> | void,
     right: ArrayValue<item>,
-  ): ArrayValue<item> {
+  ) {
     const left = require_this(this, "ArrayT.Semigroup.concat").value();
     return ArrayT([...left, ...right.value()]);
   },
@@ -138,7 +135,7 @@ Semigroup.implement(ArrayT, {
 export interface ArrayDictionary extends Semigroup<typeof ArrayT> {}
 
 Monoid.implement(ArrayT, {
-  empty<item>(): ArrayValue<item> {
+  empty<item>() {
     return ArrayT<item>([]);
   },
 });
@@ -146,14 +143,14 @@ Monoid.implement(ArrayT, {
 export interface ArrayDictionary extends Monoid<typeof ArrayT> {}
 
 Alternative.implement(ArrayT, {
-  empty<item>(): ArrayValue<item> {
+  empty<item>() {
     return ArrayT<item>([]);
   },
 
   alt<item>(
     this: ArrayValue<item> | void,
     right: ArrayValue<item>,
-  ): ArrayValue<item> {
+  ) {
     const left = require_this(this, "ArrayT.Alternative.alt").value();
     return ArrayT([...left, ...right.value()]);
   },
@@ -165,7 +162,7 @@ Monad.implement(ArrayT, {
   bind<from, to>(
     this: ArrayValue<from> | void,
     fn: (value: from) => ArrayValue<to>,
-  ): ArrayValue<to> {
+  ) {
     const array = require_this(this, "ArrayT.Monad.bind").value();
     const out: to[] = [];
 
@@ -184,7 +181,7 @@ Foldable.implement(ArrayT, {
     this: ArrayValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const array = require_this(this, "ArrayT.Foldable.fold").value();
     let state = initial;
 
@@ -203,7 +200,7 @@ Traversable.implement(ArrayT, {
     this: ArrayValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, ArrayValue<to>> {
+  ) {
     const array = require_this(this, "ArrayT.Traversable.traverse").value();
     let out = Applicative.pure(applicative, ArrayT<to>([]));
 

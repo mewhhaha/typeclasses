@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -22,23 +22,20 @@ export type MapT<item> = ReadonlyMap<string, item>;
 
 export const map_kind: unique symbol = Symbol("MapT");
 
-export interface MapDictionary extends Dictionary {
+export interface MapDictionary extends Dictionary<typeof map_kind> {
   <item>(map: MapT<item>): MapValue<item>;
-  [kind]: typeof map_kind;
-  readonly [value_type]?: MapT<this[typeof item_type]>;
+  readonly [value_type]: MapT<this[typeof item_type]>;
 }
 
 type MapValue<item> = Value<MapDictionary, item>;
 
-export const MapT = function MapT<item>(
+export const MapT: MapDictionary = function <item>(
   map: MapT<item>,
 ): MapValue<item> {
-  return map_trait(new Map(map));
+  return as_trait(MapT, new Map(map));
 } as MapDictionary;
 
 MapT[kind] = map_kind;
-
-const map_trait = trait_constructor(MapT);
 
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
@@ -63,7 +60,7 @@ export function to_record<item>(
 }
 
 Format.implement(MapT, {
-  fmt(this: MapValue<unknown> | void): string {
+  fmt() {
     const map = require_this(this, "MapT.Format.fmt").value();
     return Deno.inspect(map);
   },
@@ -75,7 +72,7 @@ Equal.implement(MapT, {
   eq<item>(
     this: MapValue<item> | void,
     right: MapValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "MapT.Equal.eq").value();
     const right_value = right.value();
 
@@ -99,7 +96,7 @@ Functor.implement(MapT, {
   map<from, to>(
     this: MapValue<from> | void,
     fn: (value: from) => to,
-  ): MapValue<to> {
+  ) {
     const map = require_this(this, "MapT.Functor.map").value();
     const out = new Map<string, to>();
 
@@ -117,7 +114,7 @@ Semigroup.implement(MapT, {
   concat<item>(
     this: MapValue<item> | void,
     right: MapValue<item>,
-  ): MapValue<item> {
+  ) {
     const left = require_this(this, "MapT.Semigroup.concat").value();
     const out = new Map(left);
 
@@ -132,7 +129,7 @@ Semigroup.implement(MapT, {
 export interface MapDictionary extends Semigroup<typeof MapT> {}
 
 Monoid.implement(MapT, {
-  empty<item>(): MapValue<item> {
+  empty<item>() {
     return MapT<item>(new Map());
   },
 });
@@ -144,7 +141,7 @@ Foldable.implement(MapT, {
     this: MapValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const map = require_this(this, "MapT.Foldable.fold").value();
     let state = initial;
 
@@ -163,7 +160,7 @@ Traversable.implement(MapT, {
     this: MapValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, MapValue<to>> {
+  ) {
     const map = require_this(this, "MapT.Traversable.traverse").value();
     const entries = [...map.entries()];
     let out = Applicative.pure(applicative, MapT<to>(new Map()));

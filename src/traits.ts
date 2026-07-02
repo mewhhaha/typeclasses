@@ -10,6 +10,7 @@ export const format_trait: unique symbol = Symbol("Format");
 
 export interface Format<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof format_trait,
     {
       fmt: (this: Receiver<dictionary, unknown>) => string;
@@ -31,6 +32,7 @@ export const equal_trait: unique symbol = Symbol("Equal");
 
 export interface Equal<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof equal_trait,
     {
       eq: <item>(
@@ -60,6 +62,7 @@ export const semigroup_trait: unique symbol = Symbol("Semigroup");
 export interface Semigroup<dictionary extends Dictionary>
   extends
     TraitDictionary<
+      dictionary,
       typeof semigroup_trait,
       {
         concat: <item>(
@@ -88,6 +91,7 @@ export const monoid_trait: unique symbol = Symbol("Monoid");
 
 export interface Monoid<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof monoid_trait,
     {
       empty: <item>() => Value<dictionary, item>;
@@ -123,6 +127,7 @@ export const functor_trait: unique symbol = Symbol("Functor");
 
 export interface Functor<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof functor_trait,
     {
       map: <from, to>(
@@ -153,6 +158,7 @@ export const applicative_trait: unique symbol = Symbol("Applicative");
 export interface Applicative<dictionary extends Dictionary>
   extends
     TraitDictionary<
+      dictionary,
       typeof applicative_trait,
       {
         pure: <item>(value: item) => Value<dictionary, item>;
@@ -195,6 +201,7 @@ export const alternative_trait: unique symbol = Symbol("Alternative");
 export interface Alternative<dictionary extends Dictionary>
   extends
     TraitDictionary<
+      dictionary,
       typeof alternative_trait,
       {
         empty: <item>() => Value<dictionary, item>;
@@ -234,6 +241,7 @@ export const monad_trait: unique symbol = Symbol("Monad");
 
 export interface Monad<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof monad_trait,
     {
       bind: <from, to>(
@@ -247,7 +255,7 @@ export interface Monad<dictionary extends Dictionary> extends
 type PerformGenerator<
   dictionary extends Monad<dictionary>,
   out,
-> = Generator<Value<dictionary, any>, out, any>;
+> = Generator<Value<dictionary, unknown>, out, unknown>;
 
 export abstract class Monad<dictionary extends Dictionary>
   extends TraitDefinition {
@@ -278,7 +286,7 @@ export function perform<dictionary extends Monad<dictionary>, out>(
 
   function run_with(
     values: unknown[],
-  ): IteratorResult<Value<dictionary, any>, out> {
+  ): IteratorResult<Value<dictionary, unknown>, out> {
     const iterator = run();
     let next = iterator.next();
 
@@ -295,9 +303,9 @@ export function perform<dictionary extends Monad<dictionary>, out>(
 
   function step(
     values: unknown[],
-    current: Value<dictionary, any>,
+    current: Value<dictionary, unknown>,
   ): Value<dictionary, out> {
-    return Monad.bind(current, (value: any) => {
+    return Monad.bind(current, (value) => {
       const next_values = [...values, value];
       const next = run_with(next_values);
 
@@ -315,6 +323,7 @@ export const foldable_trait: unique symbol = Symbol("Foldable");
 export interface Foldable<dictionary extends Dictionary>
   extends
     TraitDictionary<
+      dictionary,
       typeof foldable_trait,
       {
         fold: <item, out>(
@@ -347,6 +356,7 @@ export const traversable_trait: unique symbol = Symbol("Traversable");
 export interface Traversable<dictionary extends Dictionary>
   extends
     TraitDictionary<
+      dictionary,
       typeof traversable_trait,
       {
         traverse: <

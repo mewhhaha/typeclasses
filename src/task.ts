@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -13,23 +13,20 @@ export type Task<item> = () => Promise<item>;
 
 export const task_kind: unique symbol = Symbol("Task");
 
-export interface TaskDictionary extends Dictionary {
+export interface TaskDictionary extends Dictionary<typeof task_kind> {
   <item>(run: Task<item>): TaskValue<item>;
-  [kind]: typeof task_kind;
-  readonly [value_type]?: Task<this[typeof item_type]>;
+  readonly [value_type]: Task<this[typeof item_type]>;
 }
 
 type TaskValue<item> = Value<TaskDictionary, item>;
 
-export const Task = function Task<item>(
+export const Task: TaskDictionary = function <item>(
   run: Task<item>,
-): TaskValue<item> {
-  return task_trait(run);
+) {
+  return as_trait(Task, run);
 } as TaskDictionary;
 
 Task[kind] = task_kind;
-
-const task_trait = trait_constructor(Task);
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));
@@ -52,7 +49,7 @@ export function run<item>(task: TaskValue<item>): Promise<item> {
 }
 
 Format.implement(Task, {
-  fmt(this: TaskValue<unknown> | void): string {
+  fmt() {
     require_this(this, "Task.Format.fmt");
     return "Task(?)";
   },
@@ -64,7 +61,7 @@ Functor.implement(Task, {
   map<from, to>(
     this: TaskValue<from> | void,
     fn: (value: from) => to,
-  ): TaskValue<to> {
+  ) {
     const task = require_this(this, "Task.Functor.map");
 
     return Task(async () => fn(await run(task)));
@@ -76,14 +73,14 @@ export interface TaskDictionary extends Functor<typeof Task> {}
 Applicative.implement(Task, {
   pure<item>(
     value: item,
-  ): TaskValue<item> {
+  ) {
     return succeed(value);
   },
 
   ap<from, to>(
     this: TaskValue<(value: from) => to> | void,
     value: TaskValue<from>,
-  ): TaskValue<to> {
+  ) {
     const task = require_this(this, "Task.Applicative.ap");
 
     return Task(async () => {
@@ -99,7 +96,7 @@ Monad.implement(Task, {
   bind<from, to>(
     this: TaskValue<from> | void,
     fn: (value: from) => TaskValue<to>,
-  ): TaskValue<to> {
+  ) {
     const task = require_this(this, "Task.Monad.bind");
 
     return Task(async () => {

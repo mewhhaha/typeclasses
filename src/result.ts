@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -25,23 +25,20 @@ type Ok<item> = { tag: "ok"; value: item };
 
 export const result_kind: unique symbol = Symbol("Result");
 
-export interface ResultDictionary extends Dictionary {
+export interface ResultDictionary extends Dictionary<typeof result_kind> {
   <item>(value: Result<item, string>): ResultValue<item>;
-  [kind]: typeof result_kind;
-  readonly [value_type]?: Result<this[typeof item_type], string>;
+  readonly [value_type]: Result<this[typeof item_type], string>;
 }
 
 type ResultValue<item> = Value<ResultDictionary, item>;
 
-export const Result = function Result<item>(
+export const Result: ResultDictionary = function <item>(
   value: Result<item, string>,
-): ResultValue<item> {
-  return result_trait(value);
+) {
+  return as_trait(Result, value);
 } as ResultDictionary;
 
 Result[kind] = result_kind;
-
-const result_trait = trait_constructor(Result);
 
 export function ok<item>(value: item): ResultValue<item> {
   return Result(result_ok(value));
@@ -60,7 +57,7 @@ export function from_number(value: number): ResultValue<number> {
 }
 
 Format.implement(Result, {
-  fmt(this: ResultValue<unknown> | void): string {
+  fmt() {
     const result = require_this(this, "Result.Format.fmt").value();
 
     if (result.tag === "err") {
@@ -77,7 +74,7 @@ Equal.implement(Result, {
   eq<item>(
     this: ResultValue<item> | void,
     right: ResultValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "Result.Equal.eq").value();
     const right_value = right.value();
 
@@ -99,7 +96,7 @@ Functor.implement(Result, {
   map<from, to>(
     this: ResultValue<from> | void,
     fn: (value: from) => to,
-  ): ResultValue<to> {
+  ) {
     const result = require_this(this, "Result.Functor.map").value();
 
     if (result.tag === "err") {
@@ -113,14 +110,14 @@ Functor.implement(Result, {
 export interface ResultDictionary extends Functor<typeof Result> {}
 
 Applicative.implement(Result, {
-  pure<item>(value: item): ResultValue<item> {
+  pure<item>(value: item) {
     return ok(value);
   },
 
   ap<from, to>(
     this: ResultValue<(value: from) => to> | void,
     value: ResultValue<from>,
-  ): ResultValue<to> {
+  ) {
     const fn = require_this(this, "Result.Applicative.ap").value();
     const result = value.value();
 
@@ -142,7 +139,7 @@ Monad.implement(Result, {
   bind<from, to>(
     this: ResultValue<from> | void,
     fn: (value: from) => ResultValue<to>,
-  ): ResultValue<to> {
+  ) {
     const result = require_this(this, "Result.Monad.bind").value();
 
     if (result.tag === "err") {
@@ -160,7 +157,7 @@ Foldable.implement(Result, {
     this: ResultValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const result = require_this(this, "Result.Foldable.fold").value();
 
     if (result.tag === "err") {
@@ -178,7 +175,7 @@ Traversable.implement(Result, {
     this: ResultValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, ResultValue<to>> {
+  ) {
     const result = require_this(this, "Result.Traversable.traverse").value();
 
     if (result.tag === "err") {

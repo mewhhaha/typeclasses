@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -26,23 +26,20 @@ type Some<item> = { tag: "some"; value: item };
 
 export const option_kind: unique symbol = Symbol("Option");
 
-export interface OptionDictionary extends Dictionary {
+export interface OptionDictionary extends Dictionary<typeof option_kind> {
   <item>(value: Option<item>): OptionValue<item>;
-  [kind]: typeof option_kind;
-  readonly [value_type]?: Option<this[typeof item_type]>;
+  readonly [value_type]: Option<this[typeof item_type]>;
 }
 
 type OptionValue<item> = Value<OptionDictionary, item>;
 
-export const Option = function Option<item>(
+export const Option: OptionDictionary = function <item>(
   value: Option<item>,
-): OptionValue<item> {
-  return option_trait(value);
+) {
+  return as_trait(Option, value);
 } as OptionDictionary;
 
 Option[kind] = option_kind;
-
-const option_trait = trait_constructor(Option);
 
 export function some<item>(value: item): OptionValue<item> {
   return Option(option_some(value));
@@ -67,7 +64,7 @@ export function from_nullable<item>(
 }
 
 Format.implement(Option, {
-  fmt(this: OptionValue<unknown> | void): string {
+  fmt() {
     const option = require_this(this, "Option.Format.fmt").value();
 
     if (option.tag === "none") {
@@ -84,7 +81,7 @@ Equal.implement(Option, {
   eq<item>(
     this: OptionValue<item> | void,
     right: OptionValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "Option.Equal.eq").value();
     const right_value = right.value();
 
@@ -106,7 +103,7 @@ Functor.implement(Option, {
   map<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => to,
-  ): OptionValue<to> {
+  ) {
     const option = require_this(this, "Option.Functor.map").value();
 
     if (option.tag === "none") {
@@ -120,14 +117,14 @@ Functor.implement(Option, {
 export interface OptionDictionary extends Functor<typeof Option> {}
 
 Applicative.implement(Option, {
-  pure<item>(value: item): OptionValue<item> {
+  pure<item>(value: item) {
     return some(value);
   },
 
   ap<from, to>(
     this: OptionValue<(value: from) => to> | void,
     value: OptionValue<from>,
-  ): OptionValue<to> {
+  ) {
     const fn = require_this(this, "Option.Applicative.ap").value();
     const option = value.value();
 
@@ -146,14 +143,14 @@ Applicative.implement(Option, {
 export interface OptionDictionary extends Applicative<typeof Option> {}
 
 Alternative.implement(Option, {
-  empty<item>(): OptionValue<item> {
+  empty<item>() {
     return none<item>();
   },
 
   alt<item>(
     this: OptionValue<item> | void,
     right: OptionValue<item>,
-  ): OptionValue<item> {
+  ) {
     const option = require_this(this, "Option.Alternative.alt").value();
 
     if (option.tag === "some") {
@@ -170,7 +167,7 @@ Monad.implement(Option, {
   bind<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => OptionValue<to>,
-  ): OptionValue<to> {
+  ) {
     const option = require_this(this, "Option.Monad.bind").value();
 
     if (option.tag === "none") {
@@ -188,7 +185,7 @@ Foldable.implement(Option, {
     this: OptionValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const option = require_this(this, "Option.Foldable.fold").value();
 
     if (option.tag === "none") {
@@ -206,7 +203,7 @@ Traversable.implement(Option, {
     this: OptionValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, OptionValue<to>> {
+  ) {
     const option = require_this(this, "Option.Traversable.traverse").value();
 
     if (option.tag === "none") {

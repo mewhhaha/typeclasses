@@ -15,7 +15,6 @@ import {
   type Dictionary,
   type Receiver,
   require_this,
-  trait_constructor,
   TraitDefinition,
   type TraitDictionary,
   type Value,
@@ -32,6 +31,7 @@ const size_trait: unique symbol = Symbol("Size");
 
 interface Size<dictionary extends Dictionary> extends
   TraitDictionary<
+    dictionary,
     typeof size_trait,
     {
       size: <item>(this: Receiver<dictionary, item>) => number;
@@ -44,7 +44,7 @@ abstract class Size<dictionary extends Dictionary> extends TraitDefinition {
   static size<
     dictionary extends Size<dictionary>,
     item,
-  >(value: Value<dictionary, item>): number {
+  >(value: Value<dictionary, item>) {
     return this.invoke<number>(value, "size");
   }
 }
@@ -54,23 +54,23 @@ declare module "../src/list.ts" {
 }
 
 Size.implement(List, {
-  size<item>(this: Receiver<typeof List, item>): number {
+  size() {
     const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
 });
 
 const option = some(21);
-const doubled_option = option.map((value: number) => {
+const doubled_option = option.map((value) => {
   return value * 2;
 });
 
 const list = from_array([1, 2, 3]);
-const sized_list = trait_constructor(List)(list.value());
+const sized_list = List(list.value());
 const labeled_list = label_values(list);
 
 const result = ok("42")
-  .bind((text: string) => from_number(Number.parseInt(text, 10)));
+  .bind((text) => from_number(Number.parseInt(text, 10)));
 
 const applicative_list = from_array([
   (value: number) => value + 1,
@@ -122,8 +122,10 @@ const decoded_account = decode_account_payload({
   account: { id: "42", active: true },
 });
 const task_result = perform(function* () {
-  const text = yield* from_fn(async () => "42");
-  const value = yield* from_fn(async () => Number.parseInt(text, 10));
+  const text = yield* from_fn(() => Promise.resolve("42"));
+  const value = yield* from_fn(() => {
+    return Promise.resolve(Number.parseInt(text, 10));
+  });
 
   return value + 1;
 });

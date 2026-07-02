@@ -1,9 +1,9 @@
 import { Option, type Option as OptionContext, some } from "../src/option.ts";
-import { trait, trait_constructor } from "../src/trait.ts";
+import { as_trait, as_trait_cached, type Trait } from "../src/trait.ts";
 
 // Each benchmark iteration performs this many constructions or read cycles.
 const iterations = 10_000;
-let sink: unknown;
+let _sink: unknown;
 
 type BenchValue = OptionContext<number>;
 
@@ -13,7 +13,28 @@ const dictionary = {
   },
 };
 
-const construct_trait = trait_constructor(dictionary);
+const construct_trait = as_trait_cached(dictionary);
+const branch_lookup_payload = raw_some(1);
+
+type ConstructTrait<dictionary extends object = object> = <
+  value,
+  item = unknown,
+>(
+  value: value,
+) => Trait<dictionary, value, item>;
+
+const weakmap_constructors = new WeakMap<object, ConstructTrait<object>>();
+const symbol_constructor = Symbol("symbol.constructor");
+const weakmap_cached_as_trait_warmed = weakmap_cached_as_trait(
+  dictionary,
+  branch_lookup_payload,
+);
+const symbol_cached_as_trait_warmed = symbol_cached_as_trait(
+  dictionary,
+  branch_lookup_payload,
+);
+const lazy_construct_trait = lazy_constructor(dictionary);
+const lazy_construct_trait_warmed = lazy_construct_trait(branch_lookup_payload);
 
 const proxy_brand = Symbol("proxy.brand");
 const proxy_dictionary = Symbol("proxy.dictionary");
@@ -63,7 +84,7 @@ Deno.bench("raw option payload construction", () => {
     current = raw_some(index);
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("current some() value construction", () => {
@@ -73,7 +94,7 @@ Deno.bench("current some() value construction", () => {
     current = some(index);
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("current Option(raw) value construction", () => {
@@ -83,27 +104,107 @@ Deno.bench("current Option(raw) value construction", () => {
     current = Option(raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
-Deno.bench("current trait(dictionary, raw) construction", () => {
+Deno.bench("current as_trait(dictionary, raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = trait(dictionary, raw_some(index));
+    current = as_trait(dictionary, raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
-Deno.bench("cached trait constructor(raw) construction", () => {
+Deno.bench("cached as_trait_cached(dictionary)(raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
     current = construct_trait<BenchValue, number>(raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
+});
+
+Deno.bench("weakmap cached as_trait(dictionary, raw) construction", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = weakmap_cached_as_trait(dictionary, raw_some(index));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("external symbol cached as_trait(dictionary, raw)", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = symbol_cached_as_trait(dictionary, raw_some(index));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("lazy self-replacing constructor(raw) construction", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = lazy_construct_trait(raw_some(index));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("as_trait(dictionary, existing raw) constructor lookup", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = as_trait(dictionary, branch_lookup_payload);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("as_trait_cached(dictionary)(existing raw) no branch lookup", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = construct_trait<BenchValue, number>(branch_lookup_payload);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("weakmap cached as_trait(dictionary, existing raw)", () => {
+  let current: unknown = weakmap_cached_as_trait_warmed;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = weakmap_cached_as_trait(dictionary, branch_lookup_payload);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("external symbol cached as_trait(dictionary, existing raw)", () => {
+  let current: unknown = symbol_cached_as_trait_warmed;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = symbol_cached_as_trait(dictionary, branch_lookup_payload);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("lazy self-replacing constructor(existing raw)", () => {
+  let current: unknown = lazy_construct_trait_warmed;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = lazy_construct_trait(branch_lookup_payload);
+  }
+
+  _sink = current;
 });
 
 Deno.bench("legacy proxy trait(dictionary, raw) construction", () => {
@@ -113,7 +214,7 @@ Deno.bench("legacy proxy trait(dictionary, raw) construction", () => {
     current = proxy_trait(dictionary, raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("tuple [dictionary, raw] construction", () => {
@@ -123,7 +224,7 @@ Deno.bench("tuple [dictionary, raw] construction", () => {
     current = tuple_value(dictionary, raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("record {dictionary, raw} construction", () => {
@@ -133,7 +234,7 @@ Deno.bench("record {dictionary, raw} construction", () => {
     current = record_value_of(dictionary, raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("prototype symbol object construction", () => {
@@ -143,7 +244,7 @@ Deno.bench("prototype symbol object construction", () => {
     current = prototype_value_of(dictionary, raw_some(index));
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("current Option(raw).value() read", () => {
@@ -153,17 +254,17 @@ Deno.bench("current Option(raw).value() read", () => {
     current = Option(raw_some(index)).value();
   }
 
-  sink = current;
+  _sink = current;
 });
 
-Deno.bench("cached trait constructor(raw).value() read", () => {
+Deno.bench("cached as_trait_cached(dictionary)(raw).value() read", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
     current = construct_trait<BenchValue, number>(raw_some(index)).value();
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("legacy proxy trait(raw).value() read", () => {
@@ -173,7 +274,7 @@ Deno.bench("legacy proxy trait(raw).value() read", () => {
     current = proxy_trait(dictionary, raw_some(index)).value();
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("tuple [dictionary, raw][1] read", () => {
@@ -183,7 +284,7 @@ Deno.bench("tuple [dictionary, raw][1] read", () => {
     current = tuple_value(dictionary, raw_some(index))[1];
   }
 
-  sink = current;
+  _sink = current;
 });
 
 Deno.bench("prototype symbol object value() read", () => {
@@ -193,11 +294,59 @@ Deno.bench("prototype symbol object value() read", () => {
     current = prototype_value_of(dictionary, raw_some(index)).value();
   }
 
-  sink = current;
+  _sink = current;
 });
 
 function raw_some(value: number): BenchValue {
   return { tag: "some", value };
+}
+
+function weakmap_cached_as_trait<dictionary extends object, value>(
+  dictionary: dictionary,
+  value: value,
+): Trait<dictionary, value> {
+  let construct = weakmap_constructors.get(dictionary) as
+    | ConstructTrait<dictionary>
+    | undefined;
+
+  if (construct === undefined) {
+    construct = as_trait_cached(dictionary);
+    weakmap_constructors.set(dictionary, construct as ConstructTrait<object>);
+  }
+
+  return construct<value>(value);
+}
+
+function symbol_cached_as_trait<dictionary extends object, value>(
+  dictionary: dictionary,
+  value: value,
+): Trait<dictionary, value> {
+  const cache = dictionary as {
+    [symbol_constructor]?: ConstructTrait<dictionary>;
+  };
+  let construct = cache[symbol_constructor];
+
+  if (construct === undefined) {
+    construct = as_trait_cached(dictionary);
+    Object.defineProperty(cache, symbol_constructor, {
+      value: construct,
+    });
+  }
+
+  return construct<value>(value);
+}
+
+function lazy_constructor<dictionary extends object>(
+  dictionary: dictionary,
+): <value>(value: value) => Trait<dictionary, value> {
+  let construct = <value>(
+    value: value,
+  ): Trait<dictionary, value> => {
+    construct = as_trait_cached(dictionary) as typeof construct;
+    return construct(value);
+  };
+
+  return (value) => construct(value);
 }
 
 function proxy_trait<dictionary extends object, value>(

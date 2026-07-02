@@ -1,9 +1,9 @@
 import {
+  as_trait,
   type Dictionary,
   item_type,
   kind,
   require_this,
-  trait_constructor,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -22,23 +22,20 @@ export type RecordT<item> = Readonly<Record<string, item>>;
 
 export const record_kind: unique symbol = Symbol("RecordT");
 
-export interface RecordDictionary extends Dictionary {
+export interface RecordDictionary extends Dictionary<typeof record_kind> {
   <item>(record: RecordT<item>): RecordValue<item>;
-  [kind]: typeof record_kind;
-  readonly [value_type]?: RecordT<this[typeof item_type]>;
+  readonly [value_type]: RecordT<this[typeof item_type]>;
 }
 
 type RecordValue<item> = Value<RecordDictionary, item>;
 
-export const RecordT = function RecordT<item>(
+export const RecordT: RecordDictionary = function <item>(
   record: RecordT<item>,
-): RecordValue<item> {
-  return record_trait({ ...record });
+) {
+  return as_trait(RecordT, { ...record });
 } as RecordDictionary;
 
 RecordT[kind] = record_kind;
-
-const record_trait = trait_constructor(RecordT);
 
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
@@ -53,7 +50,7 @@ export function to_record<item>(
 }
 
 Format.implement(RecordT, {
-  fmt(this: RecordValue<unknown> | void): string {
+  fmt() {
     const record = require_this(this, "RecordT.Format.fmt").value();
     return Deno.inspect(record);
   },
@@ -65,7 +62,7 @@ Equal.implement(RecordT, {
   eq<item>(
     this: RecordValue<item> | void,
     right: RecordValue<item>,
-  ): boolean {
+  ) {
     const left = require_this(this, "RecordT.Equal.eq").value();
     const right_value = right.value();
     const left_keys = Object.keys(left);
@@ -95,7 +92,7 @@ Functor.implement(RecordT, {
   map<from, to>(
     this: RecordValue<from> | void,
     fn: (value: from) => to,
-  ): RecordValue<to> {
+  ) {
     const record = require_this(this, "RecordT.Functor.map").value();
     const out: Record<string, to> = {};
 
@@ -113,7 +110,7 @@ Semigroup.implement(RecordT, {
   concat<item>(
     this: RecordValue<item> | void,
     right: RecordValue<item>,
-  ): RecordValue<item> {
+  ) {
     const left = require_this(this, "RecordT.Semigroup.concat").value();
     return RecordT({ ...left, ...right.value() });
   },
@@ -122,7 +119,7 @@ Semigroup.implement(RecordT, {
 export interface RecordDictionary extends Semigroup<typeof RecordT> {}
 
 Monoid.implement(RecordT, {
-  empty<item>(): RecordValue<item> {
+  empty<item>() {
     return RecordT<item>({});
   },
 });
@@ -134,7 +131,7 @@ Foldable.implement(RecordT, {
     this: RecordValue<item> | void,
     initial: out,
     fn: (state: out, item: item) => out,
-  ): out {
+  ) {
     const record = require_this(this, "RecordT.Foldable.fold").value();
     let state = initial;
 
@@ -153,7 +150,7 @@ Traversable.implement(RecordT, {
     this: RecordValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
-  ): Value<applicative, RecordValue<to>> {
+  ) {
     const record = require_this(this, "RecordT.Traversable.traverse").value();
     const entries = Object.entries(record);
     let out = Applicative.pure(applicative, RecordT<to>({}));
