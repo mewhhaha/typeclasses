@@ -142,11 +142,11 @@ declare module "./traits.ts" {
   }
 }
 
-Result.flat_map = function flat_map<from, to>(
+Result.bind = function bind<from, to>(
   this: ResultValue<from> | void,
   fn: (value: from) => ResultValue<to>,
 ): ResultValue<to> {
-  const result = require_this(this, "Result.flat_map").value();
+  const result = require_this(this, "Result.bind").value();
 
   if (result.tag === "err") {
     return err<to>(result.error);

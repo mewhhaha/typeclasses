@@ -94,17 +94,22 @@ Applicative.ap = function ap<
 
 export interface Monad<dictionary extends Dictionary & Monad<dictionary>>
   extends Applicative<dictionary> {
-  flat_map: <from, to>(
+  bind: <from, to>(
     this: TraitThis<Value<dictionary, from>>,
     fn: (value: from) => Value<dictionary, to>,
   ) => Value<dictionary, to>;
 }
 
+type PerformGenerator<
+  dictionary extends Dictionary & Monad<dictionary>,
+  out,
+> = Generator<Value<dictionary, any>, out, any>;
+
 export interface MonadImpl {}
 
 export function Monad() {}
 
-Monad.flat_map = function flat_map<
+Monad.bind = function bind<
   dictionary extends Dictionary & Monad<dictionary>,
   from,
   to,
@@ -112,8 +117,53 @@ Monad.flat_map = function flat_map<
   value: Value<dictionary, from>,
   fn: (value: from) => Value<dictionary, to>,
 ): Value<dictionary, to> {
-  return value.flat_map(fn);
+  return value.bind(fn);
 };
+
+export function perform<dictionary extends Dictionary & Monad<dictionary>, out>(
+  run: () => PerformGenerator<dictionary, out>,
+): Value<dictionary, out> {
+  const first = run_with([]);
+
+  if (first.done) {
+    throw new TypeError("perform requires at least one yielded value");
+  }
+
+  return step([], first.value);
+
+  function run_with(
+    values: unknown[],
+  ): IteratorResult<Value<dictionary, any>, out> {
+    const iterator = run();
+    let next = iterator.next();
+
+    for (const value of values) {
+      if (next.done) {
+        return next;
+      }
+
+      next = iterator.next(value);
+    }
+
+    return next;
+  }
+
+  function step(
+    values: unknown[],
+    current: Value<dictionary, any>,
+  ): Value<dictionary, out> {
+    return current.bind((value) => {
+      const next_values = [...values, value];
+      const next = run_with(next_values);
+
+      if (next.done) {
+        return current.pure(next.value);
+      }
+
+      return step(next_values, next.value);
+    });
+  }
+}
 
 export interface Foldable<
   dictionary extends Dictionary & Foldable<dictionary>,

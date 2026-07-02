@@ -18,12 +18,18 @@ import {
   Result,
 } from "./result.ts";
 import {
+  from_fn as task_from_fn,
+  run as task_run,
+  succeed as task_succeed,
+} from "./task.ts";
+import {
   Applicative,
   Equal,
   Foldable,
   Format,
   Functor,
   Monad,
+  perform,
 } from "./traits.ts";
 
 Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () => {
@@ -145,7 +151,7 @@ Deno.test("Result callable wrapper derives fluent methods from its dictionary", 
   const value = result_ok(40)
     .map((item) => item + 2);
   const parsed = result_ok("42")
-    .flat_map((text) => result_from_number(Number.parseInt(text, 10)));
+    .bind((text) => result_from_number(Number.parseInt(text, 10)));
   const sum = result_ok((left: number) => {
     return (right: number) => left + right;
   })
@@ -196,9 +202,9 @@ Deno.test("Monad chains computations that choose the next context", () => {
     return option_none<number>();
   }
 
-  const kept = Monad.flat_map(option_some(4), positive);
-  const dropped = Monad.flat_map(option_some(-1), positive);
-  const parsed = Monad.flat_map(
+  const kept = Monad.bind(option_some(4), positive);
+  const dropped = Monad.bind(option_some(-1), positive);
+  const parsed = Monad.bind(
     result_ok("42"),
     (text: string) => result_from_number(Number.parseInt(text, 10)),
   );
@@ -206,6 +212,69 @@ Deno.test("Monad chains computations that choose the next context", () => {
   assert_equals(kept.value(), option_some(4).value());
   assert_equals(dropped.value(), option_none().value());
   assert_equals(parsed.value(), result_ok(42).value());
+});
+
+Deno.test("perform chains monadic generator yields with bind", () => {
+  const decoded = decode_account_payload({
+    account: { id: "42", active: true },
+  });
+  const inactive = decode_account_payload({
+    account: { id: "42", active: false },
+  });
+  const malformed = decode_account_payload({
+    account: { id: 42, active: true },
+  });
+  const missing = perform(function* () {
+    const value = yield* option_none<number>();
+
+    return value + 1;
+  });
+  const list = perform(function* () {
+    const left = yield* list_from_array([1, 2]);
+    const right = yield* list_from_array([10, 20]);
+
+    return left + right;
+  });
+
+  assert_equals(
+    decoded.value(),
+    result_ok({ id: 42, label: "account:42" }).value(),
+  );
+  assert_equals(inactive.value(), result_err("account must be active").value());
+  assert_equals(
+    malformed.value(),
+    result_err("account.id must be a string").value(),
+  );
+  assert_equals(missing.value(), option_none().value());
+  assert_equals(list_to_array(list), [11, 21, 12, 22]);
+});
+
+Deno.test("Task monad defers and chains async work", async () => {
+  const events: string[] = [];
+  const task = task_from_fn(async () => {
+    events.push("read");
+    return "21";
+  }).bind((text) =>
+    task_from_fn(async () => {
+      events.push("parse");
+      return Number.parseInt(text, 10) * 2;
+    })
+  );
+  const applied = task_succeed((value: number) => value + 1)
+    .ap(task_succeed(41));
+  const computed = perform(function* () {
+    const text = yield* task_from_fn(async () => "40");
+    const right = yield* task_succeed(2);
+
+    return Number.parseInt(text, 10) + right;
+  });
+
+  assert_equals(events, []);
+  assert_equals(await task_run(task), 42);
+  assert_equals(events, ["read", "parse"]);
+  assert_equals(await task_run(applied), 42);
+  assert_equals(await task_run(computed), 42);
+  assert_equals(computed.fmt(), "Task(?)");
 });
 
 Deno.test("Foldable reduces values inside different contexts", () => {
@@ -291,6 +360,63 @@ Deno.test("Generic monad helper lets each context define failure", () => {
   assert_equals(result.value(), result_err("negative: -1").value());
   assert_equals(list_to_array(list), [2, 3]);
 });
+
+function decode_account_payload(input: unknown) {
+  return perform(function* () {
+    const root = yield* object_value(input, "payload");
+    const account_value = yield* field(root, "account");
+    const account = yield* object_value(account_value, "account");
+    const id_value = yield* field(account, "id");
+    const active_value = yield* field(account, "active");
+    const id_text = yield* string_value(id_value, "account.id");
+    const active = yield* boolean_value(active_value, "account.active");
+    const id = yield* result_from_number(Number.parseInt(id_text, 10));
+
+    yield* require_true(active, "account must be active");
+
+    return { id, label: "account:" + id.toString() };
+  });
+}
+
+function object_value(value: unknown, name: string) {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return result_ok(value as Record<string, unknown>);
+  }
+
+  return result_err<Record<string, unknown>>(name + " must be an object");
+}
+
+function field(record: Record<string, unknown>, name: string) {
+  if (Object.hasOwn(record, name)) {
+    return result_ok(record[name]);
+  }
+
+  return result_err<unknown>(name + " is missing");
+}
+
+function string_value(value: unknown, name: string) {
+  if (typeof value === "string") {
+    return result_ok(value);
+  }
+
+  return result_err<string>(name + " must be a string");
+}
+
+function boolean_value(value: unknown, name: string) {
+  if (typeof value === "boolean") {
+    return result_ok(value);
+  }
+
+  return result_err<boolean>(name + " must be a boolean");
+}
+
+function require_true(value: boolean, message: string) {
+  if (value) {
+    return result_ok(undefined);
+  }
+
+  return result_err<void>(message);
+}
 
 function assert_trait_receiver_error(
   fn: () => unknown,

@@ -8,6 +8,11 @@ type TraitBase<dictionary, value, item> = {
   readonly [trait_dictionary]: dictionary;
   readonly [trait_item]: item;
   readonly [trait_value]: value;
+  [Symbol.iterator]: () => Generator<
+    Trait<dictionary, value, item>,
+    item,
+    item
+  >;
   value: () => value;
 };
 
@@ -55,6 +60,17 @@ export function trait<dictionary extends object, value, item = unknown>(
       if (property === "value") {
         return function value() {
           return current[trait_value];
+        };
+      }
+
+      if (property === Symbol.iterator) {
+        return function* iterator(): Generator<
+          Trait<dictionary, value, item>,
+          item,
+          item
+        > {
+          const item = yield receiver as Trait<dictionary, value, item>;
+          return item;
         };
       }
 

@@ -30,7 +30,7 @@ export function keep_positive<
   value: Value<dictionary, number>,
   reject: (value: number) => Value<dictionary, number>,
 ): Value<dictionary, number> {
-  return value.flat_map((item: number) => {
+  return value.bind((item: number) => {
     if (item >= 0) {
       return value.pure(item);
     }

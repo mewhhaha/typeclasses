@@ -148,11 +148,11 @@ declare module "./traits.ts" {
   }
 }
 
-Option.flat_map = function flat_map<from, to>(
+Option.bind = function bind<from, to>(
   this: OptionValue<from> | void,
   fn: (value: from) => OptionValue<to>,
 ): OptionValue<to> {
-  const option = require_this(this, "Option.flat_map").value();
+  const option = require_this(this, "Option.bind").value();
 
   if (option.tag === "none") {
     return none<to>();

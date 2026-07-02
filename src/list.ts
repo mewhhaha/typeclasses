@@ -161,11 +161,11 @@ declare module "./traits.ts" {
   }
 }
 
-List.flat_map = function flat_map<from, to>(
+List.bind = function bind<from, to>(
   this: ListValue<from> | void,
   fn: (value: from) => ListValue<to>,
 ): ListValue<to> {
-  const list = require_this(this, "List.flat_map");
+  const list = require_this(this, "List.bind");
   const out: to[] = [];
 
   for (const item of to_array(list)) {
