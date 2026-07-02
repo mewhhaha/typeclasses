@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -59,21 +58,18 @@ export function to_record<item>(
   return Object.fromEntries(map.value());
 }
 
-Format.implement(MapT, {
-  fmt() {
-    const map = require_this(this).value();
+Format.implement(MapT)({
+  fmt(value) {
+    const map = value.value();
     return Deno.inspect(map);
   },
 });
 
 export interface MapDictionary extends Format<typeof MapT> {}
 
-Equal.implement(MapT, {
-  eq<item>(
-    this: MapValue<item> | void,
-    right: MapValue<item>,
-  ) {
-    const left = require_this(this).value();
+Equal.implement(MapT)({
+  eq(left_value, right) {
+    const left = left_value.value();
     const right_value = right.value();
 
     if (left.size !== right_value.size) {
@@ -92,13 +88,10 @@ Equal.implement(MapT, {
 
 export interface MapDictionary extends Equal<typeof MapT> {}
 
-Functor.implement(MapT, {
-  map<from, to>(
-    this: MapValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const map = require_this(this).value();
-    const out = new Map<string, to>();
+Functor.implement(MapT)({
+  map(value, fn) {
+    const map = value.value();
+    const out = new Map<string, ReturnType<typeof fn>>();
 
     for (const [key, value] of map) {
       out.set(key, fn(value));
@@ -110,12 +103,9 @@ Functor.implement(MapT, {
 
 export interface MapDictionary extends Functor<typeof MapT> {}
 
-Semigroup.implement(MapT, {
-  concat<item>(
-    this: MapValue<item> | void,
-    right: MapValue<item>,
-  ) {
-    const left = require_this(this).value();
+Semigroup.implement(MapT)({
+  concat(left_value, right) {
+    const left = left_value.value();
     const out = new Map(left);
 
     for (const [key, value] of right.value()) {
@@ -128,21 +118,17 @@ Semigroup.implement(MapT, {
 
 export interface MapDictionary extends Semigroup<typeof MapT> {}
 
-Monoid.implement(MapT, {
-  empty<item>() {
-    return MapT<item>(new Map());
+Monoid.implement(MapT)({
+  empty(_map) {
+    return MapT(new Map());
   },
 });
 
 export interface MapDictionary extends Monoid<typeof MapT> {}
 
-Foldable.implement(MapT, {
-  fold<item, out>(
-    this: MapValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const map = require_this(this).value();
+Foldable.implement(MapT)({
+  fold(value, initial, fn) {
+    const map = value.value();
     let state = initial;
 
     for (const value of map.values()) {
@@ -155,13 +141,13 @@ Foldable.implement(MapT, {
 
 export interface MapDictionary extends Foldable<typeof MapT> {}
 
-Traversable.implement(MapT, {
+Traversable.implement(MapT)({
   traverse<applicative extends Applicative<applicative>, from, to>(
-    this: MapValue<from> | void,
+    value: MapValue<from>,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
   ) {
-    const map = require_this(this).value();
+    const map = value.value();
     const entries = [...map.entries()];
     let out = Applicative.pure(applicative, MapT<to>(new Map()));
 

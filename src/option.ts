@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -63,9 +62,9 @@ export function from_nullable<item>(
   return Option(option_some<item>(value));
 }
 
-Format.implement(Option, {
-  fmt() {
-    const option = require_this(this).value();
+Format.implement(Option)({
+  fmt(value) {
+    const option = value.value();
 
     if (option.tag === "none") {
       return "None";
@@ -77,12 +76,9 @@ Format.implement(Option, {
 
 export interface OptionDictionary extends Format<typeof Option> {}
 
-Equal.implement(Option, {
-  eq<item>(
-    this: OptionValue<item> | void,
-    right: OptionValue<item>,
-  ) {
-    const left = require_this(this).value();
+Equal.implement(Option)({
+  eq(left_value, right) {
+    const left = left_value.value();
     const right_value = right.value();
 
     if (left.tag === "none" && right_value.tag === "none") {
@@ -99,15 +95,12 @@ Equal.implement(Option, {
 
 export interface OptionDictionary extends Equal<typeof Option> {}
 
-Functor.implement(Option, {
-  map<from, to>(
-    this: OptionValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const option = require_this(this).value();
+Functor.implement(Option)({
+  map(value, fn) {
+    const option = value.value();
 
     if (option.tag === "none") {
-      return none<to>();
+      return none();
     }
 
     return some(fn(option.value));
@@ -116,24 +109,21 @@ Functor.implement(Option, {
 
 export interface OptionDictionary extends Functor<typeof Option> {}
 
-Applicative.implement(Option, {
-  pure<item>(value: item) {
+Applicative.implement(Option)({
+  pure(_value, value) {
     return some(value);
   },
 
-  ap<from, to>(
-    this: OptionValue<(value: from) => to> | void,
-    value: OptionValue<from>,
-  ) {
-    const fn = require_this(this).value();
+  ap(fn_value, value) {
+    const fn = fn_value.value();
     const option = value.value();
 
     if (fn.tag === "none") {
-      return none<to>();
+      return none();
     }
 
     if (option.tag === "none") {
-      return none<to>();
+      return none();
     }
 
     return some(fn.value(option.value));
@@ -142,16 +132,13 @@ Applicative.implement(Option, {
 
 export interface OptionDictionary extends Applicative<typeof Option> {}
 
-Alternative.implement(Option, {
-  empty<item>() {
-    return none<item>();
+Alternative.implement(Option)({
+  empty(_value) {
+    return none();
   },
 
-  alt<item>(
-    this: OptionValue<item> | void,
-    right: OptionValue<item>,
-  ) {
-    const option = require_this(this).value();
+  alt(value, right) {
+    const option = value.value();
 
     if (option.tag === "some") {
       return Option(option);
@@ -163,15 +150,12 @@ Alternative.implement(Option, {
 
 export interface OptionDictionary extends Alternative<typeof Option> {}
 
-Monad.implement(Option, {
-  bind<from, to>(
-    this: OptionValue<from> | void,
-    fn: (value: from) => OptionValue<to>,
-  ) {
-    const option = require_this(this).value();
+Monad.implement(Option)({
+  bind(value, fn) {
+    const option = value.value();
 
     if (option.tag === "none") {
-      return none<to>();
+      return none();
     }
 
     return fn(option.value);
@@ -180,13 +164,9 @@ Monad.implement(Option, {
 
 export interface OptionDictionary extends Monad<typeof Option> {}
 
-Foldable.implement(Option, {
-  fold<item, out>(
-    this: OptionValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const option = require_this(this).value();
+Foldable.implement(Option)({
+  fold(value, initial, fn) {
+    const option = value.value();
 
     if (option.tag === "none") {
       return initial;
@@ -198,16 +178,12 @@ Foldable.implement(Option, {
 
 export interface OptionDictionary extends Foldable<typeof Option> {}
 
-Traversable.implement(Option, {
-  traverse<applicative extends Applicative<applicative>, from, to>(
-    this: OptionValue<from> | void,
-    applicative: Value<applicative, unknown>,
-    fn: (value: from) => Value<applicative, to>,
-  ) {
-    const option = require_this(this).value();
+Traversable.implement(Option)({
+  traverse(value, applicative, fn) {
+    const option = value.value();
 
     if (option.tag === "none") {
-      return Applicative.pure(applicative, none<to>());
+      return Applicative.pure(applicative, none());
     }
 
     return Functor.map(fn(option.value), (value) => some(value));

@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -56,9 +55,9 @@ export function from_number(value: number): ResultValue<number> {
   return err("Expected a finite number");
 }
 
-Format.implement(Result, {
-  fmt() {
-    const result = require_this(this).value();
+Format.implement(Result)({
+  fmt(value) {
+    const result = value.value();
 
     if (result.tag === "err") {
       return "Err(" + Deno.inspect(result.error) + ")";
@@ -70,12 +69,9 @@ Format.implement(Result, {
 
 export interface ResultDictionary extends Format<typeof Result> {}
 
-Equal.implement(Result, {
-  eq<item>(
-    this: ResultValue<item> | void,
-    right: ResultValue<item>,
-  ) {
-    const left = require_this(this).value();
+Equal.implement(Result)({
+  eq(left_value, right) {
+    const left = left_value.value();
     const right_value = right.value();
 
     if (left.tag === "err" && right_value.tag === "err") {
@@ -92,15 +88,12 @@ Equal.implement(Result, {
 
 export interface ResultDictionary extends Equal<typeof Result> {}
 
-Functor.implement(Result, {
-  map<from, to>(
-    this: ResultValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const result = require_this(this).value();
+Functor.implement(Result)({
+  map(value, fn) {
+    const result = value.value();
 
     if (result.tag === "err") {
-      return err<to>(result.error);
+      return err(result.error);
     }
 
     return ok(fn(result.value));
@@ -109,24 +102,21 @@ Functor.implement(Result, {
 
 export interface ResultDictionary extends Functor<typeof Result> {}
 
-Applicative.implement(Result, {
-  pure<item>(value: item) {
+Applicative.implement(Result)({
+  pure(_value, value) {
     return ok(value);
   },
 
-  ap<from, to>(
-    this: ResultValue<(value: from) => to> | void,
-    value: ResultValue<from>,
-  ) {
-    const fn = require_this(this).value();
+  ap(fn_value, value) {
+    const fn = fn_value.value();
     const result = value.value();
 
     if (fn.tag === "err") {
-      return err<to>(fn.error);
+      return err(fn.error);
     }
 
     if (result.tag === "err") {
-      return err<to>(result.error);
+      return err(result.error);
     }
 
     return ok(fn.value(result.value));
@@ -135,15 +125,12 @@ Applicative.implement(Result, {
 
 export interface ResultDictionary extends Applicative<typeof Result> {}
 
-Monad.implement(Result, {
-  bind<from, to>(
-    this: ResultValue<from> | void,
-    fn: (value: from) => ResultValue<to>,
-  ) {
-    const result = require_this(this).value();
+Monad.implement(Result)({
+  bind(value, fn) {
+    const result = value.value();
 
     if (result.tag === "err") {
-      return err<to>(result.error);
+      return err(result.error);
     }
 
     return fn(result.value);
@@ -152,13 +139,9 @@ Monad.implement(Result, {
 
 export interface ResultDictionary extends Monad<typeof Result> {}
 
-Foldable.implement(Result, {
-  fold<item, out>(
-    this: ResultValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const result = require_this(this).value();
+Foldable.implement(Result)({
+  fold(value, initial, fn) {
+    const result = value.value();
 
     if (result.tag === "err") {
       return initial;
@@ -170,16 +153,12 @@ Foldable.implement(Result, {
 
 export interface ResultDictionary extends Foldable<typeof Result> {}
 
-Traversable.implement(Result, {
-  traverse<applicative extends Applicative<applicative>, from, to>(
-    this: ResultValue<from> | void,
-    applicative: Value<applicative, unknown>,
-    fn: (value: from) => Value<applicative, to>,
-  ) {
-    const result = require_this(this).value();
+Traversable.implement(Result)({
+  traverse(value, applicative, fn) {
+    const result = value.value();
 
     if (result.tag === "err") {
-      return Applicative.pure(applicative, err<to>(result.error));
+      return Applicative.pure(applicative, err(result.error));
     }
 
     return Functor.map(fn(result.value), (value) => ok(value));

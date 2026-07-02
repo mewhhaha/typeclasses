@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -47,21 +46,18 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
   return [...array.value()];
 }
 
-Format.implement(ArrayT, {
-  fmt() {
-    const array = require_this(this).value();
+Format.implement(ArrayT)({
+  fmt(value) {
+    const array = value.value();
     return Deno.inspect(array);
   },
 });
 
 export interface ArrayDictionary extends Format<typeof ArrayT> {}
 
-Equal.implement(ArrayT, {
-  eq<item>(
-    this: ArrayValue<item> | void,
-    right: ArrayValue<item>,
-  ) {
-    const left = require_this(this).value();
+Equal.implement(ArrayT)({
+  eq(left_value, right) {
+    const left = left_value.value();
     const right_value = right.value();
 
     if (left.length !== right_value.length) {
@@ -80,109 +76,72 @@ Equal.implement(ArrayT, {
 
 export interface ArrayDictionary extends Equal<typeof ArrayT> {}
 
-Functor.implement(ArrayT, {
-  map<from, to>(
-    this: ArrayValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const array = require_this(this).value();
-    const out: to[] = [];
-
-    for (const item of array) {
-      out.push(fn(item));
-    }
-
-    return ArrayT(out);
+Functor.implement(ArrayT)({
+  map(value, fn) {
+    const array = value.value();
+    return ArrayT(array.map(fn));
   },
 });
 
 export interface ArrayDictionary extends Functor<typeof ArrayT> {}
 
-Applicative.implement(ArrayT, {
-  pure<item>(value: item) {
+Applicative.implement(ArrayT)({
+  pure(_array, value) {
     return ArrayT([value]);
   },
 
-  ap<from, to>(
-    this: ArrayValue<(value: from) => to> | void,
-    values: ArrayValue<from>,
-  ) {
-    const fns = require_this(this).value();
-    const out: to[] = [];
+  ap(functions, values) {
+    const fns = functions.value();
+    const items = values.value();
 
-    for (const fn of fns) {
-      for (const value of values.value()) {
-        out.push(fn(value));
-      }
-    }
-
-    return ArrayT(out);
+    return ArrayT(fns.flatMap((fn) => items.map(fn)));
   },
 });
 
 export interface ArrayDictionary extends Applicative<typeof ArrayT> {}
 
-Semigroup.implement(ArrayT, {
-  concat<item>(
-    this: ArrayValue<item> | void,
-    right: ArrayValue<item>,
-  ) {
-    const left = require_this(this).value();
+Semigroup.implement(ArrayT)({
+  concat(left_value, right) {
+    const left = left_value.value();
     return ArrayT([...left, ...right.value()]);
   },
 });
 
 export interface ArrayDictionary extends Semigroup<typeof ArrayT> {}
 
-Monoid.implement(ArrayT, {
-  empty<item>() {
-    return ArrayT<item>([]);
+Monoid.implement(ArrayT)({
+  empty(_array) {
+    return ArrayT([]);
   },
 });
 
 export interface ArrayDictionary extends Monoid<typeof ArrayT> {}
 
-Alternative.implement(ArrayT, {
-  empty<item>() {
-    return ArrayT<item>([]);
+Alternative.implement(ArrayT)({
+  empty(_array) {
+    return ArrayT([]);
   },
 
-  alt<item>(
-    this: ArrayValue<item> | void,
-    right: ArrayValue<item>,
-  ) {
-    const left = require_this(this).value();
+  alt(left_value, right) {
+    const left = left_value.value();
     return ArrayT([...left, ...right.value()]);
   },
 });
 
 export interface ArrayDictionary extends Alternative<typeof ArrayT> {}
 
-Monad.implement(ArrayT, {
-  bind<from, to>(
-    this: ArrayValue<from> | void,
-    fn: (value: from) => ArrayValue<to>,
-  ) {
-    const array = require_this(this).value();
-    const out: to[] = [];
-
-    for (const item of array) {
-      out.push(...fn(item).value());
-    }
-
-    return ArrayT(out);
+Monad.implement(ArrayT)({
+  bind(value, fn) {
+    const array = value.value();
+    return ArrayT(array.flatMap((item) => fn(item).value()));
   },
 });
 
 export interface ArrayDictionary extends Monad<typeof ArrayT> {}
 
-Foldable.implement(ArrayT, {
-  fold<item, out>(
-    this: ArrayValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const array = require_this(this).value();
+Foldable.implement(ArrayT)({
+  fold(value, initial, fn) {
+    const array = value.value();
     let state = initial;
 
     for (const item of array) {
@@ -195,13 +154,13 @@ Foldable.implement(ArrayT, {
 
 export interface ArrayDictionary extends Foldable<typeof ArrayT> {}
 
-Traversable.implement(ArrayT, {
+Traversable.implement(ArrayT)({
   traverse<applicative extends Applicative<applicative>, from, to>(
-    this: ArrayValue<from> | void,
+    value: ArrayValue<from>,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
   ) {
-    const array = require_this(this).value();
+    const array = value.value();
     let out = Applicative.pure(applicative, ArrayT<to>([]));
 
     for (let index = array.length - 1; index >= 0; index -= 1) {

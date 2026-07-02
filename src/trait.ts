@@ -12,14 +12,6 @@ export const value_type: unique symbol = Symbol("Trait.value");
 
 export type This<self> = self | void;
 
-export function require_this<self>(value: This<self>): self {
-  if (value === undefined) {
-    throw new TypeError("trait method requires a receiver");
-  }
-
-  return value;
-}
-
 export type ContextValue<dictionary extends Dictionary, item> =
   dictionary extends { readonly [value_type]: unknown }
     ? (dictionary & { readonly [item_type]: item })[typeof value_type]
@@ -71,30 +63,51 @@ export type TraitDictionary<
   dictionary extends Dictionary,
   token extends PropertyKey,
   implementation extends object,
+  methods extends object = implementation,
 > =
   & Dictionary<dictionary[typeof kind]>
   & { [key in token]: implementation }
-  & implementation;
+  & methods;
 
 export function implement_trait<implementation extends object>(
   dictionary: object,
   token: PropertyKey,
   implementation: implementation,
 ): implementation {
-  Object.assign(dictionary, implementation);
+  Object.assign(dictionary, fluent_trait_methods(implementation));
   (dictionary as { [key: PropertyKey]: unknown })[token] = implementation;
 
   return implementation;
 }
 
-type Callable = (this: unknown, ...args: unknown[]) => unknown;
+type Callable = (...args: unknown[]) => unknown;
 
-function call_trait_method<out>(
-  method: Callable,
-  receiver: unknown,
-  args: readonly unknown[],
-): out {
-  return Reflect.apply(method, receiver, args) as out;
+function fluent_trait_methods(implementation: object): object {
+  const methods: PropertyDescriptorMap = {};
+  const implementation_record = implementation as Record<PropertyKey, unknown>;
+
+  for (const key of Reflect.ownKeys(implementation)) {
+    const method = implementation_record[key];
+
+    if (typeof method !== "function") {
+      continue;
+    }
+
+    methods[key] = {
+      configurable: true,
+      enumerable: true,
+      value: function trait_method(this: unknown, ...args: unknown[]) {
+        if (this === undefined || this === null) {
+          throw new TypeError("trait method requires a receiver");
+        }
+
+        return method(this, ...args);
+      },
+      writable: true,
+    };
+  }
+
+  return Object.defineProperties({}, methods);
 }
 
 type TraitImplementation<
@@ -115,13 +128,18 @@ export abstract class TraitDefinition {
   >(
     this: TraitDefinitionConstructor<token>,
     dictionary: dictionary,
-    implementation: NoInfer<TraitImplementation<token, dictionary>>,
-  ): TraitImplementation<token, dictionary> {
-    return implement_trait(
-      dictionary,
-      this.token,
-      implementation,
-    ) as TraitImplementation<token, dictionary>;
+  ): (
+    implementation: TraitImplementation<token, dictionary>,
+  ) => TraitImplementation<token, dictionary> {
+    const token = this.token;
+
+    return (implementation) => {
+      return implement_trait(
+        dictionary,
+        token,
+        implementation,
+      ) as TraitImplementation<token, dictionary>;
+    };
   }
 
   protected static invoke<out>(
@@ -134,6 +152,6 @@ export abstract class TraitDefinition {
       [key: PropertyKey]: { [key: PropertyKey]: Callable };
     })[this.token];
 
-    return call_trait_method(implementation[method], receiver, args);
+    return implementation[method](receiver, ...args) as out;
   }
 }

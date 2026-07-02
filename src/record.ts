@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -49,21 +48,18 @@ export function to_record<item>(
   return { ...record.value() };
 }
 
-Format.implement(RecordT, {
-  fmt() {
-    const record = require_this(this).value();
+Format.implement(RecordT)({
+  fmt(value) {
+    const record = value.value();
     return Deno.inspect(record);
   },
 });
 
 export interface RecordDictionary extends Format<typeof RecordT> {}
 
-Equal.implement(RecordT, {
-  eq<item>(
-    this: RecordValue<item> | void,
-    right: RecordValue<item>,
-  ) {
-    const left = require_this(this).value();
+Equal.implement(RecordT)({
+  eq(left_value, right) {
+    const left = left_value.value();
     const right_value = right.value();
     const left_keys = Object.keys(left);
     const right_keys = Object.keys(right_value);
@@ -88,13 +84,10 @@ Equal.implement(RecordT, {
 
 export interface RecordDictionary extends Equal<typeof RecordT> {}
 
-Functor.implement(RecordT, {
-  map<from, to>(
-    this: RecordValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const record = require_this(this).value();
-    const out: Record<string, to> = {};
+Functor.implement(RecordT)({
+  map(value, fn) {
+    const record = value.value();
+    const out: Record<string, ReturnType<typeof fn>> = {};
 
     for (const [key, value] of Object.entries(record)) {
       out[key] = fn(value);
@@ -106,33 +99,26 @@ Functor.implement(RecordT, {
 
 export interface RecordDictionary extends Functor<typeof RecordT> {}
 
-Semigroup.implement(RecordT, {
-  concat<item>(
-    this: RecordValue<item> | void,
-    right: RecordValue<item>,
-  ) {
-    const left = require_this(this).value();
+Semigroup.implement(RecordT)({
+  concat(left_value, right) {
+    const left = left_value.value();
     return RecordT({ ...left, ...right.value() });
   },
 });
 
 export interface RecordDictionary extends Semigroup<typeof RecordT> {}
 
-Monoid.implement(RecordT, {
-  empty<item>() {
-    return RecordT<item>({});
+Monoid.implement(RecordT)({
+  empty(_record) {
+    return RecordT({});
   },
 });
 
 export interface RecordDictionary extends Monoid<typeof RecordT> {}
 
-Foldable.implement(RecordT, {
-  fold<item, out>(
-    this: RecordValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const record = require_this(this).value();
+Foldable.implement(RecordT)({
+  fold(value, initial, fn) {
+    const record = value.value();
     let state = initial;
 
     for (const value of Object.values(record)) {
@@ -145,13 +131,13 @@ Foldable.implement(RecordT, {
 
 export interface RecordDictionary extends Foldable<typeof RecordT> {}
 
-Traversable.implement(RecordT, {
+Traversable.implement(RecordT)({
   traverse<applicative extends Applicative<applicative>, from, to>(
-    this: RecordValue<from> | void,
+    value: RecordValue<from>,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
   ) {
-    const record = require_this(this).value();
+    const record = value.value();
     const entries = Object.entries(record);
     let out = Applicative.pure(applicative, RecordT<to>({}));
 

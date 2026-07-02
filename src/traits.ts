@@ -13,6 +13,9 @@ export interface Format<dictionary extends Dictionary> extends
     dictionary,
     typeof format_trait,
     {
+      fmt: (self: Value<dictionary, unknown>) => string;
+    },
+    {
       fmt: (this: Receiver<dictionary, unknown>) => string;
     }
   > {}
@@ -34,6 +37,12 @@ export interface Equal<dictionary extends Dictionary> extends
   TraitDictionary<
     dictionary,
     typeof equal_trait,
+    {
+      eq: <item>(
+        left: Value<dictionary, item>,
+        right: Value<dictionary, item>,
+      ) => boolean;
+    },
     {
       eq: <item>(
         this: Receiver<dictionary, item>,
@@ -66,6 +75,12 @@ export interface Semigroup<dictionary extends Dictionary>
       typeof semigroup_trait,
       {
         concat: <item>(
+          left: Value<dictionary, item>,
+          right: Value<dictionary, item>,
+        ) => Value<dictionary, item>;
+      },
+      {
+        concat: <item>(
           this: Receiver<dictionary, item>,
           right: Value<dictionary, item>,
         ) => Value<dictionary, item>;
@@ -94,7 +109,16 @@ export interface Monoid<dictionary extends Dictionary> extends
     dictionary,
     typeof monoid_trait,
     {
-      empty: <item>() => Value<dictionary, item>;
+      empty: <item>(self: Value<dictionary, unknown>) => Value<
+        dictionary,
+        item
+      >;
+    },
+    {
+      empty: <item>(this: Receiver<dictionary, unknown>) => Value<
+        dictionary,
+        item
+      >;
     }
   >,
   Semigroup<dictionary> {}
@@ -131,6 +155,12 @@ export interface Functor<dictionary extends Dictionary> extends
     typeof functor_trait,
     {
       map: <from, to>(
+        value: Value<dictionary, from>,
+        fn: (value: from) => to,
+      ) => Value<dictionary, to>;
+    },
+    {
+      map: <from, to>(
         this: Receiver<dictionary, from>,
         fn: (value: from) => to,
       ) => Value<dictionary, to>;
@@ -161,7 +191,20 @@ export interface Applicative<dictionary extends Dictionary>
       dictionary,
       typeof applicative_trait,
       {
-        pure: <item>(value: item) => Value<dictionary, item>;
+        pure: <item>(
+          self: Value<dictionary, unknown>,
+          value: item,
+        ) => Value<dictionary, item>;
+        ap: <from, to>(
+          self: Value<dictionary, (value: NoInfer<from>) => to>,
+          value: Value<dictionary, from>,
+        ) => Value<dictionary, to>;
+      },
+      {
+        pure: <item>(
+          this: Receiver<dictionary, unknown>,
+          value: item,
+        ) => Value<dictionary, item>;
         ap: <from, to>(
           this: Receiver<dictionary, (value: NoInfer<from>) => to>,
           value: Value<dictionary, from>,
@@ -204,7 +247,20 @@ export interface Alternative<dictionary extends Dictionary>
       dictionary,
       typeof alternative_trait,
       {
-        empty: <item>() => Value<dictionary, item>;
+        empty: <item>(self: Value<dictionary, unknown>) => Value<
+          dictionary,
+          item
+        >;
+        alt: <item>(
+          left: Value<dictionary, item>,
+          right: Value<dictionary, item>,
+        ) => Value<dictionary, item>;
+      },
+      {
+        empty: <item>(this: Receiver<dictionary, unknown>) => Value<
+          dictionary,
+          item
+        >;
         alt: <item>(
           this: Receiver<dictionary, item>,
           right: Value<dictionary, item>,
@@ -243,6 +299,12 @@ export interface Monad<dictionary extends Dictionary> extends
   TraitDictionary<
     dictionary,
     typeof monad_trait,
+    {
+      bind: <from, to>(
+        value: Value<dictionary, from>,
+        fn: (value: from) => Value<dictionary, to>,
+      ) => Value<dictionary, to>;
+    },
     {
       bind: <from, to>(
         this: Receiver<dictionary, from>,
@@ -327,6 +389,13 @@ export interface Foldable<dictionary extends Dictionary>
       typeof foldable_trait,
       {
         fold: <item, out>(
+          value: Value<dictionary, item>,
+          initial: out,
+          fn: (state: out, item: item) => out,
+        ) => out;
+      },
+      {
+        fold: <item, out>(
           this: Receiver<dictionary, item>,
           initial: out,
           fn: (state: out, item: item) => out,
@@ -358,6 +427,17 @@ export interface Traversable<dictionary extends Dictionary>
     TraitDictionary<
       dictionary,
       typeof traversable_trait,
+      {
+        traverse: <
+          applicative extends Applicative<applicative>,
+          from,
+          to,
+        >(
+          value: Value<dictionary, from>,
+          applicative: Value<applicative, unknown>,
+          fn: (value: from) => Value<applicative, to>,
+        ) => Value<applicative, Value<dictionary, to>>;
+      },
       {
         traverse: <
           applicative extends Applicative<applicative>,

@@ -14,7 +14,6 @@ import { from_fn, run } from "../src/task.ts";
 import {
   type Dictionary,
   type Receiver,
-  require_this,
   TraitDefinition,
   type TraitDictionary,
   type Value,
@@ -33,6 +32,9 @@ interface Size<dictionary extends Dictionary> extends
   TraitDictionary<
     dictionary,
     typeof size_trait,
+    {
+      size: <item>(value: Value<dictionary, item>) => number;
+    },
     {
       size: <item>(this: Receiver<dictionary, item>) => number;
     }
@@ -53,9 +55,8 @@ declare module "../src/list.ts" {
   interface ListDictionary extends Size<typeof List> {}
 }
 
-Size.implement(List, {
-  size() {
-    const list = require_this(this);
+Size.implement(List)({
+  size(list) {
     return to_array(list).length;
   },
 });

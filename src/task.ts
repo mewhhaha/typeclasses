@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -48,41 +47,28 @@ export function run<item>(task: TaskValue<item>): Promise<item> {
   return task.value()();
 }
 
-Format.implement(Task, {
-  fmt() {
-    require_this(this);
+Format.implement(Task)({
+  fmt(_task) {
     return "Task(?)";
   },
 });
 
 export interface TaskDictionary extends Format<typeof Task> {}
 
-Functor.implement(Task, {
-  map<from, to>(
-    this: TaskValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const task = require_this(this);
-
+Functor.implement(Task)({
+  map(task, fn) {
     return Task(async () => fn(await run(task)));
   },
 });
 
 export interface TaskDictionary extends Functor<typeof Task> {}
 
-Applicative.implement(Task, {
-  pure<item>(
-    value: item,
-  ) {
+Applicative.implement(Task)({
+  pure(_task, value) {
     return succeed(value);
   },
 
-  ap<from, to>(
-    this: TaskValue<(value: from) => to> | void,
-    value: TaskValue<from>,
-  ) {
-    const task = require_this(this);
-
+  ap(task, value) {
     return Task(async () => {
       const [fn, item] = await Promise.all([run(task), run(value)]);
       return fn(item);
@@ -92,13 +78,8 @@ Applicative.implement(Task, {
 
 export interface TaskDictionary extends Applicative<typeof Task> {}
 
-Monad.implement(Task, {
-  bind<from, to>(
-    this: TaskValue<from> | void,
-    fn: (value: from) => TaskValue<to>,
-  ) {
-    const task = require_this(this);
-
+Monad.implement(Task)({
+  bind(task, fn) {
     return Task(async () => {
       const value = await run(task);
       return await run(fn(value));

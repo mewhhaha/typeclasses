@@ -3,7 +3,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -79,9 +78,8 @@ function list_from_array<item>(items: item[]): List<item> {
   return list;
 }
 
-Format.implement(List, {
-  fmt() {
-    const list = require_this(this);
+Format.implement(List)({
+  fmt(list) {
     const items = to_array(list).map((item) => Deno.inspect(item));
     return "[" + items.join(", ") + "]";
   },
@@ -89,12 +87,8 @@ Format.implement(List, {
 
 export interface ListDictionary extends Format<typeof List> {}
 
-Equal.implement(List, {
-  eq<item>(
-    this: ListValue<item> | void,
-    right: ListValue<item>,
-  ) {
-    const left = require_this(this);
+Equal.implement(List)({
+  eq(left, right) {
     let left_rest = left.value();
     let right_rest = right.value();
 
@@ -113,116 +107,68 @@ Equal.implement(List, {
 
 export interface ListDictionary extends Equal<typeof List> {}
 
-Functor.implement(List, {
-  map<from, to>(
-    this: ListValue<from> | void,
-    fn: (value: from) => to,
-  ) {
-    const list = require_this(this);
+Functor.implement(List)({
+  map(list, fn) {
     const items = to_array(list);
-    const mapped: to[] = [];
-
-    for (const item of items) {
-      mapped.push(fn(item));
-    }
-
-    return List(list_from_array(mapped));
+    return List(list_from_array(items.map(fn)));
   },
 });
 
 export interface ListDictionary extends Functor<typeof List> {}
 
-Applicative.implement(List, {
-  pure<item>(
-    value: item,
-  ) {
+Applicative.implement(List)({
+  pure(_list, value) {
     return List(list_cons(value, list_nil()));
   },
 
-  ap<from, to>(
-    this: ListValue<(value: from) => to> | void,
-    values: ListValue<from>,
-  ) {
-    const fns = require_this(this);
-    const out: to[] = [];
+  ap(fns, values) {
+    const items = to_array(values);
 
-    for (const fn of to_array(fns)) {
-      for (const value of to_array(values)) {
-        out.push(fn(value));
-      }
-    }
-
-    return List(list_from_array(out));
+    return List(list_from_array(to_array(fns).flatMap((fn) => items.map(fn))));
   },
 });
 
 export interface ListDictionary extends Applicative<typeof List> {}
 
-Semigroup.implement(List, {
-  concat<item>(
-    this: ListValue<item> | void,
-    right: ListValue<item>,
-  ) {
-    const left = require_this(this);
+Semigroup.implement(List)({
+  concat(left, right) {
     return from_array([...to_array(left), ...to_array(right)]);
   },
 });
 
 export interface ListDictionary extends Semigroup<typeof List> {}
 
-Monoid.implement(List, {
-  empty<item>() {
-    return nil<item>();
+Monoid.implement(List)({
+  empty(_list) {
+    return nil();
   },
 });
 
 export interface ListDictionary extends Monoid<typeof List> {}
 
-Alternative.implement(List, {
-  empty<item>() {
-    return nil<item>();
+Alternative.implement(List)({
+  empty(_list) {
+    return nil();
   },
 
-  alt<item>(
-    this: ListValue<item> | void,
-    right: ListValue<item>,
-  ) {
-    const left = require_this(this);
+  alt(left, right) {
     return from_array([...to_array(left), ...to_array(right)]);
   },
 });
 
 export interface ListDictionary extends Alternative<typeof List> {}
 
-Monad.implement(List, {
-  bind<from, to>(
-    this: ListValue<from> | void,
-    fn: (value: from) => ListValue<to>,
-  ) {
-    const list = require_this(this);
-    const out: to[] = [];
-
-    for (const item of to_array(list)) {
-      const values = fn(item);
-
-      for (const value of to_array(values)) {
-        out.push(value);
-      }
-    }
-
+Monad.implement(List)({
+  bind(list, fn) {
+    const out = to_array(list).flatMap((item) => to_array(fn(item)));
     return List(list_from_array(out));
   },
 });
 
 export interface ListDictionary extends Monad<typeof List> {}
 
-Foldable.implement(List, {
-  fold<item, out>(
-    this: ListValue<item> | void,
-    initial: out,
-    fn: (state: out, item: item) => out,
-  ) {
-    const list = require_this(this);
+Foldable.implement(List)({
+  fold(list, initial, fn) {
     let state = initial;
 
     for (const item of to_array(list)) {
@@ -235,13 +181,12 @@ Foldable.implement(List, {
 
 export interface ListDictionary extends Foldable<typeof List> {}
 
-Traversable.implement(List, {
+Traversable.implement(List)({
   traverse<applicative extends Applicative<applicative>, from, to>(
-    this: ListValue<from> | void,
+    list: ListValue<from>,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
   ) {
-    const list = require_this(this);
     const items = to_array(list);
     let out = Applicative.pure(applicative, nil<to>());
 

@@ -42,11 +42,11 @@ The dictionary carries a phantom associated value type. That lets the short
 `Value<typeof Option, item>` type recover that `Option` stores `Option<item>`
 without a global registry or module augmentation.
 
-Trait implementation functions use `this` as their receiver and assert it at
-runtime. The canonical trait slot is a unique symbol, so two traits can both
-have a method named `fmt` without sharing a runtime property. Data types can
-also expose direct fluent aliases like `.fmt()` or `.map()` when those names are
-useful for examples.
+Trait implementation functions receive the wrapped value as their first
+argument. The installer stores that receiver-first implementation in the
+canonical symbol slot and exposes fluent wrappers like `.fmt()` and `.map()`.
+The canonical trait slot is a unique symbol, so two traits can both have a
+method named `fmt` without sharing a runtime property.
 
 ```ts
 import {
@@ -54,7 +54,6 @@ import {
   type Dictionary,
   item_type,
   kind,
-  require_this,
   type Value,
   value_type,
 } from "./trait.ts";
@@ -91,24 +90,21 @@ export function none<item = never>(): OptionValue<item> {
   return Option({ tag: "none" });
 }
 
-Format.implement(Option, {
-  fmt() {
-    const option = require_this(this).value();
+Format.implement(Option)({
+  fmt(value) {
+    const option = value.value();
     return option.tag === "none" ? "None" : "Some(" + option.value + ")";
   },
 });
 
 export interface OptionDictionary extends Format<typeof Option> {}
 
-Monad.implement(Option, {
-  bind<from, to>(
-    this: OptionValue<from> | void,
-    fn: (value: from) => OptionValue<to>,
-  ) {
-    const option = require_this(this).value();
+Monad.implement(Option)({
+  bind(value, fn) {
+    const option = value.value();
 
     if (option.tag === "none") {
-      return none<to>();
+      return none();
     }
 
     return fn(option.value);
@@ -155,27 +151,33 @@ on the dictionary. Later calls reuse that constructor, so data type constructors
 can usually call the simple two-argument form directly.
 
 The wrapped value's prototype points at a shared trait prototype, which
-delegates to the dictionary. Symbol-scoped implementations are inherited through
-that prototype. Direct aliases are inherited the same way, so fluent calls still
-use the wrapped value as `this`.
+delegates to the dictionary. Symbol-scoped implementations and direct fluent
+aliases are inherited through that prototype. Fluent wrappers assert that they
+were called with a receiver and then pass the wrapped value as the first
+implementation argument.
 
 Hot paths can still hoist `as_trait_cached(dictionary)` manually, but the normal
 examples avoid that extra ceremony.
 
 Each data type exports an open dictionary interface. Trait implementations are
-validated and installed through trait-level installers like `Format.implement`.
-Trait definitions inherit that installer from `TraitDefinition`; public helper
-methods keep trait-specific types, but their bodies are usually the same
-`this.invoke(...)` dispatch. The installer attaches the symbol-scoped
-implementation and copies direct fluent aliases. Outside the declaring module,
-use the same extension point through module augmentation. `Receiver` keeps
-custom trait method receivers short:
+validated and installed through curried trait-level installers like
+`Format.implement(Option)({ ... })`. The first call fixes the dictionary, which
+lets TypeScript infer generic implementation parameters from the receiver-first
+method shape. Trait definitions inherit that installer from `TraitDefinition`;
+public helper methods keep trait-specific types, but their bodies are usually
+the same `this.invoke(...)` dispatch. Outside the declaring module, use the same
+extension point through module augmentation. `Receiver` keeps fluent method
+receivers short:
+
+Most implementation methods do not need explicit generic parameters. The main
+exception is an implementation such as `Traversable.traverse` that must create
+an empty target structure before any mapped `to` value exists; that body still
+needs to name `to` for the empty seed.
 
 ```ts
 import {
   type Dictionary,
   type Receiver,
-  require_this,
   TraitDefinition,
   type TraitDictionary,
   type Value,
@@ -187,6 +189,9 @@ interface Size<dictionary extends Dictionary> extends
   TraitDictionary<
     dictionary,
     typeof size_trait,
+    {
+      size: <item>(value: Value<dictionary, item>) => number;
+    },
     {
       size: <item>(this: Receiver<dictionary, item>) => number;
     }
@@ -207,9 +212,8 @@ declare module "./list.ts" {
   interface ListDictionary extends Size<typeof List> {}
 }
 
-Size.implement(List, {
-  size() {
-    const list = require_this(this);
+Size.implement(List)({
+  size(list) {
     return to_array(list).length;
   },
 });
@@ -282,7 +286,7 @@ import { array, map, record } from "./src/mod.ts";
 
 Each data type has an open dictionary interface such as `OptionDictionary` or
 `ListDictionary`. Entries are added one trait at a time next to the
-implementation. `Format.implement(Option, { ... })` validates that every
+implementation. `Format.implement(Option)({ ... })` validates that every
 required `Format` method exists, installs the collision-free symbol slot, and
 copies direct fluent aliases onto the dictionary.
 
