@@ -16,6 +16,8 @@ import {
   type Receiver,
   require_this,
   trait_constructor,
+  TraitDefinition,
+  type TraitDictionary,
   type Value,
 } from "../src/trait.ts";
 import {
@@ -24,49 +26,32 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import {
-  Alternative,
-  Format,
-  implement_trait,
-  perform,
-  Traversable,
-} from "../src/traits.ts";
+import { Alternative, Format, perform, Traversable } from "../src/traits.ts";
 
 const size_trait: unique symbol = Symbol("Size");
 
-interface SizeImplementation<dictionary extends Dictionary> {
-  size: <item>(this: Receiver<dictionary, item>) => number;
+interface Size<dictionary extends Dictionary> extends
+  TraitDictionary<
+    typeof size_trait,
+    {
+      size: <item>(this: Receiver<dictionary, item>) => number;
+    }
+  > {}
+
+abstract class Size<dictionary extends Dictionary> extends TraitDefinition {
+  static override readonly token: typeof size_trait = size_trait;
+
+  static size<
+    dictionary extends Size<dictionary>,
+    item,
+  >(value: Value<dictionary, item>): number {
+    return this.invoke<number>(value, "size");
+  }
 }
-
-interface Size<dictionary extends Dictionary> {
-  [size_trait]: SizeImplementation<dictionary>;
-}
-
-function Size() {}
-
-namespace Size {
-  export type Trait<dictionary extends Dictionary> =
-    & Size<dictionary>
-    & SizeImplementation<dictionary>;
-}
-
-Size.implement = function implement<dictionary extends Dictionary>(
-  dictionary: dictionary,
-  implementation: SizeImplementation<dictionary>,
-): SizeImplementation<dictionary> {
-  return implement_trait(dictionary, size_trait, implementation);
-};
 
 declare module "../src/list.ts" {
-  interface ListDictionary extends Size.Trait<typeof List> {}
+  interface ListDictionary extends Size<typeof List> {}
 }
-
-Size.size = function size<
-  dictionary extends Dictionary & Size<dictionary>,
-  item,
->(value: Value<dictionary, item>): number {
-  return value[size_trait].size.call(value);
-};
 
 Size.implement(List, {
   size<item>(this: Receiver<typeof List, item>): number {

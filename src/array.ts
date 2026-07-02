@@ -1,10 +1,4 @@
-import {
-  type Dictionary,
-  kind,
-  require_this,
-  trait_constructor,
-  type Value,
-} from "./trait.ts";
+import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
 import {
   Alternative,
   Applicative,
@@ -60,7 +54,7 @@ Format.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Format.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Format<typeof ArrayT> {}
 
 Equal.implement(ArrayT, {
   eq<item>(
@@ -84,7 +78,7 @@ Equal.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Equal.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Equal<typeof ArrayT> {}
 
 Functor.implement(ArrayT, {
   map<from, to>(
@@ -102,7 +96,7 @@ Functor.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Functor.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Functor<typeof ArrayT> {}
 
 Applicative.implement(ArrayT, {
   pure<item>(value: item): ArrayValue<item> {
@@ -126,7 +120,7 @@ Applicative.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Applicative.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Applicative<typeof ArrayT> {}
 
 Semigroup.implement(ArrayT, {
   concat<item>(
@@ -138,7 +132,7 @@ Semigroup.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Semigroup.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Semigroup<typeof ArrayT> {}
 
 Monoid.implement(ArrayT, {
   empty<item>(): ArrayValue<item> {
@@ -146,7 +140,7 @@ Monoid.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Monoid.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Monoid<typeof ArrayT> {}
 
 Alternative.implement(ArrayT, {
   empty<item>(): ArrayValue<item> {
@@ -162,7 +156,7 @@ Alternative.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Alternative.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Alternative<typeof ArrayT> {}
 
 Monad.implement(ArrayT, {
   bind<from, to>(
@@ -180,7 +174,7 @@ Monad.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Monad.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Monad<typeof ArrayT> {}
 
 Foldable.implement(ArrayT, {
   fold<item, out>(
@@ -199,10 +193,10 @@ Foldable.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Foldable.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Foldable<typeof ArrayT> {}
 
 Traversable.implement(ArrayT, {
-  traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
+  traverse<applicative extends Applicative<applicative>, from, to>(
     this: ArrayValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
@@ -222,4 +216,4 @@ Traversable.implement(ArrayT, {
   },
 });
 
-export interface ArrayDictionary extends Traversable.Trait<typeof ArrayT> {}
+export interface ArrayDictionary extends Traversable<typeof ArrayT> {}

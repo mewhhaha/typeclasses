@@ -55,7 +55,7 @@ Format.implement(Task, {
   },
 });
 
-export interface TaskDictionary extends Format.Trait<typeof Task> {}
+export interface TaskDictionary extends Format<typeof Task> {}
 
 Functor.implement(Task, {
   map<from, to>(
@@ -68,7 +68,7 @@ Functor.implement(Task, {
   },
 });
 
-export interface TaskDictionary extends Functor.Trait<typeof Task> {}
+export interface TaskDictionary extends Functor<typeof Task> {}
 
 Applicative.implement(Task, {
   pure<item>(
@@ -90,7 +90,7 @@ Applicative.implement(Task, {
   },
 });
 
-export interface TaskDictionary extends Applicative.Trait<typeof Task> {}
+export interface TaskDictionary extends Applicative<typeof Task> {}
 
 Monad.implement(Task, {
   bind<from, to>(
@@ -106,4 +106,4 @@ Monad.implement(Task, {
   },
 });
 
-export interface TaskDictionary extends Monad.Trait<typeof Task> {}
+export interface TaskDictionary extends Monad<typeof Task> {}

@@ -1,10 +1,4 @@
-import {
-  type Dictionary,
-  kind,
-  require_this,
-  trait_constructor,
-  type Value,
-} from "./trait.ts";
+import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
 import {
   Applicative,
   Equal,
@@ -74,7 +68,7 @@ Format.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Format.Trait<typeof Result> {}
+export interface ResultDictionary extends Format<typeof Result> {}
 
 Equal.implement(Result, {
   eq<item>(
@@ -96,7 +90,7 @@ Equal.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Equal.Trait<typeof Result> {}
+export interface ResultDictionary extends Equal<typeof Result> {}
 
 Functor.implement(Result, {
   map<from, to>(
@@ -113,7 +107,7 @@ Functor.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Functor.Trait<typeof Result> {}
+export interface ResultDictionary extends Functor<typeof Result> {}
 
 Applicative.implement(Result, {
   pure<item>(value: item): ResultValue<item> {
@@ -139,7 +133,7 @@ Applicative.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Applicative.Trait<typeof Result> {}
+export interface ResultDictionary extends Applicative<typeof Result> {}
 
 Monad.implement(Result, {
   bind<from, to>(
@@ -156,7 +150,7 @@ Monad.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Monad.Trait<typeof Result> {}
+export interface ResultDictionary extends Monad<typeof Result> {}
 
 Foldable.implement(Result, {
   fold<item, out>(
@@ -174,10 +168,10 @@ Foldable.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Foldable.Trait<typeof Result> {}
+export interface ResultDictionary extends Foldable<typeof Result> {}
 
 Traversable.implement(Result, {
-  traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
+  traverse<applicative extends Applicative<applicative>, from, to>(
     this: ResultValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
@@ -192,7 +186,7 @@ Traversable.implement(Result, {
   },
 });
 
-export interface ResultDictionary extends Traversable.Trait<typeof Result> {}
+export interface ResultDictionary extends Traversable<typeof Result> {}
 
 function result_ok<item>(value: item): Ok<item> {
   return { tag: "ok", value };

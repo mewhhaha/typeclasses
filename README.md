@@ -26,8 +26,9 @@ deno task bench
 
 ## Shape
 
-The core wrapper machinery lives in `src/trait.ts` and `src/trait_value.ts`.
-Application-level trait definitions live in `src/traits.ts`.
+The core wrapper and trait-definition machinery lives in `src/trait.ts` and
+`src/trait_value.ts`. Application-level trait definitions live in
+`src/traits.ts`.
 
 Each data type exports a type and a same-named function. The function wraps an
 existing contextual value as a fluent `Trait<dictionary, value, item>` and also
@@ -94,7 +95,7 @@ Format.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Format.Trait<typeof Option> {}
+export interface OptionDictionary extends Format<typeof Option> {}
 
 Monad.implement(Option, {
   bind<from, to>(
@@ -111,7 +112,7 @@ Monad.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Monad.Trait<typeof Option> {}
+export interface OptionDictionary extends Monad<typeof Option> {}
 ```
 
 See `src/option.ts`, `src/result.ts`, `src/list.ts`, `src/task.ts`,
@@ -156,40 +157,46 @@ shared prototype once instead of looking it up for every value.
 
 Each data type exports an open dictionary interface. Trait implementations are
 validated and installed through trait-level installers like `Format.implement`.
-The installer attaches the symbol-scoped implementation and copies direct fluent
-aliases. Outside the declaring module, use the same extension point through
-module augmentation. `Receiver` keeps custom trait method receivers short:
+Trait definitions inherit that installer from `TraitDefinition`; public helper
+methods keep trait-specific types, but their bodies are usually the same
+`this.invoke(...)` dispatch. The installer attaches the symbol-scoped
+implementation and copies direct fluent aliases. Outside the declaring module,
+use the same extension point through module augmentation. `Receiver` keeps
+custom trait method receivers short:
 
 ```ts
-import { implement_trait } from "./traits.ts";
+import {
+  type Dictionary,
+  type Receiver,
+  require_this,
+  TraitDefinition,
+  type TraitDictionary,
+  type Value,
+} from "./trait.ts";
 
 const size_trait: unique symbol = Symbol("Size");
 
-interface SizeImplementation<dictionary extends Dictionary> {
-  size: <item>(this: Receiver<dictionary, item>) => number;
+interface Size<dictionary extends Dictionary> extends
+  TraitDictionary<
+    typeof size_trait,
+    {
+      size: <item>(this: Receiver<dictionary, item>) => number;
+    }
+  > {}
+
+abstract class Size<dictionary extends Dictionary> extends TraitDefinition {
+  static override readonly token: typeof size_trait = size_trait;
+
+  static size<
+    dictionary extends Size<dictionary>,
+    item,
+  >(value: Value<dictionary, item>): number {
+    return this.invoke<number>(value, "size");
+  }
 }
-
-interface Size<dictionary extends Dictionary> {
-  [size_trait]: SizeImplementation<dictionary>;
-}
-
-function Size() {}
-
-namespace Size {
-  export type Trait<dictionary extends Dictionary> =
-    & Size<dictionary>
-    & SizeImplementation<dictionary>;
-}
-
-Size.implement = function implement<dictionary extends Dictionary>(
-  dictionary: dictionary,
-  implementation: SizeImplementation<dictionary>,
-): SizeImplementation<dictionary> {
-  return implement_trait(dictionary, size_trait, implementation);
-};
 
 declare module "./list.ts" {
-  interface ListDictionary extends Size.Trait<typeof List> {}
+  interface ListDictionary extends Size<typeof List> {}
 }
 
 Size.implement(List, {

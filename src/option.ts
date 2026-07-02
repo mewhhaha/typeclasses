@@ -1,10 +1,4 @@
-import {
-  type Dictionary,
-  kind,
-  require_this,
-  trait_constructor,
-  type Value,
-} from "./trait.ts";
+import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
 import {
   Alternative,
   Applicative,
@@ -81,7 +75,7 @@ Format.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Format.Trait<typeof Option> {}
+export interface OptionDictionary extends Format<typeof Option> {}
 
 Equal.implement(Option, {
   eq<item>(
@@ -103,7 +97,7 @@ Equal.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Equal.Trait<typeof Option> {}
+export interface OptionDictionary extends Equal<typeof Option> {}
 
 Functor.implement(Option, {
   map<from, to>(
@@ -120,7 +114,7 @@ Functor.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Functor.Trait<typeof Option> {}
+export interface OptionDictionary extends Functor<typeof Option> {}
 
 Applicative.implement(Option, {
   pure<item>(value: item): OptionValue<item> {
@@ -146,7 +140,7 @@ Applicative.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Applicative.Trait<typeof Option> {}
+export interface OptionDictionary extends Applicative<typeof Option> {}
 
 Alternative.implement(Option, {
   empty<item>(): OptionValue<item> {
@@ -167,7 +161,7 @@ Alternative.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Alternative.Trait<typeof Option> {}
+export interface OptionDictionary extends Alternative<typeof Option> {}
 
 Monad.implement(Option, {
   bind<from, to>(
@@ -184,7 +178,7 @@ Monad.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Monad.Trait<typeof Option> {}
+export interface OptionDictionary extends Monad<typeof Option> {}
 
 Foldable.implement(Option, {
   fold<item, out>(
@@ -202,10 +196,10 @@ Foldable.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Foldable.Trait<typeof Option> {}
+export interface OptionDictionary extends Foldable<typeof Option> {}
 
 Traversable.implement(Option, {
-  traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
+  traverse<applicative extends Applicative<applicative>, from, to>(
     this: OptionValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
@@ -220,7 +214,7 @@ Traversable.implement(Option, {
   },
 });
 
-export interface OptionDictionary extends Traversable.Trait<typeof Option> {}
+export interface OptionDictionary extends Traversable<typeof Option> {}
 
 function option_some<item>(value: item): Some<item> {
   return { tag: "some", value };

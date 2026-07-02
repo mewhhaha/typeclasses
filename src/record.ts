@@ -1,10 +1,4 @@
-import {
-  type Dictionary,
-  kind,
-  require_this,
-  trait_constructor,
-  type Value,
-} from "./trait.ts";
+import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
 import {
   Applicative,
   Equal,
@@ -62,7 +56,7 @@ Format.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Format.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Format<typeof RecordT> {}
 
 Equal.implement(RecordT, {
   eq<item>(
@@ -92,7 +86,7 @@ Equal.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Equal.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Equal<typeof RecordT> {}
 
 Functor.implement(RecordT, {
   map<from, to>(
@@ -110,7 +104,7 @@ Functor.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Functor.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Functor<typeof RecordT> {}
 
 Semigroup.implement(RecordT, {
   concat<item>(
@@ -122,7 +116,7 @@ Semigroup.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Semigroup.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Semigroup<typeof RecordT> {}
 
 Monoid.implement(RecordT, {
   empty<item>(): RecordValue<item> {
@@ -130,7 +124,7 @@ Monoid.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Monoid.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Monoid<typeof RecordT> {}
 
 Foldable.implement(RecordT, {
   fold<item, out>(
@@ -149,10 +143,10 @@ Foldable.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Foldable.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Foldable<typeof RecordT> {}
 
 Traversable.implement(RecordT, {
-  traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
+  traverse<applicative extends Applicative<applicative>, from, to>(
     this: RecordValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
@@ -175,4 +169,4 @@ Traversable.implement(RecordT, {
   },
 });
 
-export interface RecordDictionary extends Traversable.Trait<typeof RecordT> {}
+export interface RecordDictionary extends Traversable<typeof RecordT> {}

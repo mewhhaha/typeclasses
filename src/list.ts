@@ -1,10 +1,4 @@
-import {
-  type Dictionary,
-  kind,
-  require_this,
-  trait_constructor,
-  type Value,
-} from "./trait.ts";
+import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
 import {
   Alternative,
   Applicative,
@@ -93,7 +87,7 @@ Format.implement(List, {
   },
 });
 
-export interface ListDictionary extends Format.Trait<typeof List> {}
+export interface ListDictionary extends Format<typeof List> {}
 
 Equal.implement(List, {
   eq<item>(
@@ -117,7 +111,7 @@ Equal.implement(List, {
   },
 });
 
-export interface ListDictionary extends Equal.Trait<typeof List> {}
+export interface ListDictionary extends Equal<typeof List> {}
 
 Functor.implement(List, {
   map<from, to>(
@@ -136,7 +130,7 @@ Functor.implement(List, {
   },
 });
 
-export interface ListDictionary extends Functor.Trait<typeof List> {}
+export interface ListDictionary extends Functor<typeof List> {}
 
 Applicative.implement(List, {
   pure<item>(
@@ -162,7 +156,7 @@ Applicative.implement(List, {
   },
 });
 
-export interface ListDictionary extends Applicative.Trait<typeof List> {}
+export interface ListDictionary extends Applicative<typeof List> {}
 
 Semigroup.implement(List, {
   concat<item>(
@@ -174,7 +168,7 @@ Semigroup.implement(List, {
   },
 });
 
-export interface ListDictionary extends Semigroup.Trait<typeof List> {}
+export interface ListDictionary extends Semigroup<typeof List> {}
 
 Monoid.implement(List, {
   empty<item>(): ListValue<item> {
@@ -182,7 +176,7 @@ Monoid.implement(List, {
   },
 });
 
-export interface ListDictionary extends Monoid.Trait<typeof List> {}
+export interface ListDictionary extends Monoid<typeof List> {}
 
 Alternative.implement(List, {
   empty<item>(): ListValue<item> {
@@ -198,7 +192,7 @@ Alternative.implement(List, {
   },
 });
 
-export interface ListDictionary extends Alternative.Trait<typeof List> {}
+export interface ListDictionary extends Alternative<typeof List> {}
 
 Monad.implement(List, {
   bind<from, to>(
@@ -220,7 +214,7 @@ Monad.implement(List, {
   },
 });
 
-export interface ListDictionary extends Monad.Trait<typeof List> {}
+export interface ListDictionary extends Monad<typeof List> {}
 
 Foldable.implement(List, {
   fold<item, out>(
@@ -239,10 +233,10 @@ Foldable.implement(List, {
   },
 });
 
-export interface ListDictionary extends Foldable.Trait<typeof List> {}
+export interface ListDictionary extends Foldable<typeof List> {}
 
 Traversable.implement(List, {
-  traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
+  traverse<applicative extends Applicative<applicative>, from, to>(
     this: ListValue<from> | void,
     applicative: Value<applicative, unknown>,
     fn: (value: from) => Value<applicative, to>,
@@ -263,7 +257,7 @@ Traversable.implement(List, {
   },
 });
 
-export interface ListDictionary extends Traversable.Trait<typeof List> {}
+export interface ListDictionary extends Traversable<typeof List> {}
 
 function list_nil<item>(): List<item> {
   return { tag: "nil" };

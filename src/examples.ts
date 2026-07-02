@@ -1,9 +1,7 @@
-import type { Dictionary, Value } from "./trait.ts";
+import type { Value } from "./trait.ts";
 import { Applicative, Foldable, Functor, Monad } from "./traits.ts";
 
-export function label_values<
-  dictionary extends Dictionary & Functor<dictionary>,
->(
+export function label_values<dictionary extends Functor<dictionary>>(
   value: Value<dictionary, number>,
 ): Value<dictionary, string> {
   return Functor.map(value, (item: number) => {
@@ -11,9 +9,7 @@ export function label_values<
   });
 }
 
-export function add_values<
-  dictionary extends Dictionary & Applicative<dictionary>,
->(
+export function add_values<dictionary extends Applicative<dictionary>>(
   left: Value<dictionary, number>,
   right: Value<dictionary, number>,
 ): Value<dictionary, number> {
@@ -24,9 +20,7 @@ export function add_values<
   return Applicative.ap(add_right, right);
 }
 
-export function keep_positive<
-  dictionary extends Dictionary & Monad<dictionary>,
->(
+export function keep_positive<dictionary extends Monad<dictionary>>(
   value: Value<dictionary, number>,
   reject: (value: number) => Value<dictionary, number>,
 ): Value<dictionary, number> {
@@ -39,9 +33,7 @@ export function keep_positive<
   });
 }
 
-export function sum_values<
-  dictionary extends Dictionary & Foldable<dictionary>,
->(
+export function sum_values<dictionary extends Foldable<dictionary>>(
   value: Value<dictionary, number>,
 ): number {
   return Foldable.fold(value, 0, (state: number, item: number) => {
