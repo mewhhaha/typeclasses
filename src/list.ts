@@ -7,35 +7,15 @@ import {
 } from "./trait.ts";
 import {
   Alternative,
-  alternative_trait,
-  type AlternativeImplementation,
   Applicative,
-  applicative_trait,
-  type ApplicativeImplementation,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monad,
-  monad_trait,
-  type MonadImplementation,
   Monoid,
-  monoid_trait,
-  type MonoidImplementation,
   Semigroup,
-  semigroup_trait,
-  type SemigroupImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type List<item> =
@@ -105,21 +85,17 @@ function list_from_array<item>(items: item[]): List<item> {
   return list;
 }
 
-const list_format = {
+Format.implement(List, {
   fmt(this: ListValue<unknown> | void): string {
     const list = require_this(this, "List.Format.fmt");
     const items = to_array(list).map((item) => Deno.inspect(item));
     return "[" + items.join(", ") + "]";
   },
-} satisfies FormatImplementation<typeof List>;
+});
 
-List[format_trait] = list_format;
-List.fmt = list_format.fmt;
+export interface ListDictionary extends Format.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Format<typeof List>, FormatImplementation<typeof List> {}
-
-const list_equal = {
+Equal.implement(List, {
   eq<item>(
     this: ListValue<item> | void,
     right: ListValue<item>,
@@ -139,15 +115,11 @@ const list_equal = {
 
     return left_rest.tag === "nil" && right_rest.tag === "nil";
   },
-} satisfies EqualImplementation<typeof List>;
+});
 
-List[equal_trait] = list_equal;
-List.eq = list_equal.eq;
+export interface ListDictionary extends Equal.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Equal<typeof List>, EqualImplementation<typeof List> {}
-
-const list_functor = {
+Functor.implement(List, {
   map<from, to>(
     this: ListValue<from> | void,
     fn: (value: from) => to,
@@ -162,15 +134,11 @@ const list_functor = {
 
     return List(list_from_array(mapped));
   },
-} satisfies FunctorImplementation<typeof List>;
+});
 
-List[functor_trait] = list_functor;
-List.map = list_functor.map;
+export interface ListDictionary extends Functor.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Functor<typeof List>, FunctorImplementation<typeof List> {}
-
-const list_applicative = {
+Applicative.implement(List, {
   pure<item>(
     value: item,
   ): ListValue<item> {
@@ -192,16 +160,11 @@ const list_applicative = {
 
     return List(list_from_array(out));
   },
-} satisfies ApplicativeImplementation<typeof List>;
+});
 
-List[applicative_trait] = list_applicative;
-List.pure = list_applicative.pure;
-List.ap = list_applicative.ap;
+export interface ListDictionary extends Applicative.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Applicative<typeof List>, ApplicativeImplementation<typeof List> {}
-
-const list_semigroup = {
+Semigroup.implement(List, {
   concat<item>(
     this: ListValue<item> | void,
     right: ListValue<item>,
@@ -209,27 +172,19 @@ const list_semigroup = {
     const left = require_this(this, "List.Semigroup.concat");
     return from_array([...to_array(left), ...to_array(right)]);
   },
-} satisfies SemigroupImplementation<typeof List>;
+});
 
-List[semigroup_trait] = list_semigroup;
-List.concat = list_semigroup.concat;
+export interface ListDictionary extends Semigroup.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Semigroup<typeof List>, SemigroupImplementation<typeof List> {}
-
-const list_monoid = {
+Monoid.implement(List, {
   empty<item>(): ListValue<item> {
     return nil<item>();
   },
-} satisfies MonoidImplementation<typeof List>;
+});
 
-List[monoid_trait] = list_monoid;
-List.empty = list_monoid.empty;
+export interface ListDictionary extends Monoid.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Monoid<typeof List>, MonoidImplementation<typeof List> {}
-
-const list_alternative = {
+Alternative.implement(List, {
   empty<item>(): ListValue<item> {
     return nil<item>();
   },
@@ -241,15 +196,11 @@ const list_alternative = {
     const left = require_this(this, "List.Alternative.alt");
     return from_array([...to_array(left), ...to_array(right)]);
   },
-} satisfies AlternativeImplementation<typeof List>;
+});
 
-List[alternative_trait] = list_alternative;
-List.alt = list_alternative.alt;
+export interface ListDictionary extends Alternative.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Alternative<typeof List>, AlternativeImplementation<typeof List> {}
-
-const list_monad = {
+Monad.implement(List, {
   bind<from, to>(
     this: ListValue<from> | void,
     fn: (value: from) => ListValue<to>,
@@ -267,15 +218,11 @@ const list_monad = {
 
     return List(list_from_array(out));
   },
-} satisfies MonadImplementation<typeof List>;
+});
 
-List[monad_trait] = list_monad;
-List.bind = list_monad.bind;
+export interface ListDictionary extends Monad.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Monad<typeof List>, MonadImplementation<typeof List> {}
-
-const list_foldable = {
+Foldable.implement(List, {
   fold<item, out>(
     this: ListValue<item> | void,
     initial: out,
@@ -290,15 +237,11 @@ const list_foldable = {
 
     return state;
   },
-} satisfies FoldableImplementation<typeof List>;
+});
 
-List[foldable_trait] = list_foldable;
-List.fold = list_foldable.fold;
+export interface ListDictionary extends Foldable.Trait<typeof List> {}
 
-export interface ListDictionary
-  extends Foldable<typeof List>, FoldableImplementation<typeof List> {}
-
-const list_traversable = {
+Traversable.implement(List, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: ListValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -318,13 +261,9 @@ const list_traversable = {
 
     return out;
   },
-} satisfies TraversableImplementation<typeof List>;
+});
 
-List[traversable_trait] = list_traversable;
-List.traverse = list_traversable.traverse;
-
-export interface ListDictionary
-  extends Traversable<typeof List>, TraversableImplementation<typeof List> {}
+export interface ListDictionary extends Traversable.Trait<typeof List> {}
 
 function list_nil<item>(): List<item> {
   return { tag: "nil" };

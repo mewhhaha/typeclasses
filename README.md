@@ -46,14 +46,7 @@ useful for examples.
 
 ```ts
 import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
-import {
-  Format,
-  format_trait,
-  type FormatImplementation,
-  Monad,
-  monad_trait,
-  type MonadImplementation,
-} from "./traits.ts";
+import { Format, Monad } from "./traits.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
@@ -94,20 +87,16 @@ export function none<item = never>(): OptionValue<item> {
   return Option({ tag: "none" });
 }
 
-const option_format = {
+Format.implement(Option, {
   fmt(this: OptionValue<unknown> | void): string {
     const option = require_this(this, "Option.Format.fmt").value();
     return option.tag === "none" ? "None" : "Some(" + option.value + ")";
   },
-} satisfies FormatImplementation<typeof Option>;
+});
 
-Option[format_trait] = option_format;
-Option.fmt = option_format.fmt;
+export interface OptionDictionary extends Format.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Format<typeof Option>, FormatImplementation<typeof Option> {}
-
-const option_monad = {
+Monad.implement(Option, {
   bind<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => OptionValue<to>,
@@ -120,13 +109,9 @@ const option_monad = {
 
     return fn(option.value);
   },
-} satisfies MonadImplementation<typeof Option>;
+});
 
-Option[monad_trait] = option_monad;
-Option.bind = option_monad.bind;
-
-export interface OptionDictionary
-  extends Monad<typeof Option>, MonadImplementation<typeof Option> {}
+export interface OptionDictionary extends Monad.Trait<typeof Option> {}
 ```
 
 See `src/option.ts`, `src/result.ts`, `src/list.ts`, `src/task.ts`,
@@ -170,12 +155,14 @@ Data type constructors can use `trait_constructor(dictionary)` to cache the
 shared prototype once instead of looking it up for every value.
 
 Each data type exports an open dictionary interface. Trait implementations are
-validated as objects with `satisfies`, attached under their symbol token, and
-optionally exposed as direct fluent aliases. Outside the declaring module, use
-the same extension point through module augmentation. `Receiver` keeps custom
-trait method receivers short:
+validated and installed through trait-level installers like `Format.implement`.
+The installer attaches the symbol-scoped implementation and copies direct fluent
+aliases. Outside the declaring module, use the same extension point through
+module augmentation. `Receiver` keeps custom trait method receivers short:
 
 ```ts
+import { implement_trait } from "./traits.ts";
+
 const size_trait: unique symbol = Symbol("Size");
 
 interface SizeImplementation<dictionary extends Dictionary> {
@@ -186,20 +173,31 @@ interface Size<dictionary extends Dictionary> {
   [size_trait]: SizeImplementation<dictionary>;
 }
 
-declare module "./list.ts" {
-  interface ListDictionary
-    extends Size<typeof List>, SizeImplementation<typeof List> {}
+function Size() {}
+
+namespace Size {
+  export type Trait<dictionary extends Dictionary> =
+    & Size<dictionary>
+    & SizeImplementation<dictionary>;
 }
 
-const list_size = {
+Size.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: SizeImplementation<dictionary>,
+): SizeImplementation<dictionary> {
+  return implement_trait(dictionary, size_trait, implementation);
+};
+
+declare module "./list.ts" {
+  interface ListDictionary extends Size.Trait<typeof List> {}
+}
+
+Size.implement(List, {
   size<item>(this: Receiver<typeof List, item>): number {
     const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
-} satisfies SizeImplementation<typeof List>;
-
-List[size_trait] = list_size;
-List.size = list_size.size;
+});
 ```
 
 There is no `OptionBox` or `OptionTrait` type. The fluent methods are derived
@@ -269,10 +267,9 @@ import { array, map, record } from "./src/mod.ts";
 
 Each data type has an open dictionary interface such as `OptionDictionary` or
 `ListDictionary`. Entries are added one trait at a time next to the
-implementation. The `satisfies FormatImplementation<typeof Option>` check proves
-that the implementation object supplies every method that `Format` requires,
-while `Option[format_trait] = option_format` installs the collision-free
-canonical slot.
+implementation. `Format.implement(Option, { ... })` validates that every
+required `Format` method exists, installs the collision-free symbol slot, and
+copies direct fluent aliases onto the dictionary.
 
 ## Benchmarks
 

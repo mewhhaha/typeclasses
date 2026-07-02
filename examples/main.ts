@@ -24,7 +24,13 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Alternative, Format, perform, Traversable } from "../src/traits.ts";
+import {
+  Alternative,
+  Format,
+  implement_trait,
+  perform,
+  Traversable,
+} from "../src/traits.ts";
 
 const size_trait: unique symbol = Symbol("Size");
 
@@ -36,12 +42,24 @@ interface Size<dictionary extends Dictionary> {
   [size_trait]: SizeImplementation<dictionary>;
 }
 
-declare module "../src/list.ts" {
-  interface ListDictionary
-    extends Size<typeof List>, SizeImplementation<typeof List> {}
+function Size() {}
+
+namespace Size {
+  export type Trait<dictionary extends Dictionary> =
+    & Size<dictionary>
+    & SizeImplementation<dictionary>;
 }
 
-function Size() {}
+Size.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: SizeImplementation<dictionary>,
+): SizeImplementation<dictionary> {
+  return implement_trait(dictionary, size_trait, implementation);
+};
+
+declare module "../src/list.ts" {
+  interface ListDictionary extends Size.Trait<typeof List> {}
+}
 
 Size.size = function size<
   dictionary extends Dictionary & Size<dictionary>,
@@ -50,15 +68,12 @@ Size.size = function size<
   return value[size_trait].size.call(value);
 };
 
-const list_size = {
+Size.implement(List, {
   size<item>(this: Receiver<typeof List, item>): number {
     const list = require_this(this, "List.Size.size");
     return to_array(list).length;
   },
-} satisfies SizeImplementation<typeof List>;
-
-List[size_trait] = list_size;
-List.size = list_size.size;
+});
 
 const option = some(21);
 const doubled_option = option.map((value: number) => {

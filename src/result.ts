@@ -7,26 +7,12 @@ import {
 } from "./trait.ts";
 import {
   Applicative,
-  applicative_trait,
-  type ApplicativeImplementation,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monad,
-  monad_trait,
-  type MonadImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type Result<item, error = string> =
@@ -76,7 +62,7 @@ export function from_number(value: number): ResultValue<number> {
   return err("Expected a finite number");
 }
 
-const result_format = {
+Format.implement(Result, {
   fmt(this: ResultValue<unknown> | void): string {
     const result = require_this(this, "Result.Format.fmt").value();
 
@@ -86,15 +72,11 @@ const result_format = {
 
     return "Ok(" + Deno.inspect(result.value) + ")";
   },
-} satisfies FormatImplementation<typeof Result>;
+});
 
-Result[format_trait] = result_format;
-Result.fmt = result_format.fmt;
+export interface ResultDictionary extends Format.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends Format<typeof Result>, FormatImplementation<typeof Result> {}
-
-const result_equal = {
+Equal.implement(Result, {
   eq<item>(
     this: ResultValue<item> | void,
     right: ResultValue<item>,
@@ -112,15 +94,11 @@ const result_equal = {
 
     return false;
   },
-} satisfies EqualImplementation<typeof Result>;
+});
 
-Result[equal_trait] = result_equal;
-Result.eq = result_equal.eq;
+export interface ResultDictionary extends Equal.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends Equal<typeof Result>, EqualImplementation<typeof Result> {}
-
-const result_functor = {
+Functor.implement(Result, {
   map<from, to>(
     this: ResultValue<from> | void,
     fn: (value: from) => to,
@@ -133,15 +111,11 @@ const result_functor = {
 
     return ok(fn(result.value));
   },
-} satisfies FunctorImplementation<typeof Result>;
+});
 
-Result[functor_trait] = result_functor;
-Result.map = result_functor.map;
+export interface ResultDictionary extends Functor.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends Functor<typeof Result>, FunctorImplementation<typeof Result> {}
-
-const result_applicative = {
+Applicative.implement(Result, {
   pure<item>(value: item): ResultValue<item> {
     return ok(value);
   },
@@ -163,18 +137,11 @@ const result_applicative = {
 
     return ok(fn.value(result.value));
   },
-} satisfies ApplicativeImplementation<typeof Result>;
+});
 
-Result[applicative_trait] = result_applicative;
-Result.pure = result_applicative.pure;
-Result.ap = result_applicative.ap;
+export interface ResultDictionary extends Applicative.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends
-    Applicative<typeof Result>,
-    ApplicativeImplementation<typeof Result> {}
-
-const result_monad = {
+Monad.implement(Result, {
   bind<from, to>(
     this: ResultValue<from> | void,
     fn: (value: from) => ResultValue<to>,
@@ -187,15 +154,11 @@ const result_monad = {
 
     return fn(result.value);
   },
-} satisfies MonadImplementation<typeof Result>;
+});
 
-Result[monad_trait] = result_monad;
-Result.bind = result_monad.bind;
+export interface ResultDictionary extends Monad.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends Monad<typeof Result>, MonadImplementation<typeof Result> {}
-
-const result_foldable = {
+Foldable.implement(Result, {
   fold<item, out>(
     this: ResultValue<item> | void,
     initial: out,
@@ -209,15 +172,11 @@ const result_foldable = {
 
     return fn(initial, result.value);
   },
-} satisfies FoldableImplementation<typeof Result>;
+});
 
-Result[foldable_trait] = result_foldable;
-Result.fold = result_foldable.fold;
+export interface ResultDictionary extends Foldable.Trait<typeof Result> {}
 
-export interface ResultDictionary
-  extends Foldable<typeof Result>, FoldableImplementation<typeof Result> {}
-
-const result_traversable = {
+Traversable.implement(Result, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: ResultValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -231,15 +190,9 @@ const result_traversable = {
 
     return Functor.map(fn(result.value), (value) => ok(value));
   },
-} satisfies TraversableImplementation<typeof Result>;
+});
 
-Result[traversable_trait] = result_traversable;
-Result.traverse = result_traversable.traverse;
-
-export interface ResultDictionary
-  extends
-    Traversable<typeof Result>,
-    TraversableImplementation<typeof Result> {}
+export interface ResultDictionary extends Traversable.Trait<typeof Result> {}
 
 function result_ok<item>(value: item): Ok<item> {
   return { tag: "ok", value };

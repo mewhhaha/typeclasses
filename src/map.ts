@@ -8,26 +8,12 @@ import {
 import {
   Applicative,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monoid,
-  monoid_trait,
-  type MonoidImplementation,
   Semigroup,
-  semigroup_trait,
-  type SemigroupImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type MapT<item> = ReadonlyMap<string, item>;
@@ -79,20 +65,16 @@ export function to_record<item>(
   return Object.fromEntries(map.value());
 }
 
-const map_format = {
+Format.implement(MapT, {
   fmt(this: MapValue<unknown> | void): string {
     const map = require_this(this, "MapT.Format.fmt").value();
     return Deno.inspect(map);
   },
-} satisfies FormatImplementation<typeof MapT>;
+});
 
-MapT[format_trait] = map_format;
-MapT.fmt = map_format.fmt;
+export interface MapDictionary extends Format.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Format<typeof MapT>, FormatImplementation<typeof MapT> {}
-
-const map_equal = {
+Equal.implement(MapT, {
   eq<item>(
     this: MapValue<item> | void,
     right: MapValue<item>,
@@ -112,15 +94,11 @@ const map_equal = {
 
     return true;
   },
-} satisfies EqualImplementation<typeof MapT>;
+});
 
-MapT[equal_trait] = map_equal;
-MapT.eq = map_equal.eq;
+export interface MapDictionary extends Equal.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Equal<typeof MapT>, EqualImplementation<typeof MapT> {}
-
-const map_functor = {
+Functor.implement(MapT, {
   map<from, to>(
     this: MapValue<from> | void,
     fn: (value: from) => to,
@@ -134,15 +112,11 @@ const map_functor = {
 
     return MapT(out);
   },
-} satisfies FunctorImplementation<typeof MapT>;
+});
 
-MapT[functor_trait] = map_functor;
-MapT.map = map_functor.map;
+export interface MapDictionary extends Functor.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Functor<typeof MapT>, FunctorImplementation<typeof MapT> {}
-
-const map_semigroup = {
+Semigroup.implement(MapT, {
   concat<item>(
     this: MapValue<item> | void,
     right: MapValue<item>,
@@ -156,27 +130,19 @@ const map_semigroup = {
 
     return MapT(out);
   },
-} satisfies SemigroupImplementation<typeof MapT>;
+});
 
-MapT[semigroup_trait] = map_semigroup;
-MapT.concat = map_semigroup.concat;
+export interface MapDictionary extends Semigroup.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Semigroup<typeof MapT>, SemigroupImplementation<typeof MapT> {}
-
-const map_monoid = {
+Monoid.implement(MapT, {
   empty<item>(): MapValue<item> {
     return MapT<item>(new Map());
   },
-} satisfies MonoidImplementation<typeof MapT>;
+});
 
-MapT[monoid_trait] = map_monoid;
-MapT.empty = map_monoid.empty;
+export interface MapDictionary extends Monoid.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Monoid<typeof MapT>, MonoidImplementation<typeof MapT> {}
-
-const map_foldable = {
+Foldable.implement(MapT, {
   fold<item, out>(
     this: MapValue<item> | void,
     initial: out,
@@ -191,15 +157,11 @@ const map_foldable = {
 
     return state;
   },
-} satisfies FoldableImplementation<typeof MapT>;
+});
 
-MapT[foldable_trait] = map_foldable;
-MapT.fold = map_foldable.fold;
+export interface MapDictionary extends Foldable.Trait<typeof MapT> {}
 
-export interface MapDictionary
-  extends Foldable<typeof MapT>, FoldableImplementation<typeof MapT> {}
-
-const map_traversable = {
+Traversable.implement(MapT, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: MapValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -221,10 +183,6 @@ const map_traversable = {
 
     return out;
   },
-} satisfies TraversableImplementation<typeof MapT>;
+});
 
-MapT[traversable_trait] = map_traversable;
-MapT.traverse = map_traversable.traverse;
-
-export interface MapDictionary
-  extends Traversable<typeof MapT>, TraversableImplementation<typeof MapT> {}
+export interface MapDictionary extends Traversable.Trait<typeof MapT> {}

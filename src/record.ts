@@ -8,26 +8,12 @@ import {
 import {
   Applicative,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monoid,
-  monoid_trait,
-  type MonoidImplementation,
   Semigroup,
-  semigroup_trait,
-  type SemigroupImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type RecordT<item> = Readonly<Record<string, item>>;
@@ -69,20 +55,16 @@ export function to_record<item>(
   return { ...record.value() };
 }
 
-const record_format = {
+Format.implement(RecordT, {
   fmt(this: RecordValue<unknown> | void): string {
     const record = require_this(this, "RecordT.Format.fmt").value();
     return Deno.inspect(record);
   },
-} satisfies FormatImplementation<typeof RecordT>;
+});
 
-RecordT[format_trait] = record_format;
-RecordT.fmt = record_format.fmt;
+export interface RecordDictionary extends Format.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Format<typeof RecordT>, FormatImplementation<typeof RecordT> {}
-
-const record_equal = {
+Equal.implement(RecordT, {
   eq<item>(
     this: RecordValue<item> | void,
     right: RecordValue<item>,
@@ -108,15 +90,11 @@ const record_equal = {
 
     return true;
   },
-} satisfies EqualImplementation<typeof RecordT>;
+});
 
-RecordT[equal_trait] = record_equal;
-RecordT.eq = record_equal.eq;
+export interface RecordDictionary extends Equal.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Equal<typeof RecordT>, EqualImplementation<typeof RecordT> {}
-
-const record_functor = {
+Functor.implement(RecordT, {
   map<from, to>(
     this: RecordValue<from> | void,
     fn: (value: from) => to,
@@ -130,15 +108,11 @@ const record_functor = {
 
     return RecordT(out);
   },
-} satisfies FunctorImplementation<typeof RecordT>;
+});
 
-RecordT[functor_trait] = record_functor;
-RecordT.map = record_functor.map;
+export interface RecordDictionary extends Functor.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Functor<typeof RecordT>, FunctorImplementation<typeof RecordT> {}
-
-const record_semigroup = {
+Semigroup.implement(RecordT, {
   concat<item>(
     this: RecordValue<item> | void,
     right: RecordValue<item>,
@@ -146,27 +120,19 @@ const record_semigroup = {
     const left = require_this(this, "RecordT.Semigroup.concat").value();
     return RecordT({ ...left, ...right.value() });
   },
-} satisfies SemigroupImplementation<typeof RecordT>;
+});
 
-RecordT[semigroup_trait] = record_semigroup;
-RecordT.concat = record_semigroup.concat;
+export interface RecordDictionary extends Semigroup.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Semigroup<typeof RecordT>, SemigroupImplementation<typeof RecordT> {}
-
-const record_monoid = {
+Monoid.implement(RecordT, {
   empty<item>(): RecordValue<item> {
     return RecordT<item>({});
   },
-} satisfies MonoidImplementation<typeof RecordT>;
+});
 
-RecordT[monoid_trait] = record_monoid;
-RecordT.empty = record_monoid.empty;
+export interface RecordDictionary extends Monoid.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Monoid<typeof RecordT>, MonoidImplementation<typeof RecordT> {}
-
-const record_foldable = {
+Foldable.implement(RecordT, {
   fold<item, out>(
     this: RecordValue<item> | void,
     initial: out,
@@ -181,15 +147,11 @@ const record_foldable = {
 
     return state;
   },
-} satisfies FoldableImplementation<typeof RecordT>;
+});
 
-RecordT[foldable_trait] = record_foldable;
-RecordT.fold = record_foldable.fold;
+export interface RecordDictionary extends Foldable.Trait<typeof RecordT> {}
 
-export interface RecordDictionary
-  extends Foldable<typeof RecordT>, FoldableImplementation<typeof RecordT> {}
-
-const record_traversable = {
+Traversable.implement(RecordT, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: RecordValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -211,12 +173,6 @@ const record_traversable = {
 
     return out;
   },
-} satisfies TraversableImplementation<typeof RecordT>;
+});
 
-RecordT[traversable_trait] = record_traversable;
-RecordT.traverse = record_traversable.traverse;
-
-export interface RecordDictionary
-  extends
-    Traversable<typeof RecordT>,
-    TraversableImplementation<typeof RecordT> {}
+export interface RecordDictionary extends Traversable.Trait<typeof RecordT> {}

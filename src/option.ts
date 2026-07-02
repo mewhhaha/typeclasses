@@ -7,29 +7,13 @@ import {
 } from "./trait.ts";
 import {
   Alternative,
-  alternative_trait,
-  type AlternativeImplementation,
   Applicative,
-  applicative_trait,
-  type ApplicativeImplementation,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monad,
-  monad_trait,
-  type MonadImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type Option<item> =
@@ -85,7 +69,7 @@ export function from_nullable<item>(
   return Option(option_some<item>(value));
 }
 
-const option_format = {
+Format.implement(Option, {
   fmt(this: OptionValue<unknown> | void): string {
     const option = require_this(this, "Option.Format.fmt").value();
 
@@ -95,15 +79,11 @@ const option_format = {
 
     return "Some(" + Deno.inspect(option.value) + ")";
   },
-} satisfies FormatImplementation<typeof Option>;
+});
 
-Option[format_trait] = option_format;
-Option.fmt = option_format.fmt;
+export interface OptionDictionary extends Format.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Format<typeof Option>, FormatImplementation<typeof Option> {}
-
-const option_equal = {
+Equal.implement(Option, {
   eq<item>(
     this: OptionValue<item> | void,
     right: OptionValue<item>,
@@ -121,15 +101,11 @@ const option_equal = {
 
     return false;
   },
-} satisfies EqualImplementation<typeof Option>;
+});
 
-Option[equal_trait] = option_equal;
-Option.eq = option_equal.eq;
+export interface OptionDictionary extends Equal.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Equal<typeof Option>, EqualImplementation<typeof Option> {}
-
-const option_functor = {
+Functor.implement(Option, {
   map<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => to,
@@ -142,15 +118,11 @@ const option_functor = {
 
     return some(fn(option.value));
   },
-} satisfies FunctorImplementation<typeof Option>;
+});
 
-Option[functor_trait] = option_functor;
-Option.map = option_functor.map;
+export interface OptionDictionary extends Functor.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Functor<typeof Option>, FunctorImplementation<typeof Option> {}
-
-const option_applicative = {
+Applicative.implement(Option, {
   pure<item>(value: item): OptionValue<item> {
     return some(value);
   },
@@ -172,18 +144,11 @@ const option_applicative = {
 
     return some(fn.value(option.value));
   },
-} satisfies ApplicativeImplementation<typeof Option>;
+});
 
-Option[applicative_trait] = option_applicative;
-Option.pure = option_applicative.pure;
-Option.ap = option_applicative.ap;
+export interface OptionDictionary extends Applicative.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends
-    Applicative<typeof Option>,
-    ApplicativeImplementation<typeof Option> {}
-
-const option_alternative = {
+Alternative.implement(Option, {
   empty<item>(): OptionValue<item> {
     return none<item>();
   },
@@ -200,18 +165,11 @@ const option_alternative = {
 
     return right;
   },
-} satisfies AlternativeImplementation<typeof Option>;
+});
 
-Option[alternative_trait] = option_alternative;
-Option.empty = option_alternative.empty;
-Option.alt = option_alternative.alt;
+export interface OptionDictionary extends Alternative.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends
-    Alternative<typeof Option>,
-    AlternativeImplementation<typeof Option> {}
-
-const option_monad = {
+Monad.implement(Option, {
   bind<from, to>(
     this: OptionValue<from> | void,
     fn: (value: from) => OptionValue<to>,
@@ -224,15 +182,11 @@ const option_monad = {
 
     return fn(option.value);
   },
-} satisfies MonadImplementation<typeof Option>;
+});
 
-Option[monad_trait] = option_monad;
-Option.bind = option_monad.bind;
+export interface OptionDictionary extends Monad.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Monad<typeof Option>, MonadImplementation<typeof Option> {}
-
-const option_foldable = {
+Foldable.implement(Option, {
   fold<item, out>(
     this: OptionValue<item> | void,
     initial: out,
@@ -246,15 +200,11 @@ const option_foldable = {
 
     return fn(initial, option.value);
   },
-} satisfies FoldableImplementation<typeof Option>;
+});
 
-Option[foldable_trait] = option_foldable;
-Option.fold = option_foldable.fold;
+export interface OptionDictionary extends Foldable.Trait<typeof Option> {}
 
-export interface OptionDictionary
-  extends Foldable<typeof Option>, FoldableImplementation<typeof Option> {}
-
-const option_traversable = {
+Traversable.implement(Option, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: OptionValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -268,15 +218,9 @@ const option_traversable = {
 
     return Functor.map(fn(option.value), (value) => some(value));
   },
-} satisfies TraversableImplementation<typeof Option>;
+});
 
-Option[traversable_trait] = option_traversable;
-Option.traverse = option_traversable.traverse;
-
-export interface OptionDictionary
-  extends
-    Traversable<typeof Option>,
-    TraversableImplementation<typeof Option> {}
+export interface OptionDictionary extends Traversable.Trait<typeof Option> {}
 
 function option_some<item>(value: item): Some<item> {
   return { tag: "some", value };

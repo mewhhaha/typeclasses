@@ -1,18 +1,5 @@
 import { kind, require_this, trait_constructor, type Value } from "./trait.ts";
-import {
-  Applicative,
-  applicative_trait,
-  type ApplicativeImplementation,
-  Format,
-  format_trait,
-  type FormatImplementation,
-  Functor,
-  functor_trait,
-  type FunctorImplementation,
-  Monad,
-  monad_trait,
-  type MonadImplementation,
-} from "./traits.ts";
+import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type Task<item> = () => Promise<item>;
 
@@ -61,20 +48,16 @@ export function run<item>(task: TaskValue<item>): Promise<item> {
   return task.value()();
 }
 
-const task_format = {
+Format.implement(Task, {
   fmt(this: TaskValue<unknown> | void): string {
     require_this(this, "Task.Format.fmt");
     return "Task(?)";
   },
-} satisfies FormatImplementation<typeof Task>;
+});
 
-Task[format_trait] = task_format;
-Task.fmt = task_format.fmt;
+export interface TaskDictionary extends Format.Trait<typeof Task> {}
 
-export interface TaskDictionary
-  extends Format<typeof Task>, FormatImplementation<typeof Task> {}
-
-const task_functor = {
+Functor.implement(Task, {
   map<from, to>(
     this: TaskValue<from> | void,
     fn: (value: from) => to,
@@ -83,15 +66,11 @@ const task_functor = {
 
     return Task(async () => fn(await run(task)));
   },
-} satisfies FunctorImplementation<typeof Task>;
+});
 
-Task[functor_trait] = task_functor;
-Task.map = task_functor.map;
+export interface TaskDictionary extends Functor.Trait<typeof Task> {}
 
-export interface TaskDictionary
-  extends Functor<typeof Task>, FunctorImplementation<typeof Task> {}
-
-const task_applicative = {
+Applicative.implement(Task, {
   pure<item>(
     value: item,
   ): TaskValue<item> {
@@ -109,16 +88,11 @@ const task_applicative = {
       return fn(item);
     });
   },
-} satisfies ApplicativeImplementation<typeof Task>;
+});
 
-Task[applicative_trait] = task_applicative;
-Task.pure = task_applicative.pure;
-Task.ap = task_applicative.ap;
+export interface TaskDictionary extends Applicative.Trait<typeof Task> {}
 
-export interface TaskDictionary
-  extends Applicative<typeof Task>, ApplicativeImplementation<typeof Task> {}
-
-const task_monad = {
+Monad.implement(Task, {
   bind<from, to>(
     this: TaskValue<from> | void,
     fn: (value: from) => TaskValue<to>,
@@ -130,10 +104,6 @@ const task_monad = {
       return await run(fn(value));
     });
   },
-} satisfies MonadImplementation<typeof Task>;
+});
 
-Task[monad_trait] = task_monad;
-Task.bind = task_monad.bind;
-
-export interface TaskDictionary
-  extends Monad<typeof Task>, MonadImplementation<typeof Task> {}
+export interface TaskDictionary extends Monad.Trait<typeof Task> {}

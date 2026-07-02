@@ -7,35 +7,15 @@ import {
 } from "./trait.ts";
 import {
   Alternative,
-  alternative_trait,
-  type AlternativeImplementation,
   Applicative,
-  applicative_trait,
-  type ApplicativeImplementation,
   Equal,
-  equal_trait,
-  type EqualImplementation,
   Foldable,
-  foldable_trait,
-  type FoldableImplementation,
   Format,
-  format_trait,
-  type FormatImplementation,
   Functor,
-  functor_trait,
-  type FunctorImplementation,
   Monad,
-  monad_trait,
-  type MonadImplementation,
   Monoid,
-  monoid_trait,
-  type MonoidImplementation,
   Semigroup,
-  semigroup_trait,
-  type SemigroupImplementation,
   Traversable,
-  traversable_trait,
-  type TraversableImplementation,
 } from "./traits.ts";
 
 export type ArrayT<item> = readonly item[];
@@ -73,20 +53,16 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
   return [...array.value()];
 }
 
-const array_format = {
+Format.implement(ArrayT, {
   fmt(this: ArrayValue<unknown> | void): string {
     const array = require_this(this, "ArrayT.Format.fmt").value();
     return Deno.inspect(array);
   },
-} satisfies FormatImplementation<typeof ArrayT>;
+});
 
-ArrayT[format_trait] = array_format;
-ArrayT.fmt = array_format.fmt;
+export interface ArrayDictionary extends Format.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Format<typeof ArrayT>, FormatImplementation<typeof ArrayT> {}
-
-const array_equal = {
+Equal.implement(ArrayT, {
   eq<item>(
     this: ArrayValue<item> | void,
     right: ArrayValue<item>,
@@ -106,15 +82,11 @@ const array_equal = {
 
     return true;
   },
-} satisfies EqualImplementation<typeof ArrayT>;
+});
 
-ArrayT[equal_trait] = array_equal;
-ArrayT.eq = array_equal.eq;
+export interface ArrayDictionary extends Equal.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Equal<typeof ArrayT>, EqualImplementation<typeof ArrayT> {}
-
-const array_functor = {
+Functor.implement(ArrayT, {
   map<from, to>(
     this: ArrayValue<from> | void,
     fn: (value: from) => to,
@@ -128,15 +100,11 @@ const array_functor = {
 
     return ArrayT(out);
   },
-} satisfies FunctorImplementation<typeof ArrayT>;
+});
 
-ArrayT[functor_trait] = array_functor;
-ArrayT.map = array_functor.map;
+export interface ArrayDictionary extends Functor.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Functor<typeof ArrayT>, FunctorImplementation<typeof ArrayT> {}
-
-const array_applicative = {
+Applicative.implement(ArrayT, {
   pure<item>(value: item): ArrayValue<item> {
     return ArrayT([value]);
   },
@@ -156,18 +124,11 @@ const array_applicative = {
 
     return ArrayT(out);
   },
-} satisfies ApplicativeImplementation<typeof ArrayT>;
+});
 
-ArrayT[applicative_trait] = array_applicative;
-ArrayT.pure = array_applicative.pure;
-ArrayT.ap = array_applicative.ap;
+export interface ArrayDictionary extends Applicative.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends
-    Applicative<typeof ArrayT>,
-    ApplicativeImplementation<typeof ArrayT> {}
-
-const array_semigroup = {
+Semigroup.implement(ArrayT, {
   concat<item>(
     this: ArrayValue<item> | void,
     right: ArrayValue<item>,
@@ -175,27 +136,19 @@ const array_semigroup = {
     const left = require_this(this, "ArrayT.Semigroup.concat").value();
     return ArrayT([...left, ...right.value()]);
   },
-} satisfies SemigroupImplementation<typeof ArrayT>;
+});
 
-ArrayT[semigroup_trait] = array_semigroup;
-ArrayT.concat = array_semigroup.concat;
+export interface ArrayDictionary extends Semigroup.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Semigroup<typeof ArrayT>, SemigroupImplementation<typeof ArrayT> {}
-
-const array_monoid = {
+Monoid.implement(ArrayT, {
   empty<item>(): ArrayValue<item> {
     return ArrayT<item>([]);
   },
-} satisfies MonoidImplementation<typeof ArrayT>;
+});
 
-ArrayT[monoid_trait] = array_monoid;
-ArrayT.empty = array_monoid.empty;
+export interface ArrayDictionary extends Monoid.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Monoid<typeof ArrayT>, MonoidImplementation<typeof ArrayT> {}
-
-const array_alternative = {
+Alternative.implement(ArrayT, {
   empty<item>(): ArrayValue<item> {
     return ArrayT<item>([]);
   },
@@ -207,17 +160,11 @@ const array_alternative = {
     const left = require_this(this, "ArrayT.Alternative.alt").value();
     return ArrayT([...left, ...right.value()]);
   },
-} satisfies AlternativeImplementation<typeof ArrayT>;
+});
 
-ArrayT[alternative_trait] = array_alternative;
-ArrayT.alt = array_alternative.alt;
+export interface ArrayDictionary extends Alternative.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends
-    Alternative<typeof ArrayT>,
-    AlternativeImplementation<typeof ArrayT> {}
-
-const array_monad = {
+Monad.implement(ArrayT, {
   bind<from, to>(
     this: ArrayValue<from> | void,
     fn: (value: from) => ArrayValue<to>,
@@ -231,15 +178,11 @@ const array_monad = {
 
     return ArrayT(out);
   },
-} satisfies MonadImplementation<typeof ArrayT>;
+});
 
-ArrayT[monad_trait] = array_monad;
-ArrayT.bind = array_monad.bind;
+export interface ArrayDictionary extends Monad.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Monad<typeof ArrayT>, MonadImplementation<typeof ArrayT> {}
-
-const array_foldable = {
+Foldable.implement(ArrayT, {
   fold<item, out>(
     this: ArrayValue<item> | void,
     initial: out,
@@ -254,15 +197,11 @@ const array_foldable = {
 
     return state;
   },
-} satisfies FoldableImplementation<typeof ArrayT>;
+});
 
-ArrayT[foldable_trait] = array_foldable;
-ArrayT.fold = array_foldable.fold;
+export interface ArrayDictionary extends Foldable.Trait<typeof ArrayT> {}
 
-export interface ArrayDictionary
-  extends Foldable<typeof ArrayT>, FoldableImplementation<typeof ArrayT> {}
-
-const array_traversable = {
+Traversable.implement(ArrayT, {
   traverse<applicative extends Dictionary & Applicative<applicative>, from, to>(
     this: ArrayValue<from> | void,
     applicative: Value<applicative, unknown>,
@@ -281,12 +220,6 @@ const array_traversable = {
 
     return out;
   },
-} satisfies TraversableImplementation<typeof ArrayT>;
+});
 
-ArrayT[traversable_trait] = array_traversable;
-ArrayT.traverse = array_traversable.traverse;
-
-export interface ArrayDictionary
-  extends
-    Traversable<typeof ArrayT>,
-    TraversableImplementation<typeof ArrayT> {}
+export interface ArrayDictionary extends Traversable.Trait<typeof ArrayT> {}

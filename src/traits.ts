@@ -1,5 +1,16 @@
 import type { Dictionary, Receiver, Value } from "./trait.ts";
 
+export function implement_trait<implementation extends object>(
+  dictionary: object,
+  token: PropertyKey,
+  implementation: implementation,
+): implementation {
+  Object.assign(dictionary, implementation);
+  (dictionary as { [key: PropertyKey]: unknown })[token] = implementation;
+
+  return implementation;
+}
+
 function call_trait_method<out>(
   method: Function,
   receiver: unknown,
@@ -19,6 +30,19 @@ export interface Format<dictionary extends Dictionary> {
 }
 
 export function Format() {}
+
+export namespace Format {
+  export type Trait<dictionary extends Dictionary> =
+    & Format<dictionary>
+    & FormatImplementation<dictionary>;
+}
+
+Format.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: FormatImplementation<dictionary>,
+): FormatImplementation<dictionary> {
+  return implement_trait(dictionary, format_trait, implementation);
+};
 
 Format.fmt = function fmt<dictionary extends Dictionary & Format<dictionary>>(
   value: Value<dictionary, unknown>,
@@ -40,6 +64,19 @@ export interface Equal<dictionary extends Dictionary> {
 }
 
 export function Equal() {}
+
+export namespace Equal {
+  export type Trait<dictionary extends Dictionary> =
+    & Equal<dictionary>
+    & EqualImplementation<dictionary>;
+}
+
+Equal.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: EqualImplementation<dictionary>,
+): EqualImplementation<dictionary> {
+  return implement_trait(dictionary, equal_trait, implementation);
+};
 
 Equal.eq = function eq<
   dictionary extends Dictionary & Equal<dictionary>,
@@ -66,6 +103,19 @@ export interface Semigroup<dictionary extends Dictionary> {
 
 export function Semigroup() {}
 
+export namespace Semigroup {
+  export type Trait<dictionary extends Dictionary> =
+    & Semigroup<dictionary>
+    & SemigroupImplementation<dictionary>;
+}
+
+Semigroup.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: SemigroupImplementation<dictionary>,
+): SemigroupImplementation<dictionary> {
+  return implement_trait(dictionary, semigroup_trait, implementation);
+};
+
 Semigroup.concat = function concat<
   dictionary extends Dictionary & Semigroup<dictionary>,
   item,
@@ -88,6 +138,19 @@ export interface Monoid<dictionary extends Dictionary>
 }
 
 export function Monoid() {}
+
+export namespace Monoid {
+  export type Trait<dictionary extends Dictionary> =
+    & Monoid<dictionary>
+    & MonoidImplementation<dictionary>;
+}
+
+Monoid.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: MonoidImplementation<dictionary>,
+): MonoidImplementation<dictionary> {
+  return implement_trait(dictionary, monoid_trait, implementation);
+};
 
 Monoid.empty = function empty<
   dictionary extends Dictionary & Monoid<dictionary>,
@@ -114,6 +177,19 @@ export interface Functor<dictionary extends Dictionary> {
 }
 
 export function Functor() {}
+
+export namespace Functor {
+  export type Trait<dictionary extends Dictionary> =
+    & Functor<dictionary>
+    & FunctorImplementation<dictionary>;
+}
+
+Functor.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: FunctorImplementation<dictionary>,
+): FunctorImplementation<dictionary> {
+  return implement_trait(dictionary, functor_trait, implementation);
+};
 
 Functor.map = function map<
   dictionary extends Dictionary & Functor<dictionary>,
@@ -142,6 +218,19 @@ export interface Applicative<dictionary extends Dictionary>
 }
 
 export function Applicative() {}
+
+export namespace Applicative {
+  export type Trait<dictionary extends Dictionary> =
+    & Applicative<dictionary>
+    & ApplicativeImplementation<dictionary>;
+}
+
+Applicative.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: ApplicativeImplementation<dictionary>,
+): ApplicativeImplementation<dictionary> {
+  return implement_trait(dictionary, applicative_trait, implementation);
+};
 
 Applicative.pure = function pure<
   dictionary extends Dictionary & Applicative<dictionary>,
@@ -180,6 +269,19 @@ export interface Alternative<dictionary extends Dictionary>
 }
 
 export function Alternative() {}
+
+export namespace Alternative {
+  export type Trait<dictionary extends Dictionary> =
+    & Alternative<dictionary>
+    & AlternativeImplementation<dictionary>;
+}
+
+Alternative.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: AlternativeImplementation<dictionary>,
+): AlternativeImplementation<dictionary> {
+  return implement_trait(dictionary, alternative_trait, implementation);
+};
 
 Alternative.empty = function empty<
   dictionary extends Dictionary & Alternative<dictionary>,
@@ -220,6 +322,19 @@ type PerformGenerator<
 > = Generator<Value<dictionary, any>, out, any>;
 
 export function Monad() {}
+
+export namespace Monad {
+  export type Trait<dictionary extends Dictionary> =
+    & Monad<dictionary>
+    & MonadImplementation<dictionary>;
+}
+
+Monad.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: MonadImplementation<dictionary>,
+): MonadImplementation<dictionary> {
+  return implement_trait(dictionary, monad_trait, implementation);
+};
 
 Monad.bind = function bind<
   dictionary extends Dictionary & Monad<dictionary>,
@@ -295,6 +410,19 @@ export interface Foldable<dictionary extends Dictionary> {
 
 export function Foldable() {}
 
+export namespace Foldable {
+  export type Trait<dictionary extends Dictionary> =
+    & Foldable<dictionary>
+    & FoldableImplementation<dictionary>;
+}
+
+Foldable.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: FoldableImplementation<dictionary>,
+): FoldableImplementation<dictionary> {
+  return implement_trait(dictionary, foldable_trait, implementation);
+};
+
 Foldable.fold = function fold<
   dictionary extends Dictionary & Foldable<dictionary>,
   item,
@@ -327,6 +455,19 @@ export interface Traversable<dictionary extends Dictionary>
 }
 
 export function Traversable() {}
+
+export namespace Traversable {
+  export type Trait<dictionary extends Dictionary> =
+    & Traversable<dictionary>
+    & TraversableImplementation<dictionary>;
+}
+
+Traversable.implement = function implement<dictionary extends Dictionary>(
+  dictionary: dictionary,
+  implementation: TraversableImplementation<dictionary>,
+): TraversableImplementation<dictionary> {
+  return implement_trait(dictionary, traversable_trait, implementation);
+};
 
 Traversable.traverse = function traverse<
   dictionary extends Dictionary & Traversable<dictionary>,
