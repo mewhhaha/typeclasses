@@ -19,7 +19,6 @@ export function Task<item>(
   return trait<typeof Task, Task<item>, item>(
     Task,
     run,
-    is_task,
   );
 }
 
@@ -113,8 +112,4 @@ declare module "./traits.ts" {
   interface MonadImpl {
     [task_kind]: Monad<typeof Task>;
   }
-}
-
-function is_task<item>(value: unknown): value is Task<item> {
-  return typeof value === "function";
 }

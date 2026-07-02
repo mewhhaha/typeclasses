@@ -29,7 +29,6 @@ export function Result<item>(
   return trait<typeof Result, Result<item, string>, item>(
     Result,
     value,
-    is_result,
   );
 }
 
@@ -179,32 +178,6 @@ declare module "./traits.ts" {
   interface FoldableImpl {
     [result_kind]: Foldable<typeof Result>;
   }
-}
-
-function is_result<item>(value: unknown): value is Result<item, string> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  const candidate = value as {
-    tag?: unknown;
-    value?: unknown;
-    error?: unknown;
-  };
-
-  if (candidate.tag === "ok") {
-    return Object.hasOwn(candidate, "value");
-  }
-
-  if (candidate.tag === "err") {
-    return Object.hasOwn(candidate, "error");
-  }
-
-  return false;
 }
 
 function result_ok<item>(value: item): Ok<item> {

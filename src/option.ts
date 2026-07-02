@@ -29,7 +29,6 @@ export function Option<item>(
   return trait<typeof Option, Option<item>, item>(
     Option,
     value,
-    is_option,
   );
 }
 
@@ -185,28 +184,6 @@ declare module "./traits.ts" {
   interface FoldableImpl {
     [option_kind]: Foldable<typeof Option>;
   }
-}
-
-function is_option<item>(value: unknown): value is Option<item> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  const candidate = value as { tag?: unknown; value?: unknown };
-
-  if (candidate.tag === "none") {
-    return true;
-  }
-
-  if (candidate.tag === "some") {
-    return Object.hasOwn(candidate, "value");
-  }
-
-  return false;
 }
 
 function option_some<item>(value: item): Some<item> {

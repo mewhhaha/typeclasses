@@ -28,7 +28,6 @@ export function List<item>(
   return trait<typeof List, List<item>, item>(
     List,
     value,
-    is_list,
   );
 }
 
@@ -204,30 +203,6 @@ declare module "./traits.ts" {
   interface FoldableImpl {
     [list_kind]: Foldable<typeof List>;
   }
-}
-
-function is_list<item>(value: unknown): value is List<item> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  const candidate = value as { tag?: unknown; head?: unknown; tail?: unknown };
-
-  if (candidate.tag === "nil") {
-    return true;
-  }
-
-  if (candidate.tag === "cons") {
-    return Object.hasOwn(candidate, "head") &&
-      Object.hasOwn(candidate, "tail") &&
-      is_list(candidate.tail);
-  }
-
-  return false;
 }
 
 function list_nil<item>(): List<item> {
