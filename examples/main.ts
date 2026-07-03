@@ -24,7 +24,7 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Alternative, Format, perform, Traversable } from "../src/traits.ts";
+import { Alternative, Do, Format, Traversable } from "../src/traits.ts";
 
 const size_trait = Symbol("Size");
 
@@ -117,7 +117,7 @@ const traversed_record = Traversable.traverse(
 const decoded_account = decode_account_payload({
   account: { id: "42", active: true },
 });
-const task_result = perform(function* () {
+const task_result = Do(function* () {
   const text = yield* from_fn(() => Promise.resolve("42"));
   const value = yield* from_fn(() => {
     return Promise.resolve(Number.parseInt(text, 10));
@@ -145,10 +145,10 @@ console.log("map functor", Deno.inspect(map_to_record(mapped_map)));
 console.log("record functor", Deno.inspect(record_to_record(mapped_record)));
 console.log("record traverse result", traversed_record.fmt());
 console.log("decoded account", decoded_account.fmt());
-console.log("task perform result", await run(task_result));
+console.log("task Do result", await run(task_result));
 
 function decode_account_payload(input: unknown) {
-  return perform(function* () {
+  return Do(function* () {
     const root = yield* object_value(input, "payload");
     const account_value = yield* field(root, "account");
     const account = yield* object_value(account_value, "account");

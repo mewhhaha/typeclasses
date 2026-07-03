@@ -37,13 +37,13 @@ import {
 import {
   Alternative,
   Applicative,
+  Do,
   Equal,
   Foldable,
   Format,
   Functor,
   Monad,
   Monoid,
-  perform,
   Semigroup,
   Traversable,
 } from "./traits.ts";
@@ -282,7 +282,7 @@ Deno.test("Monad chains computations that choose the next context", () => {
   assert_equals(parsed.value(), result_ok(42).value());
 });
 
-Deno.test("perform chains monadic generator yields with bind", () => {
+Deno.test("Do chains monadic generator yields with bind", () => {
   const decoded = decode_account_payload({
     account: { id: "42", active: true },
   });
@@ -292,12 +292,12 @@ Deno.test("perform chains monadic generator yields with bind", () => {
   const malformed = decode_account_payload({
     account: { id: 42, active: true },
   });
-  const missing = perform(function* () {
+  const missing = Do(function* () {
     const value = yield* option_none<number>();
 
     return value + 1;
   });
-  const list = perform(function* () {
+  const list = Do(function* () {
     const left = yield* list_from_array([1, 2]);
     const right = yield* list_from_array([10, 20]);
 
@@ -330,7 +330,7 @@ Deno.test("Task monad defers and chains async work", async () => {
   );
   const applied = task_succeed((value: number) => value + 1)
     .ap(task_succeed(41));
-  const computed = perform(function* () {
+  const computed = Do(function* () {
     const text = yield* task_from_fn(() => Promise.resolve("40"));
     const right = yield* task_succeed(2);
 
@@ -581,7 +581,7 @@ Deno.test("Generic monad helper lets each context define failure", () => {
 });
 
 function decode_account_payload(input: unknown) {
-  return perform(function* () {
+  return Do(function* () {
     const root = yield* object_value(input, "payload");
     const account_value = yield* field(root, "account");
     const account = yield* object_value(account_value, "account");

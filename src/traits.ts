@@ -256,7 +256,7 @@ export interface Monad<dictionary extends Dictionary> extends
   >,
   Applicative<dictionary> {}
 
-type PerformGenerator<
+type DoGenerator<
   dictionary extends Monad<dictionary>,
   out,
 > = Generator<Value<dictionary, unknown>, out, unknown>;
@@ -278,13 +278,13 @@ export const Monad = define_trait(monad_trait, {
   },
 });
 
-export function perform<dictionary extends Monad<dictionary>, out>(
-  run: () => PerformGenerator<dictionary, out>,
+export function Do<dictionary extends Monad<dictionary>, out>(
+  run: () => DoGenerator<dictionary, out>,
 ): Value<dictionary, out> {
   const first = run_with([]);
 
   if (first.done) {
-    throw new TypeError("perform requires at least one yielded value");
+    throw new TypeError("Do requires at least one yielded value");
   }
 
   return step([], first.value);

@@ -8,7 +8,7 @@ complete functional programming library:
 
 - `Functor` for `map`
 - `Applicative` for `pure` and `ap`
-- `Monad` for `bind` and `perform`
+- `Monad` for `bind` and `Do`
 - `Foldable` for `fold`
 - `Traversable` for flipping structures through an applicative
 - `Semigroup` and `Monoid` for appendable/empty structures
@@ -222,11 +222,11 @@ const parsed = ok("42").bind((text) => {
 parsed.value(); // { tag: "ok", value: 42 }
 ```
 
-`perform` is a small do-notation experiment. It runs a generator over one monad
+`Do` is a small do-notation experiment. It runs a generator over one monad
 dictionary and uses `yield*` to bind each wrapped value:
 
 ```ts
-const decoded = perform(function* () {
+const decoded = Do(function* () {
   const text = yield* ok("42");
   const number = yield* from_number(Number.parseInt(text, 10));
 
@@ -239,7 +239,7 @@ decoded.value(); // { tag: "ok", value: 43 }
 `Task` shows the same trait shape for deferred async work:
 
 ```ts
-const greeting = perform(function* () {
+const greeting = Do(function* () {
   const id = yield* from_fn(async () => 7);
   const name = yield* from_fn(async () => "Ada #" + id);
 
