@@ -283,16 +283,14 @@ aliases onto the dictionary.
 ## Benchmarks
 
 `bench/value_construction.bench.ts` compares the current prototype-chain wrapper
-against the previous proxy-style baseline, constructor-cache variants, and
-cheaper construction shapes. Each benchmark iteration performs 10,000 inner-loop
-constructions or read cycles:
+against constructor-cache variants and cheaper construction shapes. Each
+benchmark iteration performs 10,000 inner-loop constructions or read cycles:
 
 - raw option payload construction
 - current `some(...)`, `Option(raw)`, and `as_trait(dictionary, raw)`
   construction
 - cached `as_trait_cached(dictionary)(raw)` construction
 - WeakMap, hidden-symbol, and lazy self-replacing constructor-cache variants
-- legacy proxy-style trait construction
 - tuple `[dictionary, raw]` construction
 - record `{ dictionary, raw }` construction
 - prototype-backed symbol object construction
