@@ -342,6 +342,7 @@ Deno.test("Task monad defers and chains async work", async () => {
   assert_equals(events, ["read", "parse"]);
   assert_equals(await task_run(applied), 42);
   assert_equals(await task_run(computed), 42);
+  assert_equals(await task_run(computed), 42);
   assert_equals(computed.fmt(), "Task(?)");
 });
 
