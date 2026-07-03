@@ -1,7 +1,6 @@
 import {
-  type ContextDictionary,
   define_dictionary,
-  type DictionaryConstructorContext,
+  type DefinedDictionary,
   type Value,
 } from "./trait.ts";
 import {
@@ -17,7 +16,7 @@ import {
 
 export type MapT<item> = ReadonlyMap<string, item>;
 
-export const map_kind: unique symbol = Symbol("MapT");
+export const map_kind = Symbol("MapT");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -25,18 +24,13 @@ declare module "./trait.ts" {
   }
 }
 
-export interface MapDictionary extends ContextDictionary<typeof map_kind> {
-  <item>(map: MapT<item>): MapValue<item>;
-}
+export interface MapDictionary extends DefinedDictionary<typeof map_kind> {}
 
 type MapValue<item> = Value<MapDictionary, item>;
 
 export const MapT = define_dictionary<MapDictionary>(
   map_kind,
-  function <item>(
-    this: DictionaryConstructorContext<MapDictionary>,
-    map: MapT<item>,
-  ) {
+  function (map) {
     return this.as_trait(new Map(map));
   },
 );

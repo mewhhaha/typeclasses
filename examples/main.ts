@@ -26,7 +26,7 @@ import {
 } from "../src/examples.ts";
 import { Alternative, Format, perform, Traversable } from "../src/traits.ts";
 
-const size_trait: unique symbol = Symbol("Size");
+const size_trait = Symbol("Size");
 
 interface Size<dictionary extends Dictionary> extends
   TraitDictionary<

@@ -1,7 +1,6 @@
 import {
-  type ContextDictionary,
   define_dictionary,
-  type DictionaryConstructorContext,
+  type DefinedDictionary,
   type Value,
 } from "./trait.ts";
 import {
@@ -17,7 +16,7 @@ import {
 
 export type RecordT<item> = Readonly<Record<string, item>>;
 
-export const record_kind: unique symbol = Symbol("RecordT");
+export const record_kind = Symbol("RecordT");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -26,18 +25,13 @@ declare module "./trait.ts" {
 }
 
 export interface RecordDictionary
-  extends ContextDictionary<typeof record_kind> {
-  <item>(record: RecordT<item>): RecordValue<item>;
-}
+  extends DefinedDictionary<typeof record_kind> {}
 
 type RecordValue<item> = Value<RecordDictionary, item>;
 
 export const RecordT = define_dictionary<RecordDictionary>(
   record_kind,
-  function <item>(
-    this: DictionaryConstructorContext<RecordDictionary>,
-    record: RecordT<item>,
-  ) {
+  function (record) {
     return this.as_trait({ ...record });
   },
 );

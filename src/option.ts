@@ -1,8 +1,4 @@
-import {
-  type ContextDictionary,
-  define_dictionary,
-  type Value,
-} from "./trait.ts";
+import { define_dictionary, type DefinedDictionary } from "./trait.ts";
 import {
   Alternative,
   Applicative,
@@ -20,7 +16,7 @@ export type Option<item> =
 
 type Some<item> = { tag: "some"; value: item };
 
-export const option_kind: unique symbol = Symbol("Option");
+export const option_kind = Symbol("Option");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -29,27 +25,23 @@ declare module "./trait.ts" {
 }
 
 export interface OptionDictionary
-  extends ContextDictionary<typeof option_kind> {
-  <item>(value: Option<item>): OptionValue<item>;
-}
-
-type OptionValue<item> = Value<OptionDictionary, item>;
+  extends DefinedDictionary<typeof option_kind> {}
 
 export const Option = define_dictionary<OptionDictionary>(
   option_kind,
 );
 
-export function some<item>(value: item): OptionValue<item> {
+export function some<item>(value: item) {
   return Option(option_some(value));
 }
 
-export function none<item = never>(): OptionValue<item> {
+export function none<item = never>() {
   return Option(option_none<item>());
 }
 
 export function from_nullable<item>(
   value: item | null | undefined,
-): OptionValue<item> {
+) {
   if (value === null) {
     return none<item>();
   }

@@ -1,8 +1,8 @@
-const trait_brand: unique symbol = Symbol("Trait.brand");
-const trait_constructor_key: unique symbol = Symbol("Trait.constructor");
-const trait_dictionary: unique symbol = Symbol("Trait.dictionary");
-const trait_prototype_key: unique symbol = Symbol("Trait.prototype");
-const trait_value: unique symbol = Symbol("Trait.value");
+const trait_brand = Symbol("Trait.brand");
+const trait_constructor_key = Symbol("Trait.constructor");
+const trait_dictionary = Symbol("Trait.dictionary");
+const trait_prototype_key = Symbol("Trait.prototype");
+const trait_value = Symbol("Trait.value");
 
 type TraitBase<dictionary, value, item> = {
   readonly [trait_brand]: true;

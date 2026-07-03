@@ -1,6 +1,6 @@
 import {
-  type ContextDictionary,
   define_dictionary,
+  type DefinedDictionary,
   type Value,
 } from "./trait.ts";
 import {
@@ -18,7 +18,7 @@ import {
 
 export type ArrayT<item> = readonly item[];
 
-export const array_kind: unique symbol = Symbol("ArrayT");
+export const array_kind = Symbol("ArrayT");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -26,9 +26,7 @@ declare module "./trait.ts" {
   }
 }
 
-export interface ArrayDictionary extends ContextDictionary<typeof array_kind> {
-  <item>(items: ArrayT<item>): ArrayValue<item>;
-}
+export interface ArrayDictionary extends DefinedDictionary<typeof array_kind> {}
 
 type ArrayValue<item> = Value<ArrayDictionary, item>;
 

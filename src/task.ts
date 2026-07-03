@@ -1,13 +1,13 @@
 import {
-  type ContextDictionary,
   define_dictionary,
+  type DefinedDictionary,
   type Value,
 } from "./trait.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type Task<item> = () => Promise<item>;
 
-export const task_kind: unique symbol = Symbol("Task");
+export const task_kind = Symbol("Task");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -15,9 +15,7 @@ declare module "./trait.ts" {
   }
 }
 
-export interface TaskDictionary extends ContextDictionary<typeof task_kind> {
-  <item>(run: Task<item>): TaskValue<item>;
-}
+export interface TaskDictionary extends DefinedDictionary<typeof task_kind> {}
 
 type TaskValue<item> = Value<TaskDictionary, item>;
 

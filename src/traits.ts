@@ -6,7 +6,7 @@ import {
   type Value,
 } from "./trait.ts";
 
-export const format_trait: unique symbol = Symbol("Format");
+export const format_trait = Symbol("Format");
 
 export interface Format<dictionary extends Dictionary> extends
   TraitDictionary<
@@ -28,7 +28,7 @@ export const Format = define_trait(format_trait, {
   },
 });
 
-export const equal_trait: unique symbol = Symbol("Equal");
+export const equal_trait = Symbol("Equal");
 
 export interface Equal<dictionary extends Dictionary> extends
   TraitDictionary<
@@ -60,7 +60,7 @@ export const Equal = define_trait(equal_trait, {
   },
 });
 
-export const semigroup_trait: unique symbol = Symbol("Semigroup");
+export const semigroup_trait = Symbol("Semigroup");
 
 export interface Semigroup<dictionary extends Dictionary>
   extends
@@ -93,7 +93,7 @@ export const Semigroup = define_trait(semigroup_trait, {
   },
 });
 
-export const monoid_trait: unique symbol = Symbol("Monoid");
+export const monoid_trait = Symbol("Monoid");
 
 export interface Monoid<dictionary extends Dictionary> extends
   TraitDictionary<
@@ -135,7 +135,7 @@ export const Monoid = define_trait(monoid_trait, {
   },
 });
 
-export const functor_trait: unique symbol = Symbol("Functor");
+export const functor_trait = Symbol("Functor");
 
 export interface Functor<dictionary extends Dictionary> extends
   TraitDictionary<
@@ -168,7 +168,7 @@ export const Functor = define_trait(functor_trait, {
   },
 });
 
-export const applicative_trait: unique symbol = Symbol("Applicative");
+export const applicative_trait = Symbol("Applicative");
 
 export interface Applicative<dictionary extends Dictionary>
   extends
@@ -221,7 +221,7 @@ export const Applicative = define_trait(applicative_trait, {
   },
 });
 
-export const alternative_trait: unique symbol = Symbol("Alternative");
+export const alternative_trait = Symbol("Alternative");
 
 export interface Alternative<dictionary extends Dictionary>
   extends
@@ -272,7 +272,7 @@ export const Alternative = define_trait(alternative_trait, {
   },
 });
 
-export const monad_trait: unique symbol = Symbol("Monad");
+export const monad_trait = Symbol("Monad");
 
 export interface Monad<dictionary extends Dictionary> extends
   TraitDictionary<
@@ -356,7 +356,7 @@ export function perform<dictionary extends Monad<dictionary>, out>(
   }
 }
 
-export const foldable_trait: unique symbol = Symbol("Foldable");
+export const foldable_trait = Symbol("Foldable");
 
 export interface Foldable<dictionary extends Dictionary>
   extends
@@ -393,7 +393,7 @@ export const Foldable = define_trait(foldable_trait, {
   },
 });
 
-export const traversable_trait: unique symbol = Symbol("Traversable");
+export const traversable_trait = Symbol("Traversable");
 
 export interface Traversable<dictionary extends Dictionary>
   extends

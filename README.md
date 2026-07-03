@@ -50,18 +50,14 @@ The canonical trait slot is a unique symbol, so two traits can both have a
 method named `fmt` without sharing a runtime property.
 
 ```ts
-import {
-  type ContextDictionary,
-  define_dictionary,
-  type Value,
-} from "./trait.ts";
+import { define_dictionary, type DefinedDictionary } from "./trait.ts";
 import { Format, Monad } from "./traits.ts";
 
 export type Option<item> =
   | { tag: "some"; value: item }
   | { tag: "none" };
 
-export const option_kind: unique symbol = Symbol("Option");
+export const option_kind = Symbol("Option");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -70,11 +66,7 @@ declare module "./trait.ts" {
 }
 
 export interface OptionDictionary
-  extends ContextDictionary<typeof option_kind> {
-  <item>(value: Option<item>): OptionValue<item>;
-}
-
-type OptionValue<item> = Value<OptionDictionary, item>;
+  extends DefinedDictionary<typeof option_kind> {}
 
 export const Option = define_dictionary<OptionDictionary>(
   option_kind,
@@ -82,11 +74,11 @@ export const Option = define_dictionary<OptionDictionary>(
 
 export function some<item>(
   value: item,
-): OptionValue<item> {
+) {
   return Option({ tag: "some", value });
 }
 
-export function none<item = never>(): OptionValue<item> {
+export function none<item = never>() {
   return Option({ tag: "none" });
 }
 
@@ -189,7 +181,7 @@ import {
   type Value,
 } from "./trait.ts";
 
-const size_trait: unique symbol = Symbol("Size");
+const size_trait = Symbol("Size");
 
 interface Size<dictionary extends Dictionary> extends
   TraitDictionary<

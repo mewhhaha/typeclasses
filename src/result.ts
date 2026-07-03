@@ -1,8 +1,4 @@
-import {
-  type ContextDictionary,
-  define_dictionary,
-  type Value,
-} from "./trait.ts";
+import { define_dictionary, type DefinedDictionary } from "./trait.ts";
 import {
   Applicative,
   Equal,
@@ -19,7 +15,7 @@ export type Result<item, error = string> =
 
 type Ok<item> = { tag: "ok"; value: item };
 
-export const result_kind: unique symbol = Symbol("Result");
+export const result_kind = Symbol("Result");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -28,25 +24,21 @@ declare module "./trait.ts" {
 }
 
 export interface ResultDictionary
-  extends ContextDictionary<typeof result_kind> {
-  <item>(value: Result<item, string>): ResultValue<item>;
-}
-
-type ResultValue<item> = Value<ResultDictionary, item>;
+  extends DefinedDictionary<typeof result_kind> {}
 
 export const Result = define_dictionary<ResultDictionary>(
   result_kind,
 );
 
-export function ok<item>(value: item): ResultValue<item> {
+export function ok<item>(value: item) {
   return Result(result_ok(value));
 }
 
-export function err<item = never>(error: string): ResultValue<item> {
+export function err<item = never>(error: string) {
   return Result(result_err<item>(error));
 }
 
-export function from_number(value: number): ResultValue<number> {
+export function from_number(value: number) {
   if (Number.isFinite(value)) {
     return ok(value);
   }

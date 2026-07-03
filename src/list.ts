@@ -1,6 +1,6 @@
 import {
-  type ContextDictionary,
   define_dictionary,
+  type DefinedDictionary,
   type Value,
 } from "./trait.ts";
 import {
@@ -20,7 +20,7 @@ export type List<item> =
   | { tag: "nil" }
   | { tag: "cons"; head: item; tail: List<item> };
 
-export const list_kind: unique symbol = Symbol("List");
+export const list_kind = Symbol("List");
 
 declare module "./trait.ts" {
   interface ContextValues<item> {
@@ -28,9 +28,7 @@ declare module "./trait.ts" {
   }
 }
 
-export interface ListDictionary extends ContextDictionary<typeof list_kind> {
-  <item>(value: List<item>): ListValue<item>;
-}
+export interface ListDictionary extends DefinedDictionary<typeof list_kind> {}
 
 type ListValue<item> = Value<ListDictionary, item>;
 

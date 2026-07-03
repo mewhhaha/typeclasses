@@ -6,7 +6,7 @@ import {
 } from "./trait_value.ts";
 import type { Trait } from "./trait_value.ts";
 
-export const kind: unique symbol = Symbol("Trait.kind");
+export const kind = Symbol("Trait.kind");
 
 export type This<self> = self | void;
 
@@ -31,9 +31,10 @@ export type Dictionary<type_id = unknown> = {
   [kind]: type_id;
 };
 
-export type ContextDictionary<type_id extends PropertyKey> = Dictionary<
-  type_id
->;
+export interface DefinedDictionary<type_id extends PropertyKey>
+  extends Dictionary<type_id> {
+  <item>(value: ContextValue<this, item>): Value<this, item>;
+}
 
 export function as_trait<dictionary extends Dictionary, item>(
   dictionary: dictionary,
