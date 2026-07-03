@@ -4,6 +4,8 @@ import * as FpOption from "fp-ts/Option";
 import { pipe as fp_pipe } from "fp-ts/function";
 import { Left, Right } from "purify-ts/Either";
 import { Just, Nothing } from "purify-ts/Maybe";
+import * as TrueMaybe from "true-myth/maybe";
+import * as TrueResult from "true-myth/result";
 
 import { none, some } from "../src/option.ts";
 import { err, ok } from "../src/result.ts";
@@ -21,9 +23,12 @@ const fp_option_double = (value: number) => FpOption.some(double(value));
 const effect_option_double = (value: number) =>
   EffectOption.some(double(value));
 const purify_maybe_double = (value: number) => Just(double(value));
+const true_maybe_double = (value: number) => TrueMaybe.just(double(value));
 
 const fp_option_map_add_one = FpOption.map(add_one);
 const fp_option_chain_double = FpOption.chain(fp_option_double);
+const true_maybe_map_add_one = TrueMaybe.map(add_one);
+const true_maybe_and_then_double = TrueMaybe.andThen(true_maybe_double);
 
 const traits_result_double = (value: number) => ok(double(value));
 const fp_either_double = <error>(value: number) => {
@@ -32,9 +37,12 @@ const fp_either_double = <error>(value: number) => {
 const effect_either_double = (value: number) =>
   EffectEither.right(double(value));
 const purify_either_double = (value: number) => Right(double(value));
+const true_result_double = (value: number) => TrueResult.ok(double(value));
 
 const fp_either_map_add_one = FpEither.map(add_one);
 const fp_either_chain_double = FpEither.chain(fp_either_double);
+const true_result_map_add_one = TrueResult.map(add_one);
+const true_result_and_then_double = TrueResult.andThen(true_result_double);
 
 Deno.bench("traits Option some construction", () => {
   let current: unknown;
@@ -71,6 +79,16 @@ Deno.bench("purify Maybe Just construction", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     current = Just(index);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("true-myth Maybe just construction", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = TrueMaybe.just(index);
   }
 
   _sink = current;
@@ -135,6 +153,18 @@ Deno.bench("purify Maybe Just map+chain", () => {
   _sink = current;
 });
 
+Deno.bench("true-myth Maybe just map+andThen", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = true_maybe_and_then_double(
+      true_maybe_map_add_one(TrueMaybe.just(index)),
+    );
+  }
+
+  _sink = current;
+});
+
 Deno.bench("traits Option none map+bind", () => {
   let current: unknown;
 
@@ -192,6 +222,18 @@ Deno.bench("purify Maybe Nothing map+chain", () => {
   _sink = current;
 });
 
+Deno.bench("true-myth Maybe nothing map+andThen", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = true_maybe_and_then_double(
+      true_maybe_map_add_one(TrueMaybe.nothing<number>()),
+    );
+  }
+
+  _sink = current;
+});
+
 Deno.bench("traits Result ok construction", () => {
   let current: unknown;
 
@@ -227,6 +269,16 @@ Deno.bench("purify Either Right construction", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     current = Right(index);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("true-myth Result ok construction", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = TrueResult.ok<number, string>(index);
   }
 
   _sink = current;
@@ -291,11 +343,35 @@ Deno.bench("purify Either Right map+chain", () => {
   _sink = current;
 });
 
+Deno.bench("true-myth Result ok map+andThen", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = true_result_and_then_double(
+      true_result_map_add_one(TrueResult.ok<number, string>(index)),
+    );
+  }
+
+  _sink = current;
+});
+
 Deno.bench("traits Result err map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
     current = err<number>(error).map(add_one).bind(traits_result_double);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("true-myth Result err map+andThen", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = true_result_and_then_double(
+      true_result_map_add_one(TrueResult.err<number, string>(error)),
+    );
   }
 
   _sink = current;

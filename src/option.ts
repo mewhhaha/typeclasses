@@ -1,4 +1,4 @@
-import { type As, define } from "./trait.ts";
+import { type As, define, type Value } from "./trait.ts";
 import {
   Alternative,
   Applicative,
@@ -26,16 +26,19 @@ declare module "./trait.ts" {
 
 export interface AsOption extends As<typeof option_kind> {}
 
+type OptionValue<item> = Value<AsOption, item>;
+
 export const Option = define<AsOption>(
   option_kind,
 );
+const none_value = Option(option_none<never>());
 
 export function some<item>(value: item) {
   return Option(option_some(value));
 }
 
-export function none<item = never>() {
-  return Option(option_none<item>());
+export function none<item = never>(): OptionValue<item> {
+  return none_value as OptionValue<item>;
 }
 
 export function from_nullable<item>(
@@ -90,7 +93,7 @@ Functor.implement(Option)({
     const option = this.value();
 
     if (option.tag === "none") {
-      return none();
+      return same_context(this);
     }
 
     return some(fn(option.value));
@@ -109,11 +112,11 @@ Applicative.implement(Option)({
     const option = value.value();
 
     if (fn.tag === "none") {
-      return none();
+      return same_context(this);
     }
 
     if (option.tag === "none") {
-      return none();
+      return same_context(value);
     }
 
     return some(fn.value(option.value));
@@ -145,7 +148,7 @@ Monad.implement(Option)({
     const option = this.value();
 
     if (option.tag === "none") {
-      return none();
+      return same_context(this);
     }
 
     return fn(option.value);
@@ -188,4 +191,8 @@ function option_some<item>(value: item): Some<item> {
 
 function option_none<item = never>(): Option<item> {
   return { tag: "none" };
+}
+
+function same_context<out>(value: unknown): out {
+  return value as out;
 }

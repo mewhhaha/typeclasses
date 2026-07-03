@@ -25,7 +25,7 @@ deno task bench
 ```
 
 The comparison benchmarks use pinned npm packages through `deno.json` imports,
-so the first run may download `fp-ts`, `effect`, and `purify-ts`.
+so the first run may download `fp-ts`, `effect`, `purify-ts`, and `true-myth`.
 
 ## Shape
 
@@ -43,11 +43,11 @@ dictionary kind to the value it wraps, so `Value<typeof Option, item>` can
 recover that `Option` stores `Option<item>` without putting a phantom value
 member on every dictionary.
 
-Trait implementation functions receive the wrapped value as their first
-argument. The installer stores that receiver-first implementation in the
-canonical symbol slot and exposes fluent wrappers like `.fmt()` and `.map()`.
-The canonical trait slot is a unique symbol, so two traits can both have a
-method named `fmt` without sharing a runtime property.
+Trait implementation functions receive the wrapped value as `this`. The
+installer stores that this-based implementation in the canonical symbol slot and
+exposes direct fluent aliases like `.fmt()` and `.map()`. The canonical trait
+slot is a unique symbol, so two traits can both have a method named `fmt`
+without sharing a runtime property.
 
 ```ts
 import { type As, define } from "./trait.ts";
@@ -147,9 +147,8 @@ methods.
 
 The wrapped value's prototype points at a shared trait prototype, which
 delegates to the dictionary. Symbol-scoped implementations and direct fluent
-aliases are inherited through that prototype. Fluent wrappers assert that they
-were called with a receiver and then call the implementation with the wrapped
-value as `this`.
+aliases are inherited through that prototype. Since implementations are
+this-based, the fluent aliases can use the implementation functions directly.
 
 Data type modules use the same callable dictionary for public wrapping and their
 own constructors.
@@ -300,8 +299,8 @@ constructions or read cycles:
 - `value()` or direct payload reads for the current, tuple, and prototype shapes
 
 `bench/library_comparison.bench.ts` compares this repository's `Option` and
-`Result` wrappers with similar data types from `fp-ts`, `effect`, and
-`purify-ts`:
+`Result` wrappers with similar data types from `fp-ts`, `effect`, `purify-ts`,
+and `true-myth`:
 
 - `Option`/`Maybe` and `Result`/`Either` construction.
 - Happy-path `map` plus `bind`/`chain`/`flatMap` composition.
@@ -310,7 +309,8 @@ constructions or read cycles:
 These are microbenchmarks, not a full library ranking. The libraries expose
 different runtime shapes: this repo boxes values with a trait dictionary,
 `fp-ts` uses standalone combinators over plain tagged objects, `effect` uses
-optimized module functions, and `purify-ts` uses methods on ADT instances.
+optimized module functions, `purify-ts` uses methods on ADT instances, and
+`true-myth` uses standalone functions over ADT instances.
 
 Run it with:
 

@@ -127,38 +127,10 @@ export function implement_trait<implementation extends object>(
   token: PropertyKey,
   implementation: implementation,
 ): implementation {
-  Object.assign(dictionary, fluent_trait_methods(implementation));
+  Object.assign(dictionary, implementation);
   (dictionary as { [key: PropertyKey]: unknown })[token] = implementation;
 
   return implementation;
-}
-
-function fluent_trait_methods(implementation: object): object {
-  const methods: PropertyDescriptorMap = {};
-  const implementation_record = implementation as Record<PropertyKey, unknown>;
-
-  for (const key of Reflect.ownKeys(implementation)) {
-    const method = implementation_record[key];
-
-    if (typeof method !== "function") {
-      continue;
-    }
-
-    methods[key] = {
-      configurable: true,
-      enumerable: true,
-      value: function trait_method(this: unknown, ...args: unknown[]) {
-        if (this === undefined || this === null) {
-          throw new TypeError("trait method requires a receiver");
-        }
-
-        return Reflect.apply(method, this, args);
-      },
-      writable: true,
-    };
-  }
-
-  return Object.defineProperties({}, methods);
 }
 
 type TraitImplementation<

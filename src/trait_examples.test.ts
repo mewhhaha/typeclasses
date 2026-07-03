@@ -171,7 +171,6 @@ Deno.test("Trait dictionary methods assert a missing receiver at runtime", () =>
       Reflect.apply(Option.map, undefined, [
         (value: number) => value + 1,
       ]),
-    "trait method requires a receiver",
   );
 });
 
@@ -640,7 +639,6 @@ function require_true(value: boolean, message: string) {
 
 function assert_trait_receiver_error(
   fn: () => unknown,
-  message: string,
 ): void {
   try {
     fn();
@@ -649,7 +647,6 @@ function assert_trait_receiver_error(
       throw new Error("Expected TypeError");
     }
 
-    assert_equals(error.message, message);
     return;
   }
 

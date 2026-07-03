@@ -1,12 +1,8 @@
-const trait_brand = Symbol("Trait.brand");
 const trait_constructor_key = Symbol("Trait.constructor");
-const trait_dictionary = Symbol("Trait.dictionary");
 const trait_prototype_key = Symbol("Trait.prototype");
 const trait_value = Symbol("Trait.value");
 
 type TraitBase<dictionary, value, item> = {
-  readonly [trait_brand]: true;
-  readonly [trait_dictionary]: dictionary;
   readonly [trait_value]: value;
   [Symbol.iterator]: () => Generator<
     Trait<dictionary, value, item>,
@@ -21,8 +17,6 @@ export type Trait<dictionary, value, item = unknown> =
   & dictionary;
 
 type TraitTarget<dictionary, value, item> = {
-  [trait_brand]: true;
-  [trait_dictionary]: dictionary;
   [trait_value]: value;
 };
 
@@ -74,7 +68,13 @@ function create_trait_constructor<dictionary extends object>(
   const construct_trait = function construct_trait<value, item = unknown>(
     value: value,
   ): Trait<dictionary, value, item> {
-    return trait_from_prototype(dictionary, prototype, value);
+    const target = Object.create(
+      prototype,
+    ) as TraitTarget<dictionary, value, item>;
+
+    target[trait_value] = value;
+
+    return target as unknown as Trait<dictionary, value, item>;
   };
 
   Object.defineProperty(trait_dictionary, trait_constructor_key, {
@@ -82,22 +82,6 @@ function create_trait_constructor<dictionary extends object>(
   });
 
   return construct_trait;
-}
-
-function trait_from_prototype<dictionary, value, item>(
-  dictionary: dictionary,
-  prototype: object,
-  value: value,
-): Trait<dictionary, value, item> {
-  const target = Object.create(
-    prototype,
-  ) as TraitTarget<dictionary, value, item>;
-
-  target[trait_brand] = true;
-  target[trait_dictionary] = dictionary;
-  target[trait_value] = value;
-
-  return target as unknown as Trait<dictionary, value, item>;
 }
 
 export function is_trait(
@@ -111,8 +95,7 @@ export function is_trait(
     return false;
   }
 
-  const candidate = value as { [trait_brand]?: unknown };
-  return candidate[trait_brand] === true;
+  return trait_value in value;
 }
 
 function trait_prototype(dictionary: object): object {

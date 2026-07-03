@@ -83,7 +83,7 @@ Functor.implement(Result)({
     const result = this.value();
 
     if (result.tag === "err") {
-      return err(result.error);
+      return same_context(this);
     }
 
     return ok(fn(result.value));
@@ -102,11 +102,11 @@ Applicative.implement(Result)({
     const result = value.value();
 
     if (fn.tag === "err") {
-      return err(fn.error);
+      return same_context(this);
     }
 
     if (result.tag === "err") {
-      return err(result.error);
+      return same_context(value);
     }
 
     return ok(fn.value(result.value));
@@ -120,7 +120,7 @@ Monad.implement(Result)({
     const result = this.value();
 
     if (result.tag === "err") {
-      return err(result.error);
+      return same_context(this);
     }
 
     return fn(result.value);
@@ -163,4 +163,8 @@ function result_ok<item>(value: item): Ok<item> {
 
 function result_err<item = never>(error: string): Result<item> {
   return { tag: "err", error };
+}
+
+function same_context<out>(value: unknown): out {
+  return value as out;
 }

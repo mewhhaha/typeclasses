@@ -3,7 +3,8 @@
   "specifiers": {
     "npm:effect@3.21.4": "3.21.4",
     "npm:fp-ts@2.16.11": "2.16.11",
-    "npm:purify-ts@2.1.4": "2.1.4"
+    "npm:purify-ts@2.1.4": "2.1.4",
+    "npm:true-myth@9.1.0": "9.1.0"
   },
   "npm": {
     "@standard-schema/spec@1.1.0": {
@@ -36,13 +37,17 @@
       "dependencies": [
         "@types/json-schema"
       ]
+    },
+    "true-myth@9.1.0": {
+      "integrity": "sha512-YjUvyDXXlSLkdAauL1MeTh/skH6SCddCjhmX2vJHWev1VubXFhFn5DrG4Iy9xqWTchxpyuZYQsTCozRoMZcbAw=="
     }
   },
   "workspace": {
     "dependencies": [
       "npm:effect@3.21.4",
       "npm:fp-ts@2.16.11",
-      "npm:purify-ts@2.1.4"
+      "npm:purify-ts@2.1.4",
+      "npm:true-myth@9.1.0"
     ]
   }
 }

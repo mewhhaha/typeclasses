@@ -5,7 +5,9 @@
     "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
     "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
     "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
-    "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe"
+    "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
+    "true-myth/maybe": "npm:true-myth@9.1.0/maybe",
+    "true-myth/result": "npm:true-myth@9.1.0/result"
   },
   "tasks": {
     "bench": "deno bench bench/*.bench.ts",
