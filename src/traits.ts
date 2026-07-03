@@ -5,6 +5,7 @@ import {
   type TraitDictionary,
   type Value,
 } from "./trait.ts";
+import type { DoApBinding, DoApValue } from "./trait_value.ts";
 
 export const format_trait = Symbol("Format");
 
@@ -261,6 +262,15 @@ type DoGenerator<
   out,
 > = Generator<Value<dictionary, unknown>, out, unknown>;
 
+type DoApGenerator<
+  dictionary extends Applicative<dictionary>,
+  out,
+> = Generator<
+  Value<dictionary, unknown>,
+  (value: DoApValue) => out,
+  DoApBinding<unknown>
+>;
+
 type DoPath = {
   readonly previous: DoPath | undefined;
   readonly value: unknown;
@@ -379,6 +389,107 @@ function values_from_path(path: DoPath | undefined): unknown[] {
   }
 
   return values;
+}
+
+export function DoAp<dictionary extends Applicative<dictionary>, out>(
+  run: () => DoApGenerator<dictionary, out>,
+): Value<dictionary, out> {
+  const scopes = new WeakSet<object>();
+  const iterator = run();
+  const values: Value<dictionary, unknown>[] = [];
+  let next = iterator.next();
+
+  while (!next.done) {
+    const index = values.length;
+    values.push(next.value);
+    next = iterator.next(do_ap_accessor(index, scopes));
+  }
+
+  if (values.length === 0) {
+    throw new TypeError("DoAp requires at least one yielded value");
+  }
+
+  const combine = next.value;
+
+  let combined = Functor.map(values[0], (value): unknown[] => {
+    return [value];
+  });
+
+  for (let index = 1; index < values.length; index += 1) {
+    const current = values[index];
+    const append = Functor.map(combined, (items) => {
+      return (item: unknown) => [...items, item];
+    });
+
+    combined = Applicative.ap(append, current);
+  }
+
+  return Functor.map(combined, (values) => {
+    scopes.add(values);
+    return combine(values as unknown as DoApValue);
+  });
+}
+
+function do_ap_accessor(
+  index: number,
+  scopes: WeakSet<object>,
+): DoApBinding<unknown> {
+  const target = function do_ap_accessor_target(
+    value: DoApValue,
+  ): unknown {
+    if (!is_do_ap_scope(value, scopes)) {
+      throw do_ap_scope_error();
+    }
+
+    return (value as unknown as unknown[])[index];
+  };
+
+  return new Proxy(target, {
+    get() {
+      throw do_ap_scope_error();
+    },
+
+    apply(target, _this, [value]) {
+      return target(value as DoApValue);
+    },
+
+    construct() {
+      throw do_ap_scope_error();
+    },
+
+    has() {
+      throw do_ap_scope_error();
+    },
+
+    ownKeys() {
+      throw do_ap_scope_error();
+    },
+
+    getOwnPropertyDescriptor() {
+      throw do_ap_scope_error();
+    },
+  }) as DoApBinding<unknown>;
+}
+
+function is_do_ap_scope(
+  value: DoApValue,
+  scopes: WeakSet<object>,
+): value is DoApValue & object {
+  if (typeof value !== "object") {
+    return false;
+  }
+
+  if (value === null) {
+    return false;
+  }
+
+  return scopes.has(value);
+}
+
+function do_ap_scope_error(): TypeError {
+  return new TypeError(
+    "DoAp yielded values can only be read inside the returned function; use Do for dependent computations",
+  );
 }
 
 export const foldable_trait = Symbol("Foldable");

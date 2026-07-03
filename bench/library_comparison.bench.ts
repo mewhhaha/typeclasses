@@ -9,6 +9,8 @@ import * as TrueResult from "true-myth/result";
 
 import { none, some } from "../src/option.ts";
 import { err, ok } from "../src/result.ts";
+import { DoAp } from "../src/traits.ts";
+import { invalid, valid } from "../src/validation.ts";
 
 // Each benchmark iteration performs this many constructions or compositions.
 const iterations = 10_000;
@@ -104,6 +106,35 @@ Deno.bench("traits Option some map+bind", () => {
   _sink = current;
 });
 
+Deno.bench("traits Option some fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = some((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(some(index))
+      .ap(some(index + 1));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Option some DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* some(index);
+      const right = yield* some(index + 1);
+
+      return (value) => left(value) + right(value);
+    });
+  }
+
+  _sink = current;
+});
+
 Deno.bench("fp-ts Option some map+chain", () => {
   let current: unknown;
 
@@ -170,6 +201,35 @@ Deno.bench("traits Option none map+bind", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     current = none<number>().map(add_one).bind(traits_option_double);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Option none fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = some((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(some(index))
+      .ap(none<number>());
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Option none DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* some(index);
+      const right = yield* none<number>();
+
+      return (value) => left(value) + right(value);
+    });
   }
 
   _sink = current;
@@ -294,6 +354,35 @@ Deno.bench("traits Result ok map+bind", () => {
   _sink = current;
 });
 
+Deno.bench("traits Result ok fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = ok((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(ok(index))
+      .ap(ok(index + 1));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Result ok DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* ok(index);
+      const right = yield* ok(index + 1);
+
+      return (value) => left(value) + right(value);
+    });
+  }
+
+  _sink = current;
+});
+
 Deno.bench("fp-ts Either right map+chain", () => {
   let current: unknown;
 
@@ -365,6 +454,35 @@ Deno.bench("traits Result err map+bind", () => {
   _sink = current;
 });
 
+Deno.bench("traits Result err fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = ok((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(ok(index))
+      .ap(err<number>(error));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Result err DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* ok(index);
+      const right = yield* err<number>(error);
+
+      return (value) => left(value) + right(value);
+    });
+  }
+
+  _sink = current;
+});
+
 Deno.bench("true-myth Result err map+andThen", () => {
   let current: unknown;
 
@@ -407,6 +525,64 @@ Deno.bench("purify Either Left map+chain", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     current = Left(error).map(add_one).chain(purify_either_double);
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Validation valid fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = valid((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(valid(index))
+      .ap(valid(index + 1));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Validation valid DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* valid(index);
+      const right = yield* valid(index + 1);
+
+      return (value) => left(value) + right(value);
+    });
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Validation invalid fluent ap", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = valid((left: number) => {
+      return (right: number) => left + right;
+    })
+      .ap(invalid<number>("left"))
+      .ap(invalid<number>("right"));
+  }
+
+  _sink = current;
+});
+
+Deno.bench("traits Validation invalid DoAp", () => {
+  let current: unknown;
+
+  for (let index = 0; index < iterations; index += 1) {
+    current = DoAp(function* () {
+      const left = yield* invalid<number>("left");
+      const right = yield* invalid<number>("right");
+
+      return (value) => left(value) + right(value);
+    });
   }
 
   _sink = current;

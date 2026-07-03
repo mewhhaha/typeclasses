@@ -12,6 +12,10 @@ import {
 import { err, from_number, ok } from "../src/result.ts";
 import { from_fn, run } from "../src/task.ts";
 import {
+  invalid as validation_invalid,
+  valid as validation_valid,
+} from "../src/validation.ts";
+import {
   call_trait_method,
   define_trait,
   type Dictionary,
@@ -24,7 +28,7 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Alternative, Do, Format, Traversable } from "../src/traits.ts";
+import { Alternative, Do, DoAp, Format, Traversable } from "../src/traits.ts";
 
 const size_trait = Symbol("Size");
 
@@ -93,6 +97,53 @@ const fluent_result = ok("42")
   .map((value) => value + 1);
 const fluent_list = from_array([1, 2, 3])
   .map((value) => value * 2);
+const optional_profile = DoAp(function* () {
+  const name = yield* some("Ada");
+  const email = yield* some("ada@example.test");
+
+  return (value) => ({
+    display_name: name(value),
+    email: email(value),
+  });
+});
+const parsed_config = DoAp(function* () {
+  const host = yield* non_empty_string("localhost", "host");
+  const port = yield* from_number(Number.parseInt("8080", 10));
+
+  return (value) => ({
+    host: host(value),
+    port: port(value),
+  });
+});
+const dice_scores = DoAp(function* () {
+  const die = yield* from_array([1, 2, 3]);
+  const bonus = yield* from_array([0, 10]);
+
+  return (value) => {
+    const die_value = die(value);
+    const bonus_value = bonus(value);
+    return die_value + bonus_value;
+  };
+});
+const parallel_task = DoAp(function* () {
+  const user = yield* from_fn(() => Promise.resolve("ada"));
+  const score = yield* from_fn(() => Promise.resolve(42));
+
+  return (value) => {
+    return user(value) + ":" + score(value).toString();
+  };
+});
+const signup_validation = DoAp(function* () {
+  const username = yield* validate_username("");
+  const email = yield* validate_email("ada.example.test");
+  const password = yield* validate_password("short");
+
+  return (value) => ({
+    username: username(value),
+    email: email(value),
+    password: password(value),
+  });
+});
 const array_monad = array_from_array([1, 2, 3])
   .bind((value) => array_from_array([value, value * 10]));
 const array_alternative = Alternative.alt(
@@ -139,6 +190,11 @@ console.log("generic positive result", Format.fmt(positive_result));
 console.log("fluent option", fluent_option.fmt());
 console.log("fluent result", fluent_result.fmt());
 console.log("fluent list", fluent_list.fmt());
+console.log("DoAp optional profile", optional_profile.fmt());
+console.log("DoAp parsed config", parsed_config.fmt());
+console.log("DoAp dice scores", dice_scores.fmt());
+console.log("DoAp parallel task", await run(parallel_task));
+console.log("DoAp validation", signup_validation.fmt());
 console.log("array monad", array_monad.fmt());
 console.log("array alternative", Format.fmt(array_alternative));
 console.log("map functor", Deno.inspect(map_to_record(mapped_map)));
@@ -194,6 +250,48 @@ function boolean_value(value: unknown, name: string) {
   }
 
   return err<boolean>(name + " must be a boolean");
+}
+
+function non_empty_string(value: string, name: string) {
+  if (value.length > 0) {
+    return ok(value);
+  }
+
+  return err<string>(name + " must not be empty");
+}
+
+function validate_username(value: string) {
+  if (value.length > 0) {
+    return validation_valid(value);
+  }
+
+  return validation_invalid<string>("username is required");
+}
+
+function validate_email(value: string) {
+  if (value.includes("@")) {
+    return validation_valid(value);
+  }
+
+  return validation_invalid<string>("email must contain @");
+}
+
+function validate_password(value: string) {
+  const errors: string[] = [];
+
+  if (value.length < 12) {
+    errors.push("password must be at least 12 characters");
+  }
+
+  if (!/[0-9]/.test(value)) {
+    errors.push("password must contain a number");
+  }
+
+  if (errors.length === 0) {
+    return validation_valid(value);
+  }
+
+  return validation_invalid<string>(errors[0], ...errors.slice(1));
 }
 
 function require_true(value: boolean, message: string) {
