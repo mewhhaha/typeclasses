@@ -1,5 +1,5 @@
 import {
-  as_trait,
+  as_trait_cached,
   type Dictionary,
   item_type,
   kind,
@@ -35,17 +35,19 @@ type OptionValue<item> = Value<OptionDictionary, item>;
 export const Option: OptionDictionary = function <item>(
   value: Option<item>,
 ) {
-  return as_trait(Option, value);
+  return option_value(value);
 } as OptionDictionary;
 
 Option[kind] = option_kind;
 
+const option_value = as_trait_cached(Option);
+
 export function some<item>(value: item): OptionValue<item> {
-  return Option(option_some(value));
+  return option_value(option_some(value));
 }
 
 export function none<item = never>(): OptionValue<item> {
-  return Option(option_none<item>());
+  return option_value(option_none<item>());
 }
 
 export function from_nullable<item>(
@@ -59,7 +61,7 @@ export function from_nullable<item>(
     return none<item>();
   }
 
-  return Option(option_some<item>(value));
+  return option_value(option_some<item>(value));
 }
 
 Format.implement(Option)({

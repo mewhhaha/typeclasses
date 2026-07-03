@@ -156,8 +156,9 @@ aliases are inherited through that prototype. Fluent wrappers assert that they
 were called with a receiver and then pass the wrapped value as the first
 implementation argument.
 
-Hot paths can still hoist `as_trait_cached(dictionary)` manually, but the normal
-examples avoid that extra ceremony.
+Hot paths can hoist `as_trait_cached(dictionary)` manually. `Option` and
+`Result` do that for their benchmarked constructors, while smaller examples can
+keep the simpler two-argument form.
 
 Each data type exports an open dictionary interface. Trait implementations are
 validated and installed through curried trait-level installers like

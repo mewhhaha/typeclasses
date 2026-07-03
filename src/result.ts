@@ -1,5 +1,5 @@
 import {
-  as_trait,
+  as_trait_cached,
   type Dictionary,
   item_type,
   kind,
@@ -34,17 +34,19 @@ type ResultValue<item> = Value<ResultDictionary, item>;
 export const Result: ResultDictionary = function <item>(
   value: Result<item, string>,
 ) {
-  return as_trait(Result, value);
+  return result_value(value);
 } as ResultDictionary;
 
 Result[kind] = result_kind;
 
+const result_value = as_trait_cached(Result);
+
 export function ok<item>(value: item): ResultValue<item> {
-  return Result(result_ok(value));
+  return result_value(result_ok(value));
 }
 
 export function err<item = never>(error: string): ResultValue<item> {
-  return Result(result_err<item>(error));
+  return result_value(result_err<item>(error));
 }
 
 export function from_number(value: number): ResultValue<number> {
