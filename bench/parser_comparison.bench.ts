@@ -5,7 +5,7 @@ import { Left, Right } from "purify-ts/Either";
 import * as TrueResult from "true-myth/result";
 
 import { err as traits_err, ok as traits_ok } from "../src/result.ts";
-import { Do, DoAp } from "../src/traits.ts";
+import { Applicative, Do } from "../src/traits.ts";
 
 const passes = 25;
 const inputs = route_inputs();
@@ -115,17 +115,12 @@ function traits_parse_request(input: string) {
     const target = yield* traits_split_target(line.target);
     const path = yield* traits_parse_user_path(target.path);
     const query = yield* traits_parse_query(target.query);
-    const fields = yield* DoAp(function* () {
-      const limit = yield* traits_query_int(query, "limit", 1, 100);
-      const offset = yield* traits_query_int(query, "offset", 0, 10_000);
-      const active = yield* traits_query_bool(query, "active");
-
-      return (value) => ({
-        limit: limit(value),
-        offset: offset(value),
-        active: active(value),
-      });
-    });
+    const fields = yield* Applicative.lift(
+      (limit, offset, active) => ({ limit, offset, active }),
+      traits_query_int(query, "limit", 1, 100),
+      traits_query_int(query, "offset", 0, 10_000),
+      traits_query_bool(query, "active"),
+    );
     const pagination = yield* traits_validate_pagination(
       fields.limit,
       fields.offset,
@@ -281,7 +276,7 @@ Deno.bench("native route parser", () => {
   _sink = checksum;
 });
 
-Deno.bench("traits Result Do+DoAp route parser", () => {
+Deno.bench("traits Result Do+lift route parser", () => {
   let checksum = 0;
 
   for (let pass = 0; pass < passes; pass += 1) {

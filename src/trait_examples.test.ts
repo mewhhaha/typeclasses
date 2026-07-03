@@ -42,7 +42,6 @@ import {
   Alternative,
   Applicative,
   Do,
-  DoAp,
   Equal,
   Foldable,
   Format,
@@ -131,6 +130,72 @@ Deno.test("Applicative applies contextual functions", () => {
   assert_equals(option.value(), option_some(42).value());
   assert_equals(none.value(), option_none().value());
   assert_equals(list_to_array(list), [2, 3, 10, 20]);
+});
+
+Deno.test("Applicative lifts independent contextual values", () => {
+  const option = Applicative.lift(
+    (left, right) => left + right,
+    option_some(20),
+    option_some(22),
+  );
+  const none = Applicative.lift(
+    (left, right) => left + right,
+    option_some(20),
+    option_none<number>(),
+  );
+  const result = Applicative.lift(
+    (left, right) => left + right,
+    result_ok(40),
+    result_ok(2),
+  );
+  const error = Applicative.lift(
+    (left, right) => left + right,
+    result_err<number>("missing"),
+    result_ok(2),
+  );
+  const list = Applicative.lift(
+    (left, right) => left + right,
+    list_from_array([1, 2]),
+    list_from_array([10, 20]),
+  );
+
+  assert_equals(option.value(), option_some(42).value());
+  assert_equals(none.value(), option_none().value());
+  assert_equals(result.value(), result_ok(42).value());
+  assert_equals(error.value(), result_err("missing").value());
+  assert_equals(list_to_array(list), [11, 21, 12, 22]);
+});
+
+Deno.test("Applicative lift can build named structures", () => {
+  const profile = Applicative.lift(
+    (name, age) => ({ name, age }),
+    option_some("Ada"),
+    option_some(37),
+  );
+  const missing = Applicative.lift(
+    (name, age) => ({ name, age }),
+    option_some("Ada"),
+    option_none<number>(),
+  );
+  const invalid_profile = Applicative.lift(
+    (name, email, age) => ({ name, email, age }),
+    validation_invalid<string>("name is required"),
+    validation_invalid<string>("email is invalid"),
+    validation_valid(37),
+  );
+
+  assert_equals(
+    profile.value(),
+    option_some({ name: "Ada", age: 37 }).value(),
+  );
+  assert_equals(missing.value(), option_none().value());
+  assert_equals(
+    invalid_profile.value(),
+    validation_invalid(
+      "name is required",
+      "email is invalid",
+    ).value(),
+  );
 });
 
 Deno.test("Option callable wrapper traits option values for fluent methods", () => {
@@ -322,74 +387,13 @@ Deno.test("Do chains monadic generator yields with bind", () => {
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
 });
 
-Deno.test("DoAp combines independent applicative generator yields", () => {
-  const option = DoAp(function* () {
-    const left = yield* option_some(20);
-    const right = yield* option_some(22);
-
-    return (value) => left(value) + right(value);
-  });
-  const none = DoAp(function* () {
-    const left = yield* option_some(20);
-    const right = yield* option_none<number>();
-
-    return (value) => left(value) + right(value);
-  });
-  const result = DoAp(function* () {
-    const left = yield* result_ok(40);
-    const right = yield* result_ok(2);
-
-    return (value) => left(value) + right(value);
-  });
-  const error = DoAp(function* () {
-    const left = yield* result_err<number>("missing");
-    const right = yield* result_ok(2);
-
-    return (value) => left(value) + right(value);
-  });
-  const list = DoAp(function* () {
-    const left = yield* list_from_array([1, 2]);
-    const right = yield* list_from_array([10, 20]);
-
-    return (value) => left(value) + right(value);
-  });
-
-  assert_equals(option.value(), option_some(42).value());
-  assert_equals(none.value(), option_none().value());
-  assert_equals(result.value(), result_ok(42).value());
-  assert_equals(error.value(), result_err("missing").value());
-  assert_equals(list_to_array(list), [11, 21, 12, 22]);
-});
-
-Deno.test("DoAp rejects dependent applicative generator yields", () => {
-  try {
-    DoAp(function* () {
-      const line = yield* result_ok({ target: "/users/42" });
-      const target = yield* result_ok(line.target);
-
-      return (value) => target(value);
-    });
-  } catch (error) {
-    if (!(error instanceof TypeError)) {
-      throw new Error("Expected TypeError");
-    }
-
-    assert_true(
-      error.message.includes("use Do"),
-      "DoAp points dependent computations to Do",
-    );
-    return;
-  }
-
-  throw new Error("Expected dependent DoAp to fail");
-});
-
-Deno.test("DoAp combines Task applicatives without sequencing effects", async () => {
+Deno.test("Applicative lift combines Task applicatives without sequencing effects", async () => {
   const events: string[] = [];
   let resolve_left: () => void = () => {};
   let resolve_right: () => void = () => {};
-  const computed = DoAp(function* () {
-    const left = yield* task_from_fn(() => {
+  const computed = Applicative.lift(
+    (left, right) => left + right,
+    task_from_fn(() => {
       return new Promise<number>((resolve) => {
         events.push("left start");
         resolve_left = () => {
@@ -397,8 +401,8 @@ Deno.test("DoAp combines Task applicatives without sequencing effects", async ()
           resolve(20);
         };
       });
-    });
-    const right = yield* task_from_fn(() => {
+    }),
+    task_from_fn(() => {
       return new Promise<number>((resolve) => {
         events.push("right start");
         resolve_right = () => {
@@ -406,10 +410,8 @@ Deno.test("DoAp combines Task applicatives without sequencing effects", async ()
           resolve(22);
         };
       });
-    });
-
-    return (value) => left(value) + right(value);
-  });
+    }),
+  );
 
   const promise = task_run(computed);
   await Promise.resolve();
@@ -428,39 +430,29 @@ Deno.test("DoAp combines Task applicatives without sequencing effects", async ()
   ]);
 });
 
-Deno.test("DoAp supports promise-returning Task combiners", async () => {
-  const computed = DoAp(function* () {
-    const left = yield* task_succeed(20);
-    const right = yield* task_succeed(22);
-
-    return (value) => Promise.resolve(left(value) + right(value));
-  });
+Deno.test("Applicative lift supports promise-returning Task combiners", async () => {
+  const computed = Applicative.lift(
+    (left, right) => Promise.resolve(left + right),
+    task_succeed(20),
+    task_succeed(22),
+  );
 
   const result: number = await task_run(computed);
   assert_equals(result, 42);
 });
 
-Deno.test("DoAp lets Validation accumulate independent errors", () => {
-  const valid_profile = DoAp(function* () {
-    const name = yield* validation_valid("Ada");
-    const age = yield* validation_valid(37);
-
-    return (value) => ({
-      name: name(value),
-      age: age(value),
-    });
-  });
-  const invalid_profile = DoAp(function* () {
-    const name = yield* validation_invalid<string>("name is required");
-    const email = yield* validation_invalid<string>("email is invalid");
-    const age = yield* validation_valid(37);
-
-    return (value) => ({
-      name: name(value),
-      email: email(value),
-      age: age(value),
-    });
-  });
+Deno.test("Applicative lift lets Validation accumulate independent errors", () => {
+  const valid_profile = Applicative.lift(
+    (name, age) => ({ name, age }),
+    validation_valid("Ada"),
+    validation_valid(37),
+  );
+  const invalid_profile = Applicative.lift(
+    (name, email, age) => ({ name, email, age }),
+    validation_invalid<string>("name is required"),
+    validation_invalid<string>("email is invalid"),
+    validation_valid(37),
+  );
 
   assert_equals(
     valid_profile.value(),

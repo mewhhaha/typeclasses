@@ -2,20 +2,12 @@ const trait_constructor_key = Symbol("Trait.constructor");
 const trait_prototype_key = Symbol("Trait.prototype");
 const trait_value = Symbol("Trait.value");
 
-declare const do_ap_value: unique symbol;
-
-export type DoApValue = {
-  readonly [do_ap_value]: never;
-};
-
-export type DoApBinding<item> = item & ((value: DoApValue) => item);
-
 type TraitBase<dictionary, value, item> = {
   readonly [trait_value]: value;
   [Symbol.iterator]: () => Generator<
     Trait<dictionary, value, item>,
-    DoApBinding<item>,
-    DoApBinding<item>
+    item,
+    unknown
   >;
   value: () => value;
 };
@@ -142,9 +134,9 @@ function* trait_iterator<dictionary, value, item>(
   this: Trait<dictionary, value, item>,
 ): Generator<
   Trait<dictionary, value, item>,
-  DoApBinding<item>,
-  DoApBinding<item>
+  item,
+  unknown
 > {
   const item = yield this;
-  return item;
+  return item as item;
 }

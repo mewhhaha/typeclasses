@@ -1,5 +1,5 @@
 export { is_trait } from "./trait_value.ts";
-export type { DoApBinding, DoApValue, Trait } from "./trait_value.ts";
+export type { Trait } from "./trait_value.ts";
 import {
   trait as raw_as_trait,
   trait_constructor as raw_as_trait_cached,

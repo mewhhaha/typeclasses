@@ -9,7 +9,7 @@ import * as TrueResult from "true-myth/result";
 
 import { none, some } from "../src/option.ts";
 import { err, ok } from "../src/result.ts";
-import { DoAp } from "../src/traits.ts";
+import { Applicative } from "../src/traits.ts";
 import { invalid, valid } from "../src/validation.ts";
 
 // Each benchmark iteration performs this many constructions or compositions.
@@ -120,16 +120,15 @@ Deno.bench("traits Option some fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Option some DoAp", () => {
+Deno.bench("traits Option some lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* some(index);
-      const right = yield* some(index + 1);
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      some(index),
+      some(index + 1),
+    );
   }
 
   _sink = current;
@@ -220,16 +219,15 @@ Deno.bench("traits Option none fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Option none DoAp", () => {
+Deno.bench("traits Option none lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* some(index);
-      const right = yield* none<number>();
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      some(index),
+      none<number>(),
+    );
   }
 
   _sink = current;
@@ -368,16 +366,15 @@ Deno.bench("traits Result ok fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Result ok DoAp", () => {
+Deno.bench("traits Result ok lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* ok(index);
-      const right = yield* ok(index + 1);
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      ok(index),
+      ok(index + 1),
+    );
   }
 
   _sink = current;
@@ -468,16 +465,15 @@ Deno.bench("traits Result err fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Result err DoAp", () => {
+Deno.bench("traits Result err lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* ok(index);
-      const right = yield* err<number>(error);
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      ok(index),
+      err<number>(error),
+    );
   }
 
   _sink = current;
@@ -544,16 +540,15 @@ Deno.bench("traits Validation valid fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation valid DoAp", () => {
+Deno.bench("traits Validation valid lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* valid(index);
-      const right = yield* valid(index + 1);
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      valid(index),
+      valid(index + 1),
+    );
   }
 
   _sink = current;
@@ -573,16 +568,15 @@ Deno.bench("traits Validation invalid fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation invalid DoAp", () => {
+Deno.bench("traits Validation invalid lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = DoAp(function* () {
-      const left = yield* invalid<number>("left");
-      const right = yield* invalid<number>("right");
-
-      return (value) => left(value) + right(value);
-    });
+    current = Applicative.lift(
+      (left, right) => left + right,
+      invalid<number>("left"),
+      invalid<number>("right"),
+    );
   }
 
   _sink = current;
