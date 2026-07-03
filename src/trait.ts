@@ -7,14 +7,14 @@ import {
 import type { Trait } from "./trait_value.ts";
 
 export const kind: unique symbol = Symbol("Trait.kind");
-export const item_type: unique symbol = Symbol("Trait.item");
-export const value_type: unique symbol = Symbol("Trait.value");
 
 export type This<self> = self | void;
 
+export interface ContextValues<item> {}
+
 export type ContextValue<dictionary extends Dictionary, item> =
-  dictionary extends { readonly [value_type]: unknown }
-    ? (dictionary & { readonly [item_type]: item })[typeof value_type]
+  dictionary[typeof kind] extends keyof ContextValues<item>
+    ? ContextValues<item>[dictionary[typeof kind]]
     : never;
 
 export type Value<dictionary extends Dictionary, item> = Trait<
@@ -29,8 +29,11 @@ export type Receiver<dictionary extends Dictionary, item> = This<
 
 export type Dictionary<type_id = unknown> = {
   [kind]: type_id;
-  readonly [item_type]?: unknown;
 };
+
+export type ContextDictionary<type_id extends PropertyKey> = Dictionary<
+  type_id
+>;
 
 export function as_trait<dictionary extends Dictionary, item>(
   dictionary: dictionary,
@@ -57,6 +60,55 @@ export function as_trait_cached<dictionary extends object>(
   dictionary: dictionary,
 ): <value, item = unknown>(value: value) => Trait<dictionary, value, item> {
   return raw_as_trait_cached(dictionary);
+}
+
+export type DictionaryWrapper<dictionary extends Dictionary> = <item>(
+  value: ContextValue<dictionary, item>,
+) => Value<dictionary, item>;
+
+export type DictionaryConstructorContext<dictionary extends Dictionary> = {
+  readonly as_trait: DictionaryWrapper<dictionary>;
+};
+
+export type DictionaryConstructor<dictionary extends Dictionary> = <item>(
+  this: DictionaryConstructorContext<dictionary>,
+  value: ContextValue<dictionary, item>,
+) => Value<dictionary, item>;
+
+export function define_dictionary<dictionary extends Dictionary>(
+  type_id: dictionary[typeof kind],
+  construct?: DictionaryConstructor<dictionary>,
+): dictionary {
+  if (construct === undefined) {
+    let as_trait: DictionaryWrapper<dictionary>;
+    const target = function <item>(
+      value: ContextValue<dictionary, item>,
+    ): Value<dictionary, item> {
+      return as_trait(value);
+    } as unknown as dictionary;
+
+    target[kind] = type_id;
+    as_trait = as_trait_cached(target);
+
+    return target;
+  }
+
+  let as_trait: DictionaryWrapper<dictionary>;
+  const context: DictionaryConstructorContext<dictionary> = {
+    as_trait<item>(value: ContextValue<dictionary, item>) {
+      return as_trait(value);
+    },
+  };
+  const target = function <item>(
+    value: ContextValue<dictionary, item>,
+  ): Value<dictionary, item> {
+    return construct.call(context, value) as Value<dictionary, item>;
+  } as unknown as dictionary;
+
+  target[kind] = type_id;
+  as_trait = as_trait_cached(target);
+
+  return target;
 }
 
 export type TraitDictionary<

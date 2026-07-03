@@ -1,10 +1,8 @@
 import {
-  as_trait,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
+  type DictionaryConstructorContext,
   type Value,
-  value_type,
 } from "./trait.ts";
 import {
   Applicative,
@@ -21,20 +19,28 @@ export type RecordT<item> = Readonly<Record<string, item>>;
 
 export const record_kind: unique symbol = Symbol("RecordT");
 
-export interface RecordDictionary extends Dictionary<typeof record_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [record_kind]: RecordT<item>;
+  }
+}
+
+export interface RecordDictionary
+  extends ContextDictionary<typeof record_kind> {
   <item>(record: RecordT<item>): RecordValue<item>;
-  readonly [value_type]: RecordT<this[typeof item_type]>;
 }
 
 type RecordValue<item> = Value<RecordDictionary, item>;
 
-export const RecordT: RecordDictionary = function <item>(
-  record: RecordT<item>,
-) {
-  return as_trait(RecordT, { ...record });
-} as RecordDictionary;
-
-RecordT[kind] = record_kind;
+export const RecordT = define_dictionary<RecordDictionary>(
+  record_kind,
+  function <item>(
+    this: DictionaryConstructorContext<RecordDictionary>,
+    record: RecordT<item>,
+  ) {
+    return this.as_trait({ ...record });
+  },
+);
 
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
@@ -55,7 +61,7 @@ Format.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Format<typeof RecordT> {}
+export interface RecordDictionary extends Format<RecordDictionary> {}
 
 Equal.implement(RecordT)({
   eq(left_value, right) {
@@ -82,7 +88,7 @@ Equal.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Equal<typeof RecordT> {}
+export interface RecordDictionary extends Equal<RecordDictionary> {}
 
 Functor.implement(RecordT)({
   map(value, fn) {
@@ -97,7 +103,7 @@ Functor.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Functor<typeof RecordT> {}
+export interface RecordDictionary extends Functor<RecordDictionary> {}
 
 Semigroup.implement(RecordT)({
   concat(left_value, right) {
@@ -106,7 +112,7 @@ Semigroup.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Semigroup<typeof RecordT> {}
+export interface RecordDictionary extends Semigroup<RecordDictionary> {}
 
 Monoid.implement(RecordT)({
   empty(_record) {
@@ -114,7 +120,7 @@ Monoid.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Monoid<typeof RecordT> {}
+export interface RecordDictionary extends Monoid<RecordDictionary> {}
 
 Foldable.implement(RecordT)({
   fold(value, initial, fn) {
@@ -129,7 +135,7 @@ Foldable.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Foldable<typeof RecordT> {}
+export interface RecordDictionary extends Foldable<RecordDictionary> {}
 
 Traversable.implement(RecordT)({
   traverse(value, applicative, fn) {
@@ -153,7 +159,7 @@ Traversable.implement(RecordT)({
   },
 });
 
-export interface RecordDictionary extends Traversable<typeof RecordT> {}
+export interface RecordDictionary extends Traversable<RecordDictionary> {}
 
 function record_single<item>(key: string) {
   return (value: item): RecordValue<item> => RecordT({ [key]: value });

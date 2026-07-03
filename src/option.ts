@@ -1,10 +1,7 @@
 import {
-  as_trait_cached,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
   type Value,
-  value_type,
 } from "./trait.ts";
 import {
   Alternative,
@@ -25,29 +22,29 @@ type Some<item> = { tag: "some"; value: item };
 
 export const option_kind: unique symbol = Symbol("Option");
 
-export interface OptionDictionary extends Dictionary<typeof option_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [option_kind]: Option<item>;
+  }
+}
+
+export interface OptionDictionary
+  extends ContextDictionary<typeof option_kind> {
   <item>(value: Option<item>): OptionValue<item>;
-  readonly [value_type]: Option<this[typeof item_type]>;
 }
 
 type OptionValue<item> = Value<OptionDictionary, item>;
 
-export const Option: OptionDictionary = function <item>(
-  value: Option<item>,
-) {
-  return option_value(value);
-} as OptionDictionary;
-
-Option[kind] = option_kind;
-
-const option_value = as_trait_cached(Option);
+export const Option = define_dictionary<OptionDictionary>(
+  option_kind,
+);
 
 export function some<item>(value: item): OptionValue<item> {
-  return option_value(option_some(value));
+  return Option(option_some(value));
 }
 
 export function none<item = never>(): OptionValue<item> {
-  return option_value(option_none<item>());
+  return Option(option_none<item>());
 }
 
 export function from_nullable<item>(
@@ -61,7 +58,7 @@ export function from_nullable<item>(
     return none<item>();
   }
 
-  return option_value(option_some<item>(value));
+  return Option(option_some<item>(value));
 }
 
 Format.implement(Option)({
@@ -76,7 +73,7 @@ Format.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Format<typeof Option> {}
+export interface OptionDictionary extends Format<OptionDictionary> {}
 
 Equal.implement(Option)({
   eq(left_value, right) {
@@ -95,7 +92,7 @@ Equal.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Equal<typeof Option> {}
+export interface OptionDictionary extends Equal<OptionDictionary> {}
 
 Functor.implement(Option)({
   map(value, fn) {
@@ -109,7 +106,7 @@ Functor.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Functor<typeof Option> {}
+export interface OptionDictionary extends Functor<OptionDictionary> {}
 
 Applicative.implement(Option)({
   pure(_value, value) {
@@ -132,7 +129,7 @@ Applicative.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Applicative<typeof Option> {}
+export interface OptionDictionary extends Applicative<OptionDictionary> {}
 
 Alternative.implement(Option)({
   empty(_value) {
@@ -150,7 +147,7 @@ Alternative.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Alternative<typeof Option> {}
+export interface OptionDictionary extends Alternative<OptionDictionary> {}
 
 Monad.implement(Option)({
   bind(value, fn) {
@@ -164,7 +161,7 @@ Monad.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Monad<typeof Option> {}
+export interface OptionDictionary extends Monad<OptionDictionary> {}
 
 Foldable.implement(Option)({
   fold(value, initial, fn) {
@@ -178,7 +175,7 @@ Foldable.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Foldable<typeof Option> {}
+export interface OptionDictionary extends Foldable<OptionDictionary> {}
 
 Traversable.implement(Option)({
   traverse(value, applicative, fn) {
@@ -192,7 +189,7 @@ Traversable.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Traversable<typeof Option> {}
+export interface OptionDictionary extends Traversable<OptionDictionary> {}
 
 function option_some<item>(value: item): Some<item> {
   return { tag: "some", value };

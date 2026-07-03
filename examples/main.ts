@@ -50,7 +50,7 @@ const Size = define_trait(size_trait, {
 });
 
 declare module "../src/list.ts" {
-  interface ListDictionary extends Size<typeof List> {}
+  interface ListDictionary extends Size<ListDictionary> {}
 }
 
 Size.implement(List)({

@@ -1,10 +1,7 @@
 import {
-  as_trait,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
   type Value,
-  value_type,
 } from "./trait.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
@@ -12,20 +9,21 @@ export type Task<item> = () => Promise<item>;
 
 export const task_kind: unique symbol = Symbol("Task");
 
-export interface TaskDictionary extends Dictionary<typeof task_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [task_kind]: Task<item>;
+  }
+}
+
+export interface TaskDictionary extends ContextDictionary<typeof task_kind> {
   <item>(run: Task<item>): TaskValue<item>;
-  readonly [value_type]: Task<this[typeof item_type]>;
 }
 
 type TaskValue<item> = Value<TaskDictionary, item>;
 
-export const Task: TaskDictionary = function <item>(
-  run: Task<item>,
-) {
-  return as_trait(Task, run);
-} as TaskDictionary;
-
-Task[kind] = task_kind;
+export const Task = define_dictionary<TaskDictionary>(
+  task_kind,
+);
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));
@@ -53,7 +51,7 @@ Format.implement(Task)({
   },
 });
 
-export interface TaskDictionary extends Format<typeof Task> {}
+export interface TaskDictionary extends Format<TaskDictionary> {}
 
 Functor.implement(Task)({
   map(task, fn) {
@@ -61,7 +59,7 @@ Functor.implement(Task)({
   },
 });
 
-export interface TaskDictionary extends Functor<typeof Task> {}
+export interface TaskDictionary extends Functor<TaskDictionary> {}
 
 Applicative.implement(Task)({
   pure(_task, value) {
@@ -76,7 +74,7 @@ Applicative.implement(Task)({
   },
 });
 
-export interface TaskDictionary extends Applicative<typeof Task> {}
+export interface TaskDictionary extends Applicative<TaskDictionary> {}
 
 Monad.implement(Task)({
   bind(task, fn) {
@@ -87,4 +85,4 @@ Monad.implement(Task)({
   },
 });
 
-export interface TaskDictionary extends Monad<typeof Task> {}
+export interface TaskDictionary extends Monad<TaskDictionary> {}

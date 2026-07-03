@@ -1,10 +1,7 @@
 import {
-  as_trait_cached,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
   type Value,
-  value_type,
 } from "./trait.ts";
 import {
   Applicative,
@@ -24,29 +21,29 @@ type Ok<item> = { tag: "ok"; value: item };
 
 export const result_kind: unique symbol = Symbol("Result");
 
-export interface ResultDictionary extends Dictionary<typeof result_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [result_kind]: Result<item, string>;
+  }
+}
+
+export interface ResultDictionary
+  extends ContextDictionary<typeof result_kind> {
   <item>(value: Result<item, string>): ResultValue<item>;
-  readonly [value_type]: Result<this[typeof item_type], string>;
 }
 
 type ResultValue<item> = Value<ResultDictionary, item>;
 
-export const Result: ResultDictionary = function <item>(
-  value: Result<item, string>,
-) {
-  return result_value(value);
-} as ResultDictionary;
-
-Result[kind] = result_kind;
-
-const result_value = as_trait_cached(Result);
+export const Result = define_dictionary<ResultDictionary>(
+  result_kind,
+);
 
 export function ok<item>(value: item): ResultValue<item> {
-  return result_value(result_ok(value));
+  return Result(result_ok(value));
 }
 
 export function err<item = never>(error: string): ResultValue<item> {
-  return result_value(result_err<item>(error));
+  return Result(result_err<item>(error));
 }
 
 export function from_number(value: number): ResultValue<number> {
@@ -69,7 +66,7 @@ Format.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Format<typeof Result> {}
+export interface ResultDictionary extends Format<ResultDictionary> {}
 
 Equal.implement(Result)({
   eq(left_value, right) {
@@ -88,7 +85,7 @@ Equal.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Equal<typeof Result> {}
+export interface ResultDictionary extends Equal<ResultDictionary> {}
 
 Functor.implement(Result)({
   map(value, fn) {
@@ -102,7 +99,7 @@ Functor.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Functor<typeof Result> {}
+export interface ResultDictionary extends Functor<ResultDictionary> {}
 
 Applicative.implement(Result)({
   pure(_value, value) {
@@ -125,7 +122,7 @@ Applicative.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Applicative<typeof Result> {}
+export interface ResultDictionary extends Applicative<ResultDictionary> {}
 
 Monad.implement(Result)({
   bind(value, fn) {
@@ -139,7 +136,7 @@ Monad.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Monad<typeof Result> {}
+export interface ResultDictionary extends Monad<ResultDictionary> {}
 
 Foldable.implement(Result)({
   fold(value, initial, fn) {
@@ -153,7 +150,7 @@ Foldable.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Foldable<typeof Result> {}
+export interface ResultDictionary extends Foldable<ResultDictionary> {}
 
 Traversable.implement(Result)({
   traverse(value, applicative, fn) {
@@ -167,7 +164,7 @@ Traversable.implement(Result)({
   },
 });
 
-export interface ResultDictionary extends Traversable<typeof Result> {}
+export interface ResultDictionary extends Traversable<ResultDictionary> {}
 
 function result_ok<item>(value: item): Ok<item> {
   return { tag: "ok", value };

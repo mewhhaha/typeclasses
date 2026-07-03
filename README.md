@@ -38,9 +38,10 @@ existing contextual value as a fluent `Trait<dictionary, value, item>` and also
 acts as the trait dictionary. Constructors and other helpers are normal exported
 functions that return wrapped values.
 
-The dictionary carries a phantom associated value type. That lets the short
-`Value<typeof Option, item>` type recover that `Option` stores `Option<item>`
-without a global registry or module augmentation.
+Each data type registers its contextual value shape in `ContextValues<item>`.
+That lets the short `Value<typeof Option, item>` type recover that `Option`
+stores `Option<item>` without putting a phantom value member on every
+dictionary.
 
 Trait implementation functions receive the wrapped value as their first
 argument. The installer stores that receiver-first implementation in the
@@ -50,12 +51,9 @@ method named `fmt` without sharing a runtime property.
 
 ```ts
 import {
-  as_trait,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
   type Value,
-  value_type,
 } from "./trait.ts";
 import { Format, Monad } from "./traits.ts";
 
@@ -65,20 +63,22 @@ export type Option<item> =
 
 export const option_kind: unique symbol = Symbol("Option");
 
-export interface OptionDictionary extends Dictionary<typeof option_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [option_kind]: Option<item>;
+  }
+}
+
+export interface OptionDictionary
+  extends ContextDictionary<typeof option_kind> {
   <item>(value: Option<item>): OptionValue<item>;
-  readonly [value_type]: Option<this[typeof item_type]>;
 }
 
 type OptionValue<item> = Value<OptionDictionary, item>;
 
-export const Option: OptionDictionary = function <item>(
-  value: Option<item>,
-) {
-  return as_trait(Option, value);
-} as OptionDictionary;
-
-Option[kind] = option_kind;
+export const Option = define_dictionary<OptionDictionary>(
+  option_kind,
+);
 
 export function some<item>(
   value: item,
@@ -97,7 +97,7 @@ Format.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Format<typeof Option> {}
+export interface OptionDictionary extends Format<OptionDictionary> {}
 
 Monad.implement(Option)({
   bind(value, fn) {
@@ -111,7 +111,7 @@ Monad.implement(Option)({
   },
 });
 
-export interface OptionDictionary extends Monad<typeof Option> {}
+export interface OptionDictionary extends Monad<OptionDictionary> {}
 ```
 
 See `src/option.ts`, `src/result.ts`, `src/list.ts`, `src/task.ts`,
@@ -145,10 +145,14 @@ Most code can use the shorter `Value<dictionary, item>` helper:
 type WrappedOption<item> = Value<typeof Option, item>;
 ```
 
-`as_trait(dictionary, value)` stores the dictionary internally. The first call
-for a dictionary builds a shared constructor and stores it under a hidden symbol
-on the dictionary. Later calls reuse that constructor, so data type constructors
-can usually call the simple two-argument form directly.
+`define_dictionary(type_id)` creates the callable dictionary, assigns its kind,
+and routes calls through a cached constructor. The lower-level
+`as_trait(dictionary, value)` and `as_trait_cached(dictionary)` helpers remain
+available for experiments that need to manage construction directly.
+
+Each data type registers its raw context once in `ContextValues<item>`. That
+keeps `Value<OptionDictionary, item>` tied to `Option<item>` without requiring a
+per-dictionary phantom value property.
 
 The wrapped value's prototype points at a shared trait prototype, which
 delegates to the dictionary. Symbol-scoped implementations and direct fluent
@@ -156,9 +160,8 @@ aliases are inherited through that prototype. Fluent wrappers assert that they
 were called with a receiver and then pass the wrapped value as the first
 implementation argument.
 
-Hot paths can hoist `as_trait_cached(dictionary)` manually. `Option` and
-`Result` do that for their benchmarked constructors, while smaller examples can
-keep the simpler two-argument form.
+Data type modules use the same callable dictionary for public wrapping and their
+own constructors.
 
 Each data type exports an open dictionary interface. Trait implementations are
 validated and installed through curried trait-level installers like
@@ -210,7 +213,7 @@ const Size = define_trait(size_trait, {
 });
 
 declare module "./list.ts" {
-  interface ListDictionary extends Size<typeof List> {}
+  interface ListDictionary extends Size<ListDictionary> {}
 }
 
 Size.implement(List)({

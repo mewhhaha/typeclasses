@@ -1,10 +1,8 @@
 import {
-  as_trait,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
+  type DictionaryConstructorContext,
   type Value,
-  value_type,
 } from "./trait.ts";
 import {
   Applicative,
@@ -21,20 +19,27 @@ export type MapT<item> = ReadonlyMap<string, item>;
 
 export const map_kind: unique symbol = Symbol("MapT");
 
-export interface MapDictionary extends Dictionary<typeof map_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [map_kind]: MapT<item>;
+  }
+}
+
+export interface MapDictionary extends ContextDictionary<typeof map_kind> {
   <item>(map: MapT<item>): MapValue<item>;
-  readonly [value_type]: MapT<this[typeof item_type]>;
 }
 
 type MapValue<item> = Value<MapDictionary, item>;
 
-export const MapT: MapDictionary = function <item>(
-  map: MapT<item>,
-): MapValue<item> {
-  return as_trait(MapT, new Map(map));
-} as MapDictionary;
-
-MapT[kind] = map_kind;
+export const MapT = define_dictionary<MapDictionary>(
+  map_kind,
+  function <item>(
+    this: DictionaryConstructorContext<MapDictionary>,
+    map: MapT<item>,
+  ) {
+    return this.as_trait(new Map(map));
+  },
+);
 
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
@@ -65,7 +70,7 @@ Format.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Format<typeof MapT> {}
+export interface MapDictionary extends Format<MapDictionary> {}
 
 Equal.implement(MapT)({
   eq(left_value, right) {
@@ -86,7 +91,7 @@ Equal.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Equal<typeof MapT> {}
+export interface MapDictionary extends Equal<MapDictionary> {}
 
 Functor.implement(MapT)({
   map(value, fn) {
@@ -101,7 +106,7 @@ Functor.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Functor<typeof MapT> {}
+export interface MapDictionary extends Functor<MapDictionary> {}
 
 Semigroup.implement(MapT)({
   concat(left_value, right) {
@@ -116,7 +121,7 @@ Semigroup.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Semigroup<typeof MapT> {}
+export interface MapDictionary extends Semigroup<MapDictionary> {}
 
 Monoid.implement(MapT)({
   empty(_map) {
@@ -124,7 +129,7 @@ Monoid.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Monoid<typeof MapT> {}
+export interface MapDictionary extends Monoid<MapDictionary> {}
 
 Foldable.implement(MapT)({
   fold(value, initial, fn) {
@@ -139,7 +144,7 @@ Foldable.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Foldable<typeof MapT> {}
+export interface MapDictionary extends Foldable<MapDictionary> {}
 
 Traversable.implement(MapT)({
   traverse(value, applicative, fn) {
@@ -163,7 +168,7 @@ Traversable.implement(MapT)({
   },
 });
 
-export interface MapDictionary extends Traversable<typeof MapT> {}
+export interface MapDictionary extends Traversable<MapDictionary> {}
 
 function map_single<item>(key: string) {
   return (value: item): MapValue<item> => MapT(new Map([[key, value]]));

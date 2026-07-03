@@ -1,10 +1,7 @@
 import {
-  as_trait,
-  type Dictionary,
-  item_type,
-  kind,
+  type ContextDictionary,
+  define_dictionary,
   type Value,
-  value_type,
 } from "./trait.ts";
 import {
   Alternative,
@@ -25,20 +22,21 @@ export type List<item> =
 
 export const list_kind: unique symbol = Symbol("List");
 
-export interface ListDictionary extends Dictionary<typeof list_kind> {
+declare module "./trait.ts" {
+  interface ContextValues<item> {
+    [list_kind]: List<item>;
+  }
+}
+
+export interface ListDictionary extends ContextDictionary<typeof list_kind> {
   <item>(value: List<item>): ListValue<item>;
-  readonly [value_type]: List<this[typeof item_type]>;
 }
 
 type ListValue<item> = Value<ListDictionary, item>;
 
-export const List: ListDictionary = function <item>(
-  value: List<item>,
-) {
-  return as_trait(List, value);
-} as ListDictionary;
-
-List[kind] = list_kind;
+export const List = define_dictionary<ListDictionary>(
+  list_kind,
+);
 
 export function nil<item>(): ListValue<item> {
   return List(list_nil<item>());
@@ -85,7 +83,7 @@ Format.implement(List)({
   },
 });
 
-export interface ListDictionary extends Format<typeof List> {}
+export interface ListDictionary extends Format<ListDictionary> {}
 
 Equal.implement(List)({
   eq(left, right) {
@@ -105,7 +103,7 @@ Equal.implement(List)({
   },
 });
 
-export interface ListDictionary extends Equal<typeof List> {}
+export interface ListDictionary extends Equal<ListDictionary> {}
 
 Functor.implement(List)({
   map(list, fn) {
@@ -114,7 +112,7 @@ Functor.implement(List)({
   },
 });
 
-export interface ListDictionary extends Functor<typeof List> {}
+export interface ListDictionary extends Functor<ListDictionary> {}
 
 Applicative.implement(List)({
   pure(_list, value) {
@@ -124,11 +122,13 @@ Applicative.implement(List)({
   ap(fns, values) {
     const items = to_array(values);
 
-    return List(list_from_array(to_array(fns).flatMap((fn) => items.map(fn))));
+    return List(
+      list_from_array(to_array(fns).flatMap((fn) => items.map(fn))),
+    );
   },
 });
 
-export interface ListDictionary extends Applicative<typeof List> {}
+export interface ListDictionary extends Applicative<ListDictionary> {}
 
 Semigroup.implement(List)({
   concat(left, right) {
@@ -136,7 +136,7 @@ Semigroup.implement(List)({
   },
 });
 
-export interface ListDictionary extends Semigroup<typeof List> {}
+export interface ListDictionary extends Semigroup<ListDictionary> {}
 
 Monoid.implement(List)({
   empty(_list) {
@@ -144,7 +144,7 @@ Monoid.implement(List)({
   },
 });
 
-export interface ListDictionary extends Monoid<typeof List> {}
+export interface ListDictionary extends Monoid<ListDictionary> {}
 
 Alternative.implement(List)({
   empty(_list) {
@@ -156,7 +156,7 @@ Alternative.implement(List)({
   },
 });
 
-export interface ListDictionary extends Alternative<typeof List> {}
+export interface ListDictionary extends Alternative<ListDictionary> {}
 
 Monad.implement(List)({
   bind(list, fn) {
@@ -165,7 +165,7 @@ Monad.implement(List)({
   },
 });
 
-export interface ListDictionary extends Monad<typeof List> {}
+export interface ListDictionary extends Monad<ListDictionary> {}
 
 Foldable.implement(List)({
   fold(list, initial, fn) {
@@ -179,7 +179,7 @@ Foldable.implement(List)({
   },
 });
 
-export interface ListDictionary extends Foldable<typeof List> {}
+export interface ListDictionary extends Foldable<ListDictionary> {}
 
 Traversable.implement(List)({
   traverse(list, applicative, fn) {
@@ -200,7 +200,7 @@ Traversable.implement(List)({
   },
 });
 
-export interface ListDictionary extends Traversable<typeof List> {}
+export interface ListDictionary extends Traversable<ListDictionary> {}
 
 function list_nil<item>(): List<item> {
   return { tag: "nil" };
