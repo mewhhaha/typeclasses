@@ -294,6 +294,354 @@ await run(
 );
 ```
 
+## Haskell Comparisons
+
+The Haskell version usually starts from a typeclass constraint. In this repo the
+dictionary is carried by the wrapped value instead, so generic code accepts a
+`Value<dictionary, item>` and calls the exported trait helper.
+
+### Functor
+
+```hs
+fmap (+1) (Just 41)
+```
+
+```ts
+Functor.map(some(41), (value) => value + 1);
+some(41).map((value) => value + 1);
+```
+
+### Applicative
+
+```hs
+(+) <$> Just 20 <*> Just 22
+```
+
+```ts
+Applicative.lift(
+  (left, right) => left + right,
+  some(20),
+  some(22),
+);
+
+some((left: number) => {
+  return (right: number) => left + right;
+})
+  .ap(some(20))
+  .ap(some(22));
+```
+
+### Monad
+
+```hs
+parse input >>= validate >>= save
+```
+
+```ts
+parse(input)
+  .bind(validate)
+  .bind(save);
+```
+
+Generator `Do` is the closest equivalent to Haskell `do` notation:
+
+```hs
+do
+  text <- parse input
+  value <- validate text
+  save value
+```
+
+```ts
+Do(function* () {
+  const text = yield* parse(input);
+  const value = yield* validate(text);
+
+  return yield* save(value);
+});
+```
+
+### Maybe and Either
+
+```hs
+safePort :: String -> Maybe Int
+safePort text =
+  readMaybe text >>= \port ->
+    if port > 0 then Just port else Nothing
+```
+
+```ts
+function read_port(text: string) {
+  const port = Number.parseInt(text, 10);
+
+  if (!Number.isInteger(port)) {
+    return none<number>();
+  }
+
+  return some(port);
+}
+
+function safe_port(text: string) {
+  return read_port(text)
+    .bind((port) => {
+      if (port > 0) {
+        return some(port);
+      }
+
+      return none();
+    });
+}
+```
+
+`Result` fills the same role as a conventional `Either error item`:
+
+```hs
+decode input =
+  parse input >>= validate
+```
+
+```ts
+function decode(input: unknown) {
+  return parse(input)
+    .bind(validate);
+}
+```
+
+### List
+
+```hs
+do
+  left <- [1, 2]
+  right <- [10, 20]
+  pure (left + right)
+```
+
+```ts
+Do(function* () {
+  const left = yield* list_from_array([1, 2]);
+  const right = yield* list_from_array([10, 20]);
+
+  return left + right;
+});
+```
+
+`List` is the recursive list experiment. `ArrayT` is the wrapper for native
+JavaScript arrays.
+
+### Reader
+
+```hs
+endpoint :: Reader Config String
+endpoint = do
+  config <- ask
+  pure (host config <> ":" <> show (port config))
+```
+
+```ts
+const endpoint = Do(function* () {
+  const config = yield* ask<Config>();
+
+  return config.host + ":" + config.port.toString();
+});
+
+endpoint.value()({ host: "localhost", port: 8080 });
+```
+
+Effects use `run_reader` when Reader is one capability inside a larger program:
+
+```ts
+const without_reader = run_reader(program, config);
+```
+
+### State
+
+```hs
+counter :: State Int Int
+counter = do
+  before <- get
+  modify (+2)
+  pure before
+```
+
+```ts
+const counter = Do(function* () {
+  const before = yield* get<number>();
+
+  yield* modify((value: number) => value + 2);
+
+  return before;
+});
+
+counter.value()(40); // [40, 42]
+```
+
+### Writer
+
+```hs
+program :: Writer [String] Int
+program = do
+  tell ["start"]
+  pure 42
+```
+
+```ts
+const program = Do(function* () {
+  yield* tell("start");
+
+  return 42;
+});
+
+program.value(); // [42, ["start"]]
+```
+
+### Effects Instead of Transformers
+
+Haskell often reaches for transformer stacks such as
+`ReaderT Config (StateT Count (WriterT [String] IO)) item`. This repo keeps the
+plain `Reader`, `State`, `Writer`, and `Task` data types separate, and composes
+mixed programs with `Effect`/`Program` instead:
+
+```ts
+type App =
+  | Uses<AsReader<Config>>
+  | Uses<AsState<number>>
+  | Uses<AsWriter<string>>
+  | Uses<AsTask>;
+
+const App = Program.scope<App>();
+
+const program = App(function* () {
+  const config = yield* ask<Config>();
+  const before = yield* get<number>();
+
+  yield* modify((value: number) => value + config.increment);
+  yield* tell(config.label + ":" + before.toString());
+
+  return yield* get<number>();
+});
+
+await run(
+  run_writer(
+    run_state(
+      run_reader(program, { label: "step", increment: 2 }),
+      40,
+    ),
+  ),
+);
+```
+
+Each runner removes one capability from the effect type. That gives a
+transformer-like composition story without defining `ReaderT`, `StateT`,
+`WriterT`, and every concrete stack combination.
+
+### IO and Task
+
+```hs
+program :: IO Int
+program = do
+  text <- readFile "port.txt"
+  pure (read text)
+```
+
+```ts
+const program = Do(function* () {
+  const text = yield* from_fn(() => Deno.readTextFile("port.txt"));
+
+  return Number.parseInt(text, 10);
+});
+
+await program.value()();
+```
+
+`Task` is deferred async work. It is intentionally a thunk,
+`() => Promise<item>`, so construction does not start the operation.
+
+### Validation
+
+Haskell validation examples usually use an applicative that accumulates errors
+instead of stopping at the first one:
+
+```hs
+Profile <$> validateName input <*> validateEmail input
+```
+
+```ts
+Applicative.lift(
+  (name, email) => ({ name, email }),
+  validate_name(input),
+  validate_email(input),
+);
+```
+
+`Validation` implements `Applicative`, `Functor`, `Foldable`, and `Traversable`,
+but not `Monad`: a lawful monad would make later validations depend on earlier
+values and lose independent error accumulation.
+
+## JavaScript Shapes
+
+The useful question for a JavaScript shape is which laws it can support without
+surprising runtime behavior.
+
+| JavaScript shape                 | Wrapper in this repo      | Natural traits                                                                                                          |
+| -------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `readonly item[]`                | `ArrayT`                  | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                      |
+| recursive list                   | `List`                    | Same list-like traits, useful for generator experiments                                                                 |
+| `ReadonlyMap<string, item>`      | `MapT`                    | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                             |
+| `Readonly<Record<string, item>>` | `RecordT`                 | Same value-focused traits as `MapT`                                                                                     |
+| `Set<item>`                      | not implemented           | `Foldable`, `Semigroup`, `Monoid`; `Functor` only preserves set semantics if equality/coercion surprises are acceptable |
+| `PromiseLike<item>`              | `Task` via `from_promise` | Use `Task` so work is deferred; raw promises are already running                                                        |
+| `() => Promise<item>`            | `Task` via `from_fn`      | `Functor`, parallel `Applicative`, sequential `Monad`                                                                   |
+| `Iterable<item>` / generator     | not implemented           | lazy `Functor`, `Foldable`, maybe `Monad`; correctness depends on replayability                                         |
+| `AsyncIterable<item>`            | not implemented           | async `Functor`/`Foldable`; `Traversable` and `Monad` need careful cancellation/error policy                            |
+| `ReadableStream<item>`           | adapter boundary          | usually convert to `AsyncIterable`; native streams are stateful and can be locked/consumed                              |
+| typed arrays                     | not implemented           | `Functor` if output stays numeric; `Foldable`; `Traversable` is awkward because constructors differ                     |
+| `ArrayBuffer` / `DataView`       | adapter boundary          | better treated as binary input/output, not a generic container                                                          |
+| `URLSearchParams` / `FormData`   | adapter boundary          | foldable key/value data; usually decode into `Result` or `Validation` first                                             |
+| `Date`, `RegExp`, `Error`        | not containers            | useful for `Format`/`Equal` style utilities, not `Functor`/`Monad`                                                      |
+
+`Set` is deliberately absent for now. JavaScript `Set` equality is identity for
+objects and SameValueZero for primitives, so mapping can collapse values:
+
+```ts
+new Set([1, 2, 3].map(() => 0)); // Set { 0 }
+```
+
+That can still be useful, but it should be documented as JavaScript set behavior
+rather than pretending to be a list.
+
+For `Iterable` and `AsyncIterable`, the main design choice is replayability.
+Many iterators are one-shot mutable cursors. A lawful wrapper either needs to
+store a factory, `() => Iterator<item>`, or explicitly materialize/cache values.
+That is the same issue the list `Do` experiments exposed: calling a continuation
+more than once must not accidentally reuse a consumed iterator.
+
+`ReadableStream` has similar constraints plus cancellation and backpressure. The
+pragmatic shape is usually:
+
+```ts
+async function* from_stream<item>(stream: ReadableStream<item>) {
+  const reader = stream.getReader();
+
+  try {
+    while (true) {
+      const next = await reader.read();
+
+      if (next.done) {
+        return;
+      }
+
+      yield next.value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+```
+
+A stream trait wrapper can then be built on `AsyncIterable` semantics. Running
+tasks in workers is a runner concern layered under `Task`, not a separate data
+type, so it is intentionally not modeled here.
+
 ## Built-In Shapes
 
 `src/array.ts`, `src/map.ts`, and `src/record.ts` wrap familiar JavaScript data
