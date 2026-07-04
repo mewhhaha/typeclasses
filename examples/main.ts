@@ -37,6 +37,8 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
+import { Eff } from "../src/effects.ts";
+import { run_writer, tell } from "../src/writer.ts";
 import {
   Alternative,
   Applicative,
@@ -244,6 +246,18 @@ const reader_writer_state_program = Do(function* () {
 
   return { before, after };
 });
+const effect_reader_writer_state_program = Eff.Do(function* () {
+  const config = yield* ask<StackConfig>();
+  const before = yield* get<number>();
+  const label = yield* from_fn(() => Promise.resolve(config.label));
+
+  yield* modify((value: number) => value + config.increment);
+  yield* tell(label + ":" + before.toString());
+
+  const after = yield* get<number>();
+
+  return { before, after };
+});
 const state_counter = Do(function* () {
   const before = yield* get<number>();
 
@@ -324,6 +338,22 @@ console.log(
       TaskWriter.run(
         TaskWriterState.run(
           TaskWriterStateReader.run(reader_writer_state_program, {
+            label: "step",
+            increment: 2,
+          }),
+          40,
+        ),
+      ),
+    ),
+  ),
+);
+console.log(
+  "effect handlers reader state writer task",
+  Deno.inspect(
+    await run(
+      run_writer(
+        run_state(
+          run_reader(effect_reader_writer_state_program, {
             label: "step",
             increment: 2,
           }),

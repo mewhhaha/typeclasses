@@ -1,4 +1,5 @@
 import { type As, define, type Value } from "./trait.ts";
+import { type Effect, is_effect, is_lift_of, type Lift } from "./effects.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type Task<item> = () => Promise<item>;
@@ -35,8 +36,36 @@ export function from_promise<item>(
   return Task(() => Promise.resolve(promise));
 }
 
-export function run<item>(task: TaskValue<item>): Promise<item> {
-  return task.value()();
+export function run<item>(task: TaskValue<item>): Promise<item>;
+export function run<requirements extends Lift<AsTask, unknown>, item>(
+  effect: Effect<requirements, item>,
+): Promise<item>;
+export function run<requirements extends Lift<AsTask, unknown>, item>(
+  task_or_effect: TaskValue<item> | Effect<requirements, item>,
+): Promise<item> {
+  if (is_effect(task_or_effect)) {
+    return run_task_effect(task_or_effect);
+  }
+
+  return task_or_effect.value()();
+}
+
+async function run_task_effect<
+  requirements extends Lift<AsTask, unknown>,
+  item,
+>(
+  effect: Effect<requirements, item>,
+): Promise<item> {
+  if (effect.tag === "pure") {
+    return effect.value;
+  }
+
+  if (is_lift_of(effect.operation, task_kind)) {
+    const operation = effect.operation as unknown as Lift<AsTask, unknown>;
+    return await run_task_effect(effect.resume(await run(operation.value)));
+  }
+
+  throw new TypeError("Unhandled effect operation");
 }
 
 Format.implement(Task)({

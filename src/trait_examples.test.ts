@@ -6,6 +6,12 @@ import {
   sum_values,
 } from "./examples.ts";
 import {
+  Eff,
+  type Effect as AlgebraicEffect,
+  type Operation as EffectOperation,
+  type TaggedOperation,
+} from "./effects.ts";
+import {
   from_array as array_from_array,
   to_array as array_to_array,
 } from "./array.ts";
@@ -44,6 +50,11 @@ import {
   put,
   run_state,
 } from "./state.ts";
+import {
+  run_writer,
+  tell as writer_tell,
+  writer as writer_value,
+} from "./writer.ts";
 import {
   abort as stm_abort,
   atomically,
@@ -581,6 +592,25 @@ Deno.test("State monad threads state through Do", () => {
   assert_equals(counter.fmt(), "State(?)");
 });
 
+Deno.test("Writer monad accumulates logs through Do", () => {
+  const program = Do(function* () {
+    yield* writer_tell("start");
+    const value = yield* writer_value(40, ["value"]);
+    yield* writer_tell("end");
+
+    return value + 2;
+  });
+
+  assert_equals(run_writer(program), [
+    42,
+    ["start", "value", "end"],
+  ]);
+  assert_equals(program.map((value) => value + 1).value(), [
+    43,
+    ["start", "value", "end"],
+  ]);
+});
+
 Deno.test("ReaderT stacks environment over Task", async () => {
   type Config = {
     readonly prefix: string;
@@ -708,6 +738,89 @@ Deno.test("ReaderT StateT WriterT stack threads config state and logs", async ()
     [{ before: 40, after: 42 }, 42],
     ["step:40"],
   ]);
+});
+
+Deno.test("Effects compose reader state writer and task with handlers", async () => {
+  type Config = {
+    readonly label: string;
+    readonly increment: number;
+  };
+
+  const program = Eff.Do(function* () {
+    const config = yield* ask<Config>();
+    const before = yield* get<number>();
+    const label = yield* task_succeed(config.label);
+
+    yield* modify((value: number) => value + config.increment);
+    yield* writer_tell(label + ":" + before.toString());
+
+    const after = yield* get<number>();
+
+    return { before, after };
+  });
+
+  const result = await task_run(
+    run_writer(
+      run_state(
+        run_reader(program, {
+          label: "step",
+          increment: 2,
+        }),
+        40,
+      ),
+    ),
+  );
+
+  assert_equals(result, [
+    [{ before: 40, after: 42 }, 42],
+    ["step:40"],
+  ]);
+
+  assert_equals(Eff.run(Eff.pure("done")), "done");
+});
+
+Deno.test("Effects allow new capabilities without changing the core", () => {
+  type ClockNow =
+    & EffectOperation<number>
+    & {
+      readonly tag: "clock.now";
+    };
+  type WithoutClock<requirements> = requirements extends {
+    readonly tag: "clock.now";
+  } ? never
+    : requirements;
+
+  function now(): AlgebraicEffect<ClockNow, number> {
+    return Eff.send({ tag: "clock.now" } as ClockNow);
+  }
+
+  function run_clock<requirements, item>(
+    effect: AlgebraicEffect<requirements, item>,
+    current: number,
+  ): AlgebraicEffect<WithoutClock<requirements>, item> {
+    if (effect.tag === "pure") {
+      return Eff.pure(effect.value);
+    }
+
+    const operation = effect.operation as TaggedOperation;
+
+    if (operation.tag === "clock.now") {
+      return run_clock(effect.resume(current), current);
+    }
+
+    return Eff.suspend(
+      effect.operation as WithoutClock<requirements>,
+      (value) => run_clock(effect.resume(value), current),
+    );
+  }
+
+  const program = Eff.Do(function* () {
+    const current = yield* now();
+
+    return current + 1;
+  });
+
+  assert_equals(Eff.run(run_clock(program, 41)), 42);
 });
 
 Deno.test("OptionT stacks optional results over Task", async () => {

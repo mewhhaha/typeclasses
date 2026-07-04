@@ -1,4 +1,12 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
+import {
+  Eff,
+  type Effect,
+  is_effect,
+  is_lift_of,
+  type Lift,
+  type WithoutLift,
+} from "./effects.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type State<state, item> = (state: state) => readonly [item, state];
@@ -55,8 +63,24 @@ export function gets<state, item>(
 export function run_state<state, item>(
   stateful: Value<AsState<state>, item>,
   state: state,
-): readonly [item, state] {
-  return stateful.value()(state);
+): readonly [item, state];
+export function run_state<requirements, state, item>(
+  effect: Effect<requirements, item>,
+  state: state,
+): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]>;
+export function run_state<requirements, state, item>(
+  stateful_or_effect:
+    | Value<AsState<state>, item>
+    | Effect<requirements, item>,
+  state: state,
+):
+  | readonly [item, state]
+  | Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
+  if (is_effect(stateful_or_effect)) {
+    return run_state_effect(stateful_or_effect, state);
+  }
+
+  return stateful_or_effect.value()(state);
 }
 
 export function eval_state<state, item>(
@@ -71,6 +95,29 @@ export function exec_state<state, item>(
   state: state,
 ): state {
   return run_state(stateful, state)[1];
+}
+
+function run_state_effect<requirements, state, item>(
+  effect: Effect<requirements, item>,
+  state: state,
+): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
+  if (effect.tag === "pure") {
+    return Eff.pure([effect.value, state] as const);
+  }
+
+  if (is_lift_of(effect.operation, state_kind)) {
+    const operation = effect.operation as unknown as Lift<
+      AsState<state>,
+      unknown
+    >;
+    const [value, next] = run_state(operation.value, state);
+    return run_state_effect(effect.resume(value), next);
+  }
+
+  return Eff.suspend(
+    effect.operation as WithoutLift<requirements, AsState<state>>,
+    (value) => run_state_effect(effect.resume(value), state),
+  );
 }
 
 Format.implement(State)({

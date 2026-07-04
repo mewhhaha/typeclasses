@@ -1,4 +1,12 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
+import {
+  Eff,
+  type Effect,
+  is_effect,
+  is_lift_of,
+  type Lift,
+  type WithoutLift,
+} from "./effects.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type Reader<environment, item> = (environment: environment) => item;
@@ -55,8 +63,47 @@ export function local<outer, inner, item>(
 export function run_reader<environment, item>(
   reader: Value<AsReader<environment>, item>,
   environment: environment,
-): item {
-  return reader.value()(environment);
+): item;
+export function run_reader<requirements, environment, item>(
+  effect: Effect<requirements, item>,
+  environment: environment,
+): Effect<WithoutLift<requirements, AsReader<environment>>, item>;
+export function run_reader<requirements, environment, item>(
+  reader_or_effect:
+    | Value<AsReader<environment>, item>
+    | Effect<requirements, item>,
+  environment: environment,
+): item | Effect<WithoutLift<requirements, AsReader<environment>>, item> {
+  if (is_effect(reader_or_effect)) {
+    return run_reader_effect(reader_or_effect, environment);
+  }
+
+  return reader_or_effect.value()(environment);
+}
+
+function run_reader_effect<requirements, environment, item>(
+  effect: Effect<requirements, item>,
+  environment: environment,
+): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
+  if (effect.tag === "pure") {
+    return Eff.pure(effect.value);
+  }
+
+  if (is_lift_of(effect.operation, reader_kind)) {
+    const operation = effect.operation as unknown as Lift<
+      AsReader<environment>,
+      unknown
+    >;
+    return run_reader_effect(
+      effect.resume(run_reader(operation.value, environment)),
+      environment,
+    );
+  }
+
+  return Eff.suspend(
+    effect.operation as WithoutLift<requirements, AsReader<environment>>,
+    (value) => run_reader_effect(effect.resume(value), environment),
+  );
 }
 
 Format.implement(Reader)({
