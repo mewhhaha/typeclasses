@@ -9,6 +9,15 @@ export * from "./state.ts";
 export * from "./writer.ts";
 export * from "./stm.ts";
 export * from "./validation.ts";
+export { Effect, Program } from "./effects.ts";
+export type {
+  Lift,
+  Operation,
+  ProgramConstructor,
+  ProgramScope,
+  TaggedOperation,
+  Uses,
+} from "./effects.ts";
 export * as effects from "./effects.ts";
 export * as array from "./array.ts";
 export * as map from "./map.ts";

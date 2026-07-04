@@ -1,7 +1,6 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
 import {
-  Eff,
-  type Effect,
+  Effect,
   is_effect,
   is_lift_of,
   type Lift,
@@ -100,7 +99,7 @@ function run_writer_effect_with<requirements, item>(
   readonly [item, readonly WriterLog<requirements>[]]
 > {
   if (effect.tag === "pure") {
-    return Eff.pure([effect.value, logs] as const);
+    return Effect.pure([effect.value, logs] as const);
   }
 
   if (is_lift_of(effect.operation, writer_kind)) {
@@ -115,7 +114,7 @@ function run_writer_effect_with<requirements, item>(
     ]);
   }
 
-  return Eff.suspend(
+  return Effect.suspend(
     effect.operation as WithoutLift<
       requirements,
       AsWriter<WriterLog<requirements>>

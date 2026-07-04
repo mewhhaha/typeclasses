@@ -3,7 +3,7 @@ import * as FpRTE from "fp-ts/ReaderTaskEither";
 import * as FpSRTE from "fp-ts/StateReaderTaskEither";
 import { pipe as fp_pipe } from "fp-ts/function";
 
-import { Eff } from "../src/effects.ts";
+import { Effect, Program } from "../src/effects.ts";
 import { ask, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
 import { from_fn, run } from "../src/task.ts";
@@ -39,11 +39,11 @@ class FxLabelConfig
 class FxState extends Context.Tag("FxState")<FxState, Ref.Ref<number>>() {}
 class FxLogs extends Context.Tag("FxLogs")<FxLogs, Ref.Ref<string[]>>() {}
 
-Deno.bench("effect Do construct+run", async () => {
+Deno.bench("effect Program construct+run", async () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume(await run_effect(make_do_program()));
+    checksum += consume(await run_effect(make_program()));
   }
 
   _sink = checksum;
@@ -99,8 +99,8 @@ Deno.bench("raw manual run", async () => {
   _sink = checksum;
 });
 
-Deno.bench("effect Do reuse+run", async () => {
-  const program = make_do_program();
+Deno.bench("effect Program reuse+run", async () => {
+  const program = make_program();
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -143,18 +143,18 @@ Deno.bench("fp-ts StateReaderTaskEither reuse+run", async () => {
   _sink = checksum;
 });
 
-function make_do_label() {
-  return Eff.Do(function* () {
+function make_program_label() {
+  return Program(function* () {
     const config = yield* ask<LabelConfig>();
 
     return config.label;
   });
 }
 
-function make_do_async_label() {
-  const label_effect = make_do_label();
+function make_program_async_label() {
+  const label_effect = make_program_label();
 
-  return Eff.Do(function* () {
+  return Program(function* () {
     const label = yield* label_effect;
     const suffix = yield* from_fn(() => Promise.resolve(":async"));
 
@@ -162,10 +162,10 @@ function make_do_async_label() {
   });
 }
 
-function make_do_program() {
-  const label_effect = make_do_async_label();
+function make_program() {
+  const label_effect = make_program_async_label();
 
-  return Eff.Do(function* () {
+  return Program(function* () {
     const config = yield* ask<EffectConfig>();
     const before = yield* get<number>();
     const label = yield* run_reader(label_effect, {
@@ -182,17 +182,17 @@ function make_do_program() {
 }
 
 function make_bind_label() {
-  return Eff.bind(Eff.lift(ask<LabelConfig>()), (config) => {
-    return Eff.pure(config.label);
+  return Effect.bind(Effect.lift(ask<LabelConfig>()), (config) => {
+    return Effect.pure(config.label);
   });
 }
 
 function make_bind_async_label() {
-  return Eff.bind(make_bind_label(), (label) => {
-    return Eff.bind(Eff.lift(from_fn(() => Promise.resolve(":async"))), (
+  return Effect.bind(make_bind_label(), (label) => {
+    return Effect.bind(Effect.lift(from_fn(() => Promise.resolve(":async"))), (
       suffix,
     ) => {
-      return Eff.pure(label + suffix);
+      return Effect.pure(label + suffix);
     });
   });
 }
@@ -200,21 +200,21 @@ function make_bind_async_label() {
 function make_bind_program() {
   const label_effect = make_bind_async_label();
 
-  return Eff.bind(Eff.lift(ask<EffectConfig>()), (config) => {
-    return Eff.bind(Eff.lift(get<number>()), (before) => {
-      return Eff.bind(
+  return Effect.bind(Effect.lift(ask<EffectConfig>()), (config) => {
+    return Effect.bind(Effect.lift(get<number>()), (before) => {
+      return Effect.bind(
         run_reader(label_effect, {
           label: config.label,
         }),
         (label) => {
-          return Eff.bind(
-            Eff.lift(modify((value: number) => value + config.increment)),
+          return Effect.bind(
+            Effect.lift(modify((value: number) => value + config.increment)),
             () => {
-              return Eff.bind(
-                Eff.lift(tell(label + ":" + before.toString())),
+              return Effect.bind(
+                Effect.lift(tell(label + ":" + before.toString())),
                 () => {
-                  return Eff.bind(Eff.lift(get<number>()), (after) => {
-                    return Eff.pure({ before, after });
+                  return Effect.bind(Effect.lift(get<number>()), (after) => {
+                    return Effect.pure({ before, after });
                   });
                 },
               );
@@ -327,7 +327,7 @@ function make_fp_program() {
   );
 }
 
-async function run_effect(program: ReturnType<typeof make_do_program>) {
+async function run_effect(program: ReturnType<typeof make_program>) {
   return await run(
     run_writer(
       run_state(

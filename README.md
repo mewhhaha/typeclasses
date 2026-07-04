@@ -249,34 +249,31 @@ const greeting = Do(function* () {
 await run(greeting); // "hello Ada #7"
 ```
 
-For mixed capabilities, use effects. `Eff.scope<Allowed>()` creates a typed
-boundary for the operations a `Do` block may yield. The block can still run a
-too-wide nested effect locally to make it fit the scope:
+For mixed capabilities, use effects. `Program.scope<Allowed>()` creates a typed
+boundary for the operations a `Program` block may yield. The block can still run
+a too-wide nested effect locally to make it fit the scope:
 
 ```ts
-type ReaderFx<env> = Lift<AsReader<env>, unknown>;
-type StateFx<state> = Lift<AsState<state>, unknown>;
-type WriterFx<log> = Lift<AsWriter<log>, unknown>;
-type TaskFx = Lift<AsTask, unknown>;
+type Label =
+  | Uses<AsReader<LabelConfig>>
+  | Uses<AsTask>;
+type App =
+  | Uses<AsReader<Config>>
+  | Uses<AsState<number>>
+  | Uses<AsWriter<string>>
+  | Uses<AsTask>;
 
-type LabelEffects = ReaderFx<LabelConfig> | TaskFx;
-type AppEffects =
-  | ReaderFx<Config>
-  | StateFx<number>
-  | WriterFx<string>
-  | TaskFx;
+const Label = Program.scope<Label>();
+const App = Program.scope<App>();
 
-const Label = Eff.scope<LabelEffects>();
-const App = Eff.scope<AppEffects>();
-
-const label = Label.Do(function* () {
+const label = Label(function* () {
   const config = yield* ask<LabelConfig>();
   const suffix = yield* from_fn(async () => ":async");
 
   return config.label + suffix;
 });
 
-const program = App.Do(function* () {
+const program = App(function* () {
   const config = yield* ask<Config>();
   const before = yield* get<number>();
   const scoped_label = yield* run_reader(label, { label: config.label });

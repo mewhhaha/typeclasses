@@ -20,6 +20,11 @@ export type Lift<dictionary extends Dictionary, item> =
     readonly value: Value<dictionary, item>;
   };
 
+export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
+  dictionary,
+  item
+>;
+
 type Pure<item> = {
   readonly tag: "pure";
   readonly value: item;
@@ -53,11 +58,17 @@ type ScopedYield<requirements, yielded> =
   Exclude<EffectRequirements<yielded>, requirements> extends never ? yielded
     : never;
 
-export type EffectScope<requirements> = {
-  Do<yielded, item>(
+export type ProgramScope<requirements> = {
+  <yielded, item>(
     run: () => Generator<ScopedYield<requirements, yielded>, item, unknown>,
   ): Effect<EffectRequirements<yielded>, item>;
 };
+
+export type ProgramConstructor =
+  & ProgramScope<unknown>
+  & {
+    scope<requirements>(): ProgramScope<requirements>;
+  };
 
 export type DictionaryType<dictionary> = dictionary extends
   Dictionary<infer type_id> ? type_id
@@ -71,8 +82,8 @@ export type WithoutLift<
   : requirements
   : requirements;
 
-type DoPath = {
-  readonly previous: DoPath | undefined;
+type ProgramPath = {
+  readonly previous: ProgramPath | undefined;
   readonly value: unknown;
   readonly length: number;
 };
@@ -81,14 +92,18 @@ const EffectPrototype: EffectBase<unknown, unknown> = {
   [Symbol.iterator]: effect_iterator,
 };
 
-export const Eff = {
+export const Program = Object.assign(program, {
+  scope,
+}) as ProgramConstructor;
+
+export const Effect = {
   pure,
   lift,
   send,
   suspend,
   map,
   bind,
-  Do,
+  Program,
   scope,
   run,
 };
@@ -156,7 +171,7 @@ export function run<item>(effect: Effect<never, item>): item {
   throw new TypeError("Unhandled effect operation: " + operation.tag);
 }
 
-export function Do<yielded, item>(
+function program<yielded, item>(
   run: () => Generator<yielded, item, unknown>,
 ): Effect<EffectRequirements<yielded>, item> {
   const first = run_with(undefined);
@@ -168,7 +183,7 @@ export function Do<yielded, item>(
   return step(undefined, first.next.value, first.iterator);
 
   function run_with(
-    path: DoPath | undefined,
+    path: ProgramPath | undefined,
   ): {
     readonly iterator: Generator<yielded, item, unknown>;
     readonly next: IteratorResult<yielded, item>;
@@ -188,7 +203,7 @@ export function Do<yielded, item>(
   }
 
   function step(
-    path: DoPath | undefined,
+    path: ProgramPath | undefined,
     current: yielded,
     iterator: Generator<yielded, item, unknown>,
   ): Effect<EffectRequirements<yielded>, item> {
@@ -203,12 +218,12 @@ export function Do<yielded, item>(
           return pure(next.value);
         }
 
-        const next_path = append_do_path(path, value);
+        const next_path = append_program_path(path, value);
         return step(next_path, next.value, iterator);
       }
 
       calls += 1;
-      const next_path = append_do_path(path, value);
+      const next_path = append_program_path(path, value);
       const state = run_with(next_path);
 
       if (state.next.done) {
@@ -220,13 +235,11 @@ export function Do<yielded, item>(
   }
 }
 
-export function scope<requirements>(): EffectScope<requirements> {
-  return {
-    Do<yielded, item>(
-      run: () => Generator<ScopedYield<requirements, yielded>, item, unknown>,
-    ): Effect<EffectRequirements<yielded>, item> {
-      return Do(run as () => Generator<yielded, item, unknown>);
-    },
+export function scope<requirements>(): ProgramScope<requirements> {
+  return function scoped_program<yielded, item>(
+    run: () => Generator<ScopedYield<requirements, yielded>, item, unknown>,
+  ): Effect<EffectRequirements<yielded>, item> {
+    return program(run as () => Generator<yielded, item, unknown>);
   };
 }
 
@@ -295,10 +308,10 @@ export function is_effect(value: unknown): value is Effect<unknown, unknown> {
   return Object.prototype.isPrototypeOf.call(EffectPrototype, value);
 }
 
-function append_do_path(
-  previous: DoPath | undefined,
+function append_program_path(
+  previous: ProgramPath | undefined,
   value: unknown,
-): DoPath {
+): ProgramPath {
   return {
     previous,
     value,
@@ -306,7 +319,7 @@ function append_do_path(
   };
 }
 
-function values_from_path(path: DoPath | undefined): unknown[] {
+function values_from_path(path: ProgramPath | undefined): unknown[] {
   if (path === undefined) {
     return [];
   }
@@ -315,7 +328,7 @@ function values_from_path(path: DoPath | undefined): unknown[] {
   let index = values.length - 1;
 
   for (
-    let node: DoPath | undefined = path;
+    let node: ProgramPath | undefined = path;
     node !== undefined;
     node = node.previous
   ) {

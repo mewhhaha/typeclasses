@@ -1,7 +1,6 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
 import {
-  Eff,
-  type Effect,
+  Effect,
   is_effect,
   is_lift_of,
   type Lift,
@@ -86,7 +85,7 @@ function run_reader_effect<requirements, environment, item>(
   environment: environment,
 ): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
   if (effect.tag === "pure") {
-    return Eff.pure(effect.value);
+    return Effect.pure(effect.value);
   }
 
   if (is_lift_of(effect.operation, reader_kind)) {
@@ -100,7 +99,7 @@ function run_reader_effect<requirements, environment, item>(
     );
   }
 
-  return Eff.suspend(
+  return Effect.suspend(
     effect.operation as WithoutLift<requirements, AsReader<environment>>,
     (value) => run_reader_effect(effect.resume(value), environment),
   );

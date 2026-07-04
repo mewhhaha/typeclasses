@@ -1,7 +1,6 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
 import {
-  Eff,
-  type Effect,
+  Effect,
   is_effect,
   is_lift_of,
   type Lift,
@@ -102,7 +101,7 @@ function run_state_effect<requirements, state, item>(
   state: state,
 ): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
   if (effect.tag === "pure") {
-    return Eff.pure([effect.value, state] as const);
+    return Effect.pure([effect.value, state] as const);
   }
 
   if (is_lift_of(effect.operation, state_kind)) {
@@ -114,7 +113,7 @@ function run_state_effect<requirements, state, item>(
     return run_state_effect(effect.resume(value), next);
   }
 
-  return Eff.suspend(
+  return Effect.suspend(
     effect.operation as WithoutLift<requirements, AsState<state>>,
     (value) => run_state_effect(effect.resume(value), state),
   );

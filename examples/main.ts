@@ -44,7 +44,7 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Eff, type Lift } from "../src/effects.ts";
+import { Program, type Uses } from "../src/effects.ts";
 import { type AsWriter, run_writer, tell } from "../src/writer.ts";
 import {
   Alternative,
@@ -204,28 +204,28 @@ type EffectConfig = {
 type LabelConfig = {
   readonly label: string;
 };
-type LabelEffects =
-  | Lift<AsReader<LabelConfig>, unknown>
-  | Lift<AsTask, unknown>;
-type AppEffects =
-  | Lift<AsReader<EffectConfig>, unknown>
-  | Lift<AsState<number>, unknown>
-  | Lift<AsWriter<string>, unknown>
-  | Lift<AsTask, unknown>;
-const Label = Eff.scope<LabelEffects>();
-const App = Eff.scope<AppEffects>();
-const effect_label = Label.Do(function* () {
+type Label =
+  | Uses<AsReader<LabelConfig>>
+  | Uses<AsTask>;
+type App =
+  | Uses<AsReader<EffectConfig>>
+  | Uses<AsState<number>>
+  | Uses<AsWriter<string>>
+  | Uses<AsTask>;
+const Label = Program.scope<Label>();
+const App = Program.scope<App>();
+const effect_label = Label(function* () {
   const config = yield* ask<LabelConfig>();
 
   return config.label;
 });
-const effect_async_label = Label.Do(function* () {
+const effect_async_label = Label(function* () {
   const label = yield* effect_label;
   const suffix = yield* from_fn(() => Promise.resolve(":async"));
 
   return label + suffix;
 });
-const effect_program = App.Do(function* () {
+const effect_program = App(function* () {
   const config = yield* ask<EffectConfig>();
   const before = yield* get<number>();
   const label = yield* run_reader(effect_async_label, {

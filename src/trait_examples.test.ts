@@ -6,11 +6,12 @@ import {
   sum_values,
 } from "./examples.ts";
 import {
-  Eff,
+  Effect,
   type Effect as AlgebraicEffect,
-  type Lift,
   type Operation as EffectOperation,
+  Program,
   type TaggedOperation,
+  type Uses,
 } from "./effects.ts";
 import {
   from_array as array_from_array,
@@ -616,29 +617,29 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
   type LabelConfig = {
     readonly label: string;
   };
-  type LabelEffects =
-    | Lift<AsReader<LabelConfig>, unknown>
-    | Lift<AsTask, unknown>;
-  type AppEffects =
-    | Lift<AsReader<Config>, unknown>
-    | Lift<AsState<number>, unknown>
-    | Lift<AsWriter<string>, unknown>
-    | Lift<AsTask, unknown>;
-  const Label = Eff.scope<LabelEffects>();
-  const App = Eff.scope<AppEffects>();
+  type Label =
+    | Uses<AsReader<LabelConfig>>
+    | Uses<AsTask>;
+  type App =
+    | Uses<AsReader<Config>>
+    | Uses<AsState<number>>
+    | Uses<AsWriter<string>>
+    | Uses<AsTask>;
+  const Label = Program.scope<Label>();
+  const App = Program.scope<App>();
 
-  const read_label = Label.Do(function* () {
+  const read_label = Label(function* () {
     const config = yield* ask<LabelConfig>();
 
     return config.label;
   });
-  const load_label = Label.Do(function* () {
+  const load_label = Label(function* () {
     const label = yield* read_label;
     const suffix = yield* task_succeed(":async");
 
     return label + suffix;
   });
-  const program = App.Do(function* () {
+  const program = App(function* () {
     const config = yield* ask<Config>();
     const before = yield* get<number>();
     const label = yield* run_reader(load_label, {
@@ -671,7 +672,7 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
     ["step:async:40"],
   ]);
 
-  assert_equals(Eff.run(Eff.pure("done")), "done");
+  assert_equals(Effect.run(Effect.pure("done")), "done");
 });
 
 Deno.test("Effects allow new capabilities without changing the core", () => {
@@ -686,7 +687,7 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
     : requirements;
 
   function now(): AlgebraicEffect<ClockNow, number> {
-    return Eff.send({ tag: "clock.now" } as ClockNow);
+    return Effect.send({ tag: "clock.now" } as ClockNow);
   }
 
   function run_clock<requirements, item>(
@@ -694,7 +695,7 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
     current: number,
   ): AlgebraicEffect<WithoutClock<requirements>, item> {
     if (effect.tag === "pure") {
-      return Eff.pure(effect.value);
+      return Effect.pure(effect.value);
     }
 
     const operation = effect.operation as TaggedOperation;
@@ -703,19 +704,19 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
       return run_clock(effect.resume(current), current);
     }
 
-    return Eff.suspend(
+    return Effect.suspend(
       effect.operation as WithoutClock<requirements>,
       (value) => run_clock(effect.resume(value), current),
     );
   }
 
-  const program = Eff.Do(function* () {
+  const program = Program(function* () {
     const current = yield* now();
 
     return current + 1;
   });
 
-  assert_equals(Eff.run(run_clock(program, 41)), 42);
+  assert_equals(Effect.run(run_clock(program, 41)), 42);
 });
 
 Deno.test("STM monad composes transactional reads and writes", () => {
