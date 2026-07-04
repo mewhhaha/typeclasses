@@ -6,10 +6,32 @@ import {
 } from "../src/map.ts";
 import { some } from "../src/option.ts";
 import {
+  ask,
+  asks,
+  local,
+  type ReaderValue,
+  run_reader,
+} from "../src/reader.ts";
+import {
   from_entries as record_from_entries,
   to_record as record_to_record,
 } from "../src/record.ts";
 import { err, from_number, ok } from "../src/result.ts";
+import {
+  exec_state,
+  get,
+  gets,
+  modify,
+  run_state,
+  type StateValue,
+} from "../src/state.ts";
+import {
+  atomically,
+  modify_tvar,
+  new_tvar,
+  read_tvar,
+  write_tvar,
+} from "../src/stm.ts";
 import { from_fn, run } from "../src/task.ts";
 import {
   invalid as validation_invalid,
@@ -161,6 +183,52 @@ const task_result = Do(function* () {
 
   return value + 1;
 });
+type AppConfig = {
+  readonly host: string;
+  readonly port: number;
+  readonly path: string;
+};
+const reader_endpoint = Do(function* () {
+  const config = yield* ask<AppConfig>();
+  const base = yield* asks<AppConfig, string>((environment) => {
+    return environment.host + ":" + environment.port.toString();
+  });
+  const path = yield* local(
+    asks<{ readonly path: string }, string>((environment) => environment.path),
+    (environment: AppConfig) => ({ path: environment.path }),
+  );
+
+  return base + path + "?host=" + config.host;
+});
+
+const typed_reader_endpoint = reader_endpoint;
+const state_counter = Do(function* () {
+  const before = yield* get<number>();
+
+  yield* modify((value: number) => value + 1);
+  yield* modify((value: number) => value * 2);
+
+  const after = yield* gets((value: number) => value);
+
+  return { before, after };
+});
+
+const typed_state_counter = state_counter.value;
+
+const [state_counter_result] = run_state(state_counter, 20);
+const checking_balance = new_tvar(40);
+const savings_balance = new_tvar(2);
+const transfer_result = atomically(Do(function* () {
+  const checking = yield* read_tvar(checking_balance);
+
+  yield* write_tvar(checking_balance, checking - 5);
+  yield* modify_tvar(savings_balance, (value) => value + 5);
+
+  const checking_after = yield* read_tvar(checking_balance);
+  const savings_after = yield* read_tvar(savings_balance);
+
+  return checking_after + savings_after;
+}));
 
 console.log("option", doubled_option.fmt());
 console.log("list labels", Format.fmt(labeled_list));
@@ -187,6 +255,20 @@ console.log("record functor", Deno.inspect(record_to_record(mapped_record)));
 console.log("record traverse result", traversed_record.fmt());
 console.log("decoded account", decoded_account.fmt());
 console.log("task Do result", await run(task_result));
+console.log(
+  "reader endpoint",
+  run_reader(reader_endpoint, {
+    host: "localhost",
+    port: 8080,
+    path: "/users",
+  }),
+);
+console.log(
+  "state counter",
+  state_counter_result,
+  exec_state(state_counter, 20),
+);
+console.log("stm transfer total", transfer_result);
 
 function decode_account_payload(input: unknown) {
   return Do(function* () {

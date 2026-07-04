@@ -19,6 +19,7 @@ import {
   to_record as map_to_record,
 } from "./map.ts";
 import { none as option_none, Option, some as option_some } from "./option.ts";
+import { ask, asks, local, run_reader } from "./reader.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
@@ -34,6 +35,26 @@ import {
   run as task_run,
   succeed as task_succeed,
 } from "./task.ts";
+import {
+  eval_state,
+  exec_state,
+  get,
+  gets,
+  modify,
+  put,
+  run_state,
+} from "./state.ts";
+import {
+  abort as stm_abort,
+  atomically,
+  modify_tvar,
+  new_tvar,
+  or_else,
+  read_tvar,
+  retry,
+  STMError,
+  write_tvar,
+} from "./stm.ts";
 import {
   invalid as validation_invalid,
   valid as validation_valid,
@@ -491,6 +512,137 @@ Deno.test("Task monad defers and chains async work", async () => {
   assert_equals(await task_run(computed), 42);
   assert_equals(await task_run(computed), 42);
   assert_equals(computed.fmt(), "Task(?)");
+});
+
+Deno.test("Reader monad threads a shared environment", () => {
+  type Config = {
+    readonly host: string;
+    readonly port: number;
+    readonly path: string;
+  };
+
+  const endpoint = Do(function* () {
+    const config = yield* ask<Config>();
+    const base = yield* asks<Config, string>((environment) => {
+      return environment.host + ":" + environment.port.toString();
+    });
+    const path = yield* local(
+      asks<{ readonly path: string }, string>((environment) => {
+        return environment.path;
+      }),
+      (environment: Config) => ({ path: environment.path }),
+    );
+
+    return base + path + "?host=" + config.host;
+  });
+  const port = asks<Config, number>((environment) => environment.port)
+    .map((value) => value + 1);
+
+  assert_equals(
+    run_reader(endpoint, {
+      host: "localhost",
+      port: 8080,
+      path: "/users",
+    }),
+    "localhost:8080/users?host=localhost",
+  );
+  assert_equals(
+    run_reader(port, { host: "localhost", port: 8080, path: "/users" }),
+    8081,
+  );
+  assert_equals(endpoint.fmt(), "Reader(?)");
+});
+
+Deno.test("State monad threads state through Do", () => {
+  const counter = Do(function* () {
+    const before = yield* get<number>();
+
+    yield* put(before + 1);
+    yield* modify((value: number) => value * 2);
+
+    const after = yield* gets((value: number) => value + 1);
+
+    return { before, after };
+  });
+
+  assert_equals(run_state(counter, 20), [
+    { before: 20, after: 43 },
+    42,
+  ]);
+  assert_equals(eval_state(counter, 20), { before: 20, after: 43 });
+  assert_equals(exec_state(counter, 20), 42);
+  assert_equals(counter.fmt(), "State(?)");
+});
+
+Deno.test("STM monad composes transactional reads and writes", () => {
+  const checking = new_tvar(40);
+  const savings = new_tvar(2);
+  const transfer = Do(function* () {
+    const checking_before = yield* read_tvar(checking);
+    const savings_before = yield* read_tvar(savings);
+
+    yield* write_tvar(checking, checking_before - 5);
+    yield* modify_tvar(savings, (value) => value + 5);
+
+    const checking_after = yield* read_tvar(checking);
+    const savings_after = yield* read_tvar(savings);
+
+    return {
+      before: checking_before + savings_before,
+      after: checking_after + savings_after,
+    };
+  });
+
+  assert_equals(atomically(transfer), { before: 42, after: 42 });
+  assert_equals(atomically(read_tvar(checking)), 35);
+  assert_equals(atomically(read_tvar(savings)), 7);
+  assert_equals(transfer.fmt(), "STM(?)");
+});
+
+Deno.test("STM rolls back pending writes when a transaction aborts", () => {
+  const counter = new_tvar(1);
+  const transaction = Do(function* () {
+    const value = yield* read_tvar(counter);
+
+    yield* write_tvar(counter, value + 1);
+    yield* stm_abort("rollback");
+
+    return value;
+  });
+
+  let error: unknown;
+
+  try {
+    atomically(transaction);
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert_true(error instanceof STMError, "transaction aborts with STMError");
+  assert_equals((error as STMError).message, "rollback");
+  assert_equals(atomically(read_tvar(counter)), 1);
+});
+
+Deno.test("STM or_else retries with the original transaction journal", () => {
+  const counter = new_tvar(0);
+  const retried = Do(function* () {
+    const value = yield* read_tvar(counter);
+
+    yield* write_tvar(counter, value + 1);
+    yield* retry();
+
+    return value;
+  });
+  const fallback = Do(function* () {
+    const value = yield* read_tvar(counter);
+
+    yield* write_tvar(counter, value + 2);
+
+    return value;
+  });
+
+  assert_equals(atomically(or_else(retried, fallback)), 0);
+  assert_equals(atomically(read_tvar(counter)), 2);
 });
 
 Deno.test("Foldable reduces values inside different contexts", () => {
