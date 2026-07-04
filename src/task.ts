@@ -36,7 +36,10 @@ export function from_promise<item>(
   return Task(() => Promise.resolve(promise));
 }
 
-export async function run<requirements extends Lift<AsTask, unknown>, item>(
+export async function run_task<
+  requirements extends Lift<AsTask, unknown>,
+  item,
+>(
   effect: Effect<requirements, item>,
 ): Promise<item> {
   if (effect.tag === "pure") {
@@ -45,7 +48,7 @@ export async function run<requirements extends Lift<AsTask, unknown>, item>(
 
   if (is_lift_of(effect.operation, task_kind)) {
     const operation = effect.operation as unknown as Lift<AsTask, unknown>;
-    return await run(effect.resume(await operation.value.value()()));
+    return await run_task(effect.resume(await operation.value.value()()));
   }
 
   throw new TypeError("Unhandled effect operation");

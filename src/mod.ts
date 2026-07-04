@@ -12,6 +12,8 @@ export * from "./stm.ts";
 export * from "./validation.ts";
 export { Effect, Program } from "./effects.ts";
 export type {
+  EffectHandler,
+  EffectRunner,
   Lift,
   Operation,
   ProgramConstructor,

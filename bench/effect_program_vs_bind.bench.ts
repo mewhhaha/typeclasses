@@ -10,7 +10,7 @@ import {
 import { Effect, Program } from "../src/effects.ts";
 import { ask, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
-import { from_fn, run } from "../src/task.ts";
+import { from_fn, run_task } from "../src/task.ts";
 import { run_writer, tell } from "../src/writer.ts";
 
 const iterations = 1_000;
@@ -334,15 +334,12 @@ function make_fp_program() {
 }
 
 async function run_effect(program: ReturnType<typeof make_program>) {
-  const [value, logs] = await run(
-    run_writer(
-      run_state(
-        run_reader(program, config),
-        40,
-      ),
-      array_from_array<string>([]),
-    ),
-  );
+  const [value, logs] = await Effect.handle_with(program, [
+    (effect) => run_reader(effect, config),
+    (effect) => run_state(effect, 40),
+    (effect) => run_writer(effect, array_from_array<string>([])),
+    run_task,
+  ]);
 
   return [value, array_to_array(logs)] as const;
 }

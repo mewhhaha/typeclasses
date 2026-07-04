@@ -1,7 +1,7 @@
-# Traits Examples
+# Traits
 
-Small Deno examples for pseudo traits using the same type-plus-empty-function
-pattern from `../binned/AGENTS.md`.
+Small Deno library playground for pseudo traits using the same
+type-plus-empty-function pattern from `../binned/AGENTS.md`.
 
 The repository demonstrates common functional paradigms without trying to be a
 complete functional programming library:
@@ -21,6 +21,7 @@ complete functional programming library:
 deno task test
 deno task check
 deno task example
+deno task case-study
 deno task bench
 ```
 
@@ -287,15 +288,12 @@ const program = App(function* () {
   return yield* get<number>();
 });
 
-await run(
-  run_writer(
-    run_state(
-      run_reader(program, { label: "step", increment: 2 }),
-      40,
-    ),
-    array_from_array<string>([]),
-  ),
-);
+await Effect.handle_with(program, [
+  (effect) => run_reader(effect, { label: "step", increment: 2 }),
+  (effect) => run_state(effect, 40),
+  (effect) => run_writer(effect, array_from_array<string>([])),
+  run_task,
+]);
 ```
 
 ## Haskell Comparisons
@@ -531,20 +529,18 @@ const program = App(function* () {
   return yield* get<number>();
 });
 
-await run(
-  run_writer(
-    run_state(
-      run_reader(program, { label: "step", increment: 2 }),
-      40,
-    ),
-    array_from_array<string>([]),
-  ),
-);
+await Effect.handle_with(program, [
+  (effect) => run_reader(effect, { label: "step", increment: 2 }),
+  (effect) => run_state(effect, 40),
+  (effect) => run_writer(effect, array_from_array<string>([])),
+  run_task,
+]);
 ```
 
-Each runner removes one capability from the effect type. That gives a
-transformer-like composition story without defining `ReaderT`, `StateT`,
-`WriterT`, and every concrete stack combination.
+Each handler removes one capability from the effect type and returns a smaller
+effect. The final `run_task` entry is the terminal runner that executes the
+remaining `Task` effect. That gives a transformer-like composition story without
+defining `ReaderT`, `StateT`, `WriterT`, and every concrete stack combination.
 
 ### IO and Task
 
@@ -705,6 +701,42 @@ Entries are added one trait at a time next to the implementation.
 `Format.implement(Option)({ ... })` validates that every required `Format`
 method exists, installs the collision-free symbol slot, and copies direct fluent
 aliases onto the dictionary.
+
+## Examples
+
+Focused examples live in `examples/`:
+
+- `examples/basics.ts` covers `Option`, `Result`, `Applicative`, validation,
+  pattern guards, and `match`.
+- `examples/custom_trait.ts` shows extending a data type with a local trait.
+- `examples/built_in_shapes.ts` covers JavaScript-shaped wrappers such as
+  arrays, maps, sets, iterables, streams, form data, and binary buffers.
+- `examples/monads.ts` shows `Do` with `Reader`, `State`, `Task`, `Stm`, and
+  decoding with `Result`.
+- `examples/effects.ts` composes `Reader`, `State`, `Writer`, and `Task` with
+  `Program`.
+
+`examples/main.ts` is only a runner for those focused files.
+
+Larger application-shaped demos live in `case_studies/`:
+
+- `case_studies/http_router/` builds a small typed HTTP router on `URLPattern`.
+  `router.ts` contains the `UrlPatternList` data type and route composition,
+  while `handlers.ts` and `mod.ts` define the concrete HTTP app. Routes carry
+  method checks, typed path params, typed query params, and compose as a
+  first-match `Alternative` route list. Handlers are `Program`s with `Reader`
+  for route input and `Writer<AsyncIterableT<string>>` for streamed response
+  bodies, so the same router can return HTML pages or JSON responses.
+- `case_studies/io_application/` models a small CLI with `echo`, `cat`, and
+  `write` commands. It uses a custom `FileSystem` effect for
+  `ReadFile`/`WriteFile`, `Reader` for argv, `Writer` for stdout lines, and
+  `Task` only at the interpreter boundary. The same program runs against an IO
+  interpreter or a dry-run interpreter that records planned writes without
+  mutating the backing store.
+- `case_studies/agent_harness/` models an agent loop as another IO program. A
+  custom `LanguageModel` effect produces tool requests or a final answer; the
+  harness executes filesystem tools, appends tool results to the transcript,
+  writes stdout with `Writer`, and repeats until the model returns `final`.
 
 ## Benchmarks
 

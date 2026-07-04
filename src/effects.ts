@@ -47,6 +47,19 @@ export type Effect<requirements, item> =
     | Impure<requirements, item>
   );
 
+export type EffectHandler<
+  requirements,
+  item,
+  next_requirements,
+  next_item,
+> = (
+  effect: Effect<requirements, item>,
+) => Effect<next_requirements, next_item>;
+
+export type EffectRunner<requirements, item, out> = (
+  effect: Effect<requirements, item>,
+) => out;
+
 type EffectRequirements<value> = value extends Effect<
   infer requirements,
   infer _item
@@ -116,6 +129,7 @@ export const Effect = {
   suspend,
   map,
   bind,
+  handle_with,
   run,
 };
 
@@ -171,6 +185,174 @@ export function bind<left, from, right, to>(
   return suspend(effect.operation, (value) => {
     return bind(effect.resume(value), fn);
   });
+}
+
+export function handle_with<requirements, item>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [],
+): Effect<requirements, item>;
+export function handle_with<requirements, item, out>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectRunner<requirements, item, out>,
+  ],
+): out;
+export function handle_with<
+  requirements,
+  item,
+  first_requirements,
+  first_item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectHandler<requirements, item, first_requirements, first_item>,
+    EffectRunner<first_requirements, first_item, out>,
+  ],
+): out;
+export function handle_with<
+  requirements,
+  item,
+  first_requirements,
+  first_item,
+  second_requirements,
+  second_item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectHandler<requirements, item, first_requirements, first_item>,
+    EffectHandler<
+      first_requirements,
+      first_item,
+      second_requirements,
+      second_item
+    >,
+    EffectRunner<second_requirements, second_item, out>,
+  ],
+): out;
+export function handle_with<
+  requirements,
+  item,
+  first_requirements,
+  first_item,
+  second_requirements,
+  second_item,
+  third_requirements,
+  third_item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectHandler<requirements, item, first_requirements, first_item>,
+    EffectHandler<
+      first_requirements,
+      first_item,
+      second_requirements,
+      second_item
+    >,
+    EffectHandler<
+      second_requirements,
+      second_item,
+      third_requirements,
+      third_item
+    >,
+    EffectRunner<third_requirements, third_item, out>,
+  ],
+): out;
+export function handle_with<
+  requirements,
+  item,
+  first_requirements,
+  first_item,
+  second_requirements,
+  second_item,
+  third_requirements,
+  third_item,
+  fourth_requirements,
+  fourth_item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectHandler<requirements, item, first_requirements, first_item>,
+    EffectHandler<
+      first_requirements,
+      first_item,
+      second_requirements,
+      second_item
+    >,
+    EffectHandler<
+      second_requirements,
+      second_item,
+      third_requirements,
+      third_item
+    >,
+    EffectHandler<
+      third_requirements,
+      third_item,
+      fourth_requirements,
+      fourth_item
+    >,
+    EffectRunner<fourth_requirements, fourth_item, out>,
+  ],
+): out;
+export function handle_with<
+  requirements,
+  item,
+  first_requirements,
+  first_item,
+  second_requirements,
+  second_item,
+  third_requirements,
+  third_item,
+  fourth_requirements,
+  fourth_item,
+  fifth_requirements,
+  fifth_item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  handlers: readonly [
+    EffectHandler<requirements, item, first_requirements, first_item>,
+    EffectHandler<
+      first_requirements,
+      first_item,
+      second_requirements,
+      second_item
+    >,
+    EffectHandler<
+      second_requirements,
+      second_item,
+      third_requirements,
+      third_item
+    >,
+    EffectHandler<
+      third_requirements,
+      third_item,
+      fourth_requirements,
+      fourth_item
+    >,
+    EffectHandler<
+      fourth_requirements,
+      fourth_item,
+      fifth_requirements,
+      fifth_item
+    >,
+    EffectRunner<fifth_requirements, fifth_item, out>,
+  ],
+): out;
+export function handle_with(
+  effect: Effect<unknown, unknown>,
+  handlers: readonly ((effect: never) => unknown)[],
+): unknown {
+  let handled: unknown = effect;
+
+  for (const handler of handlers) {
+    handled = handler(handled as never);
+  }
+
+  return handled;
 }
 
 export function run<item>(effect: Effect<never, item>): item {

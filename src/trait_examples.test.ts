@@ -79,7 +79,7 @@ import { match } from "./tagged.ts";
 import {
   type AsTask,
   from_fn as task_from_fn,
-  run as task_run,
+  run_task,
   succeed as task_succeed,
 } from "./task.ts";
 import { from_typed_array } from "./typed_array.ts";
@@ -754,20 +754,16 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
 
     return { before, after };
   });
-  const without_reader = run_reader(program, {
-    label: "step",
-    increment: 2,
-  });
-
-  const result = await task_run(
-    run_writer(
-      run_state(
-        without_reader,
-        40,
-      ),
-      array_from_array<string>([]),
-    ),
-  );
+  const result = await Effect.handle_with(program, [
+    (effect) =>
+      run_reader(effect, {
+        label: "step",
+        increment: 2,
+      }),
+    (effect) => run_state(effect, 40),
+    (effect) => run_writer(effect, array_from_array<string>([])),
+    run_task,
+  ]);
   const [result_value, result_logs] = result;
 
   assert_equals(result_value, [{ before: 40, after: 42 }, 42]);
