@@ -8,11 +8,11 @@ import type { Trait } from "./trait_value.ts";
 
 export const kind = Symbol("Trait.kind");
 
-export interface TraitTypes<item> {}
+export interface TraitTypes<dictionary, item> {}
 
 export type ContextValue<dictionary extends Dictionary, item> =
-  dictionary[typeof kind] extends keyof TraitTypes<item>
-    ? TraitTypes<item>[dictionary[typeof kind]]
+  dictionary[typeof kind] extends keyof TraitTypes<dictionary, item>
+    ? TraitTypes<dictionary, item>[dictionary[typeof kind]]
     : never;
 
 export type Value<dictionary extends Dictionary, item> = Trait<

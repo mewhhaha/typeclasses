@@ -20,7 +20,7 @@ export type STM<item> = (journal: STMJournal) => item;
 export const stm_kind = Symbol("STM");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [stm_kind]: STM<item>;
   }
 }

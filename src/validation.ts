@@ -17,7 +17,7 @@ type Valid<item> = { tag: "valid"; value: item };
 export const validation_kind = Symbol("Validation");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [validation_kind]: Validation<item>;
   }
 }

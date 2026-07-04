@@ -15,7 +15,7 @@ export type RecordT<item> = Readonly<Record<string, item>>;
 export const record_kind = Symbol("RecordT");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [record_kind]: RecordT<item>;
   }
 }

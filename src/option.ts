@@ -19,7 +19,7 @@ type Some<item> = { tag: "some"; value: item };
 export const option_kind = Symbol("Option");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [option_kind]: Option<item>;
   }
 }

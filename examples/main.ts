@@ -5,26 +5,13 @@ import {
   to_record as map_to_record,
 } from "../src/map.ts";
 import { some } from "../src/option.ts";
-import {
-  ask,
-  asks,
-  local,
-  type ReaderValue,
-  run_reader,
-} from "../src/reader.ts";
+import { ask, asks, local, run_reader } from "../src/reader.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
 } from "../src/record.ts";
 import { err, from_number, ok } from "../src/result.ts";
-import {
-  exec_state,
-  get,
-  gets,
-  modify,
-  run_state,
-  type StateValue,
-} from "../src/state.ts";
+import { exec_state, get, gets, modify, run_state } from "../src/state.ts";
 import {
   atomically,
   modify_tvar,
@@ -201,7 +188,10 @@ const reader_endpoint = Do(function* () {
   return base + path + "?host=" + config.host;
 });
 
-const typed_reader_endpoint = reader_endpoint;
+if (false) {
+  // @ts-expect-error Reader requires AppConfig.
+  run_reader(reader_endpoint, { port: 8080 });
+}
 const state_counter = Do(function* () {
   const before = yield* get<number>();
 
@@ -213,7 +203,10 @@ const state_counter = Do(function* () {
   return { before, after };
 });
 
-const typed_state_counter = state_counter.value;
+if (false) {
+  // @ts-expect-error State requires number state.
+  run_state(state_counter, "wrong");
+}
 
 const [state_counter_result] = run_state(state_counter, 20);
 const checking_balance = new_tvar(40);

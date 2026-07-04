@@ -1,31 +1,36 @@
-import { type As, define, type Trait, type Value } from "./trait.ts";
+import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type State<state, item> = (state: state) => readonly [item, state];
 
-type StateContext<item> = (state: never) => readonly [item, unknown];
-
 export const state_kind = Symbol("State");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
-    [state_kind]: StateContext<item>;
+  interface TraitTypes<dictionary, item> {
+    [state_kind]: dictionary extends AsState<infer state> ? State<state, item>
+      : never;
   }
 }
 
-export interface AsState extends As<typeof state_kind> {
-  <state, item>(value: State<state, item>): StateValue<state, item>;
+export interface AsState<state> extends Dictionary<typeof state_kind> {
+  <item>(value: State<state, item>): StateValue<state, item>;
 }
 
 export type StateValue<state, item> = Trait<
-  AsState,
+  AsState<state>,
   State<state, item>,
   item
 >;
 
-export const State = define<AsState>(
+type StateConstructor =
+  & AsState<unknown>
+  & {
+    <state, item>(value: State<state, item>): StateValue<state, item>;
+  };
+
+export const State = define<AsState<unknown>>(
   state_kind,
-);
+) as StateConstructor;
 
 export function get<state>(): StateValue<state, state> {
   return State((state: state) => [state, state]);
@@ -48,21 +53,21 @@ export function gets<state, item>(
 }
 
 export function run_state<state, item>(
-  stateful: Value<AsState, item>,
+  stateful: Value<AsState<state>, item>,
   state: state,
 ): readonly [item, state] {
-  return (stateful.value() as State<state, item>)(state);
+  return stateful.value()(state);
 }
 
 export function eval_state<state, item>(
-  stateful: Value<AsState, item>,
+  stateful: Value<AsState<state>, item>,
   state: state,
 ): item {
   return run_state(stateful, state)[0];
 }
 
 export function exec_state<state, item>(
-  stateful: Value<AsState, item>,
+  stateful: Value<AsState<state>, item>,
   state: state,
 ): state {
   return run_state(stateful, state)[1];
@@ -74,26 +79,26 @@ Format.implement(State)({
   },
 });
 
-export interface AsState extends Format<AsState> {}
+export interface AsState<state> extends Format<AsState<state>> {}
 
 Functor.implement(State)({
   map(fn) {
-    return State((state: never) => {
+    return State((state: unknown) => {
       const [value, next] = run_state(this, state);
       return [fn(value), next];
     });
   },
 });
 
-export interface AsState extends Functor<AsState> {}
+export interface AsState<state> extends Functor<AsState<state>> {}
 
 Applicative.implement(State)({
   pure(value) {
-    return State((state: never) => [value, state]);
+    return State((state: unknown) => [value, state]);
   },
 
   ap(value) {
-    return State((state: never) => {
+    return State((state: unknown) => {
       const [fn, next] = run_state(this, state);
       const [item, final] = run_state(value, next);
 
@@ -102,15 +107,15 @@ Applicative.implement(State)({
   },
 });
 
-export interface AsState extends Applicative<AsState> {}
+export interface AsState<state> extends Applicative<AsState<state>> {}
 
 Monad.implement(State)({
   bind(fn) {
-    return State((state: never) => {
+    return State((state: unknown) => {
       const [value, next] = run_state(this, state);
       return run_state(fn(value), next);
     });
   },
 });
 
-export interface AsState extends Monad<AsState> {}
+export interface AsState<state> extends Monad<AsState<state>> {}

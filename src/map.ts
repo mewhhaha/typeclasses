@@ -15,7 +15,7 @@ export type MapT<item> = ReadonlyMap<string, item>;
 export const map_kind = Symbol("MapT");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [map_kind]: MapT<item>;
   }
 }

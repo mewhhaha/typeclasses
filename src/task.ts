@@ -6,7 +6,7 @@ export type Task<item> = () => Promise<item>;
 export const task_kind = Symbol("Task");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [task_kind]: Task<item>;
   }
 }

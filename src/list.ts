@@ -19,7 +19,7 @@ export type List<item> =
 export const list_kind = Symbol("List");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [list_kind]: List<item>;
   }
 }

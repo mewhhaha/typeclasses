@@ -17,7 +17,7 @@ export type ArrayT<item> = readonly item[];
 export const array_kind = Symbol("ArrayT");
 
 declare module "./trait.ts" {
-  interface TraitTypes<item> {
+  interface TraitTypes<dictionary, item> {
     [array_kind]: ArrayT<item>;
   }
 }

@@ -538,6 +538,11 @@ Deno.test("Reader monad threads a shared environment", () => {
   const port = asks<Config, number>((environment) => environment.port)
     .map((value) => value + 1);
 
+  if (false) {
+    // @ts-expect-error Reader requires Config.
+    run_reader(endpoint, { port: 8080 });
+  }
+
   assert_equals(
     run_reader(endpoint, {
       host: "localhost",
@@ -564,6 +569,11 @@ Deno.test("State monad threads state through Do", () => {
 
     return { before, after };
   });
+
+  if (false) {
+    // @ts-expect-error State requires number state.
+    run_state(counter, "wrong");
+  }
 
   assert_equals(run_state(counter, 20), [
     { before: 20, after: 43 },
