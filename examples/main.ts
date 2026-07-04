@@ -46,7 +46,6 @@ import {
   Format,
   Traversable,
 } from "../src/traits.ts";
-import { ReaderT, ResultT, StateT, WriterT } from "../src/transformers/mod.ts";
 
 const size_trait = Symbol("Size");
 
@@ -173,20 +172,11 @@ const task_result = Do(function* () {
 
   return value + 1;
 });
-const TaskReader = ReaderT(from_fn(() => Promise.resolve(undefined)));
 type AppConfig = {
   readonly host: string;
   readonly port: number;
   readonly path: string;
 };
-const reader_task_program = Do(function* () {
-  const config = yield* TaskReader.ask<AppConfig>();
-  const path = yield* TaskReader.lift<AppConfig, string>(
-    from_fn(() => Promise.resolve(config.path)),
-  );
-
-  return config.host + ":" + config.port.toString() + path;
-});
 const reader_endpoint = Do(function* () {
   const config = yield* ask<AppConfig>();
   const base = yield* asks<AppConfig, string>((environment) => {
@@ -200,54 +190,12 @@ const reader_endpoint = Do(function* () {
   return base + path + "?host=" + config.host;
 });
 
-const TaskResult = ResultT(from_fn(() => Promise.resolve(undefined)));
-const result_task_program = Do(function* () {
-  const value = yield* TaskResult.lift(from_fn(() => Promise.resolve(40)));
-  const offset = yield* TaskResult.ok(2);
-
-  return value + offset;
-});
-const TaskWriter = WriterT(from_fn(() => Promise.resolve(undefined)), {
-  empty: [] as string[],
-  concat(left, right) {
-    return [...left, ...right];
-  },
-});
-const TaskWriterState = StateT(
-  TaskWriter.lift(from_fn(() => Promise.resolve(undefined))),
-);
-const TaskWriterStateReader = ReaderT(
-  TaskWriterState.lift<number, undefined>(
-    TaskWriter.lift(from_fn(() => Promise.resolve(undefined))),
-  ),
-);
-type StackConfig = {
+type EffectConfig = {
   readonly label: string;
   readonly increment: number;
 };
-const reader_writer_state_program = Do(function* () {
-  const config = yield* TaskWriterStateReader.ask<StackConfig>();
-  const before = yield* TaskWriterStateReader.lift<StackConfig, number>(
-    TaskWriterState.get<number>(),
-  );
-
-  yield* TaskWriterStateReader.lift<StackConfig, void>(
-    TaskWriterState.modify((value: number) => value + config.increment),
-  );
-  yield* TaskWriterStateReader.lift<StackConfig, void>(
-    TaskWriterState.lift<number, void>(
-      TaskWriter.tell([config.label + ":" + before.toString()]),
-    ),
-  );
-
-  const after = yield* TaskWriterStateReader.lift<StackConfig, number>(
-    TaskWriterState.get<number>(),
-  );
-
-  return { before, after };
-});
-const effect_reader_writer_state_program = Eff.Do(function* () {
-  const config = yield* ask<StackConfig>();
+const effect_program = Eff.Do(function* () {
+  const config = yield* ask<EffectConfig>();
   const before = yield* get<number>();
   const label = yield* from_fn(() => Promise.resolve(config.label));
 
@@ -310,16 +258,6 @@ console.log("record traverse result", traversed_record.fmt());
 console.log("decoded account", decoded_account.fmt());
 console.log("task Do result", await run(task_result));
 console.log(
-  "readerT task",
-  await run(
-    TaskReader.run(reader_task_program, {
-      host: "localhost",
-      port: 8080,
-      path: "/users",
-    }),
-  ),
-);
-console.log(
   "reader endpoint",
   run_reader(reader_endpoint, {
     host: "localhost",
@@ -328,32 +266,12 @@ console.log(
   }),
 );
 console.log(
-  "resultT task",
-  Deno.inspect(await run(TaskResult.run(result_task_program))),
-);
-console.log(
-  "readerT stateT writerT task",
-  Deno.inspect(
-    await run(
-      TaskWriter.run(
-        TaskWriterState.run(
-          TaskWriterStateReader.run(reader_writer_state_program, {
-            label: "step",
-            increment: 2,
-          }),
-          40,
-        ),
-      ),
-    ),
-  ),
-);
-console.log(
-  "effect handlers reader state writer task",
+  "effect reader state writer task",
   Deno.inspect(
     await run(
       run_writer(
         run_state(
-          run_reader(effect_reader_writer_state_program, {
+          run_reader(effect_program, {
             label: "step",
             increment: 2,
           }),

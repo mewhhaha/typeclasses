@@ -249,6 +249,31 @@ const greeting = Do(function* () {
 await run(greeting); // "hello Ada #7"
 ```
 
+For mixed capabilities, use effects. `Eff.Do` can yield normal trait values, and
+each data type runner handles its own operations:
+
+```ts
+const program = Eff.Do(function* () {
+  const config = yield* ask<Config>();
+  const before = yield* get<number>();
+  const label = yield* from_fn(async () => config.label);
+
+  yield* modify((value) => value + config.increment);
+  yield* tell(label + ":" + before.toString());
+
+  return yield* get<number>();
+});
+
+await run(
+  run_writer(
+    run_state(
+      run_reader(program, { label: "step", increment: 2 }),
+      40,
+    ),
+  ),
+);
+```
+
 ## Built-In Shapes
 
 `src/array.ts`, `src/map.ts`, and `src/record.ts` wrap familiar JavaScript data

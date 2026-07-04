@@ -83,13 +83,6 @@ import {
   Semigroup,
   Traversable,
 } from "./traits.ts";
-import {
-  OptionT,
-  ReaderT,
-  ResultT,
-  StateT,
-  WriterT,
-} from "./transformers/mod.ts";
 import { as_trait, type Trait, TraitDefinition } from "./trait.ts";
 
 Deno.test("Trait definitions inherit shared prototype helpers", () => {
@@ -611,135 +604,6 @@ Deno.test("Writer monad accumulates logs through Do", () => {
   ]);
 });
 
-Deno.test("ReaderT stacks environment over Task", async () => {
-  type Config = {
-    readonly prefix: string;
-    readonly id: string;
-  };
-  const TaskReader = ReaderT(task_succeed(undefined));
-  const program = Do(function* () {
-    const config = yield* TaskReader.ask<Config>();
-    const label = yield* TaskReader.lift<Config, string>(
-      task_from_fn(() => Promise.resolve(config.prefix + config.id)),
-    );
-
-    return label;
-  });
-
-  assert_equals(
-    await task_run(TaskReader.run(program, { prefix: "user:", id: "42" })),
-    "user:42",
-  );
-  assert_equals(program.fmt(), "ReaderT(?)");
-});
-
-Deno.test("StateT stacks state over Result", () => {
-  const ResultState = StateT(result_ok(undefined));
-  const counter = Do(function* () {
-    const before = yield* ResultState.get<number>();
-
-    yield* ResultState.modify((value: number) => value + 1);
-
-    return before;
-  });
-  const failed = Do(function* () {
-    yield* ResultState.lift<number, never>(result_err("bad"));
-    yield* ResultState.modify((value: number) => value + 1);
-
-    return 0;
-  });
-
-  assert_equals(
-    ResultState.run(counter, 41).value(),
-    result_ok([41, 42] as const).value(),
-  );
-  assert_equals(ResultState.eval(counter, 41).value(), result_ok(41).value());
-  assert_equals(ResultState.exec(counter, 41).value(), result_ok(42).value());
-  assert_equals(failed.fmt(), "StateT(?)");
-  assert_equals(ResultState.run(failed, 41).value(), result_err("bad").value());
-});
-
-Deno.test("WriterT stacks logs over Task", async () => {
-  const TaskWriter = WriterT(task_succeed(undefined), {
-    empty: [] as string[],
-    concat(left, right) {
-      return [...left, ...right];
-    },
-  });
-  const program = Do(function* () {
-    yield* TaskWriter.tell(["start"]);
-    const value = yield* TaskWriter.lift(task_succeed(40));
-    yield* TaskWriter.tell(["end"]);
-
-    return value + 2;
-  });
-
-  assert_equals(await task_run(TaskWriter.run(program)), [
-    42,
-    ["start", "end"],
-  ]);
-  assert_equals(program.fmt(), "WriterT(?)");
-});
-
-Deno.test("ReaderT StateT WriterT stack threads config state and logs", async () => {
-  type Config = {
-    readonly label: string;
-    readonly increment: number;
-  };
-
-  const TaskWriter = WriterT(task_succeed(undefined), {
-    empty: [] as string[],
-    concat(left, right) {
-      return [...left, ...right];
-    },
-  });
-  const TaskWriterState = StateT(TaskWriter.lift(task_succeed(undefined)));
-  const TaskWriterStateReader = ReaderT(
-    TaskWriterState.lift<number, undefined>(
-      TaskWriter.lift(task_succeed(undefined)),
-    ),
-  );
-
-  const program = Do(function* () {
-    const config = yield* TaskWriterStateReader.ask<Config>();
-    const before = yield* TaskWriterStateReader.lift<Config, number>(
-      TaskWriterState.get<number>(),
-    );
-
-    yield* TaskWriterStateReader.lift<Config, void>(
-      TaskWriterState.modify((value: number) => value + config.increment),
-    );
-    yield* TaskWriterStateReader.lift<Config, void>(
-      TaskWriterState.lift<number, void>(
-        TaskWriter.tell([config.label + ":" + before.toString()]),
-      ),
-    );
-
-    const after = yield* TaskWriterStateReader.lift<Config, number>(
-      TaskWriterState.get<number>(),
-    );
-
-    return { before, after };
-  });
-
-  const result = await task_run(
-    TaskWriter.run(
-      TaskWriterState.run(
-        TaskWriterStateReader.run(program, {
-          label: "step",
-          increment: 2,
-        }),
-        40,
-      ),
-    ),
-  );
-
-  assert_equals(result, [
-    [{ before: 40, after: 42 }, 42],
-    ["step:40"],
-  ]);
-});
-
 Deno.test("Effects compose reader state writer and task with handlers", async () => {
   type Config = {
     readonly label: string;
@@ -821,53 +685,6 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
   });
 
   assert_equals(Eff.run(run_clock(program, 41)), 42);
-});
-
-Deno.test("OptionT stacks optional results over Task", async () => {
-  const TaskOption = OptionT(task_succeed(undefined));
-  const present = Do(function* () {
-    const left = yield* TaskOption.some(20);
-    const right = yield* TaskOption.lift(task_succeed(22));
-
-    return left + right;
-  });
-  const missing = Do(function* () {
-    yield* TaskOption.none<number>();
-
-    return 42;
-  });
-
-  assert_equals(
-    await task_run(TaskOption.run(present)),
-    option_some(42).value(),
-  );
-  assert_equals(await task_run(TaskOption.run(missing)), option_none().value());
-  assert_equals(present.fmt(), "OptionT(?)");
-});
-
-Deno.test("ResultT stacks typed failure over Task", async () => {
-  const TaskResult = ResultT(task_succeed(undefined));
-  const parsed = Do(function* () {
-    const text = yield* TaskResult.lift(task_succeed("40"));
-    const offset = yield* TaskResult.ok(2);
-
-    return Number.parseInt(text, 10) + offset;
-  });
-  const failed = Do(function* () {
-    yield* TaskResult.err<number>("missing");
-
-    return 42;
-  });
-
-  assert_equals(
-    await task_run(TaskResult.run(parsed)),
-    result_ok(42).value(),
-  );
-  assert_equals(
-    await task_run(TaskResult.run(failed)),
-    result_err("missing").value(),
-  );
-  assert_equals(parsed.fmt(), "ResultT(?)");
 });
 
 Deno.test("STM monad composes transactional reads and writes", () => {

@@ -9,7 +9,6 @@ export * from "./state.ts";
 export * from "./writer.ts";
 export * from "./stm.ts";
 export * from "./validation.ts";
-export * from "./transformers/mod.ts";
 export * as effects from "./effects.ts";
 export * as array from "./array.ts";
 export * as map from "./map.ts";
