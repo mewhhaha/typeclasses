@@ -3,6 +3,10 @@ import * as FpRTE from "fp-ts/ReaderTaskEither";
 import * as FpSRTE from "fp-ts/StateReaderTaskEither";
 import { pipe as fp_pipe } from "fp-ts/function";
 
+import {
+  from_array as array_from_array,
+  to_array as array_to_array,
+} from "../src/array.ts";
 import { Effect, Program } from "../src/effects.ts";
 import { ask, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
@@ -173,7 +177,7 @@ function make_program() {
     });
 
     yield* modify((value: number) => value + config.increment);
-    yield* tell(label + ":" + before.toString());
+    yield* tell(array_from_array([label + ":" + before.toString()]));
 
     const after = yield* get<number>();
 
@@ -211,7 +215,9 @@ function make_bind_program() {
             Effect.lift(modify((value: number) => value + config.increment)),
             () => {
               return Effect.bind(
-                Effect.lift(tell(label + ":" + before.toString())),
+                Effect.lift(
+                  tell(array_from_array([label + ":" + before.toString()])),
+                ),
                 () => {
                   return Effect.bind(Effect.lift(get<number>()), (after) => {
                     return Effect.pure({ before, after });
@@ -328,14 +334,17 @@ function make_fp_program() {
 }
 
 async function run_effect(program: ReturnType<typeof make_program>) {
-  return await run(
+  const [value, logs] = await run(
     run_writer(
       run_state(
         run_reader(program, config),
         40,
       ),
+      array_from_array<string>([]),
     ),
   );
+
+  return [value, array_to_array(logs)] as const;
 }
 
 async function run_fx(program: ReturnType<typeof make_fx_program>) {
@@ -397,10 +406,12 @@ async function run_concrete_manual() {
   const [_modified, modified_state] = increment.value()(state);
   state = modified_state;
 
-  const [_told, logs] = tell(label + ":" + before.toString()).value();
+  const [_told, logs] = tell(
+    array_from_array([label + ":" + before.toString()]),
+  ).value();
   const [after, after_state] = get<number>().value()(state);
 
-  return [[{ before, after }, after_state], logs] as const;
+  return [[{ before, after }, after_state], array_to_array(logs)] as const;
 }
 
 async function run_raw() {

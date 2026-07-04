@@ -1,3 +1,7 @@
+import {
+  from_array as array_from_array,
+  to_array as array_to_array,
+} from "../src/array.ts";
 import { Effect, Program } from "../src/effects.ts";
 import { ask, asks, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
@@ -118,7 +122,11 @@ Deno.bench("Writer Program construct+run", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume_writer(Effect.run(run_writer(make_writer_program())));
+    checksum += consume_writer(
+      Effect.run(
+        run_writer(make_writer_program(), array_from_array<string>([])),
+      ),
+    );
   }
 
   _sink = checksum;
@@ -140,7 +148,9 @@ Deno.bench("Writer Program reuse+run", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume_writer(Effect.run(run_writer(program)));
+    checksum += consume_writer(
+      Effect.run(run_writer(program, array_from_array<string>([]))),
+    );
   }
 
   _sink = checksum;
@@ -232,9 +242,9 @@ function make_state_program() {
 
 function make_writer_do() {
   return Do(function* () {
-    yield* tell("start");
-    const value = yield* writer(40, ["value"]);
-    yield* tell("end");
+    yield* tell(array_from_array(["start"]));
+    const value = yield* writer(40, array_from_array(["value"]));
+    yield* tell(array_from_array(["end"]));
 
     return value + 2;
   });
@@ -242,9 +252,9 @@ function make_writer_do() {
 
 function make_writer_program() {
   return Program(function* () {
-    yield* tell("start");
-    const value = yield* writer(40, ["value"]);
-    yield* tell("end");
+    yield* tell(array_from_array(["start"]));
+    const value = yield* writer(40, array_from_array(["value"]));
+    yield* tell(array_from_array(["end"]));
 
     return value + 2;
   });
@@ -283,10 +293,13 @@ function consume_state(
   return value.before + value.after + state;
 }
 
-function consume_writer(result: readonly [number, readonly string[]]): number {
+function consume_writer(
+  result: readonly [number, unknown],
+): number {
   const [value, logs] = result;
 
-  return value + logs.length;
+  return value +
+    array_to_array(logs as ReturnType<typeof array_from_array<string>>).length;
 }
 
 function consume_task(value: number): number {

@@ -1,4 +1,4 @@
-import { type As, define } from "./trait.ts";
+import { type As, define, type Trait } from "./trait.ts";
 import {
   Applicative,
   Equal,
@@ -10,31 +10,58 @@ import {
 } from "./traits.ts";
 
 export type Result<item, error = string> =
-  | readonly ["ok", item]
-  | readonly ["err", error];
+  | Ok<item>
+  | Err<error>;
 
-type Ok<item> = readonly ["ok", item];
+export type Ok<item> = readonly ["ok", item];
+export type Err<error = string> = readonly ["err", error];
 
 export const result_kind = Symbol("Result");
 
 declare module "./trait.ts" {
   interface TraitTypes<dictionary, item> {
-    [result_kind]: Result<item, string>;
+    [result_kind]: Result<item, unknown>;
   }
 }
 
 export interface AsResult extends As<typeof result_kind> {}
 
+export type ResultValue<error, item> = Trait<
+  AsResult,
+  Result<item, error>,
+  item
+>;
+
+type ResultConstructor =
+  & AsResult
+  & {
+    <item, error>(value: Result<item, error>): ResultValue<error, item>;
+  };
+
 export const Result = define<AsResult>(
   result_kind,
-);
+) as ResultConstructor;
 
-export function ok<item>(value: item) {
-  return Result(result_ok(value));
+export function ok<item>(value: item): ResultValue<never, item> {
+  return Result(result_ok(value)) as ResultValue<never, item>;
 }
 
-export function err<item = never>(error: string) {
-  return Result(result_err<item>(error));
+export function err<item = never, error = string>(
+  error: error,
+): ResultValue<error, item> {
+  return Result(result_err<item, error>(error)) as ResultValue<error, item>;
+}
+
+export function is_ok<item, error>(
+  value: Result<item, error>,
+): value is Ok<item> {
+  return value[0] === "ok";
+}
+
+export function is_err<item, error>(
+  value: Result<item, error>,
+): value is Err<error> {
+  return value[0] === "err";
 }
 
 export function from_number(value: number) {
@@ -161,7 +188,9 @@ function result_ok<item>(value: item): Ok<item> {
   return ["ok", value];
 }
 
-function result_err<item = never>(error: string): Result<item> {
+function result_err<item = never, error = string>(
+  error: error,
+): Result<item, error> {
   return ["err", error];
 }
 

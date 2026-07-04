@@ -1,4 +1,4 @@
-import { type As, define, type Value } from "./trait.ts";
+import { type As, define, type Trait } from "./trait.ts";
 import {
   Applicative,
   Equal,
@@ -8,37 +8,68 @@ import {
   Traversable,
 } from "./traits.ts";
 
-export type Validation<item> =
-  | readonly ["valid", item]
-  | readonly ["invalid", readonly string[]];
+export type Validation<error, item> =
+  | Valid<item>
+  | Invalid<error>;
 
-type Valid<item> = readonly ["valid", item];
+export type Valid<item> = readonly ["valid", item];
+export type Invalid<error> = readonly [
+  "invalid",
+  error,
+  ValidationSemigroup<error>,
+];
+
+export type ValidationSemigroup<error> = {
+  concat(left: error, right: error): error;
+};
 
 export const validation_kind = Symbol("Validation");
 
 declare module "./trait.ts" {
   interface TraitTypes<dictionary, item> {
-    [validation_kind]: Validation<item>;
+    [validation_kind]: Validation<unknown, item>;
   }
 }
 
 export interface AsValidation extends As<typeof validation_kind> {}
 
-type ValidationValue<item> = Value<AsValidation, item>;
+export type ValidationValue<error, item> = Trait<
+  AsValidation,
+  Validation<error, item>,
+  item
+>;
+
+type ValidationConstructor =
+  & AsValidation
+  & {
+    <error, item>(
+      value: Validation<error, item>,
+    ): ValidationValue<error, item>;
+  };
 
 export const Validation = define<AsValidation>(
   validation_kind,
-);
+) as ValidationConstructor;
 
-export function valid<item>(value: item) {
-  return Validation(validation_valid(value));
+export function valid<item>(value: item): ValidationValue<never, item> {
+  return Validation(validation_valid(value)) as ValidationValue<never, item>;
 }
 
 export function invalid<item = never>(
   first: string,
   ...rest: string[]
-): ValidationValue<item> {
-  return Validation(validation_invalid([first, ...rest]));
+): ValidationValue<readonly string[], item> {
+  return invalid_with([first, ...rest], array_semigroup<string>());
+}
+
+export function invalid_with<error, item = never>(
+  error: error,
+  semigroup: ValidationSemigroup<error>,
+): ValidationValue<error, item> {
+  return Validation(validation_invalid(error, semigroup)) as ValidationValue<
+    error,
+    item
+  >;
 }
 
 Format.implement(Validation)({
@@ -65,13 +96,7 @@ Equal.implement(Validation)({
     }
 
     if (left[0] === "invalid" && right_value[0] === "invalid") {
-      if (left[1].length !== right_value[1].length) {
-        return false;
-      }
-
-      return left[1].every((error, index) => {
-        return Object.is(error, right_value[1][index]);
-      });
+      return errors_equal(left[1], right_value[1]);
     }
 
     return false;
@@ -104,15 +129,18 @@ Applicative.implement(Validation)({
     const validation = value.value();
 
     if (fn[0] === "invalid" && validation[0] === "invalid") {
-      return invalid_from_errors([...fn[1], ...validation[1]]);
+      return invalid_from_error(
+        concat_errors(fn, validation),
+        fn[2],
+      );
     }
 
     if (fn[0] === "invalid") {
-      return invalid_from_errors(fn[1]);
+      return invalid_from_error(fn[1], fn[2]);
     }
 
     if (validation[0] === "invalid") {
-      return invalid_from_errors(validation[1]);
+      return invalid_from_error(validation[1], validation[2]);
     }
 
     return valid(fn[1](validation[1]));
@@ -142,8 +170,9 @@ Traversable.implement(Validation)({
     if (validation[0] === "invalid") {
       return Applicative.pure(
         applicative,
-        invalid_from_errors(
+        invalid_from_error(
           validation[1],
+          validation[2],
         ),
       );
     }
@@ -158,16 +187,56 @@ function validation_valid<item>(value: item): Valid<item> {
   return ["valid", value];
 }
 
-function validation_invalid<item = never>(
-  errors: readonly string[],
-): Validation<item> {
-  return ["invalid", errors];
+function validation_invalid<error>(
+  error: error,
+  semigroup: ValidationSemigroup<error>,
+): Validation<error, never> {
+  return ["invalid", error, semigroup];
 }
 
-function invalid_from_errors<item = never>(
-  errors: readonly string[],
-): ValidationValue<item> {
-  return Validation(validation_invalid([...errors]));
+function invalid_from_error<error, item = never>(
+  error: error,
+  semigroup: ValidationSemigroup<error>,
+): ValidationValue<error, item> {
+  return Validation(validation_invalid(error, semigroup)) as ValidationValue<
+    error,
+    item
+  >;
+}
+
+function array_semigroup<item>(): ValidationSemigroup<readonly item[]> {
+  return {
+    concat(left, right) {
+      if (left.length === 0) {
+        return right;
+      }
+
+      if (right.length === 0) {
+        return left;
+      }
+
+      return [...left, ...right];
+    },
+  };
+}
+
+function concat_errors(left: Invalid<unknown>, right: Invalid<unknown>) {
+  const semigroup = left[2] as ValidationSemigroup<unknown>;
+  return semigroup.concat(left[1], right[1]);
+}
+
+function errors_equal(left: unknown, right: unknown) {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((error, index) => {
+      return Object.is(error, right[index]);
+    });
+  }
+
+  return Object.is(left, right);
 }
 
 function same_context<out>(value: unknown): out {

@@ -765,7 +765,7 @@ function consume_traits(
   const value = result.value();
 
   if (value[0] === "err") {
-    return -value[1].length;
+    return -String(value[1]).length;
   }
 
   return value[1].score;

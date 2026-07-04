@@ -12,9 +12,10 @@ import {
 
 export type Option<item> =
   | readonly ["some", item]
-  | readonly ["none"];
+  | None;
 
-type Some<item> = readonly ["some", item];
+export type Some<item> = readonly ["some", item];
+export type None = readonly ["none"];
 
 export const option_kind = Symbol("Option");
 
@@ -39,6 +40,14 @@ export function some<item>(value: item) {
 
 export function none<item = never>(): OptionValue<item> {
   return none_value as OptionValue<item>;
+}
+
+export function is_some<item>(value: Option<item>): value is Some<item> {
+  return value[0] === "some";
+}
+
+export function is_none<item>(value: Option<item>): value is None {
+  return value[0] === "none";
 }
 
 export function from_nullable<item>(

@@ -222,6 +222,9 @@ const parsed = ok("42").bind((text) => {
 parsed.value(); // ["ok", 42]
 ```
 
+`Result` does not fix the error payload to `string`; `err(value)` keeps the
+error value's type. The examples use strings because they are easy to inspect.
+
 `Do` is a small do-notation experiment. It runs a generator over one monad
 dictionary and uses `yield*` to bind each wrapped value:
 
@@ -260,7 +263,7 @@ type Label =
 type App =
   | Uses<AsReader<Config>>
   | Uses<AsState<number>>
-  | Uses<AsWriter<string>>
+  | Uses<AsWriter<AsArray, string>>
   | Uses<AsTask>;
 
 const Label = Program.scope<Label>();
@@ -279,7 +282,7 @@ const program = App(function* () {
   const scoped_label = yield* run_reader(label, { label: config.label });
 
   yield* modify((value) => value + config.increment);
-  yield* tell(scoped_label + ":" + before.toString());
+  yield* tell(array_from_array([scoped_label + ":" + before.toString()]));
 
   return yield* get<number>();
 });
@@ -290,6 +293,7 @@ await run(
       run_reader(program, { label: "step", increment: 2 }),
       40,
     ),
+    array_from_array<string>([]),
   ),
 );
 ```
@@ -486,13 +490,20 @@ program = do
 
 ```ts
 const program = Do(function* () {
-  yield* tell("start");
+  yield* tell(array_from_array(["start"]));
 
   return 42;
 });
 
-program.value(); // [42, ["start"]]
+const [value, logs] = program.value();
+
+value; // 42
+array_to_array(logs); // ["start"]
 ```
+
+`Writer` is parameterized by the monoidal output. Arrays are just one concrete
+choice through `ArrayT`; the same `Writer` machinery can accumulate any output
+with a `Monoid` implementation.
 
 ### Effects Instead of Transformers
 
@@ -505,7 +516,7 @@ mixed programs with `Effect`/`Program` instead:
 type App =
   | Uses<AsReader<Config>>
   | Uses<AsState<number>>
-  | Uses<AsWriter<string>>
+  | Uses<AsWriter<AsArray, string>>
   | Uses<AsTask>;
 
 const App = Program.scope<App>();
@@ -515,7 +526,7 @@ const program = App(function* () {
   const before = yield* get<number>();
 
   yield* modify((value: number) => value + config.increment);
-  yield* tell(config.label + ":" + before.toString());
+  yield* tell(array_from_array([config.label + ":" + before.toString()]));
 
   return yield* get<number>();
 });
@@ -526,6 +537,7 @@ await run(
       run_reader(program, { label: "step", increment: 2 }),
       40,
     ),
+    array_from_array<string>([]),
   ),
 );
 ```
@@ -577,43 +589,49 @@ Applicative.lift(
 but not `Monad`: a lawful monad would make later validations depend on earlier
 values and lose independent error accumulation.
 
+Like `Writer`, `Validation` now separates the accumulation rule from the default
+error shape. `invalid("message")` is a convenience for `readonly string[]`
+errors, while `invalid_with(error, semigroup)` can accumulate any error payload
+with an explicit semigroup.
+
 ## JavaScript Shapes
 
 The useful question for a JavaScript shape is which laws it can support without
 surprising runtime behavior.
 
-| JavaScript shape                 | Wrapper in this repo      | Natural traits                                                                                                          |
-| -------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `readonly item[]`                | `ArrayT`                  | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                      |
-| recursive list                   | `List`                    | Same list-like traits, useful for generator experiments                                                                 |
-| `ReadonlyMap<string, item>`      | `MapT`                    | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                             |
-| `Readonly<Record<string, item>>` | `RecordT`                 | Same value-focused traits as `MapT`                                                                                     |
-| `Set<item>`                      | not implemented           | `Foldable`, `Semigroup`, `Monoid`; `Functor` only preserves set semantics if equality/coercion surprises are acceptable |
-| `PromiseLike<item>`              | `Task` via `from_promise` | Use `Task` so work is deferred; raw promises are already running                                                        |
-| `() => Promise<item>`            | `Task` via `from_fn`      | `Functor`, parallel `Applicative`, sequential `Monad`                                                                   |
-| `Iterable<item>` / generator     | not implemented           | lazy `Functor`, `Foldable`, maybe `Monad`; correctness depends on replayability                                         |
-| `AsyncIterable<item>`            | not implemented           | async `Functor`/`Foldable`; `Traversable` and `Monad` need careful cancellation/error policy                            |
-| `ReadableStream<item>`           | adapter boundary          | usually convert to `AsyncIterable`; native streams are stateful and can be locked/consumed                              |
-| typed arrays                     | not implemented           | `Functor` if output stays numeric; `Foldable`; `Traversable` is awkward because constructors differ                     |
-| `ArrayBuffer` / `DataView`       | adapter boundary          | better treated as binary input/output, not a generic container                                                          |
-| `URLSearchParams` / `FormData`   | adapter boundary          | foldable key/value data; usually decode into `Result` or `Validation` first                                             |
-| `Date`, `RegExp`, `Error`        | not containers            | useful for `Format`/`Equal` style utilities, not `Functor`/`Monad`                                                      |
+| JavaScript shape                 | Wrapper in this repo             | Natural traits                                                                                                           |
+| -------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `readonly item[]`                | `ArrayT`                         | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                       |
+| recursive list                   | `List`                           | Same list-like traits, useful for generator experiments                                                                  |
+| `ReadonlyMap<string, item>`      | `MapT`                           | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                              |
+| `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused traits as `MapT`                                                                                      |
+| `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates         |
+| `PromiseLike<item>`              | `Task` via `from_promise`        | Use `Task` so work is deferred; raw promises are already running                                                         |
+| `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`                                                                    |
+| `Iterable<item>` / generator     | `IterableT`                      | replayable lazy `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`       |
+| `AsyncIterable<item>`            | `AsyncIterableT`                 | replayable async `Functor`, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Alternative`; collect with `to_array`        |
+| `ReadableStream<item>`           | `ReadableStreamT`                | opaque stream wrapper plus `to_async_iterable`; native streams are stateful and can be locked/consumed                   |
+| typed arrays                     | `TypedArrayT`                    | `Format`, `Equal`, `Foldable`; no general `Functor` because output must stay compatible with the typed-array constructor |
+| `ArrayBuffer` / `DataView`       | `ArrayBufferT` / `DataViewT`     | byte-level `Format`, `Equal`, `Foldable`, `Semigroup`, `Monoid`                                                          |
+| `URLSearchParams` / `FormData`   | `URLSearchParamsT` / `FormDataT` | entry-level `Format`, `Equal`, `Foldable`, `Semigroup`, `Monoid`; usually decode into `Result` or `Validation` first     |
+| `WeakMap` / `WeakSet`            | `WeakMapT` / `WeakSetT`          | opaque `Format` and identity `Equal`; no fold because JavaScript intentionally makes them non-iterable                   |
+| `Date`, `RegExp`, `Error`        | `DateT`, `RegExpT`, `ErrorT`     | `Format` and `Equal` utility wrappers, not `Functor`/`Monad` containers                                                  |
 
-`Set` is deliberately absent for now. JavaScript `Set` equality is identity for
-objects and SameValueZero for primitives, so mapping can collapse values:
+`SetT` keeps JavaScript `Set` behavior. Equality is identity for objects and
+SameValueZero for primitives, so mapping can collapse values:
 
 ```ts
 new Set([1, 2, 3].map(() => 0)); // Set { 0 }
 ```
 
-That can still be useful, but it should be documented as JavaScript set behavior
-rather than pretending to be a list.
+That can still be useful, but it is set behavior rather than list behavior.
 
-For `Iterable` and `AsyncIterable`, the main design choice is replayability.
-Many iterators are one-shot mutable cursors. A lawful wrapper either needs to
-store a factory, `() => Iterator<item>`, or explicitly materialize/cache values.
-That is the same issue the list `Do` experiments exposed: calling a continuation
-more than once must not accidentally reuse a consumed iterator.
+For `IterableT` and `AsyncIterableT`, the main design choice is replayability.
+Many iterators are one-shot mutable cursors. The preferred constructors store a
+factory, `() => Iterable<item>` or `() => AsyncIterable<item>`. The plain
+`from_iterable` helper materializes values to make a replayable source. That is
+the same issue the list `Do` experiments exposed: calling a continuation more
+than once must not accidentally reuse a consumed iterator.
 
 `ReadableStream` has similar constraints plus cancellation and backpressure. The
 pragmatic shape is usually:
@@ -638,14 +656,14 @@ async function* from_stream<item>(stream: ReadableStream<item>) {
 }
 ```
 
-A stream trait wrapper can then be built on `AsyncIterable` semantics. Running
-tasks in workers is a runner concern layered under `Task`, not a separate data
-type, so it is intentionally not modeled here.
+`ReadableStreamT` exposes this as `to_async_iterable`, which returns an
+`AsyncIterableT`. Running tasks in workers is a runner concern layered under
+`Task`, not a separate data type, so it is intentionally not modeled here.
 
 ## Built-In Shapes
 
-`src/array.ts`, `src/map.ts`, and `src/record.ts` wrap familiar JavaScript data
-shapes without replacing them:
+`src/array.ts`, `src/map.ts`, `src/record.ts`, and the other built-in-shaped
+modules wrap familiar JavaScript data shapes without replacing them:
 
 - `ArrayT<item>` wraps `readonly item[]` and implements list-like `Functor`,
   `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, and
@@ -654,6 +672,13 @@ shapes without replacing them:
   `Functor`, `Foldable`, `Traversable`, `Semigroup`, and `Monoid`.
 - `RecordT<item>` wraps `Readonly<Record<string, item>>` with the same
   value-focused traits as `MapT`.
+- `SetT<item>` wraps `ReadonlySet<item>` with JavaScript set semantics.
+- `IterableT<item>` and `AsyncIterableT<item>` use replayable factories.
+- `ArrayBufferT`, `DataViewT`, and `TypedArrayT` expose byte/numeric folding
+  without pretending binary buffers are general-purpose functors.
+- `URLSearchParamsT` and `FormDataT` fold over key/value entries.
+- `WeakMapT`, `WeakSetT`, `DateT`, `RegExpT`, and `ErrorT` are utility wrappers
+  for formatting/equality rather than collection programming.
 
 Maps and records use right-biased `concat`, where values from the right side
 replace matching keys from the left side. They intentionally do not implement
@@ -664,7 +689,15 @@ The root module exports these built-in-shaped modules under namespaces to avoid
 helper-name collisions:
 
 ```ts
-import { array, map, record } from "./src/mod.ts";
+import {
+  array,
+  async_iterable,
+  map,
+  record,
+  set,
+  typed_array,
+  url_search_params,
+} from "./src/mod.ts";
 ```
 
 Each data type has an open dictionary interface such as `AsOption` or `AsList`.

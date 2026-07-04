@@ -1,16 +1,52 @@
-import { from_array as array_from_array } from "../src/array.ts";
+import {
+  type AsArray,
+  from_array as array_from_array,
+  to_array as array_to_array,
+} from "../src/array.ts";
+import { from_bytes as array_buffer_from_bytes } from "../src/array_buffer.ts";
+import {
+  from_factory as async_iterable_from_factory,
+  to_array as async_iterable_to_array,
+} from "../src/async_iterable.ts";
+import { from_bytes as data_view_from_bytes } from "../src/data_view.ts";
+import { from_date } from "../src/date.ts";
+import { from_error } from "../src/error.ts";
+import {
+  from_entries as form_data_from_entries,
+  to_entries as form_data_to_entries,
+} from "../src/form_data.ts";
+import {
+  from_factory as iterable_from_factory,
+  to_array as iterable_to_array,
+} from "../src/iterable.ts";
 import { from_array, List, to_array } from "../src/list.ts";
 import {
   from_entries as map_from_entries,
   to_record as map_to_record,
 } from "../src/map.ts";
-import { some } from "../src/option.ts";
+import { is_none, is_some, none, type Option, some } from "../src/option.ts";
 import { ask, asks, type AsReader, local, run_reader } from "../src/reader.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
 } from "../src/record.ts";
-import { err, from_number, ok } from "../src/result.ts";
+import {
+  from_readable_stream,
+  to_async_iterable as readable_stream_to_async_iterable,
+} from "../src/readable_stream.ts";
+import { from_regexp } from "../src/regexp.ts";
+import {
+  err,
+  from_number,
+  is_err,
+  is_ok,
+  ok,
+  type Result,
+} from "../src/result.ts";
+import {
+  from_iterable as set_from_iterable,
+  to_set as set_to_set,
+} from "../src/set.ts";
 import {
   type AsState,
   exec_state,
@@ -27,10 +63,17 @@ import {
   write_tvar,
 } from "../src/stm.ts";
 import { type AsTask, from_fn, run } from "../src/task.ts";
+import { from_typed_array } from "../src/typed_array.ts";
+import {
+  from_entries as url_params_from_entries,
+  to_entries as url_params_to_entries,
+} from "../src/url_search_params.ts";
 import {
   invalid as validation_invalid,
   valid as validation_valid,
 } from "../src/validation.ts";
+import { from_entries as weak_map_from_entries } from "../src/weak_map.ts";
+import { from_iterable as weak_set_from_iterable } from "../src/weak_set.ts";
 import {
   call_trait_method,
   define_trait,
@@ -45,6 +88,7 @@ import {
   sum_values,
 } from "../src/examples.ts";
 import { Program, type Uses } from "../src/effects.ts";
+import { match } from "../src/tagged.ts";
 import { type AsWriter, run_writer, tell } from "../src/writer.ts";
 import {
   Alternative,
@@ -95,6 +139,23 @@ const labeled_list = label_values(list);
 
 const result = ok("42")
   .bind((text) => from_number(Number.parseInt(text, 10)));
+const guarded_option = describe_option(option.value());
+const matched_option = match(option.value(), {
+  some(value) {
+    return "some:" + value.toString();
+  },
+  none() {
+    return "none";
+  },
+});
+const matched_none = match(none<number>().value(), {
+  some(value) {
+    return "some:" + value.toString();
+  },
+  none() {
+    return "none";
+  },
+});
 
 const applicative_list = from_array([
   (value: number) => value + 1,
@@ -111,6 +172,15 @@ const positive_result = keep_positive(
   ok(-1),
   (value) => err("negative: " + value.toString()),
 );
+const guarded_result = describe_result(positive_result.value());
+const matched_result = match(result.value(), {
+  ok(value) {
+    return "ok:" + value.toString();
+  },
+  err(message) {
+    return "err:" + message;
+  },
+});
 const fluent_option = some((left: number) => {
   return (right: number) => left + right;
 })
@@ -157,6 +227,53 @@ const mapped_map = map_from_entries<number>([["left", 1], ["right", 2]])
   .map((value) => "value:" + value.toString());
 const mapped_record = record_from_entries<number>([["x", 4], ["y", 5]])
   .map((value) => value * 2);
+const mapped_set = set_from_iterable([1, 2, 2, 3])
+  .map((value) => value * 10);
+const replayable_iterable = iterable_from_factory(function* () {
+  yield 1;
+  yield 2;
+  yield 3;
+}).bind((value) => {
+  return iterable_from_factory(function* () {
+    yield value;
+    yield value * 10;
+  });
+});
+const replayable_async_iterable = async_iterable_from_factory(
+  async function* () {
+    yield "a";
+    yield "b";
+  },
+).map((value) => value.toUpperCase());
+const readable_numbers = from_readable_stream(
+  new ReadableStream<number>({
+    start(controller) {
+      controller.enqueue(1);
+      controller.enqueue(2);
+      controller.close();
+    },
+  }),
+);
+const readable_as_iterable = readable_stream_to_async_iterable(readable_numbers)
+  .map((value) => value * 10);
+const byte_buffer = array_buffer_from_bytes([1, 2])
+  .concat(array_buffer_from_bytes([3]));
+const byte_view = data_view_from_bytes([4, 5, 6]);
+const typed_numbers = from_typed_array(new Uint8Array([7, 8, 9]));
+const query_params = url_params_from_entries([
+  ["tag", "traits"],
+  ["tag", "typescript"],
+]);
+const form_fields = form_data_from_entries([
+  ["name", "Ada"],
+  ["email", "ada@example.test"],
+]);
+const weak_key = {};
+const weak_map = weak_map_from_entries([[weak_key, "cached"]]);
+const weak_set = weak_set_from_iterable([weak_key]);
+const date_value = from_date(new Date("2024-01-02T03:04:05.000Z"));
+const regexp_value = from_regexp(/^traits$/iu);
+const error_value = from_error(new TypeError("expected value"));
 const traversed_record = Traversable.traverse(
   record_from_entries<number>([["id", 42], ["limit", 10]]),
   ok(undefined),
@@ -210,7 +327,7 @@ type Label =
 type App =
   | Uses<AsReader<EffectConfig>>
   | Uses<AsState<number>>
-  | Uses<AsWriter<string>>
+  | Uses<AsWriter<AsArray, string>>
   | Uses<AsTask>;
 const Label = Program.scope<Label>();
 const App = Program.scope<App>();
@@ -233,7 +350,7 @@ const effect_program = App(function* () {
   });
 
   yield* modify((value: number) => value + config.increment);
-  yield* tell(label + ":" + before.toString());
+  yield* tell(array_from_array([label + ":" + before.toString()]));
 
   const after = yield* get<number>();
 
@@ -268,8 +385,21 @@ const transfer_result = atomically(Do(function* () {
 
   return checking_after + savings_after;
 }));
+const effect_result = await run(
+  run_writer(
+    run_state(
+      effect_without_reader,
+      40,
+    ),
+    array_from_array<string>([]),
+  ),
+);
+const [effect_result_value, effect_result_logs] = effect_result;
 
 console.log("option", doubled_option.fmt());
+console.log("option switch guards", guarded_option);
+console.log("option match", matched_option);
+console.log("none match", matched_none);
 console.log("list labels", Format.fmt(labeled_list));
 console.log("list sum", sum_values(list));
 console.log("custom trait list size", Size.size(sized_list));
@@ -279,6 +409,8 @@ console.log("applicative list", applicative_list.fmt());
 console.log("generic option sum", Format.fmt(generic_option_sum));
 console.log("generic list sum", Format.fmt(generic_list_sum));
 console.log("generic positive result", Format.fmt(positive_result));
+console.log("result switch guards", guarded_result);
+console.log("result match", matched_result);
 console.log("fluent option", fluent_option.fmt());
 console.log("fluent result", fluent_result.fmt());
 console.log("fluent list", fluent_list.fmt());
@@ -291,6 +423,32 @@ console.log("array monad", array_monad.fmt());
 console.log("array alternative", Format.fmt(array_alternative));
 console.log("map functor", Deno.inspect(map_to_record(mapped_map)));
 console.log("record functor", Deno.inspect(record_to_record(mapped_record)));
+console.log("set functor", Deno.inspect([...set_to_set(mapped_set)]));
+console.log(
+  "iterable monad",
+  Deno.inspect(iterable_to_array(replayable_iterable)),
+);
+console.log(
+  "async iterable functor",
+  Deno.inspect(await async_iterable_to_array(replayable_async_iterable)),
+);
+console.log(
+  "readable stream adapter",
+  Deno.inspect(await async_iterable_to_array(readable_as_iterable)),
+);
+console.log("array buffer concat", byte_buffer.fmt());
+console.log("data view bytes", byte_view.fmt());
+console.log(
+  "typed array fold",
+  typed_numbers.fold(0, (sum, byte) => sum + Number(byte)),
+);
+console.log("url params", Deno.inspect(url_params_to_entries(query_params)));
+console.log("form data", Deno.inspect(form_data_to_entries(form_fields)));
+console.log("weak map", weak_map.fmt());
+console.log("weak set", weak_set.fmt());
+console.log("date", date_value.fmt());
+console.log("regexp", regexp_value.fmt());
+console.log("error", error_value.fmt());
 console.log("record traverse result", traversed_record.fmt());
 console.log("decoded account", decoded_account.fmt());
 console.log("task Do result", await task_result.value()());
@@ -305,14 +463,7 @@ console.log(
 console.log(
   "effect reader state writer task",
   Deno.inspect(
-    await run(
-      run_writer(
-        run_state(
-          effect_without_reader,
-          40,
-        ),
-      ),
-    ),
+    [effect_result_value, array_to_array(effect_result_logs)],
   ),
 );
 console.log(
@@ -321,6 +472,28 @@ console.log(
   exec_state(state_counter, 20),
 );
 console.log("stm transfer total", transfer_result);
+
+function describe_option(value: Option<number>) {
+  switch (true) {
+    case is_some(value):
+      return "some:" + value[1].toString();
+    case is_none(value):
+      return "none";
+  }
+
+  throw new Error("unreachable option variant");
+}
+
+function describe_result(value: Result<number, unknown>) {
+  switch (true) {
+    case is_ok(value):
+      return "ok:" + value[1].toString();
+    case is_err(value):
+      return "err:" + String(value[1]);
+  }
+
+  throw new Error("unreachable result variant");
+}
 
 function decode_account_payload(input: unknown) {
   return Do(function* () {

@@ -14,9 +14,29 @@ import {
   type Uses,
 } from "./effects.ts";
 import {
+  type AsArray,
   from_array as array_from_array,
   to_array as array_to_array,
 } from "./array.ts";
+import {
+  from_bytes as array_buffer_from_bytes,
+  to_bytes as array_buffer_to_bytes,
+} from "./array_buffer.ts";
+import {
+  from_factory as async_iterable_from_factory,
+  to_array as async_iterable_to_array,
+} from "./async_iterable.ts";
+import { from_bytes as data_view_from_bytes } from "./data_view.ts";
+import { from_date } from "./date.ts";
+import { from_error } from "./error.ts";
+import {
+  from_entries as form_data_from_entries,
+  to_entries as form_data_to_entries,
+} from "./form_data.ts";
+import {
+  from_factory as iterable_from_factory,
+  to_array as iterable_to_array,
+} from "./iterable.ts";
 import {
   from_array as list_from_array,
   nil as list_nil,
@@ -26,24 +46,47 @@ import {
   from_entries as map_from_entries,
   to_record as map_to_record,
 } from "./map.ts";
-import { none as option_none, Option, some as option_some } from "./option.ts";
+import {
+  is_none as option_is_none,
+  is_some as option_is_some,
+  none as option_none,
+  Option,
+  some as option_some,
+} from "./option.ts";
 import { ask, asks, type AsReader, local, run_reader } from "./reader.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
 } from "./record.ts";
 import {
+  from_readable_stream,
+  to_async_iterable as readable_stream_to_async_iterable,
+} from "./readable_stream.ts";
+import { from_regexp } from "./regexp.ts";
+import {
   err as result_err,
   from_number as result_from_number,
+  is_err as result_is_err,
+  is_ok as result_is_ok,
   ok as result_ok,
   Result,
 } from "./result.ts";
+import {
+  from_iterable as set_from_iterable,
+  to_set as set_to_set,
+} from "./set.ts";
+import { match } from "./tagged.ts";
 import {
   type AsTask,
   from_fn as task_from_fn,
   run as task_run,
   succeed as task_succeed,
 } from "./task.ts";
+import { from_typed_array } from "./typed_array.ts";
+import {
+  from_entries as url_params_from_entries,
+  to_entries as url_params_to_entries,
+} from "./url_search_params.ts";
 import {
   type AsState,
   eval_state,
@@ -68,13 +111,15 @@ import {
   or_else,
   read_tvar,
   retry,
-  STMError,
+  StmError,
   write_tvar,
 } from "./stm.ts";
 import {
   invalid as validation_invalid,
   valid as validation_valid,
 } from "./validation.ts";
+import { from_entries as weak_map_from_entries } from "./weak_map.ts";
+import { from_iterable as weak_set_from_iterable } from "./weak_set.ts";
 import {
   Alternative,
   Applicative,
@@ -119,6 +164,51 @@ Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () =>
     Equal.eq(result_ok("done"), result_ok("done")),
     "boxed result",
   );
+});
+
+Deno.test("Tuple tagged values can be matched by tag", () => {
+  const option = match(option_some(42).value(), {
+    some(value) {
+      return value + 1;
+    },
+    none() {
+      return 0;
+    },
+  });
+  const result = match(result_err<number>("missing").value(), {
+    ok(value) {
+      return value.toString();
+    },
+    err(message) {
+      return message;
+    },
+  });
+
+  assert_equals(option, 43);
+  assert_equals(result, "missing");
+});
+
+Deno.test("Tuple tagged guards narrow Option and Result payloads", () => {
+  const option = option_some(42).value();
+  const result = result_err<number>("missing").value();
+
+  switch (true) {
+    case option_is_some(option):
+      assert_equals(option[1] + 1, 43);
+      break;
+    case option_is_none(option):
+      assert_equals(option[0], "none");
+      break;
+  }
+
+  switch (true) {
+    case result_is_ok(result):
+      assert_equals(result[1] + 1, 10);
+      break;
+    case result_is_err(result):
+      assert_equals(result[1], "missing");
+      break;
+  }
 });
 
 Deno.test("Functor maps values without leaving the context", () => {
@@ -226,13 +316,16 @@ Deno.test("Applicative lift can build named structures", () => {
     option_some({ name: "Ada", age: 37 }).value(),
   );
   assert_equals(missing.value(), option_none().value());
-  assert_equals(
-    invalid_profile.value(),
-    validation_invalid(
-      "name is required",
-      "email is invalid",
-    ).value(),
-  );
+  const invalid_profile_value = invalid_profile.value();
+
+  if (invalid_profile_value[0] !== "invalid") {
+    throw new Error("expected invalid profile");
+  }
+
+  assert_equals(invalid_profile_value[1], [
+    "name is required",
+    "email is invalid",
+  ]);
 });
 
 Deno.test("Option callable wrapper traits option values for fluent methods", () => {
@@ -495,10 +588,16 @@ Deno.test("Applicative lift lets Validation accumulate independent errors", () =
     valid_profile.value(),
     validation_valid({ name: "Ada", age: 37 }).value(),
   );
-  assert_equals(
-    invalid_profile.value(),
-    validation_invalid("name is required", "email is invalid").value(),
-  );
+  const invalid_profile_value = invalid_profile.value();
+
+  if (invalid_profile_value[0] !== "invalid") {
+    throw new Error("expected invalid profile");
+  }
+
+  assert_equals(invalid_profile_value[1], [
+    "name is required",
+    "email is invalid",
+  ]);
 });
 
 Deno.test("Task monad defers and chains async work", async () => {
@@ -592,21 +691,23 @@ Deno.test("State monad threads state through Do", () => {
 
 Deno.test("Writer monad accumulates logs through Do", () => {
   const program = Do(function* () {
-    yield* writer_tell("start");
-    const value = yield* writer_value(40, ["value"]);
-    yield* writer_tell("end");
+    yield* writer_tell(array_from_array(["start"]));
+    const value = yield* writer_value(40, array_from_array(["value"]));
+    yield* writer_tell(array_from_array(["end"]));
 
     return value + 2;
   });
+  const [value, logs] = program.value() as readonly [
+    number,
+    ReturnType<typeof array_from_array<string>>,
+  ];
+  const [mapped_value, mapped_logs] = program.map((value) => value + 1)
+    .value() as readonly [number, ReturnType<typeof array_from_array<string>>];
 
-  assert_equals(program.value(), [
-    42,
-    ["start", "value", "end"],
-  ]);
-  assert_equals(program.map((value) => value + 1).value(), [
-    43,
-    ["start", "value", "end"],
-  ]);
+  assert_equals(value, 42);
+  assert_equals(array_to_array(logs), ["start", "value", "end"]);
+  assert_equals(mapped_value, 43);
+  assert_equals(array_to_array(mapped_logs), ["start", "value", "end"]);
 });
 
 Deno.test("Effects compose reader state writer and task with handlers", async () => {
@@ -623,7 +724,7 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
   type App =
     | Uses<AsReader<Config>>
     | Uses<AsState<number>>
-    | Uses<AsWriter<string>>
+    | Uses<AsWriter<AsArray, string>>
     | Uses<AsTask>;
   const Label = Program.scope<Label>();
   const App = Program.scope<App>();
@@ -647,7 +748,7 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
     });
 
     yield* modify((value: number) => value + config.increment);
-    yield* writer_tell(label + ":" + before.toString());
+    yield* writer_tell(array_from_array([label + ":" + before.toString()]));
 
     const after = yield* get<number>();
 
@@ -664,13 +765,13 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
         without_reader,
         40,
       ),
+      array_from_array<string>([]),
     ),
   );
+  const [result_value, result_logs] = result;
 
-  assert_equals(result, [
-    [{ before: 40, after: 42 }, 42],
-    ["step:async:40"],
-  ]);
+  assert_equals(result_value, [{ before: 40, after: 42 }, 42]);
+  assert_equals(array_to_array(result_logs), ["step:async:40"]);
 
   assert_equals(Effect.run(Effect.pure("done")), "done");
 });
@@ -719,7 +820,7 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
   assert_equals(Effect.run(run_clock(program, 41)), 42);
 });
 
-Deno.test("STM monad composes transactional reads and writes", () => {
+Deno.test("Stm monad composes transactional reads and writes", () => {
   const checking = new_tvar(40);
   const savings = new_tvar(2);
   const transfer = Do(function* () {
@@ -741,10 +842,10 @@ Deno.test("STM monad composes transactional reads and writes", () => {
   assert_equals(atomically(transfer), { before: 42, after: 42 });
   assert_equals(atomically(read_tvar(checking)), 35);
   assert_equals(atomically(read_tvar(savings)), 7);
-  assert_equals(transfer.fmt(), "STM(?)");
+  assert_equals(transfer.fmt(), "Stm(?)");
 });
 
-Deno.test("STM rolls back pending writes when a transaction aborts", () => {
+Deno.test("Stm rolls back pending writes when a transaction aborts", () => {
   const counter = new_tvar(1);
   const transaction = Do(function* () {
     const value = yield* read_tvar(counter);
@@ -763,12 +864,12 @@ Deno.test("STM rolls back pending writes when a transaction aborts", () => {
     error = caught;
   }
 
-  assert_true(error instanceof STMError, "transaction aborts with STMError");
-  assert_equals((error as STMError).message, "rollback");
+  assert_true(error instanceof StmError, "transaction aborts with StmError");
+  assert_equals((error as StmError).message, "rollback");
   assert_equals(atomically(read_tvar(counter)), 1);
 });
 
-Deno.test("STM or_else retries with the original transaction journal", () => {
+Deno.test("Stm or_else retries with the original transaction journal", () => {
   const counter = new_tvar(0);
   const retried = Do(function* () {
     const value = yield* read_tvar(counter);
@@ -880,6 +981,85 @@ Deno.test("Built-in wrappers map and fold over values", () => {
   assert_equals(map_to_record(map), { a: "value:1", b: "value:2" });
   assert_equals(record_to_record(record), { a: 2, b: 4 });
   assert_equals(map_sum, 3);
+});
+
+Deno.test("JavaScript shape wrappers expose conservative traits", async () => {
+  const set = set_from_iterable([1, 2, 2, 3])
+    .map((value) => value * 10);
+  const iterable = iterable_from_factory(function* () {
+    yield 1;
+    yield 2;
+  }).bind((value) => {
+    return iterable_from_factory(function* () {
+      yield value;
+      yield value * 10;
+    });
+  });
+  const async_iterable = async_iterable_from_factory(async function* () {
+    yield "a";
+    yield "b";
+  }).map((value) => value.toUpperCase());
+  const stream = from_readable_stream(
+    new ReadableStream<number>({
+      start(controller) {
+        controller.enqueue(1);
+        controller.enqueue(2);
+        controller.close();
+      },
+    }),
+  );
+  const buffer = Semigroup.concat(
+    array_buffer_from_bytes([1]),
+    array_buffer_from_bytes([2, 3]),
+  );
+  const data_view = data_view_from_bytes([4, 5]);
+  const typed_array = from_typed_array(new Uint8Array([6, 7]));
+  const url_params = url_params_from_entries([
+    ["tag", "traits"],
+    ["tag", "typescript"],
+  ]);
+  const form_data = form_data_from_entries([
+    ["name", "Ada"],
+    ["email", "ada@example.test"],
+  ]);
+  const weak_key = {};
+  const weak_map = weak_map_from_entries([[weak_key, "cached"]]);
+  const weak_set = weak_set_from_iterable([weak_key]);
+  const date = from_date(new Date("2024-01-02T03:04:05.000Z"));
+  const same_date = from_date(new Date("2024-01-02T03:04:05.000Z"));
+  const regexp = from_regexp(/^traits$/iu);
+  const error = from_error(new TypeError("expected value"));
+
+  assert_equals([...set_to_set(set)], [10, 20, 30]);
+  assert_equals(iterable_to_array(iterable), [1, 10, 2, 20]);
+  assert_equals(await async_iterable_to_array(async_iterable), ["A", "B"]);
+  assert_equals(
+    await async_iterable_to_array(readable_stream_to_async_iterable(stream)),
+    [1, 2],
+  );
+  assert_equals([...array_buffer_to_bytes(buffer)], [1, 2, 3]);
+  assert_equals(
+    Foldable.fold(data_view, 0, (state, byte) => state + byte),
+    9,
+  );
+  assert_equals(
+    Foldable.fold(typed_array, 0, (state, item) => state + Number(item)),
+    13,
+  );
+  assert_equals(url_params_to_entries(url_params), [
+    ["tag", "traits"],
+    ["tag", "typescript"],
+  ]);
+  assert_equals(form_data_to_entries(form_data), [
+    ["name", "Ada"],
+    ["email", "ada@example.test"],
+  ]);
+  assert_equals(weak_map.fmt(), "WeakMap(?)");
+  assert_equals(weak_set.fmt(), "WeakSet(?)");
+  assert_true(Equal.eq(date, same_date), "dates compare by time value");
+  assert_equals(date.fmt(), "2024-01-02T03:04:05.000Z");
+  assert_equals(regexp.fmt(), "/^traits$/iu");
+  assert_equals(error.fmt(), "TypeError: expected value");
 });
 
 Deno.test("Traversable flips structures through an applicative", () => {

@@ -11,39 +11,39 @@ type TVarBox<item> = TVar<item> & {
   [tvar_value]: item;
 };
 
-type STMJournal = {
+type StmJournal = {
   readonly writes: Map<TVar<unknown>, unknown>;
 };
 
-export type STM<item> = (journal: STMJournal) => item;
+export type Stm<item> = (journal: StmJournal) => item;
 
-export const stm_kind = Symbol("STM");
+export const stm_kind = Symbol("Stm");
 
 declare module "./trait.ts" {
   interface TraitTypes<dictionary, item> {
-    [stm_kind]: STM<item>;
+    [stm_kind]: Stm<item>;
   }
 }
 
-export interface AsSTM extends As<typeof stm_kind> {}
+export interface AsStm extends As<typeof stm_kind> {}
 
-type STMValue<item> = Value<AsSTM, item>;
+type StmValue<item> = Value<AsStm, item>;
 
-export const STM = define<AsSTM>(
+export const Stm = define<AsStm>(
   stm_kind,
 );
 
-export class STMError extends Error {
+export class StmError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "STMError";
+    this.name = "StmError";
   }
 }
 
-export class STMRetry extends Error {
+export class StmRetry extends Error {
   constructor() {
-    super("STM retry has no alternative");
-    this.name = "STMRetry";
+    super("Stm retry has no alternative");
+    this.name = "StmRetry";
   }
 }
 
@@ -51,15 +51,15 @@ export function new_tvar<item>(value: item): TVar<item> {
   return { [tvar_value]: value } as TVarBox<item>;
 }
 
-export function read_tvar<item>(variable: TVar<item>): STMValue<item> {
-  return STM((journal) => read_journal(journal, variable));
+export function read_tvar<item>(variable: TVar<item>): StmValue<item> {
+  return Stm((journal) => read_journal(journal, variable));
 }
 
 export function write_tvar<item>(
   variable: TVar<item>,
   value: item,
-): STMValue<void> {
-  return STM((journal) => {
+): StmValue<void> {
+  return Stm((journal) => {
     write_journal(journal, variable, value);
   });
 }
@@ -67,8 +67,8 @@ export function write_tvar<item>(
 export function modify_tvar<item>(
   variable: TVar<item>,
   fn: (value: item) => item,
-): STMValue<item> {
-  return STM((journal) => {
+): StmValue<item> {
+  return Stm((journal) => {
     const next = fn(read_journal(journal, variable));
     write_journal(journal, variable, next);
 
@@ -76,29 +76,29 @@ export function modify_tvar<item>(
   });
 }
 
-export function abort<item = never>(message: string): STMValue<item> {
-  return STM(() => {
-    throw new STMError(message);
+export function abort<item = never>(message: string): StmValue<item> {
+  return Stm(() => {
+    throw new StmError(message);
   });
 }
 
-export function retry<item = never>(): STMValue<item> {
-  return STM(() => {
-    throw new STMRetry();
+export function retry<item = never>(): StmValue<item> {
+  return Stm(() => {
+    throw new StmRetry();
   });
 }
 
 export function or_else<item>(
-  left: STMValue<item>,
-  right: STMValue<item>,
-): STMValue<item> {
-  return STM((journal) => {
+  left: StmValue<item>,
+  right: StmValue<item>,
+): StmValue<item> {
+  return Stm((journal) => {
     const writes = new Map(journal.writes);
 
     try {
       return run_stm(left, journal);
     } catch (error) {
-      if (!(error instanceof STMRetry)) {
+      if (!(error instanceof StmRetry)) {
         throw error;
       }
 
@@ -108,8 +108,8 @@ export function or_else<item>(
   });
 }
 
-export function atomically<item>(transaction: STMValue<item>): item {
-  const journal: STMJournal = { writes: new Map() };
+export function atomically<item>(transaction: StmValue<item>): item {
+  const journal: StmJournal = { writes: new Map() };
   const value = run_stm(transaction, journal);
 
   commit_journal(journal);
@@ -117,57 +117,57 @@ export function atomically<item>(transaction: STMValue<item>): item {
   return value;
 }
 
-Format.implement(STM)({
+Format.implement(Stm)({
   fmt() {
-    return "STM(?)";
+    return "Stm(?)";
   },
 });
 
-export interface AsSTM extends Format<AsSTM> {}
+export interface AsStm extends Format<AsStm> {}
 
-Functor.implement(STM)({
+Functor.implement(Stm)({
   map(fn) {
-    return STM((journal) => fn(run_stm(this, journal)));
+    return Stm((journal) => fn(run_stm(this, journal)));
   },
 });
 
-export interface AsSTM extends Functor<AsSTM> {}
+export interface AsStm extends Functor<AsStm> {}
 
-Applicative.implement(STM)({
+Applicative.implement(Stm)({
   pure(value) {
-    return STM(() => value);
+    return Stm(() => value);
   },
 
   ap(value) {
-    return STM((journal) => {
+    return Stm((journal) => {
       const fn = run_stm(this, journal);
       return fn(run_stm(value, journal));
     });
   },
 });
 
-export interface AsSTM extends Applicative<AsSTM> {}
+export interface AsStm extends Applicative<AsStm> {}
 
-Monad.implement(STM)({
+Monad.implement(Stm)({
   bind(fn) {
-    return STM((journal) => {
+    return Stm((journal) => {
       const value = run_stm(this, journal);
       return run_stm(fn(value), journal);
     });
   },
 });
 
-export interface AsSTM extends Monad<AsSTM> {}
+export interface AsStm extends Monad<AsStm> {}
 
 function run_stm<item>(
-  transaction: STMValue<item>,
-  journal: STMJournal,
+  transaction: StmValue<item>,
+  journal: StmJournal,
 ): item {
   return transaction.value()(journal);
 }
 
 function read_journal<item>(
-  journal: STMJournal,
+  journal: StmJournal,
   variable: TVar<item>,
 ): item {
   const key = variable as TVar<unknown>;
@@ -180,21 +180,21 @@ function read_journal<item>(
 }
 
 function write_journal<item>(
-  journal: STMJournal,
+  journal: StmJournal,
   variable: TVar<item>,
   value: item,
 ): void {
   journal.writes.set(variable as TVar<unknown>, value);
 }
 
-function commit_journal(journal: STMJournal): void {
+function commit_journal(journal: StmJournal): void {
   for (const [variable, value] of journal.writes) {
     write_current(variable, value);
   }
 }
 
 function restore_journal(
-  journal: STMJournal,
+  journal: StmJournal,
   writes: Map<TVar<unknown>, unknown>,
 ): void {
   journal.writes.clear();
