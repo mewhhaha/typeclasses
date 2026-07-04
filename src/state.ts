@@ -1,11 +1,5 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
-import {
-  Effect,
-  is_effect,
-  is_lift_of,
-  type Lift,
-  type WithoutLift,
-} from "./effects.ts";
+import { Effect, handle_lift, is_effect, type WithoutLift } from "./effects.ts";
 import { Applicative, Format, Functor, Monad } from "./traits.ts";
 
 export type State<state, item> = (state: state) => readonly [item, state];
@@ -100,23 +94,15 @@ function run_state_effect<requirements, state, item>(
   effect: Effect<requirements, item>,
   state: state,
 ): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
-  if (effect.tag === "pure") {
-    return Effect.pure([effect.value, state] as const);
-  }
+  return handle_lift(effect, state_kind, state, {
+    done(value: item, state) {
+      return [value, state] as const;
+    },
 
-  if (is_lift_of(effect.operation, state_kind)) {
-    const operation = effect.operation as unknown as Lift<
-      AsState<state>,
-      unknown
-    >;
-    const [value, next] = run_state(operation.value, state);
-    return run_state_effect(effect.resume(value), next);
-  }
-
-  return Effect.suspend(
-    effect.operation as WithoutLift<requirements, AsState<state>>,
-    (value) => run_state_effect(effect.resume(value), state),
-  );
+    handle(stateful: Value<AsState<state>, unknown>, state) {
+      return run_state(stateful, state);
+    },
+  });
 }
 
 Format.implement(State)({

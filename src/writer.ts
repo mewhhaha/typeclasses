@@ -1,8 +1,8 @@
 import { define, type Dictionary, type Trait, type Value } from "./trait.ts";
 import {
   Effect,
+  handle_lift,
   is_effect,
-  is_lift_of,
   type Lift,
   type WithoutLift,
 } from "./effects.ts";
@@ -84,43 +84,24 @@ type WriterLog<requirements> = requirements extends Lift<
 
 function run_writer_effect<requirements, item>(
   effect: Effect<requirements, item>,
+  logs: readonly WriterLog<requirements>[] = [],
 ): Effect<
   WithoutLift<requirements, AsWriter<WriterLog<requirements>>>,
   readonly [item, readonly WriterLog<requirements>[]]
 > {
-  return run_writer_effect_with(effect, []);
-}
+  return handle_lift(effect, writer_kind, logs, {
+    done(value: item, logs) {
+      return [value, logs] as const;
+    },
 
-function run_writer_effect_with<requirements, item>(
-  effect: Effect<requirements, item>,
-  logs: readonly WriterLog<requirements>[],
-): Effect<
-  WithoutLift<requirements, AsWriter<WriterLog<requirements>>>,
-  readonly [item, readonly WriterLog<requirements>[]]
-> {
-  if (effect.tag === "pure") {
-    return Effect.pure([effect.value, logs] as const);
-  }
-
-  if (is_lift_of(effect.operation, writer_kind)) {
-    const operation = effect.operation as unknown as Lift<
-      AsWriter<WriterLog<requirements>>,
-      unknown
-    >;
-    const [value, next_logs] = run_writer(operation.value);
-    return run_writer_effect_with(effect.resume(value), [
-      ...logs,
-      ...next_logs,
-    ]);
-  }
-
-  return Effect.suspend(
-    effect.operation as WithoutLift<
-      requirements,
-      AsWriter<WriterLog<requirements>>
-    >,
-    (value) => run_writer_effect_with(effect.resume(value), logs),
-  );
+    handle(
+      writer: Value<AsWriter<WriterLog<requirements>>, unknown>,
+      logs,
+    ) {
+      const [value, next_logs] = run_writer(writer);
+      return [value, append_logs(logs, next_logs)] as const;
+    },
+  });
 }
 
 Format.implement(Writer)({

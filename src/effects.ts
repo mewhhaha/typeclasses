@@ -82,6 +82,19 @@ export type WithoutLift<
   : requirements
   : requirements;
 
+export type LiftHandler<
+  dictionary extends Dictionary<PropertyKey>,
+  state,
+  item,
+  out,
+> = {
+  done(value: item, state: state): out;
+  handle(
+    value: Value<dictionary, unknown>,
+    state: state,
+  ): readonly [unknown, state];
+};
+
 type ProgramPath = {
   readonly previous: ProgramPath | undefined;
   readonly value: unknown;
@@ -167,6 +180,35 @@ export function run<item>(effect: Effect<never, item>): item {
 
   const operation = effect.operation as unknown as TaggedOperation;
   throw new TypeError("Unhandled effect operation: " + operation.tag);
+}
+
+export function handle_lift<
+  requirements,
+  dictionary extends Dictionary<PropertyKey>,
+  state,
+  item,
+  out,
+>(
+  effect: Effect<requirements, item>,
+  type_id: DictionaryType<dictionary>,
+  state: state,
+  handler: LiftHandler<dictionary, state, item, out>,
+): Effect<WithoutLift<requirements, dictionary>, out> {
+  if (effect.tag === "pure") {
+    return pure(handler.done(effect.value, state));
+  }
+
+  if (is_lift_of(effect.operation, type_id)) {
+    const operation = effect.operation as unknown as Lift<dictionary, unknown>;
+    const [value, next] = handler.handle(operation.value, state);
+
+    return handle_lift(effect.resume(value), type_id, next, handler);
+  }
+
+  return suspend(
+    effect.operation as WithoutLift<requirements, dictionary>,
+    (value) => handle_lift(effect.resume(value), type_id, state, handler),
+  );
 }
 
 function program<yielded, item>(
