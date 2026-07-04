@@ -8,6 +8,7 @@ export * from "./reader.ts";
 export * from "./state.ts";
 export * from "./stm.ts";
 export * from "./validation.ts";
+export * from "./transformers/mod.ts";
 export * as array from "./array.ts";
 export * as map from "./map.ts";
 export * as record from "./record.ts";

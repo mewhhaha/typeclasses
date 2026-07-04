@@ -8,6 +8,7 @@ import type { Trait } from "./trait_value.ts";
 
 export const kind = Symbol("Trait.kind");
 
+// deno-lint-ignore no-empty-interface
 export interface TraitTypes<dictionary, item> {}
 
 export type ContextValue<dictionary extends Dictionary, item> =
@@ -74,7 +75,6 @@ export function define<dictionary extends Dictionary>(
   construct?: DictionaryConstructor<dictionary>,
 ): dictionary {
   if (construct === undefined) {
-    let as_trait: DictionaryWrapper<dictionary>;
     const target = function <item>(
       value: ContextValue<dictionary, item>,
     ): Value<dictionary, item> {
@@ -82,12 +82,11 @@ export function define<dictionary extends Dictionary>(
     } as unknown as dictionary;
 
     target[kind] = type_id;
-    as_trait = as_trait_cached(target);
+    const as_trait = as_trait_cached(target);
 
     return target;
   }
 
-  let as_trait: DictionaryWrapper<dictionary>;
   const context: DictionaryConstructorContext<dictionary> = {
     as_trait<item>(value: ContextValue<dictionary, item>) {
       return as_trait(value);
@@ -100,7 +99,7 @@ export function define<dictionary extends Dictionary>(
   } as unknown as dictionary;
 
   target[kind] = type_id;
-  as_trait = as_trait_cached(target);
+  const as_trait = as_trait_cached(target);
 
   return target;
 }
