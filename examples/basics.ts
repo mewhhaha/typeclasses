@@ -103,7 +103,7 @@ export async function run_basic_examples() {
   console.log("lift optional profile", optional_profile.fmt());
   console.log("lift parsed config", parsed_config.fmt());
   console.log("lift dice scores", dice_scores.fmt());
-  console.log("lift parallel task", await parallel_task.value()());
+  console.log("lift parallel task", await parallel_task.run());
   console.log("lift validation", signup_validation.fmt());
 }
 

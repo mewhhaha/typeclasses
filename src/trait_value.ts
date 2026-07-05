@@ -10,8 +10,13 @@ type TraitBase<dictionary, value, item> = {
     item,
     unknown
   >;
+  run: TraitRunner<value>;
   value: () => value;
 };
+
+type TraitRunner<value> = value extends (...args: infer args) => infer out
+  ? (...args: args) => out
+  : never;
 
 export type Trait<dictionary, value, item = unknown> =
   & TraitBase<dictionary, value, item>
@@ -113,6 +118,9 @@ function trait_prototype(dictionary: object): object {
     value: {
       value: trait_value_of,
     },
+    run: {
+      value: trait_run,
+    },
     [Symbol.iterator]: {
       value: trait_iterator,
     },
@@ -129,6 +137,19 @@ function trait_value_of<dictionary, value, item>(
   this: TraitTarget<dictionary, value, item>,
 ): value {
   return this[trait_value];
+}
+
+function trait_run<dictionary, value, item>(
+  this: TraitTarget<dictionary, value, item>,
+  ...args: unknown[]
+): unknown {
+  const value = this[trait_value];
+
+  if (typeof value !== "function") {
+    throw new TypeError("Trait value is not callable");
+  }
+
+  return Reflect.apply(value, undefined, args);
 }
 
 function* trait_iterator<dictionary, value, item>(

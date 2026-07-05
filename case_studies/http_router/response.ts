@@ -25,7 +25,7 @@ export function to_response(program: HttpProgram): Response {
   const [metadata, chunks] = Effect.run(run_writer(program, empty_body));
 
   return new Response(
-    readable_from_async_iterable(encode_body(chunks.value()())),
+    readable_from_async_iterable(encode_body(chunks.run())),
     {
       status: metadata.status,
       headers: {

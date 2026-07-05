@@ -552,7 +552,7 @@ Deno.test("Applicative lift combines Task applicatives without sequencing effect
     }),
   );
 
-  const promise = computed.value()();
+  const promise = computed.run();
   await Promise.resolve();
 
   assert_equals(events, ["left start", "right start"]);
@@ -576,7 +576,7 @@ Deno.test("Applicative lift supports promise-returning Task combiners", async ()
     task_succeed(22),
   );
 
-  const result: number = await computed.value()();
+  const result: number = await computed.run();
   assert_equals(result, 42);
 });
 
@@ -629,11 +629,11 @@ Deno.test("Task monad defers and chains async work", async () => {
   });
 
   assert_equals(events, []);
-  assert_equals(await task.value()(), 42);
+  assert_equals(await task.run(), 42);
   assert_equals(events, ["read", "parse"]);
-  assert_equals(await applied.value()(), 42);
-  assert_equals(await computed.value()(), 42);
-  assert_equals(await computed.value()(), 42);
+  assert_equals(await applied.run(), 42);
+  assert_equals(await computed.run(), 42);
+  assert_equals(await computed.run(), 42);
   assert_equals(computed.fmt(), "Task(?)");
 });
 
@@ -662,7 +662,7 @@ Deno.test("Reader monad threads a shared environment", () => {
     .map((value) => value + 1);
 
   assert_equals(
-    endpoint.value()({
+    endpoint.run({
       host: "localhost",
       port: 8080,
       path: "/users",
@@ -670,7 +670,7 @@ Deno.test("Reader monad threads a shared environment", () => {
     "localhost:8080/users?host=localhost",
   );
   assert_equals(
-    port.value()({ host: "localhost", port: 8080, path: "/users" }),
+    port.run({ host: "localhost", port: 8080, path: "/users" }),
     8081,
   );
   assert_equals(endpoint.fmt(), "Reader(?)");
@@ -688,7 +688,7 @@ Deno.test("State monad threads state through Do", () => {
     return { before, after };
   });
 
-  assert_equals(counter.value()(20), [
+  assert_equals(counter.run(20), [
     { before: 20, after: 43 },
     42,
   ]);

@@ -48,7 +48,7 @@ export async function run_monad_examples() {
 
     return { before, after };
   });
-  const [state_counter_result] = state_counter.value()(20);
+  const [state_counter_result] = state_counter.run(20);
   const checking_balance = new_tvar(40);
   const savings_balance = new_tvar(2);
   const transfer_result = atomically(Do(function* () {
@@ -64,10 +64,10 @@ export async function run_monad_examples() {
   }));
 
   console.log("decoded account", decoded_account.fmt());
-  console.log("task Do result", await task_result.value()());
+  console.log("task Do result", await task_result.run());
   console.log(
     "reader endpoint",
-    reader_endpoint.value()({
+    reader_endpoint.run({
       host: "localhost",
       port: 8080,
       path: "/users",

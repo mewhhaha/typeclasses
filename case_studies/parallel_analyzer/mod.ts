@@ -189,7 +189,7 @@ async function run_batched_analyzer(
   analyze_batch: BatchAnalyzer,
 ): Promise<AnalyzerBatchRun> {
   const started = performance.now();
-  const report = await analyze_batches(batches, analyze_batch).value()();
+  const report = await analyze_batches(batches, analyze_batch).run();
 
   return batch_run_from_report(
     batches.length,

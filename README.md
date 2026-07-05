@@ -120,6 +120,11 @@ sum.value(); // ["some", 42]
 sum.eq(some(42)); // true
 ```
 
+If the wrapped raw value is a function, the wrapper also exposes `.run(...)` as
+the typed shortcut for `.value()(...)`. That keeps callable data types such as
+`Task`, `Reader`, `State`, and `IterableT` from leaking double calls into
+examples.
+
 The same-named function wraps an existing raw context when you already have one:
 
 ```ts
@@ -247,7 +252,7 @@ const greeting = Do(function* () {
   return "hello " + name;
 });
 
-await greeting.value()(); // "hello Ada #7"
+await greeting.run(); // "hello Ada #7"
 ```
 
 For mixed capabilities, use effects. `Program.scope<Allowed>()` creates a typed
@@ -496,6 +501,135 @@ Do(function* () {
 `List` is the recursive list implementation. `ArrayT` is the wrapper for native
 JavaScript arrays.
 
+### Foldable
+
+```hs
+foldl' (+) 0 [1, 2, 3]
+```
+
+```ts
+Foldable.fold(
+  array_from_array([1, 2, 3]),
+  0,
+  (sum, item) => sum + item,
+);
+```
+
+`Foldable` is intentionally just the core fold operation. Haskell helpers such
+as `sum`, `length`, `foldMap`, and `mconcat` can be written on top of that
+operation when an example needs them.
+
+### Traversable
+
+```hs
+traverse readMaybe ["1", "2", "3"]
+sequenceA [Just 1, Just 2, Just 3]
+```
+
+```ts
+Traversable.traverse(
+  array_from_array(["1", "2", "3"]),
+  result_ok(undefined),
+  (text) => result_from_number(Number.parseInt(text, 10)),
+);
+
+Traversable.sequence(
+  array_from_array([some(1), some(2), some(3)]),
+  some(undefined),
+);
+```
+
+`Traversable` flips a container of effects into an effect containing a
+container. This is the same shape as Haskell's `traverse` and `sequenceA`, but
+the TypeScript version receives one value from the target applicative as the
+dictionary witness.
+
+### Semigroup and Monoid
+
+```hs
+[1, 2] <> [3]
+mempty <> ["done"]
+mconcat [[1], [2], [3]]
+```
+
+```ts
+Semigroup.concat(
+  array_from_array([1, 2]),
+  array_from_array([3]),
+);
+
+Monoid.concat(
+  Monoid.empty(array_from_array<string>([])),
+  array_from_array(["done"]),
+);
+
+Foldable.fold(
+  array_from_array([
+    array_from_array([1]),
+    array_from_array([2]),
+    array_from_array([3]),
+  ]),
+  Monoid.empty(array_from_array<number>([])),
+  Monoid.concat,
+);
+```
+
+`Semigroup` provides associative combination. `Monoid` adds `empty`. The
+receiver value is the runtime dictionary witness, so `Monoid.empty` takes a
+representative value of the data type whose empty value should be produced.
+
+### Alternative
+
+```hs
+Nothing <|> Just 42
+[1, 2] <|> [3, 4]
+```
+
+```ts
+Alternative.alt(none<number>(), some(42));
+
+Alternative.alt(
+  array_from_array([1, 2]),
+  array_from_array([3, 4]),
+);
+```
+
+`Alternative` is the common "empty plus choice" interface. `Option` chooses the
+first successful branch, arrays concatenate branches, and parser examples use
+the same idea for backtracking choices.
+
+### Parser Combinators
+
+Haskell parser libraries such as Megaparsec build larger grammars from small
+`Functor`, `Applicative`, `Monad`, and `Alternative` pieces:
+
+```hs
+parameters =
+  between (symbol "(") (symbol ")") (identifier `sepBy` symbol ",")
+
+declaration =
+  choice [keyword "let", keyword "const"]
+```
+
+The programming-language parser case study follows that shape with ordinary
+TypeScript functions:
+
+```ts
+const parameters = between(
+  symbol("("),
+  sep_by(identifier, symbol(",")),
+  symbol(")"),
+);
+
+const declaration = choice([
+  keyword("let"),
+  keyword("const"),
+]);
+```
+
+The parser is still just another data type with trait implementations; the
+combinators are convenience functions for the grammar domain.
+
 ### Reader
 
 ```hs
@@ -512,7 +646,7 @@ const endpoint = Do(function* () {
   return config.host + ":" + config.port.toString();
 });
 
-endpoint.value()({ host: "localhost", port: 8080 });
+endpoint.run({ host: "localhost", port: 8080 });
 ```
 
 Effects use `run_reader` when Reader is one capability inside a larger program:
@@ -540,7 +674,7 @@ const counter = Do(function* () {
   return before;
 });
 
-counter.value()(40); // [40, 42]
+counter.run(40); // [40, 42]
 ```
 
 ### Writer
@@ -624,11 +758,107 @@ const program = Do(function* () {
   return Number.parseInt(text, 10);
 });
 
-await program.value()();
+await program.run();
 ```
 
 `Task` is deferred async work. It is intentionally a thunk,
 `() => Promise<item>`, so construction does not start the operation.
+
+### Async and Concurrency
+
+Haskell separates applicative independence from monadic dependency:
+
+```hs
+UserAndScore <$> fetchUser id <*> fetchScore id
+
+fetchUser id >>= fetchProfile
+```
+
+The same distinction matters for `Task`. Applicative composition can start
+independent tasks together, while `Do` sequences dependent work:
+
+```ts
+const parallel = Applicative.lift(
+  (user, score) => ({ user, score }),
+  from_fn(() => fetch_user(id)),
+  from_fn(() => fetch_score(id)),
+);
+
+const dependent = Do(function* () {
+  const user = yield* from_fn(() => fetch_user(id));
+
+  return yield* from_fn(() => fetch_profile(user.id));
+});
+
+await parallel.run();
+await dependent.run();
+```
+
+This is the same rule as Haskell's `Applicative` versus `Monad`: use applicative
+style when later operations do not need earlier results, and use monadic style
+when they do.
+
+### STM
+
+```hs
+atomically $ do
+  before <- readTVar counter
+  writeTVar counter (before + 1)
+  pure before
+```
+
+```ts
+const counter = new_tvar(0);
+
+const increment = Do(function* () {
+  const before = yield* read_tvar(counter);
+
+  yield* write_tvar(counter, before + 1);
+
+  return before;
+});
+
+atomically(increment);
+```
+
+`Stm` keeps writes in a journal until `atomically` commits them. `retry` and
+`or_else` provide the familiar transactional choice shape, so failed branches
+can roll back their writes before another transaction is attempted.
+
+### Resource Handling
+
+Haskell's `bracket` and `finally` make cleanup explicit around effectful code:
+
+```hs
+bracket acquire release use
+```
+
+JavaScript already has the same control-flow shape with `try`/`finally`, and not
+every platform resource implements `[Symbol.dispose]`:
+
+```ts
+async function* from_stream<item>(stream: ReadableStream<item>) {
+  const reader = stream.getReader();
+
+  try {
+    while (true) {
+      const next = await reader.read();
+
+      if (next.done) {
+        return;
+      }
+
+      yield next.value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+```
+
+The important Haskell lesson is the bracket shape: acquire, use, and release
+stay together. The repo keeps that shape direct instead of hiding it behind a
+trait until a data type needs a reusable resource abstraction.
 
 ### Validation
 
