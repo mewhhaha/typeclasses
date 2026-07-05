@@ -128,7 +128,7 @@ Deno.bench("algorithm functor traits List", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor native Iterator forced", () => {
+Deno.bench("algorithm functor native generator forced", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -246,7 +246,7 @@ Deno.bench("algorithm applicative traits List product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative native Iterator product forced", () => {
+Deno.bench("algorithm applicative native generator product forced", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -358,7 +358,7 @@ Deno.bench("algorithm monad traits List dependent product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm monad native Iterator dependent product forced", () => {
+Deno.bench("algorithm monad native generator dependent product forced", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {

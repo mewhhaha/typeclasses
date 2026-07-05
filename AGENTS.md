@@ -2,10 +2,10 @@
 
 ## Goal
 
-Keep this repository as a small, inspectable playground for pseudo traits in
-TypeScript/Deno.
+Keep this repository as a small, inspectable library for typeclass-style traits
+in TypeScript/Deno.
 
-The examples mirror the pattern described in `../binned/AGENTS.md`:
+The core pattern is:
 
 - Define a data type and an empty function with the same exported name.
 - Attach trait methods directly to the function.
@@ -14,7 +14,7 @@ The examples mirror the pattern described in `../binned/AGENTS.md`:
 
 ## Scope
 
-This repo is for experimenting with functional programming traits:
+This repo provides functional programming traits:
 
 - `Functor`: map values inside a context.
 - `Applicative`: lift values and apply contextual functions.
@@ -22,8 +22,8 @@ This repo is for experimenting with functional programming traits:
 - `Foldable`: reduce contextual values into a summary.
 - `Format` and `Equal`: small utility traits used by examples and tests.
 
-Prefer simple examples over a full library. If a change needs advanced type
-machinery, add it only when it improves the examples.
+Prefer simple, inspectable library code. If a change needs advanced type
+machinery, add it only when it improves the public API or examples.
 
 ## Style
 
@@ -34,7 +34,8 @@ machinery, add it only when it improves the examples.
 - Prefer `switch` statements, then the tagged `match` helper, then explicit `if`
   statements for branching. For tuple-tagged values, typically deconstruct the
   value with `const [tag, payload] = value` and switch on `tag`.
-- Do not add external dependencies unless an experiment needs them.
+- Do not add external dependencies unless a feature, benchmark, or case study
+  needs them.
 
 ## Verification
 

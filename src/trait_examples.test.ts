@@ -146,7 +146,7 @@ Deno.test("Trait definitions inherit shared prototype helpers", () => {
   );
 });
 
-Deno.test("Format and Equal traits dispatch through pseudo-trait helpers", () => {
+Deno.test("Format and Equal traits dispatch through trait helpers", () => {
   assert_equals(Format.fmt(option_some(42)), "Some(42)");
   assert_equals(Format.fmt(option_none()), "None");
   assert_true(Equal.eq(option_some("x"), option_some("x")), "boxed same");

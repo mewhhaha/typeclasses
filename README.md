@@ -1,10 +1,10 @@
 # Traits
 
-Small Deno library playground for pseudo traits using the same
-type-plus-empty-function pattern from `../binned/AGENTS.md`.
+Traits is a Deno and TypeScript library for typeclass-style programming with
+runtime dictionaries and fluent wrapped values.
 
-The repository demonstrates common functional paradigms without trying to be a
-complete functional programming library:
+It provides reusable trait definitions, data types, effect programs, examples,
+case studies, benchmarks, and a source transformer:
 
 - `Functor` for `map`
 - `Applicative` for `pure` and `ap`
@@ -140,7 +140,7 @@ type WrappedOption<item> = Value<typeof Option, item>;
 `define(type_id)` creates the callable dictionary, assigns its kind, and routes
 calls through a cached constructor. The lower-level
 `as_trait(dictionary, value)` and `as_trait_cached(dictionary)` helpers remain
-available for experiments that need to manage construction directly.
+available for integrations that need to manage construction directly.
 
 Each data type registers its raw value once in `TraitTypes<dictionary, item>`.
 `Value` uses that registry to type helper functions, trait implementations, and
@@ -226,7 +226,7 @@ parsed.value(); // ["ok", 42]
 `Result` does not fix the error payload to `string`; `err(value)` keeps the
 error value's type. The examples use strings because they are easy to inspect.
 
-`Do` is a small do-notation experiment. It runs a generator over one monad
+`Do` is generator-based do notation. It runs a generator over one monad
 dictionary and uses `yield*` to bind each wrapped value:
 
 ```ts
@@ -310,7 +310,7 @@ result.diagnostics; // skipped unsupported patterns
 result.transformed; // number of rewritten sites
 ```
 
-The transformer is meant for bundlers, build scripts, or local experiments that
+The transformer is meant for bundlers, build scripts, or local workflows that
 want the ergonomic `Do(function* () { ... })` and
 `Program(function* () { ... })` syntax in source code, but cheaper raw bindings
 in emitted code. It currently lowers supported `Do` blocks to direct trait
@@ -331,8 +331,8 @@ deno task transform --write src/file.ts
 
 ## Benchmarks
 
-The benchmark folder is part of the playground. The broad task runs every
-benchmark file:
+The benchmark folder is part of the library maintenance harness. The broad task
+runs every benchmark file:
 
 ```sh
 deno task bench
@@ -491,7 +491,7 @@ Do(function* () {
 });
 ```
 
-`List` is the recursive list experiment. `ArrayT` is the wrapper for native
+`List` is the recursive list implementation. `ArrayT` is the wrapper for native
 JavaScript arrays.
 
 ### Reader
@@ -662,7 +662,7 @@ surprising runtime behavior.
 | JavaScript shape                 | Wrapper in this repo             | Natural traits                                                                                                           |
 | -------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `readonly item[]`                | `ArrayT`                         | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                       |
-| recursive list                   | `List`                           | Same list-like traits, useful for generator experiments                                                                  |
+| recursive list                   | `List`                           | Same list-like traits, useful for generator-heavy algorithms                                                             |
 | `ReadonlyMap<string, item>`      | `MapT`                           | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                              |
 | `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused traits as `MapT`                                                                                      |
 | `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates         |
@@ -689,9 +689,8 @@ That can still be useful, but it is set behavior rather than list behavior.
 For `IterableT` and `AsyncIterableT`, the main design choice is replayability.
 Many iterators are one-shot mutable cursors. The preferred constructors store a
 factory, `() => Iterable<item>` or `() => AsyncIterable<item>`. The plain
-`from_iterable` helper materializes values to make a replayable source. That is
-the same issue the list `Do` experiments exposed: calling a continuation more
-than once must not accidentally reuse a consumed iterator.
+`from_iterable` helper materializes values to make a replayable source. Calling
+a continuation more than once must not accidentally reuse a consumed iterator.
 
 `ReadableStream` has similar constraints plus cancellation and backpressure. The
 pragmatic shape is usually:

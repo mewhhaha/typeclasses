@@ -39,7 +39,7 @@ const program = Do(function* () {
 });
 
 Deno.test({
-  name: "transformer lowers Program generators to Effect.bind",
+  name: "transformer lowers Program generators to Effect bind/map chains",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
@@ -204,7 +204,7 @@ const identifier = Do(function* () {
 });
 
 Deno.test({
-  name: "transformer lifts generated Do temporaries from static call arguments",
+  name: "transformer removes generated Do wrappers from static call arguments",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
@@ -222,14 +222,14 @@ const parser = label(Do(function* () {
     assert_includes(result.code, "const parser = label(identifier.map");
     assert_true(
       !result.code.includes("(() =>"),
-      "expected generated Do argument IIFE to be lifted\n\n" + result.code,
+      "expected generated Do argument wrapper to be removed\n\n" + result.code,
     );
   },
 });
 
 Deno.test({
   name:
-    "transformer lifts generated Do temporaries from returned call arguments",
+    "transformer removes generated Do wrappers from returned call arguments",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
@@ -249,14 +249,13 @@ function parser() {
     assert_includes(result.code, "return label(identifier.map");
     assert_true(
       !result.code.includes("(() =>"),
-      "expected generated Do return IIFE to be lifted\n\n" + result.code,
+      "expected generated Do return wrapper to be removed\n\n" + result.code,
     );
   },
 });
 
 Deno.test({
-  name:
-    "transformer sequences generated Do temporaries in later call arguments",
+  name: "transformer removes generated Do wrappers from later call arguments",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
@@ -277,7 +276,7 @@ const parser = label(right(skip_hidden(), Do(function* () {
     );
     assert_true(
       !result.code.includes("(() =>"),
-      "expected generated Do argument IIFE to become a sequence\n\n" +
+      "expected generated Do argument wrapper to be removed\n\n" +
         result.code,
     );
   },
