@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Alternative,
   Applicative,
@@ -18,7 +18,7 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type List<item> =
   | { tag: "nil" }
@@ -39,12 +39,12 @@ export interface AsList
     Traversable<AsList>,
     Ord<AsList> {
   readonly [type_item]: unknown;
-  readonly [type_value]: List<this[typeof type_item]>;
+  readonly [type_data]: List<this[typeof type_item]>;
 }
 
-type ListValue<item> = Value<AsList, item>;
+type ListValue<item> = Data<AsList, item>;
 
-export const List = define<AsList>();
+export const List = data<AsList>();
 
 export function nil<item>(): ListValue<item> {
   return List(list_nil<item>());
@@ -84,14 +84,14 @@ function list_from_array<item>(items: item[]): List<item> {
   return list;
 }
 
-Show.implement(List)({
+Show.instance(List)({
   show() {
     const items = to_array(this).map((item) => Deno.inspect(item));
     return "[" + items.join(", ") + "]";
   },
 });
 
-Eq.implement(List)({
+Eq.instance(List)({
   eq(right) {
     let left_rest = this.value();
     let right_rest = right.value();
@@ -109,7 +109,7 @@ Eq.implement(List)({
   },
 });
 
-Ord.implement(List)({
+Ord.instance(List)({
   compare(right) {
     let left_rest = this.value();
     let right_rest = right.value();
@@ -142,14 +142,14 @@ Ord.implement(List)({
   },
 });
 
-Functor.implement(List)({
+Functor.instance(List)({
   map(fn) {
     const items = to_array(this);
     return List(list_from_array(items.map(fn)));
   },
 });
 
-Applicative.implement(List)({
+Applicative.instance(List)({
   pure(value) {
     return List(list_cons(value, list_nil()));
   },
@@ -163,19 +163,19 @@ Applicative.implement(List)({
   },
 });
 
-Semigroup.implement(List)({
+Semigroup.instance(List)({
   concat(right) {
     return from_array([...to_array(this), ...to_array(right)]);
   },
 });
 
-Monoid.implement(List)({
+Monoid.instance(List)({
   empty() {
     return nil();
   },
 });
 
-Alternative.implement(List)({
+Alternative.instance(List)({
   empty() {
     return nil();
   },
@@ -185,14 +185,14 @@ Alternative.implement(List)({
   },
 });
 
-Monad.implement(List)({
+Monad.instance(List)({
   bind(fn) {
     const out = to_array(this).flatMap((item) => to_array(fn(item)));
     return List(list_from_array(out));
   },
 });
 
-Foldable.implement(List)({
+Foldable.instance(List)({
   fold(initial, fn) {
     let state = initial;
 
@@ -204,7 +204,7 @@ Foldable.implement(List)({
   },
 });
 
-Traversable.implement(List)({
+Traversable.instance(List)({
   traverse(applicative, fn) {
     const items = to_array(this);
 

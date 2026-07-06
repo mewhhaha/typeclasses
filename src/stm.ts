@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Applicative, Functor, Monad, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Applicative, Functor, Monad, Show } from "./typeclasses.ts";
 
 const tvar_value = Symbol("TVar.value");
 
@@ -31,12 +31,12 @@ export interface AsStm
     Applicative<AsStm>,
     Monad<AsStm> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Stm<this[typeof type_item]>;
+  readonly [type_data]: Stm<this[typeof type_item]>;
 }
 
-type StmValue<item> = Value<AsStm, item>;
+type StmValue<item> = Data<AsStm, item>;
 
-export const Stm = define<AsStm>();
+export const Stm = data<AsStm>();
 
 export class StmError extends Error {
   constructor(message: string) {
@@ -122,19 +122,19 @@ export function atomically<item>(transaction: StmValue<item>): item {
   return value;
 }
 
-Show.implement(Stm)({
+Show.instance(Stm)({
   show() {
     return "Stm(?)";
   },
 });
 
-Functor.implement(Stm)({
+Functor.instance(Stm)({
   map(fn) {
     return Stm((journal) => fn(run_stm(this, journal)));
   },
 });
 
-Applicative.implement(Stm)({
+Applicative.instance(Stm)({
   pure(value) {
     return Stm(() => value);
   },
@@ -147,7 +147,7 @@ Applicative.implement(Stm)({
   },
 });
 
-Monad.implement(Stm)({
+Monad.instance(Stm)({
   bind(fn) {
     return Stm((journal) => {
       const value = run_stm(this, journal);

@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type FormDataEntry = readonly [string, FormDataEntryValue];
 export type FormDataT = FormData;
@@ -19,14 +19,14 @@ export interface AsFormData
     Monoid<AsFormData>,
     Foldable<AsFormData> {
   readonly [type_item]: unknown;
-  readonly [type_value]: FormDataT;
+  readonly [type_data]: FormDataT;
 }
 
-type FormDataValue = Value<AsFormData, FormDataEntry>;
+type FormDataValue = Data<AsFormData, FormDataEntry>;
 
-export const FormDataT = define<AsFormData>(
+export const FormDataT = data<AsFormData>(
   function (form_data) {
-    return this.as_trait(clone_form_data(form_data));
+    return this.data(clone_form_data(form_data));
   },
 );
 
@@ -40,13 +40,13 @@ export function to_entries(form_data: FormDataValue): FormDataEntry[] {
   return [...form_data.value().entries()];
 }
 
-Show.implement(FormDataT)({
+Show.instance(FormDataT)({
   show() {
     return Deno.inspect([...this.value().entries()]);
   },
 });
 
-Eq.implement(FormDataT)({
+Eq.instance(FormDataT)({
   eq(right) {
     const left_entries = [...this.value().entries()];
     const right_entries = [...right.value().entries()];
@@ -68,7 +68,7 @@ Eq.implement(FormDataT)({
   },
 });
 
-Semigroup.implement(FormDataT)({
+Semigroup.instance(FormDataT)({
   concat(right) {
     const out = clone_form_data(this.value());
 
@@ -80,15 +80,15 @@ Semigroup.implement(FormDataT)({
   },
 });
 
-Monoid.implement(FormDataT)({
+Monoid.instance(FormDataT)({
   empty() {
     return FormDataT(new FormData());
   },
 });
 
-Foldable.implement(FormDataT)({
+Foldable.instance(FormDataT)({
   fold<item, out>(
-    this: Value<AsFormData, item>,
+    this: Data<AsFormData, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) {

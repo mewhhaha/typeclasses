@@ -1,4 +1,4 @@
-import { Show } from "../../src/traits.ts";
+import { Show } from "../../src/typeclasses.ts";
 import {
   bad_request_page,
   create_message_page,

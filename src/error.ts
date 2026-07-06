@@ -1,34 +1,34 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Show } from "./typeclasses.ts";
 
 export type ErrorT = Error;
 
 export interface AsError extends As<AsError>, Show<AsError>, Eq<AsError> {
   readonly [type_item]: unknown;
-  readonly [type_value]: ErrorT;
+  readonly [type_data]: ErrorT;
 }
 
-type ErrorValue = Value<AsError, Error>;
+type ErrorValue = Data<AsError, Error>;
 
-export const ErrorT = define<AsError>();
+export const ErrorT = data<AsError>();
 
 export function from_error(error: Error): ErrorValue {
   return ErrorT(error) as ErrorValue;
 }
 
-Show.implement(ErrorT)({
+Show.instance(ErrorT)({
   show() {
     return this.value().name + ": " + this.value().message;
   },
 });
 
-Eq.implement(ErrorT)({
+Eq.instance(ErrorT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();

@@ -8,7 +8,7 @@ import {
   retry,
   write_tvar,
 } from "../src/stm.ts";
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 export function lesson_14_stm() {
   const checking = new_tvar(40);

@@ -6,12 +6,17 @@ import type {
 import { type AsReader, run_reader } from "../../src/reader.ts";
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "../../src/trait.ts";
-import { Alternative, Applicative, Functor, Show } from "../../src/traits.ts";
+} from "../../src/typeclass.ts";
+import {
+  Alternative,
+  Applicative,
+  Functor,
+  Show,
+} from "../../src/typeclasses.ts";
 
 export type HttpMethod =
   | "GET"
@@ -77,20 +82,20 @@ export interface AsUrlPatternList
     Applicative<AsUrlPatternList>,
     Alternative<AsUrlPatternList> {
   readonly [type_item]: unknown;
-  readonly [type_value]: UrlPatternList<this[typeof type_item]>;
+  readonly [type_data]: UrlPatternList<this[typeof type_item]>;
 }
 
-export type UrlPatternListValue<item> = Value<AsUrlPatternList, item>;
+export type UrlPatternListValue<item> = Data<AsUrlPatternList, item>;
 
-export const UrlPatternList = define<AsUrlPatternList>();
+export const UrlPatternList = data<AsUrlPatternList>();
 
-Show.implement(UrlPatternList)({
+Show.instance(UrlPatternList)({
   show() {
     return this.value().label;
   },
 });
 
-Functor.implement(UrlPatternList)({
+Functor.instance(UrlPatternList)({
   map(fn) {
     const routes = this.value();
 
@@ -129,7 +134,7 @@ Functor.implement(UrlPatternList)({
   },
 });
 
-Applicative.implement(UrlPatternList)({
+Applicative.instance(UrlPatternList)({
   pure(value) {
     return UrlPatternList({
       label: "pure",
@@ -174,7 +179,7 @@ Applicative.implement(UrlPatternList)({
   },
 });
 
-Alternative.implement(UrlPatternList)({
+Alternative.instance(UrlPatternList)({
   empty() {
     return UrlPatternList(never_url_pattern_list());
   },

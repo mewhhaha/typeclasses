@@ -10,7 +10,7 @@ import {
   write_tvar,
 } from "../src/stm.ts";
 import { from_fn } from "../src/task.ts";
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 export async function run_monad_examples() {
   const decoded_account = decode_account_payload({

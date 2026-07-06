@@ -1,6 +1,6 @@
 import { assert_equals } from "../src/assert.ts";
 import { just, nothing } from "../src/maybe.ts";
-import { Applicative } from "../src/traits.ts";
+import { Applicative } from "../src/typeclasses.ts";
 import { invalid, valid } from "../src/validation.ts";
 
 type User = {

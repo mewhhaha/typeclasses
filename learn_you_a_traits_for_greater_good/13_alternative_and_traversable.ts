@@ -2,7 +2,7 @@ import { ArrayT, to_array } from "../src/array.ts";
 import { assert_equals } from "../src/assert.ts";
 import { left, right } from "../src/either.ts";
 import { just, nothing } from "../src/maybe.ts";
-import { Alternative, Traversable } from "../src/traits.ts";
+import { Alternative, Traversable } from "../src/typeclasses.ts";
 
 export function lesson_13_alternative_and_traversable() {
   const fallback = Alternative.alt(nothing<number>(), just(42));

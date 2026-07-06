@@ -1,24 +1,24 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Show } from "./typeclasses.ts";
 
 export type RegExpT = RegExp;
 
 export interface AsRegExp extends As<AsRegExp>, Show<AsRegExp>, Eq<AsRegExp> {
   readonly [type_item]: unknown;
-  readonly [type_value]: RegExpT;
+  readonly [type_data]: RegExpT;
 }
 
-type RegExpValue = Value<AsRegExp, RegExp>;
+type RegExpValue = Data<AsRegExp, RegExp>;
 
-export const RegExpT = define<AsRegExp>(
+export const RegExpT = data<AsRegExp>(
   function (regexp) {
-    return this.as_trait(new RegExp(regexp.source, regexp.flags));
+    return this.data(new RegExp(regexp.source, regexp.flags));
   },
 );
 
@@ -26,13 +26,13 @@ export function from_regexp(regexp: RegExp): RegExpValue {
   return RegExpT(regexp) as RegExpValue;
 }
 
-Show.implement(RegExpT)({
+Show.instance(RegExpT)({
   show() {
     return this.value().toString();
   },
 });
 
-Eq.implement(RegExpT)({
+Eq.instance(RegExpT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();

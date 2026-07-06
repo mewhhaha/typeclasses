@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type URLSearchParamsEntry = readonly [string, string];
 export type URLSearchParamsT = URLSearchParams;
@@ -19,17 +19,17 @@ export interface AsURLSearchParams
     Monoid<AsURLSearchParams>,
     Foldable<AsURLSearchParams> {
   readonly [type_item]: unknown;
-  readonly [type_value]: URLSearchParamsT;
+  readonly [type_data]: URLSearchParamsT;
 }
 
-type URLSearchParamsValue = Value<
+type URLSearchParamsValue = Data<
   AsURLSearchParams,
   URLSearchParamsEntry
 >;
 
-export const URLSearchParamsT = define<AsURLSearchParams>(
+export const URLSearchParamsT = data<AsURLSearchParams>(
   function (params) {
-    return this.as_trait(new URLSearchParams(params));
+    return this.data(new URLSearchParams(params));
   },
 );
 
@@ -51,13 +51,13 @@ export function to_entries(
   return [...params.value().entries()];
 }
 
-Show.implement(URLSearchParamsT)({
+Show.instance(URLSearchParamsT)({
   show() {
     return Deno.inspect([...this.value().entries()]);
   },
 });
 
-Eq.implement(URLSearchParamsT)({
+Eq.instance(URLSearchParamsT)({
   eq(right) {
     const left_entries = [...this.value().entries()];
     const right_entries = [...right.value().entries()];
@@ -79,7 +79,7 @@ Eq.implement(URLSearchParamsT)({
   },
 });
 
-Semigroup.implement(URLSearchParamsT)({
+Semigroup.instance(URLSearchParamsT)({
   concat(right) {
     const out = new URLSearchParams(this.value());
 
@@ -91,15 +91,15 @@ Semigroup.implement(URLSearchParamsT)({
   },
 });
 
-Monoid.implement(URLSearchParamsT)({
+Monoid.instance(URLSearchParamsT)({
   empty() {
     return URLSearchParamsT(new URLSearchParams());
   },
 });
 
-Foldable.implement(URLSearchParamsT)({
+Foldable.instance(URLSearchParamsT)({
   fold<item, out>(
-    this: Value<AsURLSearchParams, item>,
+    this: Data<AsURLSearchParams, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) {

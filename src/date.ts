@@ -1,24 +1,24 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Show } from "./typeclasses.ts";
 
 export type DateT = Date;
 
 export interface AsDate extends As<AsDate>, Show<AsDate>, Eq<AsDate> {
   readonly [type_item]: unknown;
-  readonly [type_value]: DateT;
+  readonly [type_data]: DateT;
 }
 
-type DateValue = Value<AsDate, Date>;
+type DateValue = Data<AsDate, Date>;
 
-export const DateT = define<AsDate>(
+export const DateT = data<AsDate>(
   function (date) {
-    return this.as_trait(new Date(date.getTime()));
+    return this.data(new Date(date.getTime()));
   },
 );
 
@@ -26,13 +26,13 @@ export function from_date(date: Date): DateValue {
   return DateT(date) as DateValue;
 }
 
-Show.implement(DateT)({
+Show.instance(DateT)({
   show() {
     return this.value().toISOString();
   },
 });
 
-Eq.implement(DateT)({
+Eq.instance(DateT)({
   eq(right) {
     return Object.is(this.value().getTime(), right.value().getTime());
   },

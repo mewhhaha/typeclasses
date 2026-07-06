@@ -8,7 +8,7 @@ import {
 } from "../src/record.ts";
 import { assert_equals } from "../src/assert.ts";
 import { just } from "../src/maybe.ts";
-import { Functor } from "../src/traits.ts";
+import { Functor } from "../src/typeclasses.ts";
 
 export function lesson_06_functors() {
   const maybe = Functor.map(just(20), (value) => value + 22);

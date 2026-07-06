@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Applicative,
   Eq,
@@ -14,7 +14,7 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type RecordT<item> = Readonly<Record<string, item>>;
 
@@ -29,14 +29,14 @@ export interface AsRecord
     Foldable<AsRecord>,
     Traversable<AsRecord> {
   readonly [type_item]: unknown;
-  readonly [type_value]: RecordT<this[typeof type_item]>;
+  readonly [type_data]: RecordT<this[typeof type_item]>;
 }
 
-type RecordValue<item> = Value<AsRecord, item>;
+type RecordValue<item> = Data<AsRecord, item>;
 
-export const RecordT = define<AsRecord>(
+export const RecordT = data<AsRecord>(
   function (record) {
-    return this.as_trait({ ...record });
+    return this.data({ ...record });
   },
 );
 
@@ -52,14 +52,14 @@ export function to_record<item>(
   return { ...record.value() };
 }
 
-Show.implement(RecordT)({
+Show.instance(RecordT)({
   show() {
     const record = this.value();
     return Deno.inspect(record);
   },
 });
 
-Eq.implement(RecordT)({
+Eq.instance(RecordT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
@@ -84,7 +84,7 @@ Eq.implement(RecordT)({
   },
 });
 
-Functor.implement(RecordT)({
+Functor.instance(RecordT)({
   map(fn) {
     const record = this.value();
     const out: Record<string, ReturnType<typeof fn>> = {};
@@ -97,20 +97,20 @@ Functor.implement(RecordT)({
   },
 });
 
-Semigroup.implement(RecordT)({
+Semigroup.instance(RecordT)({
   concat(right) {
     const left = this.value();
     return RecordT({ ...left, ...right.value() });
   },
 });
 
-Monoid.implement(RecordT)({
+Monoid.instance(RecordT)({
   empty() {
     return RecordT({});
   },
 });
 
-Foldable.implement(RecordT)({
+Foldable.instance(RecordT)({
   fold(initial, fn) {
     const record = this.value();
     let state = initial;
@@ -123,7 +123,7 @@ Foldable.implement(RecordT)({
   },
 });
 
-Traversable.implement(RecordT)({
+Traversable.instance(RecordT)({
   traverse(applicative, fn) {
     const record = this.value();
     const entries = Object.entries(record);

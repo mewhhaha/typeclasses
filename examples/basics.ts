@@ -12,7 +12,7 @@ import {
   label_values,
   sum_values,
 } from "../src/examples.ts";
-import { Applicative, Show } from "../src/traits.ts";
+import { Applicative, Show } from "../src/typeclasses.ts";
 
 export async function run_basic_examples() {
   const maybe = just(21);

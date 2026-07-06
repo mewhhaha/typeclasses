@@ -1,13 +1,13 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
   type Dictionary,
   kind,
-  type Trait,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   type Effect,
   type Lift,
@@ -22,13 +22,13 @@ import {
   Monoid,
   type Monoid as MonoidDictionary,
   Show,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Writer<
   output extends Dictionary,
   log,
   item,
-> = readonly [item, Value<output, log>];
+> = readonly [item, Data<output, log>];
 
 export interface AsWriter<
   output extends Dictionary,
@@ -40,7 +40,7 @@ export interface AsWriter<
   Applicative<AsWriter<output, log>>,
   Monad<AsWriter<output, log>> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Writer<output, log, this[typeof type_item]>;
+  readonly [type_data]: Writer<output, log, this[typeof type_item]>;
   <item>(value: Writer<output, log, item>): WriterValue<output, log, item>;
 }
 
@@ -48,7 +48,7 @@ export type WriterValue<
   output extends Dictionary,
   log,
   item,
-> = Trait<
+> = WrappedData<
   AsWriter<output, log>,
   Writer<output, log, item>,
   item
@@ -62,7 +62,7 @@ type WriterConstructor =
     ): WriterValue<output, log, item>;
   };
 
-export const Writer = define<
+export const Writer = data<
   AsWriter<Dictionary, unknown>
 >() as WriterConstructor;
 
@@ -72,7 +72,7 @@ export function writer<
   item,
 >(
   value: item,
-  output: Value<output, log>,
+  output: Data<output, log>,
 ): WriterValue<output, log, item> {
   return Writer([value, output] as const) as unknown as WriterValue<
     output,
@@ -82,7 +82,7 @@ export function writer<
 }
 
 export function tell<output extends MonoidDictionary<output>, log>(
-  output: Value<output, log>,
+  output: Data<output, log>,
 ): WriterValue<output, log, void> {
   return writer(undefined, output);
 }
@@ -94,10 +94,10 @@ export function run_writer<
   item,
 >(
   effect: Effect<requirements, item>,
-  empty: Value<output, log>,
+  empty: Data<output, log>,
 ): Effect<
   WithoutLift<requirements, AsWriter<output, log>>,
-  readonly [item, Value<output, log>]
+  readonly [item, Data<output, log>]
 > {
   if (effect.tag === "pure") {
     return pure([effect.value, empty] as const);
@@ -125,7 +125,7 @@ export function run_writer<
     (value) => run_writer(effect.resume(value), empty),
   ) as Effect<
     WithoutLift<requirements, AsWriter<output, log>>,
-    readonly [item, Value<output, log>]
+    readonly [item, Data<output, log>]
   >;
 }
 
@@ -153,22 +153,22 @@ type WriterLog<requirements> = requirements extends Lift<
 > ? log
   : never;
 
-Show.implement(Writer)({
+Show.instance(Writer)({
   show() {
     const [value, output] = this.value();
     return "Writer(" + Deno.inspect(value) + ", " +
-      Deno.inspect((output as Value<Dictionary, unknown>).value()) + ")";
+      Deno.inspect((output as Data<Dictionary, unknown>).value()) + ")";
   },
 });
 
-Functor.implement(Writer)({
+Functor.instance(Writer)({
   map(fn) {
     const [value, output] = this.value();
     return writer_any(fn(value), output);
   },
 });
 
-Applicative.implement(Writer)({
+Applicative.instance(Writer)({
   pure(value) {
     const [_ignored, output] = this.value();
     return writer_any(value, empty_output(output));
@@ -181,7 +181,7 @@ Applicative.implement(Writer)({
   },
 });
 
-Monad.implement(Writer)({
+Monad.instance(Writer)({
   bind(fn) {
     const [value, left_output] = this.value();
     const [item, right_output] = fn(value).value();
@@ -195,25 +195,25 @@ export type WriterEffectLog<requirements> = WriterLog<requirements>;
 function writer_any<item>(
   value: item,
   output: unknown,
-): Value<AsWriter<Dictionary, unknown>, item> {
+): Data<AsWriter<Dictionary, unknown>, item> {
   return Writer([
     value,
-    output as Value<Dictionary, unknown>,
+    output as Data<Dictionary, unknown>,
   ] as Writer<Dictionary, unknown, item>);
 }
 
 function empty_output(output: unknown): unknown {
-  return Monoid.empty(output as Value<MonoidDictionary<Dictionary>, unknown>);
+  return Monoid.empty(output as Data<MonoidDictionary<Dictionary>, unknown>);
 }
 
 function concat_output<output extends Dictionary, log>(
-  left: Value<output, log>,
+  left: Data<output, log>,
   right: unknown,
-): Value<output, log>;
+): Data<output, log>;
 function concat_output(left: unknown, right: unknown): unknown;
 function concat_output(left: unknown, right: unknown): unknown {
   return Monoid.concat(
-    left as Value<MonoidDictionary<Dictionary>, unknown>,
-    right as Value<MonoidDictionary<Dictionary>, unknown>,
+    left as Data<MonoidDictionary<Dictionary>, unknown>,
+    right as Data<MonoidDictionary<Dictionary>, unknown>,
   );
 }

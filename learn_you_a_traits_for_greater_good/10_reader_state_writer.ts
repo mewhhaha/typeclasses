@@ -2,7 +2,7 @@ import { ArrayT, to_array } from "../src/array.ts";
 import { assert_equals } from "../src/assert.ts";
 import { ask, asks } from "../src/reader.ts";
 import { get, gets, modify } from "../src/state.ts";
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 import { tell, writer } from "../src/writer.ts";
 
 type Config = {

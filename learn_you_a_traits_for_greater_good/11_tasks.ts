@@ -1,6 +1,6 @@
 import { assert_equals } from "../src/assert.ts";
 import { from_fn, succeed } from "../src/task.ts";
-import { Applicative, Do } from "../src/traits.ts";
+import { Applicative, Do } from "../src/typeclasses.ts";
 
 export async function lesson_11_tasks() {
   const sequential = Do(function* () {

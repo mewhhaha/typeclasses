@@ -2,7 +2,7 @@ import { assert_equals, assert_true } from "../src/assert.ts";
 import { right } from "../src/either.ts";
 import { label_values } from "../src/examples.ts";
 import { just } from "../src/maybe.ts";
-import { Eq, Functor, Show } from "../src/traits.ts";
+import { Eq, Functor, Show } from "../src/typeclasses.ts";
 
 export function lesson_02_typeclasses() {
   const maybe = just(5);

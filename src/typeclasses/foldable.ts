@@ -1,39 +1,39 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
+  type Data,
   type Dictionary,
-  type TraitDictionary,
-  type Value,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+} from "../typeclass.ts";
 
-export const foldable_trait = Symbol("Foldable");
+export const foldable_typeclass = Symbol("Foldable");
 
 export interface Foldable<dictionary extends Dictionary>
   extends
-    TraitDictionary<
+    TypeclassDictionary<
       dictionary,
-      typeof foldable_trait,
+      typeof foldable_typeclass,
       {
         fold: <item, out>(
-          this: Value<dictionary, item>,
+          this: Data<dictionary, item>,
           initial: out,
           fn: (state: out, item: item) => out,
         ) => out;
       }
     > {}
 
-export const Foldable = define_trait(foldable_trait, {
+export const Foldable = typeclass(foldable_typeclass, {
   fold<
     dictionary extends Foldable<dictionary>,
     item,
     out,
   >(
-    value: Value<dictionary, item>,
+    value: Data<dictionary, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ): out {
-    return call_trait_method(
-      this.implementation(value).fold<item, out>,
+    return call_typeclass_method(
+      this.instance_for(value).fold<item, out>,
       value,
       initial,
       fn,

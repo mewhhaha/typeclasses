@@ -1,28 +1,28 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
   type Dictionary,
-  type Trait,
-  type TraitDictionary,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+  type WrappedData,
+} from "../typeclass.ts";
 
-export const bifunctor_trait = Symbol("Bifunctor");
+export const bifunctor_typeclass = Symbol("Bifunctor");
 
 export interface Bifunctor<dictionary extends Dictionary>
   extends
-    TraitDictionary<
+    TypeclassDictionary<
       dictionary,
-      typeof bifunctor_trait,
+      typeof bifunctor_typeclass,
       {
         bimap: <raw, left, right, next_left, next_right>(
-          this: Trait<dictionary, raw, right>,
+          this: WrappedData<dictionary, raw, right>,
           left: (value: left) => next_left,
           right: (value: right) => next_right,
-        ) => Trait<dictionary, unknown, next_right>;
+        ) => WrappedData<dictionary, unknown, next_right>;
       }
     > {}
 
-export const Bifunctor = define_trait(bifunctor_trait, {
+export const Bifunctor = typeclass(bifunctor_typeclass, {
   bimap<
     dictionary extends Bifunctor<dictionary>,
     raw,
@@ -31,12 +31,12 @@ export const Bifunctor = define_trait(bifunctor_trait, {
     next_left,
     next_right,
   >(
-    value: Trait<dictionary, raw, right>,
+    value: WrappedData<dictionary, raw, right>,
     left: (value: left) => next_left,
     right: (value: right) => next_right,
-  ): Trait<dictionary, unknown, next_right> {
-    return call_trait_method(
-      this.implementation(value).bimap<
+  ): WrappedData<dictionary, unknown, next_right> {
+    return call_typeclass_method(
+      this.instance_for(value).bimap<
         raw,
         left,
         right,
@@ -56,9 +56,9 @@ export const Bifunctor = define_trait(bifunctor_trait, {
     right,
     next_left,
   >(
-    value: Trait<dictionary, raw, right>,
+    value: WrappedData<dictionary, raw, right>,
     fn: (value: left) => next_left,
-  ): Trait<dictionary, unknown, right> {
+  ): WrappedData<dictionary, unknown, right> {
     return this.bimap(value, fn, identity);
   },
 });

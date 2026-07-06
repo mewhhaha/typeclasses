@@ -1,4 +1,4 @@
-import { Do } from "../../src/traits.ts";
+import { Do } from "../../src/typeclasses.ts";
 import {
   attempt,
   char,

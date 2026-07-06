@@ -1,12 +1,12 @@
 import {
   type As,
-  define,
+  data,
   type Dictionary,
   kind,
-  type Trait,
+  type type_data,
   type type_item,
-  type type_value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   type Effect,
   type Lift,
@@ -14,7 +14,7 @@ import {
   suspend,
   type WithoutLift,
 } from "./effects.ts";
-import { Applicative, Functor, Monad, Show } from "./traits.ts";
+import { Applicative, Functor, Monad, Show } from "./typeclasses.ts";
 
 export type Reader<environment, item> = (environment: environment) => item;
 
@@ -26,11 +26,11 @@ export interface AsReader<environment>
     Applicative<AsReader<environment>>,
     Monad<AsReader<environment>> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Reader<environment, this[typeof type_item]>;
+  readonly [type_data]: Reader<environment, this[typeof type_item]>;
   <item>(value: Reader<environment, item>): ReaderValue<environment, item>;
 }
 
-export type ReaderValue<environment, item> = Trait<
+export type ReaderValue<environment, item> = WrappedData<
   AsReader<environment>,
   Reader<environment, item>,
   item
@@ -44,7 +44,7 @@ type ReaderConstructor =
     ): ReaderValue<environment, item>;
   };
 
-export const Reader = define<AsReader<unknown>>() as ReaderConstructor;
+export const Reader = data<AsReader<unknown>>() as ReaderConstructor;
 
 export function ask<environment>(): ReaderValue<environment, environment> {
   return Reader((environment: environment) => environment);
@@ -105,13 +105,13 @@ function is_reader_value(value: unknown): value is Dictionary {
   return (value as Dictionary)[kind] === Reader[kind];
 }
 
-Show.implement(Reader)({
+Show.instance(Reader)({
   show() {
     return "Reader(?)";
   },
 });
 
-Functor.implement(Reader)({
+Functor.instance(Reader)({
   map(fn) {
     return Reader((environment: unknown) => {
       return fn(this.value()(environment));
@@ -119,7 +119,7 @@ Functor.implement(Reader)({
   },
 });
 
-Applicative.implement(Reader)({
+Applicative.instance(Reader)({
   pure(value) {
     return Reader((_environment: unknown) => value);
   },
@@ -132,7 +132,7 @@ Applicative.implement(Reader)({
   },
 });
 
-Monad.implement(Reader)({
+Monad.instance(Reader)({
   bind(fn) {
     return Reader((environment: unknown) => {
       const value = this.value()(environment);

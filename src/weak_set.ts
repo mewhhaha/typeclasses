@@ -1,23 +1,23 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Show } from "./typeclasses.ts";
 
 export type WeakSetT<item = object> = WeakSet<object>;
 
 export interface AsWeakSet
   extends As<AsWeakSet>, Show<AsWeakSet>, Eq<AsWeakSet> {
   readonly [type_item]: unknown;
-  readonly [type_value]: WeakSetT<this[typeof type_item]>;
+  readonly [type_data]: WeakSetT<this[typeof type_item]>;
 }
 
-type WeakSetValue<item extends object> = Value<AsWeakSet, item>;
+type WeakSetValue<item extends object> = Data<AsWeakSet, item>;
 
-export const WeakSetT = define<AsWeakSet>();
+export const WeakSetT = data<AsWeakSet>();
 
 export function from_iterable<item extends object>(
   items: Iterable<item>,
@@ -25,13 +25,13 @@ export function from_iterable<item extends object>(
   return WeakSetT(new WeakSet<object>(items));
 }
 
-Show.implement(WeakSetT)({
+Show.instance(WeakSetT)({
   show() {
     return "WeakSet(?)";
   },
 });
 
-Eq.implement(WeakSetT)({
+Eq.instance(WeakSetT)({
   eq(right) {
     return Object.is(this.value(), right.value());
   },

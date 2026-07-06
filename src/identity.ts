@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Applicative,
   Comonad,
@@ -16,7 +16,7 @@ import {
   Ord,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Identity<item> = item;
 
@@ -33,42 +33,42 @@ export interface AsIdentity
     Comonad<AsIdentity>,
     Ord<AsIdentity> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Identity<this[typeof type_item]>;
+  readonly [type_data]: Identity<this[typeof type_item]>;
 }
 
-export type IdentityValue<item> = Value<AsIdentity, item>;
+export type IdentityValue<item> = Data<AsIdentity, item>;
 
-export const Identity = define<AsIdentity>();
+export const Identity = data<AsIdentity>();
 
 export function identity<item>(value: item): IdentityValue<item> {
   return Identity(value);
 }
 
-Show.implement(Identity)({
+Show.instance(Identity)({
   show() {
     return "Identity(" + Deno.inspect(this.value()) + ")";
   },
 });
 
-Eq.implement(Identity)({
+Eq.instance(Identity)({
   eq(right) {
     return Object.is(this.value(), right.value());
   },
 });
 
-Ord.implement(Identity)({
+Ord.instance(Identity)({
   compare(right) {
     return compare_unknown(this.value(), right.value());
   },
 });
 
-Functor.implement(Identity)({
+Functor.instance(Identity)({
   map(fn) {
     return identity(fn(this.value()));
   },
 });
 
-Applicative.implement(Identity)({
+Applicative.instance(Identity)({
   pure(value) {
     return identity(value);
   },
@@ -78,25 +78,25 @@ Applicative.implement(Identity)({
   },
 });
 
-Monad.implement(Identity)({
+Monad.instance(Identity)({
   bind(fn) {
     return fn(this.value());
   },
 });
 
-Foldable.implement(Identity)({
+Foldable.instance(Identity)({
   fold(initial, fn) {
     return fn(initial, this.value());
   },
 });
 
-Traversable.implement(Identity)({
+Traversable.instance(Identity)({
   traverse(_applicative, fn) {
     return Functor.map(fn(this.value()), identity);
   },
 });
 
-Comonad.implement(Identity)({
+Comonad.instance(Identity)({
   extract() {
     return this.value();
   },

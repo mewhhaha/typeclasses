@@ -1,13 +1,13 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
   type Dictionary,
   kind,
-  type Trait,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   type Effect,
   type Lift,
@@ -15,7 +15,7 @@ import {
   suspend,
   type WithoutLift,
 } from "./effects.ts";
-import { Applicative, Functor, Monad, Show } from "./traits.ts";
+import { Applicative, Functor, Monad, Show } from "./typeclasses.ts";
 
 export type State<state, item> = (state: state) => readonly [item, state];
 
@@ -27,11 +27,11 @@ export interface AsState<state>
     Applicative<AsState<state>>,
     Monad<AsState<state>> {
   readonly [type_item]: unknown;
-  readonly [type_value]: State<state, this[typeof type_item]>;
+  readonly [type_data]: State<state, this[typeof type_item]>;
   <item>(value: State<state, item>): StateValue<state, item>;
 }
 
-export type StateValue<state, item> = Trait<
+export type StateValue<state, item> = WrappedData<
   AsState<state>,
   State<state, item>,
   item
@@ -43,7 +43,7 @@ type StateConstructor =
     <state, item>(value: State<state, item>): StateValue<state, item>;
   };
 
-export const State = define<AsState<unknown>>() as StateConstructor;
+export const State = data<AsState<unknown>>() as StateConstructor;
 
 export function get<state>(): StateValue<state, state> {
   return State((state: state) => [state, state]);
@@ -109,26 +109,26 @@ function is_state_value(value: unknown): value is Dictionary {
 }
 
 export function eval_state<state, item>(
-  stateful: Value<AsState<state>, item>,
+  stateful: Data<AsState<state>, item>,
   state: state,
 ): item {
   return stateful.value()(state)[0];
 }
 
 export function exec_state<state, item>(
-  stateful: Value<AsState<state>, item>,
+  stateful: Data<AsState<state>, item>,
   state: state,
 ): state {
   return stateful.value()(state)[1];
 }
 
-Show.implement(State)({
+Show.instance(State)({
   show() {
     return "State(?)";
   },
 });
 
-Functor.implement(State)({
+Functor.instance(State)({
   map(fn) {
     return State((state: unknown) => {
       const [value, next] = this.value()(state);
@@ -137,7 +137,7 @@ Functor.implement(State)({
   },
 });
 
-Applicative.implement(State)({
+Applicative.instance(State)({
   pure(value) {
     return State((state: unknown) => [value, state]);
   },
@@ -152,7 +152,7 @@ Applicative.implement(State)({
   },
 });
 
-Monad.implement(State)({
+Monad.instance(State)({
   bind(fn) {
     return State((state: unknown) => {
       const [value, next] = this.value()(state);

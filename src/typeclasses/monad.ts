@@ -1,34 +1,35 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
+  type Data,
   type Dictionary,
-  type TraitDictionary,
-  type Value,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+} from "../typeclass.ts";
 import {
   Applicative,
   type Applicative as ApplicativeDictionary,
 } from "./applicative.ts";
 
-export const monad_trait = Symbol("Monad");
+export const monad_typeclass = Symbol("Monad");
 
-export interface Monad<dictionary extends Dictionary> extends
-  TraitDictionary<
-    dictionary,
-    typeof monad_trait,
-    {
-      bind: <from, to>(
-        this: Value<dictionary, from>,
-        fn: (value: from) => Value<dictionary, to>,
-      ) => Value<dictionary, to>;
-    }
-  >,
-  ApplicativeDictionary<dictionary> {}
+export interface Monad<dictionary extends Dictionary>
+  extends
+    TypeclassDictionary<
+      dictionary,
+      typeof monad_typeclass,
+      {
+        bind: <from, to>(
+          this: Data<dictionary, from>,
+          fn: (value: from) => Data<dictionary, to>,
+        ) => Data<dictionary, to>;
+      }
+    >,
+    ApplicativeDictionary<dictionary> {}
 
 type DoGenerator<
   dictionary extends Monad<dictionary>,
   out,
-> = Generator<Value<dictionary, unknown>, out, unknown>;
+> = Generator<Data<dictionary, unknown>, out, unknown>;
 
 type DoPath = {
   readonly previous: DoPath | undefined;
@@ -36,17 +37,17 @@ type DoPath = {
   readonly length: number;
 };
 
-export const Monad = define_trait(monad_trait, {
+export const Monad = typeclass(monad_typeclass, {
   bind<
     dictionary extends Monad<dictionary>,
     from,
     to,
   >(
-    value: Value<dictionary, from>,
-    fn: (value: from) => Value<dictionary, to>,
-  ): Value<dictionary, to> {
-    return call_trait_method(
-      this.implementation(value).bind<from, to>,
+    value: Data<dictionary, from>,
+    fn: (value: from) => Data<dictionary, to>,
+  ): Data<dictionary, to> {
+    return call_typeclass_method(
+      this.instance_for(value).bind<from, to>,
       value,
       fn,
     );
@@ -55,7 +56,7 @@ export const Monad = define_trait(monad_trait, {
 
 export function Do<dictionary extends Monad<dictionary>, out>(
   run: () => DoGenerator<dictionary, out>,
-): Value<dictionary, out> {
+): Data<dictionary, out> {
   const first = run_with(undefined);
 
   if (first.next.done) {
@@ -68,7 +69,7 @@ export function Do<dictionary extends Monad<dictionary>, out>(
     path: DoPath | undefined,
   ): {
     iterator: DoGenerator<dictionary, out>;
-    next: IteratorResult<Value<dictionary, unknown>, out>;
+    next: IteratorResult<Data<dictionary, unknown>, out>;
   } {
     const iterator = run();
     let next = iterator.next();
@@ -88,9 +89,9 @@ export function Do<dictionary extends Monad<dictionary>, out>(
 
   function step(
     path: DoPath | undefined,
-    current: Value<dictionary, unknown>,
+    current: Data<dictionary, unknown>,
     iterator: DoGenerator<dictionary, out>,
-  ): Value<dictionary, out> {
+  ): Data<dictionary, out> {
     let calls = 0;
 
     return Monad.bind(current, (value) => {

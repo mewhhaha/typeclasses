@@ -1,10 +1,10 @@
 import {
+  type Data,
   type Dictionary,
-  type DictionaryValueType,
-  is_trait,
+  type DictionaryDataType,
+  is_data,
   kind,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 
 declare const operation_output: unique symbol;
 
@@ -23,7 +23,7 @@ export type Lift<dictionary extends Dictionary, item> =
   & Operation<item>
   & {
     readonly tag: "lift";
-    readonly value: Value<dictionary, item>;
+    readonly value: Data<dictionary, item>;
   };
 
 export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
@@ -80,7 +80,7 @@ type EffectRequirements<value> = value extends Effect<
   infer requirements,
   infer _item
 > ? requirements
-  : value extends Value<infer dictionary extends Dictionary, infer item>
+  : value extends Data<infer dictionary extends Dictionary, infer item>
     ? Lift<dictionary, item>
   : never;
 
@@ -104,7 +104,7 @@ export type WithoutLift<
   requirements,
   dictionary extends Dictionary,
 > = requirements extends Lift<infer lifted, infer _item>
-  ? DictionaryValueType<lifted> extends DictionaryValueType<dictionary> ? never
+  ? DictionaryDataType<lifted> extends DictionaryDataType<dictionary> ? never
   : requirements
   : requirements;
 
@@ -116,7 +116,7 @@ export type LiftHandler<
 > = {
   done(value: item, state: state): out;
   handle(
-    value: Value<dictionary, unknown>,
+    value: Data<dictionary, unknown>,
     state: state,
   ): readonly [unknown, state];
 };
@@ -184,14 +184,14 @@ export function from<requirements, item>(
   value: Effect<requirements, item>,
 ): Effect<requirements, item>;
 export function from<dictionary extends Dictionary, item>(
-  value: Value<dictionary, item>,
+  value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item>;
 export function from(value: unknown): Effect<unknown, unknown> {
   return as_effect(value);
 }
 
 export function lift<dictionary extends Dictionary, item>(
-  value: Value<dictionary, item>,
+  value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item> {
   return suspend(
     { tag: "lift", value } as Lift<dictionary, item>,
@@ -574,7 +574,7 @@ function as_effect<requirements, item>(
     return value as Effect<requirements, item>;
   }
 
-  if (is_trait(value)) {
+  if (is_data(value)) {
     return suspend(
       { tag: "lift", value } as Lift<Dictionary, item>,
       resume_pure,

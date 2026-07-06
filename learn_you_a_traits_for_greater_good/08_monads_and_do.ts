@@ -5,7 +5,7 @@ import {
   to_array as list_to_array,
 } from "../src/list.ts";
 import { just, nothing } from "../src/maybe.ts";
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 export function lesson_08_monads_and_do() {
   const maybe = Do(function* () {

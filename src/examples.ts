@@ -1,18 +1,18 @@
-import type { Value } from "./trait.ts";
-import { Applicative, Foldable, Functor, Monad } from "./traits.ts";
+import type { Data } from "./typeclass.ts";
+import { Applicative, Foldable, Functor, Monad } from "./typeclasses.ts";
 
 export function label_values<dictionary extends Functor<dictionary>>(
-  value: Value<dictionary, number>,
-): Value<dictionary, string> {
+  value: Data<dictionary, number>,
+): Data<dictionary, string> {
   return Functor.map(value, (item) => {
     return "value:" + item.toString();
   });
 }
 
 export function add_values<dictionary extends Applicative<dictionary>>(
-  left: Value<dictionary, number>,
-  right: Value<dictionary, number>,
-): Value<dictionary, number> {
+  left: Data<dictionary, number>,
+  right: Data<dictionary, number>,
+): Data<dictionary, number> {
   const add_right = Functor.map(left, (left_value) => {
     return (right_value: number) => left_value + right_value;
   });
@@ -21,9 +21,9 @@ export function add_values<dictionary extends Applicative<dictionary>>(
 }
 
 export function keep_positive<dictionary extends Monad<dictionary>>(
-  value: Value<dictionary, number>,
-  reject: (value: number) => Value<dictionary, number>,
-): Value<dictionary, number> {
+  value: Data<dictionary, number>,
+  reject: (value: number) => Data<dictionary, number>,
+): Data<dictionary, number> {
   return Monad.bind(value, (item) => {
     if (item >= 0) {
       return Applicative.pure(value, item);
@@ -34,7 +34,7 @@ export function keep_positive<dictionary extends Monad<dictionary>>(
 }
 
 export function sum_values<dictionary extends Foldable<dictionary>>(
-  value: Value<dictionary, number>,
+  value: Data<dictionary, number>,
 ): number {
   return Foldable.fold(value, 0, (state, item) => {
     return state + item;

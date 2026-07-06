@@ -1,5 +1,5 @@
 import { just, Maybe, type Maybe as MaybeContext } from "../src/maybe.ts";
-import { as_trait, as_trait_cached, type Trait } from "../src/trait.ts";
+import { as_data, as_data_cached, type WrappedData } from "../src/typeclass.ts";
 
 // Each benchmark iteration performs this many constructions or read cycles.
 const iterations = 10_000;
@@ -13,28 +13,28 @@ const dictionary = {
   },
 };
 
-const construct_trait = as_trait_cached(dictionary);
+const construct_data = as_data_cached(dictionary);
 const branch_lookup_payload = raw_just(1);
 
-type ConstructTrait<dictionary extends object = object> = <
+type ConstructData<dictionary extends object = object> = <
   value,
   item = unknown,
 >(
   value: value,
-) => Trait<dictionary, value, item>;
+) => WrappedData<dictionary, value, item>;
 
-const weakmap_constructors = new WeakMap<object, ConstructTrait<object>>();
+const weakmap_constructors = new WeakMap<object, ConstructData<object>>();
 const symbol_constructor = Symbol("symbol.constructor");
-const weakmap_cached_as_trait_warmed = weakmap_cached_as_trait(
+const weakmap_cached_as_data_warmed = weakmap_cached_as_data(
   dictionary,
   branch_lookup_payload,
 );
-const symbol_cached_as_trait_warmed = symbol_cached_as_trait(
+const symbol_cached_as_data_warmed = symbol_cached_as_data(
   dictionary,
   branch_lookup_payload,
 );
-const lazy_construct_trait = lazy_constructor(dictionary);
-const lazy_construct_trait_warmed = lazy_construct_trait(branch_lookup_payload);
+const lazy_construct_data = lazy_constructor(dictionary);
+const lazy_construct_data_warmed = lazy_construct_data(branch_lookup_payload);
 
 const record_dictionary = Symbol("record.dictionary");
 const record_value = Symbol("record.value");
@@ -97,41 +97,41 @@ Deno.bench("current Maybe(raw) value construction", () => {
   _sink = current;
 });
 
-Deno.bench("current as_trait(dictionary, raw) construction", () => {
+Deno.bench("current as_data(dictionary, raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = as_trait(dictionary, raw_just(index));
+    current = as_data(dictionary, raw_just(index));
   }
 
   _sink = current;
 });
 
-Deno.bench("cached as_trait_cached(dictionary)(raw) construction", () => {
+Deno.bench("cached as_data_cached(dictionary)(raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = construct_trait<BenchValue, number>(raw_just(index));
+    current = construct_data<BenchValue, number>(raw_just(index));
   }
 
   _sink = current;
 });
 
-Deno.bench("weakmap cached as_trait(dictionary, raw) construction", () => {
+Deno.bench("weakmap cached as_data(dictionary, raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = weakmap_cached_as_trait(dictionary, raw_just(index));
+    current = weakmap_cached_as_data(dictionary, raw_just(index));
   }
 
   _sink = current;
 });
 
-Deno.bench("external symbol cached as_trait(dictionary, raw)", () => {
+Deno.bench("external symbol cached as_data(dictionary, raw)", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = symbol_cached_as_trait(dictionary, raw_just(index));
+    current = symbol_cached_as_data(dictionary, raw_just(index));
   }
 
   _sink = current;
@@ -141,57 +141,57 @@ Deno.bench("lazy self-replacing constructor(raw) construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = lazy_construct_trait(raw_just(index));
+    current = lazy_construct_data(raw_just(index));
   }
 
   _sink = current;
 });
 
-Deno.bench("as_trait(dictionary, existing raw) constructor lookup", () => {
+Deno.bench("as_data(dictionary, existing raw) constructor lookup", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = as_trait(dictionary, branch_lookup_payload);
+    current = as_data(dictionary, branch_lookup_payload);
   }
 
   _sink = current;
 });
 
-Deno.bench("as_trait_cached(dictionary)(existing raw) no branch lookup", () => {
+Deno.bench("as_data_cached(dictionary)(existing raw) no branch lookup", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = construct_trait<BenchValue, number>(branch_lookup_payload);
+    current = construct_data<BenchValue, number>(branch_lookup_payload);
   }
 
   _sink = current;
 });
 
-Deno.bench("weakmap cached as_trait(dictionary, existing raw)", () => {
-  let current: unknown = weakmap_cached_as_trait_warmed;
+Deno.bench("weakmap cached as_data(dictionary, existing raw)", () => {
+  let current: unknown = weakmap_cached_as_data_warmed;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = weakmap_cached_as_trait(dictionary, branch_lookup_payload);
+    current = weakmap_cached_as_data(dictionary, branch_lookup_payload);
   }
 
   _sink = current;
 });
 
-Deno.bench("external symbol cached as_trait(dictionary, existing raw)", () => {
-  let current: unknown = symbol_cached_as_trait_warmed;
+Deno.bench("external symbol cached as_data(dictionary, existing raw)", () => {
+  let current: unknown = symbol_cached_as_data_warmed;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = symbol_cached_as_trait(dictionary, branch_lookup_payload);
+    current = symbol_cached_as_data(dictionary, branch_lookup_payload);
   }
 
   _sink = current;
 });
 
 Deno.bench("lazy self-replacing constructor(existing raw)", () => {
-  let current: unknown = lazy_construct_trait_warmed;
+  let current: unknown = lazy_construct_data_warmed;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = lazy_construct_trait(branch_lookup_payload);
+    current = lazy_construct_data(branch_lookup_payload);
   }
 
   _sink = current;
@@ -237,11 +237,11 @@ Deno.bench("current Maybe(raw).value() read", () => {
   _sink = current;
 });
 
-Deno.bench("cached as_trait_cached(dictionary)(raw).value() read", () => {
+Deno.bench("cached as_data_cached(dictionary)(raw).value() read", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = construct_trait<BenchValue, number>(raw_just(index)).value();
+    current = construct_data<BenchValue, number>(raw_just(index)).value();
   }
 
   _sink = current;
@@ -271,33 +271,33 @@ function raw_just(value: number): BenchValue {
   return ["just", value];
 }
 
-function weakmap_cached_as_trait<dictionary extends object, value>(
+function weakmap_cached_as_data<dictionary extends object, value>(
   dictionary: dictionary,
   value: value,
-): Trait<dictionary, value> {
+): WrappedData<dictionary, value> {
   let construct = weakmap_constructors.get(dictionary) as
-    | ConstructTrait<dictionary>
+    | ConstructData<dictionary>
     | undefined;
 
   if (construct === undefined) {
-    construct = as_trait_cached(dictionary);
-    weakmap_constructors.set(dictionary, construct as ConstructTrait<object>);
+    construct = as_data_cached(dictionary);
+    weakmap_constructors.set(dictionary, construct as ConstructData<object>);
   }
 
   return construct<value>(value);
 }
 
-function symbol_cached_as_trait<dictionary extends object, value>(
+function symbol_cached_as_data<dictionary extends object, value>(
   dictionary: dictionary,
   value: value,
-): Trait<dictionary, value> {
+): WrappedData<dictionary, value> {
   const cache = dictionary as {
-    [symbol_constructor]?: ConstructTrait<dictionary>;
+    [symbol_constructor]?: ConstructData<dictionary>;
   };
   let construct = cache[symbol_constructor];
 
   if (construct === undefined) {
-    construct = as_trait_cached(dictionary);
+    construct = as_data_cached(dictionary);
     Object.defineProperty(cache, symbol_constructor, {
       value: construct,
     });
@@ -308,11 +308,11 @@ function symbol_cached_as_trait<dictionary extends object, value>(
 
 function lazy_constructor<dictionary extends object>(
   dictionary: dictionary,
-): <value>(value: value) => Trait<dictionary, value> {
+): <value>(value: value) => WrappedData<dictionary, value> {
   let construct = <value>(
     value: value,
-  ): Trait<dictionary, value> => {
-    construct = as_trait_cached(dictionary) as typeof construct;
+  ): WrappedData<dictionary, value> => {
+    construct = as_data_cached(dictionary) as typeof construct;
     return construct(value);
   };
 

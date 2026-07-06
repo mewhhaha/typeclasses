@@ -1,14 +1,14 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
   type Dictionary,
   kind,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import type { Effect, Lift } from "./effects.ts";
-import { Applicative, Functor, Monad, Show } from "./traits.ts";
+import { Applicative, Functor, Monad, Show } from "./typeclasses.ts";
 
 export type Task<item> = () => Promise<item>;
 
@@ -20,12 +20,12 @@ export interface AsTask
     Applicative<AsTask>,
     Monad<AsTask> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Task<this[typeof type_item]>;
+  readonly [type_data]: Task<this[typeof type_item]>;
 }
 
-type TaskValue<item> = Value<AsTask, item>;
+type TaskValue<item> = Data<AsTask, item>;
 
-export const Task = define<AsTask>();
+export const Task = data<AsTask>();
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));
@@ -78,19 +78,19 @@ function is_task_value(value: unknown): value is Dictionary {
   return (value as Dictionary)[kind] === Task[kind];
 }
 
-Show.implement(Task)({
+Show.instance(Task)({
   show() {
     return "Task(?)";
   },
 });
 
-Functor.implement(Task)({
+Functor.instance(Task)({
   map(fn) {
     return Task(async () => fn(await this.value()()));
   },
 });
 
-Applicative.implement(Task)({
+Applicative.instance(Task)({
   pure(value) {
     return succeed(value);
   },
@@ -106,7 +106,7 @@ Applicative.implement(Task)({
   },
 });
 
-Monad.implement(Task)({
+Monad.instance(Task)({
   bind(fn) {
     return Task(async () => {
       const value = await this.value()();

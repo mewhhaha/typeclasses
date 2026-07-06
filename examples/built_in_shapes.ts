@@ -40,7 +40,7 @@ import {
 } from "../src/url_search_params.ts";
 import { from_entries as weak_map_from_entries } from "../src/weak_map.ts";
 import { from_iterable as weak_set_from_iterable } from "../src/weak_set.ts";
-import { Alternative, Show, Traversable } from "../src/traits.ts";
+import { Alternative, Show, Traversable } from "../src/typeclasses.ts";
 
 export async function run_builtin_shape_examples() {
   const array_monad = ArrayT([1, 2, 3])

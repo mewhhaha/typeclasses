@@ -1,11 +1,18 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Functor, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import {
+  Eq,
+  Foldable,
+  Functor,
+  Monoid,
+  Semigroup,
+  Show,
+} from "./typeclasses.ts";
 
 export type SetT<item> = ReadonlySet<item>;
 
@@ -19,14 +26,14 @@ export interface AsSet
     Monoid<AsSet>,
     Foldable<AsSet> {
   readonly [type_item]: unknown;
-  readonly [type_value]: SetT<this[typeof type_item]>;
+  readonly [type_data]: SetT<this[typeof type_item]>;
 }
 
-type SetValue<item> = Value<AsSet, item>;
+type SetValue<item> = Data<AsSet, item>;
 
-export const SetT = define<AsSet>(
+export const SetT = data<AsSet>(
   function (set) {
-    return this.as_trait(new Set(set));
+    return this.data(new Set(set));
   },
 );
 
@@ -44,13 +51,13 @@ export function to_set<item>(set: SetValue<item>): Set<item> {
   return new Set(set.value());
 }
 
-Show.implement(SetT)({
+Show.instance(SetT)({
   show() {
     return Deno.inspect(this.value());
   },
 });
 
-Eq.implement(SetT)({
+Eq.instance(SetT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
@@ -69,25 +76,25 @@ Eq.implement(SetT)({
   },
 });
 
-Functor.implement(SetT)({
+Functor.instance(SetT)({
   map(fn) {
     return SetT(new Set([...this.value()].map(fn)));
   },
 });
 
-Semigroup.implement(SetT)({
+Semigroup.instance(SetT)({
   concat(right) {
     return SetT(new Set([...this.value(), ...right.value()]));
   },
 });
 
-Monoid.implement(SetT)({
+Monoid.instance(SetT)({
   empty() {
     return SetT(new Set());
   },
 });
 
-Foldable.implement(SetT)({
+Foldable.instance(SetT)({
   fold(initial, fn) {
     let state = initial;
 

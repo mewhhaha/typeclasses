@@ -1,12 +1,12 @@
 import { from_array } from "../../src/array.ts";
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "../../src/trait.ts";
-import { Foldable, Monoid, Semigroup, Show } from "../../src/traits.ts";
+} from "../../src/typeclass.ts";
+import { Foldable, Monoid, Semigroup, Show } from "../../src/typeclasses.ts";
 import type {
   AnalyzeResult,
   AnalyzerReport,
@@ -17,12 +17,12 @@ import type {
 export interface AsReport
   extends As<AsReport>, Show<AsReport>, Semigroup<AsReport>, Monoid<AsReport> {
   readonly [type_item]: unknown;
-  readonly [type_value]: AnalyzerReport;
+  readonly [type_data]: AnalyzerReport;
 }
 
-export type ReportValue = Value<AsReport, AnalyzerReport>;
+export type ReportValue = Data<AsReport, AnalyzerReport>;
 
-export const Report = define<AsReport>();
+export const Report = data<AsReport>();
 
 export function empty_report(): AnalyzerReport {
   return {
@@ -127,7 +127,7 @@ export function concat_report_value(
   return Monoid.concat(left, Report(right));
 }
 
-Show.implement(Report)({
+Show.instance(Report)({
   show() {
     const report = this.value();
 
@@ -139,13 +139,13 @@ Show.implement(Report)({
   },
 });
 
-Semigroup.implement(Report)({
+Semigroup.instance(Report)({
   concat(right) {
     return Report(concat_reports(this.value(), right.value()));
   },
 });
 
-Monoid.implement(Report)({
+Monoid.instance(Report)({
   empty() {
     return Report(empty_report());
   },

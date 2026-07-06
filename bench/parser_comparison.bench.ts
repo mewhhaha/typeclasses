@@ -5,7 +5,7 @@ import { Left, Right } from "purify-ts/Either";
 import * as TrueResult from "true-myth/result";
 
 import { left as traits_left, right as traits_right } from "../src/either.ts";
-import { Applicative, Do } from "../src/traits.ts";
+import { Applicative, Do } from "../src/typeclasses.ts";
 
 const passes = 25;
 const inputs = route_inputs();

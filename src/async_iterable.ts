@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Alternative,
   Applicative,
@@ -13,7 +13,7 @@ import {
   Monoid,
   Semigroup,
   Show,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type AsyncIterableT<item> = () => AsyncIterable<item>;
 
@@ -28,12 +28,12 @@ export interface AsAsyncIterable
     Alternative<AsAsyncIterable>,
     Monad<AsAsyncIterable> {
   readonly [type_item]: unknown;
-  readonly [type_value]: AsyncIterableT<this[typeof type_item]>;
+  readonly [type_data]: AsyncIterableT<this[typeof type_item]>;
 }
 
-type AsyncIterableValue<item> = Value<AsAsyncIterable, item>;
+type AsyncIterableValue<item> = Data<AsAsyncIterable, item>;
 
-export const AsyncIterableT = define<AsAsyncIterable>();
+export const AsyncIterableT = data<AsAsyncIterable>();
 
 export function from_factory<item>(
   factory: () => AsyncIterable<item>,
@@ -59,13 +59,13 @@ export async function to_array<item>(
   return items;
 }
 
-Show.implement(AsyncIterableT)({
+Show.instance(AsyncIterableT)({
   show() {
     return "AsyncIterable(?)";
   },
 });
 
-Functor.implement(AsyncIterableT)({
+Functor.instance(AsyncIterableT)({
   map(fn) {
     const source = this.value();
 
@@ -77,7 +77,7 @@ Functor.implement(AsyncIterableT)({
   },
 });
 
-Applicative.implement(AsyncIterableT)({
+Applicative.instance(AsyncIterableT)({
   pure(value) {
     return AsyncIterableT(async function* () {
       yield value;
@@ -98,7 +98,7 @@ Applicative.implement(AsyncIterableT)({
   },
 });
 
-Semigroup.implement(AsyncIterableT)({
+Semigroup.instance(AsyncIterableT)({
   concat(right) {
     const left = this.value();
     const right_value = right.value();
@@ -110,13 +110,13 @@ Semigroup.implement(AsyncIterableT)({
   },
 });
 
-Monoid.implement(AsyncIterableT)({
+Monoid.instance(AsyncIterableT)({
   empty() {
     return AsyncIterableT(async function* () {});
   },
 });
 
-Alternative.implement(AsyncIterableT)({
+Alternative.instance(AsyncIterableT)({
   empty() {
     return AsyncIterableT(async function* () {});
   },
@@ -132,7 +132,7 @@ Alternative.implement(AsyncIterableT)({
   },
 });
 
-Monad.implement(AsyncIterableT)({
+Monad.instance(AsyncIterableT)({
   bind(fn) {
     const source = this.value();
 

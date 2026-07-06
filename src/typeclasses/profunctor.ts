@@ -1,28 +1,28 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
   type Dictionary,
-  type Trait,
-  type TraitDictionary,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+  type WrappedData,
+} from "../typeclass.ts";
 
-export const profunctor_trait = Symbol("Profunctor");
+export const profunctor_typeclass = Symbol("Profunctor");
 
 export interface Profunctor<dictionary extends Dictionary>
   extends
-    TraitDictionary<
+    TypeclassDictionary<
       dictionary,
-      typeof profunctor_trait,
+      typeof profunctor_typeclass,
       {
         dimap: <raw, from, to, next_from, next_to>(
-          this: Trait<dictionary, raw, to>,
+          this: WrappedData<dictionary, raw, to>,
           input: (value: next_from) => from,
           output: (value: to) => next_to,
-        ) => Trait<dictionary, unknown, next_to>;
+        ) => WrappedData<dictionary, unknown, next_to>;
       }
     > {}
 
-export const Profunctor = define_trait(profunctor_trait, {
+export const Profunctor = typeclass(profunctor_typeclass, {
   dimap<
     dictionary extends Profunctor<dictionary>,
     raw,
@@ -31,12 +31,12 @@ export const Profunctor = define_trait(profunctor_trait, {
     next_from,
     next_to,
   >(
-    value: Trait<dictionary, raw, to>,
+    value: WrappedData<dictionary, raw, to>,
     input: (value: next_from) => from,
     output: (value: to) => next_to,
-  ): Trait<dictionary, unknown, next_to> {
-    return call_trait_method(
-      this.implementation(value).dimap<raw, from, to, next_from, next_to>,
+  ): WrappedData<dictionary, unknown, next_to> {
+    return call_typeclass_method(
+      this.instance_for(value).dimap<raw, from, to, next_from, next_to>,
       value,
       input,
       output,
@@ -50,9 +50,9 @@ export const Profunctor = define_trait(profunctor_trait, {
     to,
     next_from,
   >(
-    value: Trait<dictionary, raw, to>,
+    value: WrappedData<dictionary, raw, to>,
     input: (value: next_from) => from,
-  ): Trait<dictionary, unknown, to> {
+  ): WrappedData<dictionary, unknown, to> {
     return this.dimap(value, input, identity);
   },
 
@@ -63,9 +63,9 @@ export const Profunctor = define_trait(profunctor_trait, {
     to,
     next_to,
   >(
-    value: Trait<dictionary, raw, to>,
+    value: WrappedData<dictionary, raw, to>,
     output: (value: to) => next_to,
-  ): Trait<dictionary, unknown, next_to> {
+  ): WrappedData<dictionary, unknown, next_to> {
     return this.dimap(value, identity<from>, output);
   },
 });

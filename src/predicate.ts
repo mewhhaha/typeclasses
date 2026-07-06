@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Contravariant, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Contravariant, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type Predicate<item> = (value: item) => boolean;
 
@@ -17,12 +17,12 @@ export interface AsPredicate
     Semigroup<AsPredicate>,
     Monoid<AsPredicate> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Predicate<this[typeof type_item]>;
+  readonly [type_data]: Predicate<this[typeof type_item]>;
 }
 
-export type PredicateValue<item> = Value<AsPredicate, item>;
+export type PredicateValue<item> = Data<AsPredicate, item>;
 
-export const Predicate = define<AsPredicate>();
+export const Predicate = data<AsPredicate>();
 
 export function predicate<item>(
   value: Predicate<item>,
@@ -37,13 +37,13 @@ export function test<item>(
   return value.run(item);
 }
 
-Show.implement(Predicate)({
+Show.instance(Predicate)({
   show() {
     return "Predicate(?)";
   },
 });
 
-Contravariant.implement(Predicate)({
+Contravariant.instance(Predicate)({
   contramap(fn) {
     const test = this.value();
 
@@ -53,7 +53,7 @@ Contravariant.implement(Predicate)({
   },
 });
 
-Semigroup.implement(Predicate)({
+Semigroup.instance(Predicate)({
   concat(right) {
     const left = this.value();
     const right_value = right.value();
@@ -68,7 +68,7 @@ Semigroup.implement(Predicate)({
   },
 });
 
-Monoid.implement(Predicate)({
+Monoid.instance(Predicate)({
   empty() {
     return predicate(() => true);
   },

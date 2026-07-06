@@ -1,11 +1,11 @@
 import { assert_equals, assert_true } from "../src/assert.ts";
 
 Deno.test({
-  name: "transformer lowers Do generators to direct trait methods",
+  name: "transformer lowers Do generators to direct typeclass methods",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 import { ask, asks } from "../src/reader.ts";
 
 const program = Do(function* () {
@@ -18,7 +18,7 @@ const program = Do(function* () {
 
     assert_equals(result.transformed, 1);
     assert_equals(result.diagnostics, []);
-    assert_includes(result.code, 'import { Do } from "../src/traits.ts";');
+    assert_includes(result.code, 'import { Do } from "../src/typeclasses.ts";');
     assert_true(
       !result.code.includes("Applicative") && !result.code.includes("Monad"),
       "expected Do lowering to avoid helper imports\n\n" + result.code,
@@ -180,7 +180,7 @@ Deno.test({
   permissions: { env: true },
   async fn() {
     const result = await transform(`
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 const identifier = Do(function* () {
   const name = yield* read_name();
@@ -208,7 +208,7 @@ Deno.test({
   permissions: { env: true },
   async fn() {
     const result = await transform(`
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 const parser = label(Do(function* () {
   const name = yield* identifier;
@@ -233,7 +233,7 @@ Deno.test({
   permissions: { env: true },
   async fn() {
     const result = await transform(`
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 function parser() {
   return label(Do(function* () {
@@ -259,7 +259,7 @@ Deno.test({
   permissions: { env: true },
   async fn() {
     const result = await transform(`
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 
 const parser = label(right(skip_hidden(), Do(function* () {
   const name = yield* identifier;

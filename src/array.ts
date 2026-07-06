@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Alternative,
   Applicative,
@@ -18,7 +18,7 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type ArrayT<item> = readonly item[];
 
@@ -37,12 +37,12 @@ export interface AsArray
     Traversable<AsArray>,
     Ord<AsArray> {
   readonly [type_item]: unknown;
-  readonly [type_value]: ArrayT<this[typeof type_item]>;
+  readonly [type_data]: ArrayT<this[typeof type_item]>;
 }
 
-type ArrayValue<item> = Value<AsArray, item>;
+type ArrayValue<item> = Data<AsArray, item>;
 
-export const ArrayT = define<AsArray>();
+export const ArrayT = data<AsArray>();
 
 export function from_array<item>(items: readonly item[]): ArrayValue<item> {
   return ArrayT([...items]);
@@ -52,14 +52,14 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
   return [...array.value()];
 }
 
-Show.implement(ArrayT)({
+Show.instance(ArrayT)({
   show() {
     const array = this.value();
     return Deno.inspect(array);
   },
 });
 
-Eq.implement(ArrayT)({
+Eq.instance(ArrayT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
@@ -78,7 +78,7 @@ Eq.implement(ArrayT)({
   },
 });
 
-Ord.implement(ArrayT)({
+Ord.instance(ArrayT)({
   compare(right) {
     const left = this.value();
     const right_value = right.value();
@@ -100,14 +100,14 @@ Ord.implement(ArrayT)({
   },
 });
 
-Functor.implement(ArrayT)({
+Functor.instance(ArrayT)({
   map(fn) {
     const array = this.value();
     return ArrayT(array.map(fn));
   },
 });
 
-Applicative.implement(ArrayT)({
+Applicative.instance(ArrayT)({
   pure(value) {
     return ArrayT([value]);
   },
@@ -120,20 +120,20 @@ Applicative.implement(ArrayT)({
   },
 });
 
-Semigroup.implement(ArrayT)({
+Semigroup.instance(ArrayT)({
   concat(right) {
     const left = this.value();
     return ArrayT([...left, ...right.value()]);
   },
 });
 
-Monoid.implement(ArrayT)({
+Monoid.instance(ArrayT)({
   empty() {
     return ArrayT([]);
   },
 });
 
-Alternative.implement(ArrayT)({
+Alternative.instance(ArrayT)({
   empty() {
     return ArrayT([]);
   },
@@ -144,14 +144,14 @@ Alternative.implement(ArrayT)({
   },
 });
 
-Monad.implement(ArrayT)({
+Monad.instance(ArrayT)({
   bind(fn) {
     const array = this.value();
     return ArrayT(array.flatMap((item) => fn(item).value()));
   },
 });
 
-Foldable.implement(ArrayT)({
+Foldable.instance(ArrayT)({
   fold(initial, fn) {
     const array = this.value();
     let state = initial;
@@ -164,7 +164,7 @@ Foldable.implement(ArrayT)({
   },
 });
 
-Traversable.implement(ArrayT)({
+Traversable.instance(ArrayT)({
   traverse(applicative, fn) {
     const array = this.value();
 

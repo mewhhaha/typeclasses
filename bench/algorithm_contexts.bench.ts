@@ -10,7 +10,7 @@ import { type AsMaybe, just } from "../src/maybe.ts";
 import { from_entries as record_from_entries } from "../src/record.ts";
 import { type AsEither, right } from "../src/either.ts";
 import { from_iterable as set_from_iterable } from "../src/set.ts";
-import type { Value } from "../src/trait.ts";
+import type { Data } from "../src/typeclass.ts";
 import {
   Applicative,
   type Applicative as ApplicativeDictionary,
@@ -18,7 +18,7 @@ import {
   type Functor as FunctorDictionary,
   Monad,
   type Monad as MonadDictionary,
-} from "../src/traits.ts";
+} from "../src/typeclasses.ts";
 import { invalid, valid } from "../src/validation.ts";
 
 const iterations = 10_000;
@@ -413,26 +413,26 @@ Deno.bench("algorithm monad traits Either", () => {
 });
 
 function score_events<dictionary extends FunctorDictionary<dictionary>>(
-  input: Value<dictionary, Event>,
-): Value<dictionary, number> {
+  input: Data<dictionary, Event>,
+): Data<dictionary, number> {
   return Functor.map(input, score_event);
 }
 
 function build_features<
   dictionary extends ApplicativeDictionary<dictionary>,
 >(
-  id: Value<dictionary, number>,
-  weight: Value<dictionary, number>,
-  active: Value<dictionary, boolean>,
-): Value<dictionary, Feature> {
+  id: Data<dictionary, number>,
+  weight: Data<dictionary, number>,
+  active: Data<dictionary, boolean>,
+): Data<dictionary, Feature> {
   return Applicative.lift(build_feature, id, weight, active);
 }
 
 function dependent_features<dictionary extends MonadDictionary<dictionary>>(
-  id: Value<dictionary, number>,
-  weight_for: (id: number) => Value<dictionary, number>,
-  active_for: (id: number, weight: number) => Value<dictionary, boolean>,
-): Value<dictionary, Feature> {
+  id: Data<dictionary, number>,
+  weight_for: (id: number) => Data<dictionary, number>,
+  active_for: (id: number, weight: number) => Data<dictionary, boolean>,
+): Data<dictionary, Feature> {
   return Monad.bind(id, (id) => {
     return Monad.bind(weight_for(id), (weight) => {
       return Functor.map(active_for(id, weight), (active) => {
@@ -530,29 +530,29 @@ function native_active_for(id: number, weight: number): readonly boolean[] {
   return [weight % 2 === 0, id % 2 === 0];
 }
 
-function array_weights_for(id: number): Value<AsArray, number> {
+function array_weights_for(id: number): Data<AsArray, number> {
   return array_from_array(native_weights_for(id));
 }
 
 function array_active_for(
   id: number,
   weight: number,
-): Value<AsArray, boolean> {
+): Data<AsArray, boolean> {
   return array_from_array(native_active_for(id, weight));
 }
 
-function list_weights_for(id: number): Value<AsList, number> {
+function list_weights_for(id: number): Data<AsList, number> {
   return list_from_array([...native_weights_for(id)]);
 }
 
 function list_active_for(
   id: number,
   weight: number,
-): Value<AsList, boolean> {
+): Data<AsList, boolean> {
   return list_from_array([...native_active_for(id, weight)]);
 }
 
-function iterable_weights_for(id: number): Value<AsIterable, number> {
+function iterable_weights_for(id: number): Data<AsIterable, number> {
   return iterable_from_factory(function* () {
     yield* native_weights_for(id);
   });
@@ -561,30 +561,30 @@ function iterable_weights_for(id: number): Value<AsIterable, number> {
 function iterable_active_for(
   id: number,
   weight: number,
-): Value<AsIterable, boolean> {
+): Data<AsIterable, boolean> {
   return iterable_from_factory(function* () {
     yield* native_active_for(id, weight);
   });
 }
 
-function maybe_weight_for(id: number): Value<AsMaybe, number> {
+function maybe_weight_for(id: number): Data<AsMaybe, number> {
   return just(id * 10);
 }
 
 function maybe_active_for(
   id: number,
   weight: number,
-): Value<AsMaybe, boolean> {
+): Data<AsMaybe, boolean> {
   return just(weight % 2 === 0 && id % 2 === 1);
 }
 
-function either_weight_for(id: number): Value<AsEither, number> {
+function either_weight_for(id: number): Data<AsEither, number> {
   return right(id * 10);
 }
 
 function either_active_for(
   id: number,
   weight: number,
-): Value<AsEither, boolean> {
+): Data<AsEither, boolean> {
   return right(weight % 2 === 0 && id % 2 === 1);
 }

@@ -1,76 +1,76 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
+  type Data,
   type Dictionary,
-  type TraitDictionary,
-  type Value,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+} from "../typeclass.ts";
 import type { Eq as EqDictionary } from "./eq.ts";
 
 export type Ordering = "lt" | "eq" | "gt";
 
-export const ord_trait = Symbol("Ord");
+export const ord_typeclass = Symbol("Ord");
 
 export interface Ord<dictionary extends Dictionary> extends
-  TraitDictionary<
+  TypeclassDictionary<
     dictionary,
-    typeof ord_trait,
+    typeof ord_typeclass,
     {
       compare: <item>(
-        this: Value<dictionary, item>,
-        right: Value<dictionary, item>,
+        this: Data<dictionary, item>,
+        right: Data<dictionary, item>,
       ) => Ordering;
     }
   >,
   EqDictionary<dictionary> {}
 
-export const Ord = define_trait(ord_trait, {
+export const Ord = typeclass(ord_typeclass, {
   compare<
     dictionary extends Ord<dictionary>,
     item,
   >(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
   ): Ordering {
-    return call_trait_method(
-      this.implementation(left).compare<item>,
+    return call_typeclass_method(
+      this.instance_for(left).compare<item>,
       left,
       right,
     );
   },
 
   lt<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
   ): boolean {
     return this.compare(left, right) === "lt";
   },
 
   lte<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
   ): boolean {
     return this.compare(left, right) !== "gt";
   },
 
   gt<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
   ): boolean {
     return this.compare(left, right) === "gt";
   },
 
   gte<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
   ): boolean {
     return this.compare(left, right) !== "lt";
   },
 
   min<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
-  ): Value<dictionary, item> {
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
+  ): Data<dictionary, item> {
     if (this.lte(left, right)) {
       return left;
     }
@@ -79,9 +79,9 @@ export const Ord = define_trait(ord_trait, {
   },
 
   max<dictionary extends Ord<dictionary>, item>(
-    left: Value<dictionary, item>,
-    right: Value<dictionary, item>,
-  ): Value<dictionary, item> {
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
+  ): Data<dictionary, item> {
     if (this.gte(left, right)) {
       return left;
     }

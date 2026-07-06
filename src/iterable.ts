@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Alternative,
   Applicative,
@@ -16,7 +16,7 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type IterableT<item> = () => Iterable<item>;
 
@@ -34,12 +34,12 @@ export interface AsIterable
     Foldable<AsIterable>,
     Traversable<AsIterable> {
   readonly [type_item]: unknown;
-  readonly [type_value]: IterableT<this[typeof type_item]>;
+  readonly [type_data]: IterableT<this[typeof type_item]>;
 }
 
-type IterableValue<item> = Value<AsIterable, item>;
+type IterableValue<item> = Data<AsIterable, item>;
 
-export const IterableT = define<AsIterable>();
+export const IterableT = data<AsIterable>();
 
 export function from_factory<item>(
   factory: () => Iterable<item>,
@@ -58,13 +58,13 @@ export function to_array<item>(iterable: IterableValue<item>): item[] {
   return [...iterable.value()()];
 }
 
-Show.implement(IterableT)({
+Show.instance(IterableT)({
   show() {
     return Deno.inspect([...this.value()()]);
   },
 });
 
-Eq.implement(IterableT)({
+Eq.instance(IterableT)({
   eq(right) {
     const left_iterator = this.value()()[Symbol.iterator]();
     const right_iterator = right.value()()[Symbol.iterator]();
@@ -84,7 +84,7 @@ Eq.implement(IterableT)({
   },
 });
 
-Functor.implement(IterableT)({
+Functor.instance(IterableT)({
   map(fn) {
     const source = this.value();
 
@@ -96,7 +96,7 @@ Functor.implement(IterableT)({
   },
 });
 
-Applicative.implement(IterableT)({
+Applicative.instance(IterableT)({
   pure(value) {
     return IterableT(function* () {
       yield value;
@@ -117,7 +117,7 @@ Applicative.implement(IterableT)({
   },
 });
 
-Semigroup.implement(IterableT)({
+Semigroup.instance(IterableT)({
   concat(right) {
     const left = this.value();
     const right_value = right.value();
@@ -129,13 +129,13 @@ Semigroup.implement(IterableT)({
   },
 });
 
-Monoid.implement(IterableT)({
+Monoid.instance(IterableT)({
   empty() {
     return IterableT(function* () {});
   },
 });
 
-Alternative.implement(IterableT)({
+Alternative.instance(IterableT)({
   empty() {
     return IterableT(function* () {});
   },
@@ -151,7 +151,7 @@ Alternative.implement(IterableT)({
   },
 });
 
-Monad.implement(IterableT)({
+Monad.instance(IterableT)({
   bind(fn) {
     const source = this.value();
 
@@ -163,7 +163,7 @@ Monad.implement(IterableT)({
   },
 });
 
-Foldable.implement(IterableT)({
+Foldable.instance(IterableT)({
   fold(initial, fn) {
     let state = initial;
 
@@ -175,7 +175,7 @@ Foldable.implement(IterableT)({
   },
 });
 
-Traversable.implement(IterableT)({
+Traversable.instance(IterableT)({
   traverse(applicative, fn) {
     const items = [...this.value()()];
 

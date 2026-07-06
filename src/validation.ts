@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
-  type Trait,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   Applicative,
   Eq,
@@ -12,7 +12,7 @@ import {
   Functor,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Validation<error, item> =
   | Valid<item>
@@ -39,10 +39,10 @@ export interface AsValidation
     Foldable<AsValidation>,
     Traversable<AsValidation> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Validation<unknown, this[typeof type_item]>;
+  readonly [type_data]: Validation<unknown, this[typeof type_item]>;
 }
 
-export type ValidationValue<error, item> = Trait<
+export type ValidationValue<error, item> = WrappedData<
   AsValidation,
   Validation<error, item>,
   item
@@ -56,7 +56,7 @@ type ValidationConstructor =
     ): ValidationValue<error, item>;
   };
 
-export const Validation = define<AsValidation>() as ValidationConstructor;
+export const Validation = data<AsValidation>() as ValidationConstructor;
 
 export function valid<item>(value: item): ValidationValue<never, item> {
   return Validation(validation_valid(value)) as ValidationValue<never, item>;
@@ -79,7 +79,7 @@ export function invalid_with<error, item = never>(
   >;
 }
 
-Show.implement(Validation)({
+Show.instance(Validation)({
   show() {
     const [tag, payload] = this.value();
 
@@ -92,7 +92,7 @@ Show.implement(Validation)({
   },
 });
 
-Eq.implement(Validation)({
+Eq.instance(Validation)({
   eq(right) {
     const [left_tag, left_payload] = this.value();
     const [right_tag, right_payload] = right.value();
@@ -120,7 +120,7 @@ Eq.implement(Validation)({
   },
 });
 
-Functor.implement(Validation)({
+Functor.instance(Validation)({
   map(fn) {
     const [tag, payload] = this.value();
 
@@ -133,7 +133,7 @@ Functor.implement(Validation)({
   },
 });
 
-Applicative.implement(Validation)({
+Applicative.instance(Validation)({
   pure(value) {
     return valid(value);
   },
@@ -174,7 +174,7 @@ Applicative.implement(Validation)({
   },
 });
 
-Foldable.implement(Validation)({
+Foldable.instance(Validation)({
   fold(initial, fn) {
     const [tag, payload] = this.value();
 
@@ -187,7 +187,7 @@ Foldable.implement(Validation)({
   },
 });
 
-Traversable.implement(Validation)({
+Traversable.instance(Validation)({
   traverse(applicative, fn) {
     const [tag, payload, semigroup] = this.value();
 

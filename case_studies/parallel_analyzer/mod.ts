@@ -8,7 +8,7 @@ import {
 } from "../../src/parallel.ts";
 import { run_reader } from "../../src/reader.ts";
 import { from_fn, run_task, succeed } from "../../src/task.ts";
-import { Foldable, Monad } from "../../src/traits.ts";
+import { Foldable, Monad } from "../../src/typeclasses.ts";
 import { run_writer } from "../../src/writer.ts";
 import {
   broken_program,

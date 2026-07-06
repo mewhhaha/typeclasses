@@ -1,42 +1,42 @@
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
+  type Data,
   type Dictionary,
-  type TraitDictionary,
-  type Value,
-} from "../trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+} from "../typeclass.ts";
 import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
 
-export const applicative_trait = Symbol("Applicative");
+export const applicative_typeclass = Symbol("Applicative");
 
 export interface Applicative<dictionary extends Dictionary>
   extends
-    TraitDictionary<
+    TypeclassDictionary<
       dictionary,
-      typeof applicative_trait,
+      typeof applicative_typeclass,
       {
         pure: <item>(
-          this: Value<dictionary, unknown>,
+          this: Data<dictionary, unknown>,
           value: item,
-        ) => Value<dictionary, item>;
+        ) => Data<dictionary, item>;
         ap: <from, to>(
-          this: Value<dictionary, (value: NoInfer<from>) => to>,
-          value: Value<dictionary, from>,
-        ) => Value<dictionary, to>;
+          this: Data<dictionary, (value: NoInfer<from>) => to>,
+          value: Data<dictionary, from>,
+        ) => Data<dictionary, to>;
       }
     >,
     FunctorDictionary<dictionary> {}
 
-export const Applicative = define_trait(applicative_trait, {
+export const Applicative = typeclass(applicative_typeclass, {
   pure<
     dictionary extends Applicative<dictionary>,
     item,
   >(
-    value: Value<dictionary, unknown>,
+    value: Data<dictionary, unknown>,
     item: item,
-  ): Value<dictionary, item> {
-    return call_trait_method(
-      this.implementation(value).pure<item>,
+  ): Data<dictionary, item> {
+    return call_typeclass_method(
+      this.instance_for(value).pure<item>,
       value,
       item,
     );
@@ -49,11 +49,11 @@ export const Applicative = define_trait(applicative_trait, {
     from,
     to,
   >(
-    value: Value<dictionary, (value: NoInfer<from>) => to>,
-    item: Value<dictionary, from>,
-  ): Value<dictionary, to> {
-    return call_trait_method(
-      this.implementation(value).ap<from, to>,
+    value: Data<dictionary, (value: NoInfer<from>) => to>,
+    item: Data<dictionary, from>,
+  ): Data<dictionary, to> {
+    return call_typeclass_method(
+      this.instance_for(value).ap<from, to>,
       value,
       item,
     );
@@ -66,8 +66,8 @@ function applicative_lift<
   out,
 >(
   fn: (first: first) => out,
-  first: Value<dictionary, first>,
-): Value<dictionary, out>;
+  first: Data<dictionary, first>,
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
@@ -75,9 +75,9 @@ function applicative_lift<
   out,
 >(
   fn: (first: first, second: second) => out,
-  first: Value<dictionary, first>,
-  second: Value<dictionary, second>,
-): Value<dictionary, out>;
+  first: Data<dictionary, first>,
+  second: Data<dictionary, second>,
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
@@ -86,10 +86,10 @@ function applicative_lift<
   out,
 >(
   fn: (first: first, second: second, third: third) => out,
-  first: Value<dictionary, first>,
-  second: Value<dictionary, second>,
-  third: Value<dictionary, third>,
-): Value<dictionary, out>;
+  first: Data<dictionary, first>,
+  second: Data<dictionary, second>,
+  third: Data<dictionary, third>,
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
@@ -99,11 +99,11 @@ function applicative_lift<
   out,
 >(
   fn: (first: first, second: second, third: third, fourth: fourth) => out,
-  first: Value<dictionary, first>,
-  second: Value<dictionary, second>,
-  third: Value<dictionary, third>,
-  fourth: Value<dictionary, fourth>,
-): Value<dictionary, out>;
+  first: Data<dictionary, first>,
+  second: Data<dictionary, second>,
+  third: Data<dictionary, third>,
+  fourth: Data<dictionary, fourth>,
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
@@ -120,28 +120,28 @@ function applicative_lift<
     fourth: fourth,
     fifth: fifth,
   ) => out,
-  first: Value<dictionary, first>,
-  second: Value<dictionary, second>,
-  third: Value<dictionary, third>,
-  fourth: Value<dictionary, fourth>,
-  fifth: Value<dictionary, fifth>,
-): Value<dictionary, out>;
+  first: Data<dictionary, first>,
+  second: Data<dictionary, second>,
+  third: Data<dictionary, third>,
+  fourth: Data<dictionary, fourth>,
+  fifth: Data<dictionary, fifth>,
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   out,
 >(
   fn: (...values: unknown[]) => out,
-  first: Value<dictionary, unknown>,
-  ...rest: Value<dictionary, unknown>[]
-): Value<dictionary, out>;
+  first: Data<dictionary, unknown>,
+  ...rest: Data<dictionary, unknown>[]
+): Data<dictionary, out>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   out,
 >(
   fn: (...values: unknown[]) => out,
-  first: Value<dictionary, unknown>,
-  ...rest: Value<dictionary, unknown>[]
-): Value<dictionary, out> {
+  first: Data<dictionary, unknown>,
+  ...rest: Data<dictionary, unknown>[]
+): Data<dictionary, out> {
   const values = [first, ...rest];
 
   if (values.length === 1) {

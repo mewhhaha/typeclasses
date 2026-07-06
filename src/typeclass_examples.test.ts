@@ -143,20 +143,20 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
-import { as_trait, type Trait, TraitDefinition } from "./trait.ts";
+} from "./typeclasses.ts";
+import { as_data, TypeclassDefinition, type WrappedData } from "./typeclass.ts";
 
-Deno.test("Trait definitions inherit shared prototype helpers", () => {
-  assert_equals(Object.getPrototypeOf(Show), TraitDefinition);
-  assert_equals(Object.getPrototypeOf(Functor), TraitDefinition);
-  assert_true(!Object.hasOwn(Show, "implement"), "Show inherits installer");
+Deno.test("Typeclass definitions inherit shared prototype helpers", () => {
+  assert_equals(Object.getPrototypeOf(Show), TypeclassDefinition);
+  assert_equals(Object.getPrototypeOf(Functor), TypeclassDefinition);
+  assert_true(!Object.hasOwn(Show, "instance"), "Show inherits installer");
   assert_true(
-    !Object.hasOwn(Functor, "implementation"),
+    !Object.hasOwn(Functor, "instance_for"),
     "Functor inherits implementation accessor",
   );
 });
 
-Deno.test("Show and Eq traits dispatch through trait helpers", () => {
+Deno.test("Show and Eq typeclasses dispatch through typeclass helpers", () => {
   assert_equals(Show.show(maybe_just(42)), "Just(42)");
   assert_equals(Show.show(maybe_nothing()), "Nothing");
   assert_true(Eq.eq(maybe_just("x"), maybe_just("x")), "boxed same");
@@ -242,7 +242,7 @@ Deno.test("Comonad extracts and extends Identity", () => {
   assert_equals(extended.value(), 42);
 });
 
-Deno.test("Function traits cover Profunctor, Category, Arrow, and Parse", () => {
+Deno.test("Function typeclasses cover Profunctor, Category, Arrow, and Parse", () => {
   const direct = fn_arr((value: number) => value + 1);
   const named_length = Profunctor.dimap(
     fn((text: string) => text.length),
@@ -497,7 +497,7 @@ Deno.test("Applicative lift can build named structures", () => {
   ]);
 });
 
-Deno.test("Maybe callable wrapper traits maybe values for fluent methods", () => {
+Deno.test("Maybe callable wrapper typeclasses maybe values for fluent methods", () => {
   const value = maybe_just(41)
     .map((item) => item + 1);
   const nothing = maybe_nothing<number>()
@@ -534,8 +534,8 @@ Deno.test("Maybe callable wrapper chains applicative ap through this", () => {
   assert_equals(missing.value(), maybe_nothing().value());
 });
 
-Deno.test("Trait dictionary methods assert a missing receiver at runtime", () => {
-  assert_trait_receiver_error(
+Deno.test("Typeclass dictionary methods assert a missing receiver at runtime", () => {
+  assert_typeclass_receiver_error(
     () =>
       Reflect.apply(Maybe.map, undefined, [
         (value: number) => value + 1,
@@ -543,7 +543,7 @@ Deno.test("Trait dictionary methods assert a missing receiver at runtime", () =>
   );
 });
 
-Deno.test("Trait helpers use symbol-scoped implementations", () => {
+Deno.test("Typeclass helpers use symbol-scoped implementations", () => {
   const original = Maybe.show;
 
   try {
@@ -560,19 +560,19 @@ Deno.test("Trait helpers use symbol-scoped implementations", () => {
   }
 });
 
-Deno.test("Trait values inherit methods added after construction", () => {
+Deno.test("Data values inherit methods added after construction", () => {
   type DynamicDictionary = {
-    inc?: (this: Trait<DynamicDictionary, number, number>) => number;
+    inc?: (this: WrappedData<DynamicDictionary, number, number>) => number;
   };
 
   const dictionary: DynamicDictionary = {};
   const extended = dictionary as DynamicDictionary & {
-    inc: (this: Trait<DynamicDictionary, number, number>) => number;
+    inc: (this: WrappedData<DynamicDictionary, number, number>) => number;
   };
-  const value = as_trait<DynamicDictionary, number, number>(extended, 41);
+  const value = as_data<DynamicDictionary, number, number>(extended, 41);
 
   extended.inc = function inc(
-    this: Trait<DynamicDictionary, number, number>,
+    this: WrappedData<DynamicDictionary, number, number>,
   ) {
     return this.value() + 1;
   };
@@ -1150,7 +1150,7 @@ Deno.test("Built-in wrappers map and fold over values", () => {
   assert_equals(map_sum, 3);
 });
 
-Deno.test("JavaScript shape wrappers expose conservative traits", async () => {
+Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () => {
   const set = set_from_iterable([1, 2, 2, 3])
     .map((value) => value * 10);
   const iterable = iterable_from_factory(function* () {
@@ -1319,7 +1319,7 @@ Deno.test("Traversable flips structures through an applicative", () => {
   assert_equals(record_to_record(empty_record_result), {});
 });
 
-Deno.test("Generic helpers work against trait interfaces", () => {
+Deno.test("Generic helpers work against typeclass interfaces", () => {
   const option = label_values(maybe_just(5));
   const list = label_values(list_from_array([1, 2]));
   const result = label_values(either_right(3));
@@ -1456,7 +1456,7 @@ function expect_validation_invalid<error, item>(
   }
 }
 
-function assert_trait_receiver_error(
+function assert_typeclass_receiver_error(
   fn: () => unknown,
 ): void {
   try {
@@ -1469,5 +1469,5 @@ function assert_trait_receiver_error(
     return;
   }
 
-  throw new Error("Expected a missing trait receiver error");
+  throw new Error("Expected a missing typeclass receiver error");
 }

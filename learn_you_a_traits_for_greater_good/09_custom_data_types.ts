@@ -1,12 +1,12 @@
 import { assert_equals } from "../src/assert.ts";
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "../src/trait.ts";
-import { Foldable, Functor, Show } from "../src/traits.ts";
+} from "../src/typeclass.ts";
+import { Foldable, Functor, Show } from "../src/typeclasses.ts";
 
 type Tree<item> =
   | readonly ["leaf", item]
@@ -15,12 +15,12 @@ type Tree<item> =
 interface AsTree
   extends As<AsTree>, Show<AsTree>, Functor<AsTree>, Foldable<AsTree> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Tree<this[typeof type_item]>;
+  readonly [type_data]: Tree<this[typeof type_item]>;
 }
 
-type TreeValue<item> = Value<AsTree, item>;
+type TreeValue<item> = Data<AsTree, item>;
 
-const Tree = define<AsTree>();
+const Tree = data<AsTree>();
 
 export function lesson_09_custom_data_types() {
   const tree = branch(
@@ -46,19 +46,19 @@ function branch<item>(
   return Tree(["branch", left.value(), right.value()]);
 }
 
-Show.implement(Tree)({
+Show.instance(Tree)({
   show() {
     return show_tree(this.value());
   },
 });
 
-Functor.implement(Tree)({
+Functor.instance(Tree)({
   map(fn) {
     return Tree(map_tree(this.value(), fn));
   },
 });
 
-Foldable.implement(Tree)({
+Foldable.instance(Tree)({
   fold(initial, fn) {
     return fold_tree(this.value(), initial, fn);
   },

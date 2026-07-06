@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
-  type Trait,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   Applicative,
   Bifunctor,
@@ -17,7 +17,7 @@ import {
   Ord,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Either<left, right> =
   | Left<left>
@@ -40,10 +40,10 @@ export interface AsEither
     Bifunctor<AsEither>,
     Ord<AsEither> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Either<unknown, this[typeof type_item]>;
+  readonly [type_data]: Either<unknown, this[typeof type_item]>;
 }
 
-export type EitherValue<left, right> = Trait<
+export type EitherValue<left, right> = WrappedData<
   AsEither,
   Either<left, right>,
   right
@@ -55,7 +55,7 @@ type EitherConstructor =
     <left, right>(value: Either<left, right>): EitherValue<left, right>;
   };
 
-export const Either = define<AsEither>() as EitherConstructor;
+export const Either = data<AsEither>() as EitherConstructor;
 
 export function right<right>(value: right): EitherValue<never, right> {
   return Either(either_right(value)) as EitherValue<never, right>;
@@ -91,7 +91,7 @@ export function from_number(value: number) {
   return left("Expected a finite number");
 }
 
-Show.implement(Either)({
+Show.instance(Either)({
   show() {
     const [tag, payload] = this.value();
 
@@ -104,7 +104,7 @@ Show.implement(Either)({
   },
 });
 
-Eq.implement(Either)({
+Eq.instance(Either)({
   eq(right) {
     const [left_tag, left_payload] = this.value();
     const [right_tag, right_payload] = right.value();
@@ -132,7 +132,7 @@ Eq.implement(Either)({
   },
 });
 
-Ord.implement(Either)({
+Ord.instance(Either)({
   compare(right) {
     const [left_tag, left_payload] = this.value();
     const [right_tag, right_payload] = right.value();
@@ -160,9 +160,9 @@ Ord.implement(Either)({
   },
 });
 
-Bifunctor.implement(Either)({
+Bifunctor.instance(Either)({
   bimap<raw, left, right, next_left, next_right>(
-    this: Trait<AsEither, raw, right>,
+    this: WrappedData<AsEither, raw, right>,
     map_left: (value: left) => next_left,
     map_right: (value: right) => next_right,
   ) {
@@ -170,14 +170,14 @@ Bifunctor.implement(Either)({
 
     switch (tag) {
       case "left":
-        return unknown_trait<next_right>(left(map_left(payload)));
+        return unknown_typeclass<next_right>(left(map_left(payload)));
       case "right":
-        return unknown_trait<next_right>(right(map_right(payload)));
+        return unknown_typeclass<next_right>(right(map_right(payload)));
     }
   },
 });
 
-Functor.implement(Either)({
+Functor.instance(Either)({
   map(fn) {
     const [tag, payload] = this.value();
 
@@ -190,7 +190,7 @@ Functor.implement(Either)({
   },
 });
 
-Applicative.implement(Either)({
+Applicative.instance(Either)({
   pure(value) {
     return right(value);
   },
@@ -215,7 +215,7 @@ Applicative.implement(Either)({
   },
 });
 
-Monad.implement(Either)({
+Monad.instance(Either)({
   bind(fn) {
     const [tag, payload] = this.value();
 
@@ -228,7 +228,7 @@ Monad.implement(Either)({
   },
 });
 
-MonadError.implement(Either)({
+MonadError.instance(Either)({
   throw_error(error) {
     return left(error);
   },
@@ -245,7 +245,7 @@ MonadError.implement(Either)({
   },
 });
 
-Foldable.implement(Either)({
+Foldable.instance(Either)({
   fold(initial, fn) {
     const [tag, payload] = this.value();
 
@@ -258,7 +258,7 @@ Foldable.implement(Either)({
   },
 });
 
-Traversable.implement(Either)({
+Traversable.instance(Either)({
   traverse(applicative, fn) {
     const [tag, payload] = this.value();
 
@@ -285,6 +285,8 @@ function same_context<out>(value: unknown): out {
   return value as out;
 }
 
-function unknown_trait<item>(value: unknown): Trait<AsEither, unknown, item> {
-  return value as Trait<AsEither, unknown, item>;
+function unknown_typeclass<item>(
+  value: unknown,
+): WrappedData<AsEither, unknown, item> {
+  return value as WrappedData<AsEither, unknown, item>;
 }

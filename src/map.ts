@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Applicative,
   Eq,
@@ -14,7 +14,7 @@ import {
   Semigroup,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type MapT<item> = ReadonlyMap<string, item>;
 
@@ -29,14 +29,14 @@ export interface AsMap
     Foldable<AsMap>,
     Traversable<AsMap> {
   readonly [type_item]: unknown;
-  readonly [type_value]: MapT<this[typeof type_item]>;
+  readonly [type_data]: MapT<this[typeof type_item]>;
 }
 
-type MapValue<item> = Value<AsMap, item>;
+type MapValue<item> = Data<AsMap, item>;
 
-export const MapT = define<AsMap>(
+export const MapT = data<AsMap>(
   function (map) {
-    return this.as_trait(new Map(map));
+    return this.data(new Map(map));
   },
 );
 
@@ -62,14 +62,14 @@ export function to_record<item>(
   return Object.fromEntries(map.value());
 }
 
-Show.implement(MapT)({
+Show.instance(MapT)({
   show() {
     const map = this.value();
     return Deno.inspect(map);
   },
 });
 
-Eq.implement(MapT)({
+Eq.instance(MapT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
@@ -88,7 +88,7 @@ Eq.implement(MapT)({
   },
 });
 
-Functor.implement(MapT)({
+Functor.instance(MapT)({
   map(fn) {
     const map = this.value();
     const out = new Map<string, ReturnType<typeof fn>>();
@@ -101,7 +101,7 @@ Functor.implement(MapT)({
   },
 });
 
-Semigroup.implement(MapT)({
+Semigroup.instance(MapT)({
   concat(right) {
     const left = this.value();
     const out = new Map(left);
@@ -114,13 +114,13 @@ Semigroup.implement(MapT)({
   },
 });
 
-Monoid.implement(MapT)({
+Monoid.instance(MapT)({
   empty() {
     return MapT(new Map());
   },
 });
 
-Foldable.implement(MapT)({
+Foldable.instance(MapT)({
   fold(initial, fn) {
     const map = this.value();
     let state = initial;
@@ -133,7 +133,7 @@ Foldable.implement(MapT)({
   },
 });
 
-Traversable.implement(MapT)({
+Traversable.instance(MapT)({
   traverse(applicative, fn) {
     const map = this.value();
     const entries = [...map.entries()];

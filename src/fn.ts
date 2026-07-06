@@ -1,11 +1,18 @@
 import {
   type As,
-  define,
-  type Trait,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-} from "./trait.ts";
-import { Arrow, Category, Functor, Parse, Profunctor, Show } from "./traits.ts";
+  type WrappedData,
+} from "./typeclass.ts";
+import {
+  Arrow,
+  Category,
+  Functor,
+  Parse,
+  Profunctor,
+  Show,
+} from "./typeclasses.ts";
 
 export type Fn<input, item> = (value: input) => item;
 
@@ -19,12 +26,12 @@ export interface AsFn
     Arrow<AsFn>,
     Parse<AsFn> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Fn<never, this[typeof type_item]>;
+  readonly [type_data]: Fn<never, this[typeof type_item]>;
 }
 
-export type FnValue<input, item> = Trait<AsFn, Fn<input, item>, item>;
+export type FnValue<input, item> = WrappedData<AsFn, Fn<input, item>, item>;
 
-export const Fn = define<AsFn>();
+export const Fn = data<AsFn>();
 
 export function fn<input, item>(value: Fn<input, item>): FnValue<input, item> {
   return Fn(value) as FnValue<input, item>;
@@ -36,13 +43,13 @@ export function arr<input, item>(
   return fn(value);
 }
 
-Show.implement(Fn)({
+Show.instance(Fn)({
   show() {
     return "Fn(?)";
   },
 });
 
-Functor.implement(Fn)({
+Functor.instance(Fn)({
   map(output) {
     const run = this.value() as (value: unknown) => unknown;
 
@@ -52,15 +59,15 @@ Functor.implement(Fn)({
   },
 });
 
-Profunctor.implement(Fn)({
+Profunctor.instance(Fn)({
   dimap<raw, from, to, next_from, next_to>(
-    this: Trait<AsFn, raw, to>,
+    this: WrappedData<AsFn, raw, to>,
     input: (value: next_from) => from,
     output: (value: to) => next_to,
   ) {
     const run = this.value() as (value: from) => to;
 
-    return unknown_trait<next_to>(
+    return unknown_typeclass<next_to>(
       Fn((value: next_from) => {
         return output(run(input(value)));
       }),
@@ -68,9 +75,9 @@ Profunctor.implement(Fn)({
   },
 });
 
-Category.implement(Fn)({
+Category.instance(Fn)({
   id<item>(this: AsFn) {
-    return unknown_trait<item>(
+    return unknown_typeclass<item>(
       Fn((value: item) => {
         return value;
       }),
@@ -78,13 +85,13 @@ Category.implement(Fn)({
   },
 
   compose<after_raw, before_raw, from, middle, to>(
-    this: Trait<AsFn, after_raw, to>,
-    before: Trait<AsFn, before_raw, middle>,
+    this: WrappedData<AsFn, after_raw, to>,
+    before: WrappedData<AsFn, before_raw, middle>,
   ) {
     const after_run = this.value() as (value: middle) => to;
     const before_run = before.value() as (value: from) => middle;
 
-    return unknown_trait<to>(
+    return unknown_typeclass<to>(
       Fn((value: from) => {
         return after_run(before_run(value));
       }),
@@ -92,28 +99,28 @@ Category.implement(Fn)({
   },
 });
 
-Arrow.implement(Fn)({
+Arrow.instance(Fn)({
   arr<from, to>(
     this: AsFn,
     fn: (value: from) => to,
   ) {
-    return unknown_trait<to>(Fn(fn as Fn<from, to>));
+    return unknown_typeclass<to>(Fn(fn as Fn<from, to>));
   },
 
-  first<raw, from, to, extra>(this: Trait<AsFn, raw, to>) {
+  first<raw, from, to, extra>(this: WrappedData<AsFn, raw, to>) {
     const run = this.value() as (value: from) => to;
 
-    return unknown_trait<readonly [to, extra]>(
+    return unknown_typeclass<readonly [to, extra]>(
       Fn((pair: readonly [from, extra]) => {
         return [run(pair[0]), pair[1]] as const;
       }),
     );
   },
 
-  second<raw, from, to, extra>(this: Trait<AsFn, raw, to>) {
+  second<raw, from, to, extra>(this: WrappedData<AsFn, raw, to>) {
     const run = this.value() as (value: from) => to;
 
-    return unknown_trait<readonly [extra, to]>(
+    return unknown_typeclass<readonly [extra, to]>(
       Fn((pair: readonly [extra, from]) => {
         return [pair[0], run(pair[1])] as const;
       }),
@@ -121,9 +128,9 @@ Arrow.implement(Fn)({
   },
 });
 
-Parse.implement(Fn)({
+Parse.instance(Fn)({
   parse<raw, item>(
-    this: Trait<AsFn, raw, item>,
+    this: WrappedData<AsFn, raw, item>,
     input: string,
   ) {
     const run = this.value() as (value: string) => item;
@@ -132,8 +139,8 @@ Parse.implement(Fn)({
   },
 });
 
-function unknown_trait<item>(
+function unknown_typeclass<item>(
   value: unknown,
-): Trait<AsFn, unknown, item> {
-  return value as Trait<AsFn, unknown, item>;
+): WrappedData<AsFn, unknown, item> {
+  return value as WrappedData<AsFn, unknown, item>;
 }

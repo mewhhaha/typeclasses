@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Foldable, Show } from "./typeclasses.ts";
 
 export type NumericTypedArray =
   | Int8Array
@@ -32,14 +32,14 @@ export interface AsTypedArray
     Eq<AsTypedArray>,
     Foldable<AsTypedArray> {
   readonly [type_item]: unknown;
-  readonly [type_value]: TypedArrayT<this[typeof type_item]>;
+  readonly [type_data]: TypedArrayT<this[typeof type_item]>;
 }
 
-type TypedArrayValue<item> = Value<AsTypedArray, item>;
+type TypedArrayValue<item> = Data<AsTypedArray, item>;
 
-export const TypedArrayT = define<AsTypedArray>(
+export const TypedArrayT = data<AsTypedArray>(
   function (array) {
-    return this.as_trait(clone_typed_array(array));
+    return this.data(clone_typed_array(array));
   },
 );
 
@@ -55,13 +55,13 @@ export function to_typed_array<item>(
   return clone_typed_array(array.value()) as TypedArrayT<item>;
 }
 
-Show.implement(TypedArrayT)({
+Show.instance(TypedArrayT)({
   show() {
     return Deno.inspect(this.value());
   },
 });
 
-Eq.implement(TypedArrayT)({
+Eq.instance(TypedArrayT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
@@ -84,9 +84,9 @@ Eq.implement(TypedArrayT)({
   },
 });
 
-Foldable.implement(TypedArrayT)({
+Foldable.instance(TypedArrayT)({
   fold<item, out>(
-    this: Value<AsTypedArray, item>,
+    this: Data<AsTypedArray, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) {

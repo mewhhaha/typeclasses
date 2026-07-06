@@ -1,5 +1,5 @@
 {
-  "name": "@mewhhaha/traits",
+  "name": "@mewhhaha/typeclasses",
   "version": "0.1.0",
   "license": "MIT",
   "sideEffects": false,

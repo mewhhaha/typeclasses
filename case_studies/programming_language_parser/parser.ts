@@ -1,17 +1,17 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "../../src/trait.ts";
+} from "../../src/typeclass.ts";
 import {
   Alternative,
   Applicative,
   Functor,
   Monad,
   Show,
-} from "../../src/traits.ts";
+} from "../../src/typeclasses.ts";
 
 export type SourcePosition = {
   readonly source: string;
@@ -63,20 +63,20 @@ export interface AsParser
     Monad<AsParser>,
     Alternative<AsParser> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Parser<this[typeof type_item]>;
+  readonly [type_data]: Parser<this[typeof type_item]>;
 }
 
-export type ParserValue<item> = Value<AsParser, item>;
+export type ParserValue<item> = Data<AsParser, item>;
 
-export const Parser = define<AsParser>();
+export const Parser = data<AsParser>();
 
-Show.implement(Parser)({
+Show.instance(Parser)({
   show() {
     return "Parser(" + this.value().label + ")";
   },
 });
 
-Functor.implement(Parser)({
+Functor.instance(Parser)({
   map(fn) {
     const source = this.value();
 
@@ -98,7 +98,7 @@ Functor.implement(Parser)({
   },
 });
 
-Applicative.implement(Parser)({
+Applicative.instance(Parser)({
   pure(value) {
     return succeed(value);
   },
@@ -137,7 +137,7 @@ Applicative.implement(Parser)({
   },
 });
 
-Monad.implement(Parser)({
+Monad.instance(Parser)({
   bind(fn) {
     const source = this.value();
 
@@ -168,7 +168,7 @@ Monad.implement(Parser)({
   },
 });
 
-Alternative.implement(Parser)({
+Alternative.instance(Parser)({
   empty() {
     return empty_parser();
   },

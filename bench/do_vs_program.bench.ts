@@ -6,7 +6,7 @@ import { Effect, Program, run } from "../src/effects.ts";
 import { ask, asks, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
 import { from_fn, run_task } from "../src/task.ts";
-import { Do } from "../src/traits.ts";
+import { Do } from "../src/typeclasses.ts";
 import { run_writer, tell, writer } from "../src/writer.ts";
 
 const iterations = 10_000;

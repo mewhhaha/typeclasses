@@ -5,7 +5,7 @@ export function seed_agent_files(): Map<string, string> {
   return new Map([
     [
       "README.md",
-      "Traits is a TypeScript library for typeclasses, traits, and effects.",
+      "Traits is a TypeScript library for typeclasses and effects.",
     ],
   ]);
 }
@@ -32,7 +32,7 @@ export function default_language_model(): LanguageModelRuntime {
       {
         path: "summary.md",
         text:
-          "Summary: this project provides traits, typeclasses, and composable effects.",
+          "Summary: this project provides typeclasses and composable effects.",
       },
     ],
     ["final", { answer: "summary.md is ready" }],

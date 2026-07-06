@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
+} from "./typeclass.ts";
 import {
   Alternative,
   Applicative,
@@ -16,7 +16,7 @@ import {
   Ord,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Maybe<item> =
   | readonly ["just", item]
@@ -38,12 +38,12 @@ export interface AsMaybe
     Traversable<AsMaybe>,
     Ord<AsMaybe> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Maybe<this[typeof type_item]>;
+  readonly [type_data]: Maybe<this[typeof type_item]>;
 }
 
-type MaybeValue<item> = Value<AsMaybe, item>;
+type MaybeValue<item> = Data<AsMaybe, item>;
 
-export const Maybe = define<AsMaybe>();
+export const Maybe = data<AsMaybe>();
 const nothing_value = Maybe(maybe_nothing<never>());
 
 export function just<item>(value: item) {
@@ -80,7 +80,7 @@ export function from_nullable<item>(
   return Maybe(maybe_just<item>(value));
 }
 
-Show.implement(Maybe)({
+Show.instance(Maybe)({
   show() {
     const [tag, payload] = this.value();
 
@@ -93,7 +93,7 @@ Show.implement(Maybe)({
   },
 });
 
-Eq.implement(Maybe)({
+Eq.instance(Maybe)({
   eq(right) {
     const [left_tag, left_payload] = this.value();
     const [right_tag, right_payload] = right.value();
@@ -112,7 +112,7 @@ Eq.implement(Maybe)({
   },
 });
 
-Ord.implement(Maybe)({
+Ord.instance(Maybe)({
   compare(right) {
     const [left_tag, left_payload] = this.value();
     const [right_tag, right_payload] = right.value();
@@ -140,7 +140,7 @@ Ord.implement(Maybe)({
   },
 });
 
-Functor.implement(Maybe)({
+Functor.instance(Maybe)({
   map(fn) {
     const [tag, payload] = this.value();
 
@@ -153,7 +153,7 @@ Functor.implement(Maybe)({
   },
 });
 
-Applicative.implement(Maybe)({
+Applicative.instance(Maybe)({
   pure(value) {
     return just(value);
   },
@@ -178,7 +178,7 @@ Applicative.implement(Maybe)({
   },
 });
 
-Alternative.implement(Maybe)({
+Alternative.instance(Maybe)({
   empty() {
     return nothing();
   },
@@ -195,7 +195,7 @@ Alternative.implement(Maybe)({
   },
 });
 
-Monad.implement(Maybe)({
+Monad.instance(Maybe)({
   bind(fn) {
     const [tag, payload] = this.value();
 
@@ -208,7 +208,7 @@ Monad.implement(Maybe)({
   },
 });
 
-Foldable.implement(Maybe)({
+Foldable.instance(Maybe)({
   fold(initial, fn) {
     const [tag, payload] = this.value();
 
@@ -221,7 +221,7 @@ Foldable.implement(Maybe)({
   },
 });
 
-Traversable.implement(Maybe)({
+Traversable.instance(Maybe)({
   traverse(applicative, fn) {
     const [tag, payload] = this.value();
 

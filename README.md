@@ -1,10 +1,10 @@
 # Traits
 
-Traits is a Deno and TypeScript library for typeclass-style programming with
+Traits is a Deno and TypeScript library for Haskell-style typeclasses with
 runtime dictionaries and fluent wrapped values.
 
-It provides reusable trait definitions, data types, effect programs, examples,
-case studies, benchmarks, and a source transformer:
+It provides reusable typeclass definitions, data types, effect programs,
+examples, case studies, benchmarks, and a source transformer:
 
 - `Functor` for `map`
 - `Applicative` for `pure` and `ap`
@@ -19,7 +19,7 @@ case studies, benchmarks, and a source transformer:
 - `Comonad` for extracting and extending contextual values
 - `MonadError` for monads with recoverable failures
 - `Parse` for parser-like values that can consume string input
-- `Show` and `Eq` as small utility traits
+- `Show` and `Eq` as small utility typeclasses
 
 ## Run
 
@@ -36,29 +36,29 @@ so the first run may download `fp-ts`, `effect`, `purify-ts`, and `true-myth`.
 
 ## Shape
 
-The core wrapper and trait-definition machinery lives in `src/trait.ts` and
-`src/trait_value.ts`. Application-level trait definitions live in `src/traits/`,
-with `src/traits.ts` re-exporting them for examples.
+The core wrapper and typeclass-definition machinery lives in `src/typeclass.ts`
+and `src/data_value.ts`. Application-level typeclass definitions live in
+`src/typeclasses/`, with `src/typeclasses.ts` re-exporting them for examples.
 
 Each data type exports a type and a same-named function. The function wraps an
-existing contextual value as a fluent `Trait<dictionary, value, item>` and also
-acts as the trait dictionary. Constructors and other helpers are normal exported
-functions that return wrapped values.
+existing contextual value as a fluent `WrappedData<dictionary, value, item>` and
+also acts as the data dictionary. Constructors and other helpers are normal
+exported functions that return wrapped values.
 
 Each data type declares its raw value shape directly on its dictionary interface
 with type-only phantom symbols. That maps the contextual `item` to the raw value
-the dictionary wraps, so `Value<typeof Maybe, item>` can recover that `Maybe`
+the dictionary wraps, so `Data<typeof Maybe, item>` can recover that `Maybe`
 stores `Maybe<item>` without a global registry or a public kind symbol.
 
-Trait implementation functions receive the wrapped value as `this`. The
-installer stores that this-based implementation in the canonical symbol slot and
-exposes direct fluent aliases like `.show()` and `.map()`. The canonical trait
-slot is a unique symbol, so two traits can both have a method named `show`
-without sharing a runtime property.
+Typeclass instance methods receive the wrapped value as `this`. The installer
+stores that this-based instance in the canonical symbol slot and exposes direct
+fluent aliases like `.show()` and `.map()`. The canonical typeclass slot is a
+unique symbol, so two typeclasses can both have a method named `show` without
+sharing a runtime property.
 
 ```ts
-import { type As, define, type type_item, type type_value } from "./trait.ts";
-import { Monad, Show } from "./traits.ts";
+import { type As, data, type type_data, type type_item } from "./typeclass.ts";
+import { Monad, Show } from "./typeclasses.ts";
 
 export type Maybe<item> =
   | readonly ["just", item]
@@ -66,10 +66,10 @@ export type Maybe<item> =
 
 export interface AsMaybe extends As<AsMaybe>, Show<AsMaybe>, Monad<AsMaybe> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Maybe<this[typeof type_item]>;
+  readonly [type_data]: Maybe<this[typeof type_item]>;
 }
 
-export const Maybe = define<AsMaybe>();
+export const Maybe = data<AsMaybe>();
 
 export function just<item>(
   value: item,
@@ -81,7 +81,7 @@ export function nothing<item = never>() {
   return Maybe(["nothing"]);
 }
 
-Show.implement(Maybe)({
+Show.instance(Maybe)({
   show() {
     const [tag, value] = this.value();
 
@@ -94,7 +94,7 @@ Show.implement(Maybe)({
   },
 });
 
-Monad.implement(Maybe)({
+Monad.instance(Maybe)({
   bind(fn) {
     const [tag, value] = this.value();
 
@@ -114,7 +114,7 @@ See `src/maybe.ts`, `src/either.ts`, `src/identity.ts`, `src/predicate.ts`,
 
 ## Fluent API
 
-Wrapped values chain directly through the implemented traits:
+Wrapped values chain directly through the implemented typeclasses:
 
 ```ts
 const sum = just((left: number) => {
@@ -138,40 +138,41 @@ The same-named function wraps an existing raw context when you already have one:
 const doubled = Maybe(sum.value()).map((value) => value * 2);
 ```
 
-The public trait-wrapped value protocol is `Trait<dictionary, value, item>`.
-Most code can use the shorter `Value<dictionary, item>` helper:
+The public data-wrapped value protocol is
+`WrappedData<dictionary, value, item>`. Most code can use the shorter
+`Data<dictionary, item>` helper:
 
 ```ts
-type WrappedMaybe<item> = Value<typeof Maybe, item>;
+type WrappedMaybe<item> = Data<typeof Maybe, item>;
 ```
 
-`define<AsMaybe>()` creates the callable dictionary, assigns an internal kind,
-and routes calls through a cached constructor. The lower-level
-`as_trait(dictionary, value)` and `as_trait_cached(dictionary)` helpers remain
+`data<AsMaybe>()` creates the callable dictionary, assigns an internal kind, and
+routes calls through a cached constructor. The lower-level
+`as_data(dictionary, value)` and `as_data_cached(dictionary)` helpers remain
 available for integrations that need to manage construction directly.
 
 Each data type declares its raw value shape once on the `As...` interface.
-`Value` uses that shape to type helper functions, trait implementations, and
-fluent methods.
+`Data` uses that shape to type helper functions, instance methods, and fluent
+methods.
 
-The wrapped value's prototype points at a shared trait prototype, which
-delegates to the dictionary. Symbol-scoped implementations and direct fluent
-aliases are inherited through that prototype. Since implementations are
-this-based, the fluent aliases can use the implementation functions directly.
+The wrapped value's prototype points at a shared data prototype, which delegates
+to the dictionary. Symbol-scoped implementations and direct fluent aliases are
+inherited through that prototype. Since implementations are this-based, the
+fluent aliases can use the instance functions directly.
 
 Data type modules use the same callable dictionary for public wrapping and their
 own constructors.
 
-Each data type exports an open dictionary interface. Trait implementations are
-validated and installed through curried trait-level installers like
-`Show.implement(Maybe)({ ... })`. The first call fixes the dictionary, which
-lets TypeScript infer generic implementation parameters from the `this`-based
-method shape. Trait definitions are prototype-backed objects made with
-`define_trait`; each definition inherits the shared installer and implementation
-accessor, while public helper methods keep trait-specific types. Their bodies
-usually dispatch through `call_trait_method`. Outside the declaring module,
-extend a dictionary by augmenting its exported `As...` interface and installing
-the implementation on the callable dictionary.
+Each data type exports an open dictionary interface. Typeclass instances are
+validated and installed through curried typeclass-level installers like
+`Show.instance(Maybe)({ ... })`. The first call fixes the dictionary, which lets
+TypeScript infer generic implementation parameters from the `this`-based method
+shape. Typeclass definitions are prototype-backed objects made with `typeclass`;
+each definition inherits the shared installer and instance accessor, while
+public helper methods keep typeclass-specific types. Their bodies usually
+dispatch through `call_typeclass_method`. Outside the declaring module, extend a
+dictionary by augmenting its exported `As...` interface and installing the
+implementation on the callable dictionary.
 
 Implementation methods usually do not need explicit generic parameters. For
 `Traversable.traverse`, collection implementations split empty and non-empty
@@ -181,30 +182,30 @@ can infer the output item type before the fold continues.
 
 ```ts
 import {
-  call_trait_method,
-  define_trait,
+  call_typeclass_method,
+  type Data,
   type Dictionary,
-  type TraitDictionary,
-  type Value,
-} from "./trait.ts";
+  typeclass,
+  type TypeclassDictionary,
+} from "./typeclass.ts";
 
-const size_trait = Symbol("Size");
+const size_typeclass = Symbol("Size");
 
 interface Size<dictionary extends Dictionary> extends
-  TraitDictionary<
+  TypeclassDictionary<
     dictionary,
-    typeof size_trait,
+    typeof size_typeclass,
     {
-      size: <item>(this: Value<dictionary, item>) => number;
+      size: <item>(this: Data<dictionary, item>) => number;
     }
   > {}
 
-const Size = define_trait(size_trait, {
+const Size = typeclass(size_typeclass, {
   size<
     dictionary extends Size<dictionary>,
     item,
-  >(value: Value<dictionary, item>) {
-    return call_trait_method(this.implementation(value).size<item>, value);
+  >(value: Data<dictionary, item>) {
+    return call_typeclass_method(this.instance_for(value).size<item>, value);
   },
 });
 
@@ -212,15 +213,15 @@ declare module "./list.ts" {
   interface AsList extends Size<AsList> {}
 }
 
-Size.implement(List)({
+Size.instance(List)({
   size() {
     return to_array(this).length;
   },
 });
 ```
 
-There is no `MaybeBox` or `MaybeTrait` type. The fluent methods are derived from
-the dictionary shape plus the wrapped value and item type.
+There is no `MaybeBox` or `MaybeInstance` type. The fluent methods are derived
+from the dictionary shape plus the wrapped value and item type.
 
 Direct fluent aliases still work when a data type opts into them:
 
@@ -277,7 +278,7 @@ const decoded = Do(function* () {
 decoded.value(); // ["right", 43]
 ```
 
-`Task` shows the same trait shape for deferred async work:
+`Task` shows the same typeclass shape for deferred async work:
 
 ```ts
 const greeting = Do(function* () {
@@ -337,7 +338,7 @@ await Effect.interpret(program)
 The package also exports the source transformer as `./transform`:
 
 ```ts
-import { transform_do_program_source } from "@mewhhaha/traits/transform";
+import { transform_do_program_source } from "@mewhhaha/typeclasses/transform";
 
 const result = transform_do_program_source(source_text, "input.ts");
 
@@ -349,7 +350,7 @@ result.transformed; // number of rewritten sites
 The transformer is meant for bundlers, build scripts, or local workflows that
 want the ergonomic `Do(function* () { ... })` and
 `Program(function* () { ... })` syntax in source code, but cheaper raw bindings
-in emitted code. It currently lowers supported `Do` blocks to direct trait
+in emitted code. It currently lowers supported `Do` blocks to direct typeclass
 method chains, supported `Program` blocks to `Effect.bind`/`Effect.map`/
 `Effect.pure`, `return yield* value` to the monadic right identity, and static
 `Effect.handle_with(program, [handlers...])` calls to nested runner calls. The
@@ -421,7 +422,7 @@ and a manual fused loop baseline.
 
 The Haskell version usually starts from a typeclass constraint. In this repo the
 dictionary is carried by the wrapped value instead, so generic code accepts a
-`Value<dictionary, item>` and calls the exported trait helper.
+`Data<dictionary, item>` and calls the exported typeclass helper.
 
 ### Functor
 
@@ -571,7 +572,7 @@ MonadError.catch_error(
 );
 ```
 
-`Either` is the natural implementation for both traits. `Validation` stays
+`Either` is the natural implementation for both typeclasses. `Validation` stays
 applicative-only here: changing the error type would also need a new semigroup
 for the new error type, so a general `Bifunctor` instance would be misleading.
 
@@ -676,11 +677,11 @@ const parsed = Parse.parse(
 );
 ```
 
-`Fn` is the small function carrier for these traits. Use `fn(...)` or `arr(...)`
-to keep `.run(...)` typed. The higher-arity traits are represented with
-raw-value generics because this library's core `Value<dictionary, item>` tracks
-one item slot, while Haskell's function-like classes are parameterized over both
-input and output.
+`Fn` is the small function carrier for these typeclasses. Use `fn(...)` or
+`arr(...)` to keep `.run(...)` typed. The higher-arity typeclasses are
+represented with raw-value generics because this library's core
+`Data<dictionary, item>` tracks one item slot, while Haskell's function-like
+classes are parameterized over both input and output.
 
 ### List
 
@@ -829,7 +830,7 @@ const declaration = choice([
 ]);
 ```
 
-The parser is still just another data type with trait implementations; the
+The parser is still just another data type with typeclass instances; the
 combinators are convenience functions for the grammar domain.
 
 ### Reader
@@ -1059,7 +1060,7 @@ async function* from_stream<item>(stream: ReadableStream<item>) {
 
 The important Haskell lesson is the bracket shape: acquire, use, and release
 stay together. The repo keeps that shape direct instead of hiding it behind a
-trait until a data type needs a reusable resource abstraction.
+typeclass until a data type needs a reusable resource abstraction.
 
 ### Validation
 
@@ -1092,12 +1093,12 @@ with an explicit semigroup.
 The useful question for a JavaScript shape is which laws it can support without
 surprising runtime behavior.
 
-| JavaScript shape                 | Wrapper in this repo             | Natural traits                                                                                                      |
+| JavaScript shape                 | Wrapper in this repo             | Natural typeclasses                                                                                                 |
 | -------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `readonly item[]`                | `ArrayT`                         | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                  |
-| recursive list                   | `List`                           | Same list-like traits, useful for generator-heavy algorithms                                                        |
+| recursive list                   | `List`                           | Same list-like typeclasses, useful for generator-heavy algorithms                                                   |
 | `ReadonlyMap<string, item>`      | `MapT`                           | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                         |
-| `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused traits as `MapT`                                                                                 |
+| `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused typeclasses as `MapT`                                                                            |
 | `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates    |
 | `PromiseLike<item>`              | `Task` via `from_promise`        | Use `Task` so work is deferred; raw promises are already running                                                    |
 | `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`                                                               |
@@ -1180,7 +1181,7 @@ modules wrap familiar JavaScript data shapes without replacing them:
 - `MapT<item>` wraps `ReadonlyMap<string, item>` and implements value-focused
   `Functor`, `Foldable`, `Traversable`, `Semigroup`, and `Monoid`.
 - `RecordT<item>` wraps `Readonly<Record<string, item>>` with the same
-  value-focused traits as `MapT`.
+  value-focused typeclasses as `MapT`.
 - `SetT<item>` wraps `ReadonlySet<item>` with JavaScript set semantics.
 - `IterableT<item>` and `AsyncIterableT<item>` use replayable factories.
 - `ArrayBufferT`, `DataViewT`, and `TypedArrayT` expose byte/numeric folding
@@ -1210,8 +1211,8 @@ import {
 ```
 
 Each data type has an open dictionary interface such as `AsMaybe` or `AsList`.
-Entries are added one trait at a time next to the implementation.
-`Show.implement(Maybe)({ ... })` validates that every required `Show` method
+Entries are added one typeclass at a time next to the implementation.
+`Show.instance(Maybe)({ ... })` validates that every required `Show` method
 exists, installs the collision-free symbol slot, and copies direct fluent
 aliases onto the dictionary.
 
@@ -1221,7 +1222,8 @@ Focused examples live in `examples/`:
 
 - `examples/basics.ts` covers `Maybe`, `Either`, `Applicative`, validation,
   pattern guards, and `match`.
-- `examples/custom_trait.ts` shows extending a data type with a local trait.
+- `examples/custom_typeclass.ts` shows extending a data type with a local
+  typeclass.
 - `examples/built_in_shapes.ts` covers JavaScript-shaped wrappers such as
   arrays, maps, sets, iterables, streams, form data, and binary buffers.
 - `examples/monads.ts` shows `Do` with `Reader`, `State`, `Task`, `Stm`, and
@@ -1247,9 +1249,9 @@ Larger application-shaped demos live in `case_studies/`:
   `/todos`. The request program uses `Reader` for request context, `Task` for
   JSON body reads and async storage, a custom `Database` effect for list/create/
   read/update/delete operations, a custom `Clock` effect for timestamps, and a
-  custom `Trace` effect for request and domain events. A trace-scope
-  interpreter can also observe selected effects before their concrete runner,
-  so database operations automatically produce `crud.database.*.start` and
+  custom `Trace` effect for request and domain events. A trace-scope interpreter
+  can also observe selected effects before their concrete runner, so database
+  operations automatically produce `crud.database.*.start` and
   `crud.database.*.finish` trace lines without adding trace calls to the route
   handlers. The same program can run against an in-memory dry-run database with
   trace lines collected through `Writer`, or against a D1-style runtime with
@@ -1272,9 +1274,8 @@ against constructor-cache variants and cheaper construction shapes. Each
 benchmark iteration performs 10,000 inner-loop constructions or read cycles:
 
 - raw maybe payload construction
-- current `just(...)`, `Maybe(raw)`, and `as_trait(dictionary, raw)`
-  construction
-- cached `as_trait_cached(dictionary)(raw)` construction
+- current `just(...)`, `Maybe(raw)`, and `as_data(dictionary, raw)` construction
+- cached `as_data_cached(dictionary)(raw)` construction
 - WeakMap, hidden-symbol, and lazy self-replacing constructor-cache variants
 - tuple `[dictionary, raw]` construction
 - record `{ dictionary, raw }` construction
@@ -1290,10 +1291,10 @@ and `true-myth`:
 - Failure-path `nothing`/`left`/`left` composition.
 
 These are microbenchmarks, not a full library ranking. The libraries expose
-different runtime shapes: this repo boxes values with a trait dictionary,
-`fp-ts` uses standalone combinators over plain tagged objects, `effect` uses
-optimized module functions, `purify-ts` uses methods on ADT instances, and
-`true-myth` uses standalone functions over ADT instances.
+different runtime shapes: this repo boxes values with a data dictionary, `fp-ts`
+uses standalone combinators over plain tagged objects, `effect` uses optimized
+module functions, `purify-ts` uses methods on ADT instances, and `true-myth`
+uses standalone functions over ADT instances.
 
 Run it with:
 

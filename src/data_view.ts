@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type DataViewT = DataView;
 
@@ -18,14 +18,14 @@ export interface AsDataView
     Monoid<AsDataView>,
     Foldable<AsDataView> {
   readonly [type_item]: unknown;
-  readonly [type_value]: DataViewT;
+  readonly [type_data]: DataViewT;
 }
 
-type DataViewValue = Value<AsDataView, number>;
+type DataViewValue = Data<AsDataView, number>;
 
-export const DataViewT = define<AsDataView>(
+export const DataViewT = data<AsDataView>(
   function (view) {
-    return this.as_trait(clone_data_view(view));
+    return this.data(clone_data_view(view));
   },
 );
 
@@ -37,13 +37,13 @@ export function to_bytes(view: DataViewValue): Uint8Array {
   return new Uint8Array(clone_data_view(view.value()).buffer);
 }
 
-Show.implement(DataViewT)({
+Show.instance(DataViewT)({
   show() {
     return Deno.inspect(to_view_bytes(this.value()));
   },
 });
 
-Eq.implement(DataViewT)({
+Eq.instance(DataViewT)({
   eq(right) {
     return bytes_equal(
       to_view_bytes(this.value()),
@@ -52,7 +52,7 @@ Eq.implement(DataViewT)({
   },
 });
 
-Semigroup.implement(DataViewT)({
+Semigroup.instance(DataViewT)({
   concat(right) {
     const left = to_view_bytes(this.value());
     const right_value = to_view_bytes(right.value());
@@ -65,15 +65,15 @@ Semigroup.implement(DataViewT)({
   },
 });
 
-Monoid.implement(DataViewT)({
+Monoid.instance(DataViewT)({
   empty() {
     return DataViewT(new DataView(new ArrayBuffer(0)));
   },
 });
 
-Foldable.implement(DataViewT)({
+Foldable.instance(DataViewT)({
   fold<item, out>(
-    this: Value<AsDataView, item>,
+    this: Data<AsDataView, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) {

@@ -1,11 +1,11 @@
 import {
   type As,
-  define,
+  type Data,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-  type Value,
-} from "./trait.ts";
-import { Eq, Foldable, Monoid, Semigroup, Show } from "./traits.ts";
+} from "./typeclass.ts";
+import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type ArrayBufferT = ArrayBuffer;
 
@@ -18,14 +18,14 @@ export interface AsArrayBuffer
     Monoid<AsArrayBuffer>,
     Foldable<AsArrayBuffer> {
   readonly [type_item]: unknown;
-  readonly [type_value]: ArrayBufferT;
+  readonly [type_data]: ArrayBufferT;
 }
 
-type ArrayBufferValue = Value<AsArrayBuffer, number>;
+type ArrayBufferValue = Data<AsArrayBuffer, number>;
 
-export const ArrayBufferT = define<AsArrayBuffer>(
+export const ArrayBufferT = data<AsArrayBuffer>(
   function (buffer) {
-    return this.as_trait(buffer.slice(0));
+    return this.data(buffer.slice(0));
   },
 );
 
@@ -37,13 +37,13 @@ export function to_bytes(buffer: ArrayBufferValue): Uint8Array {
   return new Uint8Array(buffer.value().slice(0));
 }
 
-Show.implement(ArrayBufferT)({
+Show.instance(ArrayBufferT)({
   show() {
     return Deno.inspect(new Uint8Array(this.value()));
   },
 });
 
-Eq.implement(ArrayBufferT)({
+Eq.instance(ArrayBufferT)({
   eq(right) {
     return bytes_equal(
       new Uint8Array(this.value()),
@@ -52,7 +52,7 @@ Eq.implement(ArrayBufferT)({
   },
 });
 
-Semigroup.implement(ArrayBufferT)({
+Semigroup.instance(ArrayBufferT)({
   concat(right) {
     const left = new Uint8Array(this.value());
     const right_value = new Uint8Array(right.value());
@@ -65,15 +65,15 @@ Semigroup.implement(ArrayBufferT)({
   },
 });
 
-Monoid.implement(ArrayBufferT)({
+Monoid.instance(ArrayBufferT)({
   empty() {
     return ArrayBufferT(new ArrayBuffer(0));
   },
 });
 
-Foldable.implement(ArrayBufferT)({
+Foldable.instance(ArrayBufferT)({
   fold<item, out>(
-    this: Value<AsArrayBuffer, item>,
+    this: Data<AsArrayBuffer, item>,
     initial: out,
     fn: (state: out, item: item) => out,
   ) {

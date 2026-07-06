@@ -4,7 +4,7 @@ import {
   from_array as list_from_array,
   to_array as list_to_array,
 } from "../src/list.ts";
-import { Foldable, Monoid, Semigroup } from "../src/traits.ts";
+import { Foldable, Monoid, Semigroup } from "../src/typeclasses.ts";
 
 export function lesson_05_folds_and_monoids() {
   const numbers = list_from_array([1, 2, 3, 4]);

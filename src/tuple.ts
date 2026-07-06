@@ -1,10 +1,10 @@
 import {
   type As,
-  define,
-  type Trait,
+  data,
+  type type_data,
   type type_item,
-  type type_value,
-} from "./trait.ts";
+  type WrappedData,
+} from "./typeclass.ts";
 import {
   Bifunctor,
   Comonad,
@@ -15,7 +15,7 @@ import {
   Ord,
   Show,
   Traversable,
-} from "./traits.ts";
+} from "./typeclasses.ts";
 
 export type Tuple<left, right> = readonly [left, right];
 
@@ -31,10 +31,10 @@ export interface AsTuple
     Traversable<AsTuple>,
     Comonad<AsTuple> {
   readonly [type_item]: unknown;
-  readonly [type_value]: Tuple<unknown, this[typeof type_item]>;
+  readonly [type_data]: Tuple<unknown, this[typeof type_item]>;
 }
 
-export type TupleValue<left, right> = Trait<
+export type TupleValue<left, right> = WrappedData<
   AsTuple,
   Tuple<left, right>,
   right
@@ -46,7 +46,7 @@ type TupleConstructor =
     <left, right>(value: Tuple<left, right>): TupleValue<left, right>;
   };
 
-export const Tuple = define<AsTuple>() as TupleConstructor;
+export const Tuple = data<AsTuple>() as TupleConstructor;
 
 export function tuple<left, right>(
   left: left,
@@ -71,7 +71,7 @@ export function swap<left, right>(
   return tuple(right, left);
 }
 
-Show.implement(Tuple)({
+Show.instance(Tuple)({
   show() {
     const [left, right] = this.value();
 
@@ -79,7 +79,7 @@ Show.implement(Tuple)({
   },
 });
 
-Eq.implement(Tuple)({
+Eq.instance(Tuple)({
   eq(right) {
     const [left_first, left_second] = this.value();
     const [right_first, right_second] = right.value();
@@ -92,7 +92,7 @@ Eq.implement(Tuple)({
   },
 });
 
-Ord.implement(Tuple)({
+Ord.instance(Tuple)({
   compare(right) {
     const [left_first, left_second] = this.value();
     const [right_first, right_second] = right.value();
@@ -108,19 +108,21 @@ Ord.implement(Tuple)({
   },
 });
 
-Bifunctor.implement(Tuple)({
+Bifunctor.instance(Tuple)({
   bimap<raw, left, right, next_left, next_right>(
-    this: Trait<AsTuple, raw, right>,
+    this: WrappedData<AsTuple, raw, right>,
     map_left: (value: left) => next_left,
     map_right: (value: right) => next_right,
   ) {
     const [left, right] = this.value() as Tuple<left, right>;
 
-    return unknown_trait<next_right>(tuple(map_left(left), map_right(right)));
+    return unknown_typeclass<next_right>(
+      tuple(map_left(left), map_right(right)),
+    );
   },
 });
 
-Functor.implement(Tuple)({
+Functor.instance(Tuple)({
   map(fn) {
     const [left, right] = this.value();
 
@@ -128,7 +130,7 @@ Functor.implement(Tuple)({
   },
 });
 
-Foldable.implement(Tuple)({
+Foldable.instance(Tuple)({
   fold(initial, fn) {
     const [_left, right] = this.value();
 
@@ -136,7 +138,7 @@ Foldable.implement(Tuple)({
   },
 });
 
-Traversable.implement(Tuple)({
+Traversable.instance(Tuple)({
   traverse(_applicative, fn) {
     const [left, right] = this.value();
 
@@ -144,7 +146,7 @@ Traversable.implement(Tuple)({
   },
 });
 
-Comonad.implement(Tuple)({
+Comonad.instance(Tuple)({
   extract() {
     const [_left, right] = this.value();
 
@@ -158,8 +160,8 @@ Comonad.implement(Tuple)({
   },
 });
 
-function unknown_trait<item>(
+function unknown_typeclass<item>(
   value: unknown,
-): Trait<AsTuple, unknown, item> {
-  return value as Trait<AsTuple, unknown, item>;
+): WrappedData<AsTuple, unknown, item> {
+  return value as WrappedData<AsTuple, unknown, item>;
 }

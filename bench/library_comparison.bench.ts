@@ -9,7 +9,7 @@ import * as TrueResult from "true-myth/result";
 
 import { just, nothing } from "../src/maybe.ts";
 import { left, right } from "../src/either.ts";
-import { Applicative } from "../src/traits.ts";
+import { Applicative } from "../src/typeclasses.ts";
 import { invalid, valid } from "../src/validation.ts";
 
 // Each benchmark iteration performs this many constructions or compositions.
