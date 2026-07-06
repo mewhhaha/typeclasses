@@ -108,7 +108,7 @@ Deno.bench("algorithm functor native Array", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits ArrayT", () => {
+Deno.bench("algorithm functor typeclasses ArrayT", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -118,7 +118,7 @@ Deno.bench("algorithm functor traits ArrayT", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits List", () => {
+Deno.bench("algorithm functor typeclasses List", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -138,7 +138,7 @@ Deno.bench("algorithm functor native generator forced", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits IterableT forced", () => {
+Deno.bench("algorithm functor typeclasses IterableT forced", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -148,7 +148,7 @@ Deno.bench("algorithm functor traits IterableT forced", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits MapT", () => {
+Deno.bench("algorithm functor typeclasses MapT", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -158,7 +158,7 @@ Deno.bench("algorithm functor traits MapT", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits RecordT", () => {
+Deno.bench("algorithm functor typeclasses RecordT", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -168,7 +168,7 @@ Deno.bench("algorithm functor traits RecordT", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits SetT", () => {
+Deno.bench("algorithm functor typeclasses SetT", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -178,7 +178,7 @@ Deno.bench("algorithm functor traits SetT", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits Maybe", () => {
+Deno.bench("algorithm functor typeclasses Maybe", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -188,7 +188,7 @@ Deno.bench("algorithm functor traits Maybe", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits Either", () => {
+Deno.bench("algorithm functor typeclasses Either", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -198,7 +198,7 @@ Deno.bench("algorithm functor traits Either", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm functor traits Validation", () => {
+Deno.bench("algorithm functor typeclasses Validation", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -218,7 +218,7 @@ Deno.bench("algorithm applicative native Array product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits ArrayT product", () => {
+Deno.bench("algorithm applicative typeclasses ArrayT product", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -232,7 +232,7 @@ Deno.bench("algorithm applicative traits ArrayT product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits List product", () => {
+Deno.bench("algorithm applicative typeclasses List product", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -256,7 +256,7 @@ Deno.bench("algorithm applicative native generator product forced", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits IterableT product forced", () => {
+Deno.bench("algorithm applicative typeclasses IterableT product forced", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -272,7 +272,7 @@ Deno.bench("algorithm applicative traits IterableT product forced", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits Maybe", () => {
+Deno.bench("algorithm applicative typeclasses Maybe", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -282,7 +282,7 @@ Deno.bench("algorithm applicative traits Maybe", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits Either", () => {
+Deno.bench("algorithm applicative typeclasses Either", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -292,7 +292,7 @@ Deno.bench("algorithm applicative traits Either", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits Validation valid", () => {
+Deno.bench("algorithm applicative typeclasses Validation valid", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -306,7 +306,7 @@ Deno.bench("algorithm applicative traits Validation valid", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm applicative traits Validation invalid", () => {
+Deno.bench("algorithm applicative typeclasses Validation invalid", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -330,7 +330,7 @@ Deno.bench("algorithm monad native Array dependent product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm monad traits ArrayT dependent product", () => {
+Deno.bench("algorithm monad typeclasses ArrayT dependent product", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -344,7 +344,7 @@ Deno.bench("algorithm monad traits ArrayT dependent product", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm monad traits List dependent product", () => {
+Deno.bench("algorithm monad typeclasses List dependent product", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -368,23 +368,26 @@ Deno.bench("algorithm monad native generator dependent product forced", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm monad traits IterableT dependent product forced", () => {
-  let current: unknown;
+Deno.bench(
+  "algorithm monad typeclasses IterableT dependent product forced",
+  () => {
+    let current: unknown;
 
-  for (let index = 0; index < iterations; index += 1) {
-    current = iterable_to_array(
-      dependent_features(
-        iterable_ids,
-        iterable_weights_for,
-        iterable_active_for,
-      ),
-    );
-  }
+    for (let index = 0; index < iterations; index += 1) {
+      current = iterable_to_array(
+        dependent_features(
+          iterable_ids,
+          iterable_weights_for,
+          iterable_active_for,
+        ),
+      );
+    }
 
-  _sink = current;
-});
+    _sink = current;
+  },
+);
 
-Deno.bench("algorithm monad traits Maybe", () => {
+Deno.bench("algorithm monad typeclasses Maybe", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -398,7 +401,7 @@ Deno.bench("algorithm monad traits Maybe", () => {
   _sink = current;
 });
 
-Deno.bench("algorithm monad traits Either", () => {
+Deno.bench("algorithm monad typeclasses Either", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {

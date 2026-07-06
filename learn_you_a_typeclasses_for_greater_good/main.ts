@@ -39,5 +39,5 @@ const lessons: readonly Lesson[] = [
 
 for (const [name, run] of lessons) {
   await run();
-  console.log("learn_you_a_traits ok", name);
+  console.log("learn_you_a_typeclasses ok", name);
 }

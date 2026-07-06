@@ -275,7 +275,7 @@ export const program: ParserValue<Program> = lazy("program", () => {
 
 export function parse_program(
   source: string,
-  source_name = "program.traits",
+  source_name = "program.typeclasses",
 ): ParseOutcome<Program> {
   return parse_all(program, source, source_name);
 }

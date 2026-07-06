@@ -4,7 +4,10 @@ import { pipe as fp_pipe } from "fp-ts/function";
 import { Left, Right } from "purify-ts/Either";
 import * as TrueResult from "true-myth/result";
 
-import { left as traits_left, right as traits_right } from "../src/either.ts";
+import {
+  left as typeclasses_left,
+  right as typeclasses_right,
+} from "../src/either.ts";
 import { Applicative, Do } from "../src/typeclasses.ts";
 
 const passes = 25;
@@ -149,20 +152,20 @@ function plain_parse_request(input: string): PlainResult<ParsedRoute> {
   );
 }
 
-function traits_parse_request(input: string) {
+function typeclasses_parse_request(input: string) {
   return Do(function* () {
-    const line = yield* traits_split_request_line(input);
-    const method = yield* traits_parse_method(line);
-    const target = yield* traits_split_target(line.target);
-    const path = yield* traits_parse_user_path(target.path);
-    const query = yield* traits_parse_query(target.query);
+    const line = yield* typeclasses_split_request_line(input);
+    const method = yield* typeclasses_parse_method(line);
+    const target = yield* typeclasses_split_target(line.target);
+    const path = yield* typeclasses_parse_user_path(target.path);
+    const query = yield* typeclasses_parse_query(target.query);
     const fields = yield* Applicative.lift(
       (limit, offset, active) => ({ limit, offset, active }),
-      traits_query_int(query, "limit", 1, 100),
-      traits_query_int(query, "offset", 0, 10_000),
-      traits_query_bool(query, "active"),
+      typeclasses_query_int(query, "limit", 1, 100),
+      typeclasses_query_int(query, "offset", 0, 10_000),
+      typeclasses_query_bool(query, "active"),
     );
-    const pagination = yield* traits_validate_pagination(
+    const pagination = yield* typeclasses_validate_pagination(
       fields.limit,
       fields.offset,
     );
@@ -317,12 +320,12 @@ Deno.bench("native route parser", () => {
   _sink = checksum;
 });
 
-Deno.bench("traits Either Do+lift route parser", () => {
+Deno.bench("typeclasses Either Do+lift route parser", () => {
   let checksum = 0;
 
   for (let pass = 0; pass < passes; pass += 1) {
     for (const input of inputs) {
-      checksum += consume_traits(traits_parse_request(input));
+      checksum += consume_typeclasses(typeclasses_parse_request(input));
     }
   }
 
@@ -575,52 +578,52 @@ function parse_int(text: string): number | undefined {
   return value;
 }
 
-function traits_from_plain<item>(result: PlainResult<item>) {
+function typeclasses_from_plain<item>(result: PlainResult<item>) {
   const [tag, payload] = result;
 
   switch (tag) {
     case "err":
-      return traits_left<string, item>(payload);
+      return typeclasses_left<string, item>(payload);
     case "ok":
-      return traits_right(payload);
+      return typeclasses_right(payload);
   }
 }
 
-function traits_split_request_line(input: string) {
-  return traits_from_plain(plain_split_request_line(input));
+function typeclasses_split_request_line(input: string) {
+  return typeclasses_from_plain(plain_split_request_line(input));
 }
 
-function traits_parse_method(line: RequestLine) {
-  return traits_from_plain(plain_parse_method(line));
+function typeclasses_parse_method(line: RequestLine) {
+  return typeclasses_from_plain(plain_parse_method(line));
 }
 
-function traits_split_target(target: string) {
-  return traits_from_plain(plain_split_target(target));
+function typeclasses_split_target(target: string) {
+  return typeclasses_from_plain(plain_split_target(target));
 }
 
-function traits_parse_user_path(path: string) {
-  return traits_from_plain(plain_parse_user_path(path));
+function typeclasses_parse_user_path(path: string) {
+  return typeclasses_from_plain(plain_parse_user_path(path));
 }
 
-function traits_parse_query(query: string) {
-  return traits_from_plain(plain_parse_query(query));
+function typeclasses_parse_query(query: string) {
+  return typeclasses_from_plain(plain_parse_query(query));
 }
 
-function traits_query_int(
+function typeclasses_query_int(
   query: Record<string, string>,
   key: string,
   min: number,
   max: number,
 ) {
-  return traits_from_plain(plain_query_int(query, key, min, max));
+  return typeclasses_from_plain(plain_query_int(query, key, min, max));
 }
 
-function traits_validate_pagination(limit: number, offset: number) {
-  return traits_from_plain(plain_validate_pagination(limit, offset));
+function typeclasses_validate_pagination(limit: number, offset: number) {
+  return typeclasses_from_plain(plain_validate_pagination(limit, offset));
 }
 
-function traits_query_bool(query: Record<string, string>, key: string) {
-  return traits_from_plain(plain_query_bool(query, key));
+function typeclasses_query_bool(query: Record<string, string>, key: string) {
+  return typeclasses_from_plain(plain_query_bool(query, key));
 }
 
 function fp_from_plain<item>(
@@ -828,8 +831,8 @@ function consume_plain(result: PlainResult<ParsedRoute>): number {
   }
 }
 
-function consume_traits(
-  result: ReturnType<typeof traits_parse_request>,
+function consume_typeclasses(
+  result: ReturnType<typeof typeclasses_parse_request>,
 ): number {
   const value = result.value();
   const [tag, payload] = value;

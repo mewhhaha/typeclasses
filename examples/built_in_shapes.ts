@@ -89,7 +89,7 @@ export async function run_builtin_shape_examples() {
   const byte_view = data_view_from_bytes([4, 5, 6]);
   const typed_numbers = from_typed_array(new Uint8Array([7, 8, 9]));
   const query_params = url_params_from_entries([
-    ["tag", "traits"],
+    ["tag", "typeclasses"],
     ["tag", "typescript"],
   ]);
   const form_fields = form_data_from_entries([
@@ -100,7 +100,7 @@ export async function run_builtin_shape_examples() {
   const weak_map = weak_map_from_entries([[weak_key, "cached"]]);
   const weak_set = weak_set_from_iterable([weak_key]);
   const date_value = from_date(new Date("2024-01-02T03:04:05.000Z"));
-  const regexp_value = from_regexp(/^traits$/iu);
+  const regexp_value = from_regexp(/^typeclasses$/iu);
   const error_value = from_error(new TypeError("expected value"));
   const traversed_record = Traversable.traverse(
     record_from_entries<number>([["id", 42], ["limit", 10]]),

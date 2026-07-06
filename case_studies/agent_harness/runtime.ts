@@ -5,7 +5,7 @@ export function seed_agent_files(): Map<string, string> {
   return new Map([
     [
       "README.md",
-      "Traits is a TypeScript library for typeclasses and effects.",
+      "Typeclasses is a TypeScript library for typeclasses and effects.",
     ],
   ]);
 }

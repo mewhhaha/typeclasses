@@ -9,7 +9,7 @@ import { Foldable, Monoid, Semigroup } from "../src/typeclasses.ts";
 export function lesson_05_folds_and_monoids() {
   const numbers = list_from_array([1, 2, 3, 4]);
   const left = ArrayT(["learn"]);
-  const right = ArrayT(["traits"]);
+  const right = ArrayT(["typeclasses"]);
   const empty = Monoid.empty(ArrayT<string>([]));
 
   const total = Foldable.fold(numbers, 0, (state, item) => state + item);
@@ -17,6 +17,6 @@ export function lesson_05_folds_and_monoids() {
   const with_empty = Monoid.concat(empty, combined);
 
   assert_equals(total, 10);
-  assert_equals(to_array(with_empty), ["learn", "traits"]);
+  assert_equals(to_array(with_empty), ["learn", "typeclasses"]);
   assert_equals(list_to_array(numbers), [1, 2, 3, 4]);
 }

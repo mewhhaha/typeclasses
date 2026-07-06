@@ -32,7 +32,7 @@ type ModuleSet = {
 
 const source_root = new URL("../", import.meta.url);
 const transformed_root = new URL(
-  "file:///tmp/traits-case-study-transform-bench/",
+  "file:///tmp/typeclasses-case-study-transform-bench/",
 );
 const original = await load_modules(source_root, "without transformer");
 const transformed = await prepare_transformed_modules();
@@ -130,11 +130,11 @@ function run_parallel_analyzer_dry(modules: ModuleSet): number {
 function run_parser_dry(modules: ModuleSet): number {
   const parsed = modules.parser_language.parse_program(
     modules.parser_language.sample_program,
-    "sample.traits",
+    "sample.typeclasses",
   );
   const broken = modules.parser_language.parse_program(
     modules.parser_language.broken_program,
-    "broken.traits",
+    "broken.typeclasses",
   );
 
   return parsed[0].length + broken[0].length;
@@ -406,7 +406,7 @@ const http_requests = [
 ];
 
 const cli_commands = [
-  ["echo", "hello", "traits"],
+  ["echo", "hello", "typeclasses"],
   ["cat", "notes.txt"],
   ["cat", "missing.txt"],
   ["write", "out.txt", "preview only"],

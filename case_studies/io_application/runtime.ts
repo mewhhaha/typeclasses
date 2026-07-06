@@ -9,7 +9,7 @@ export function seed_files(): Map<string, string> {
   return new Map([
     [
       "notes.txt",
-      "traits are values with dictionaries",
+      "typeclasses are values with dictionaries",
     ],
   ]);
 }

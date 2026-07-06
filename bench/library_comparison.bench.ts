@@ -20,7 +20,7 @@ const error = "bad";
 const add_one = (value: number) => value + 1;
 const double = (value: number) => value * 2;
 
-const traits_maybe_double = (value: number) => just(double(value));
+const typeclasses_maybe_double = (value: number) => just(double(value));
 const fp_option_double = (value: number) => FpOption.some(double(value));
 const effect_option_double = (value: number) =>
   EffectOption.some(double(value));
@@ -32,7 +32,7 @@ const fp_option_chain_double = FpOption.chain(fp_option_double);
 const true_maybe_map_add_one = TrueMaybe.map(add_one);
 const true_maybe_and_then_double = TrueMaybe.andThen(true_maybe_double);
 
-const traits_either_double = (value: number) => right(double(value));
+const typeclasses_either_double = (value: number) => right(double(value));
 const fp_either_double = <error>(value: number) => {
   return FpEither.right<error, number>(double(value));
 };
@@ -46,7 +46,7 @@ const fp_either_chain_double = FpEither.chain(fp_either_double);
 const true_result_map_add_one = TrueResult.map(add_one);
 const true_result_and_then_double = TrueResult.andThen(true_result_double);
 
-Deno.bench("traits Maybe just construction", () => {
+Deno.bench("typeclasses Maybe just construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -96,17 +96,17 @@ Deno.bench("true-myth Maybe just construction", () => {
   _sink = current;
 });
 
-Deno.bench("traits Maybe just map+bind", () => {
+Deno.bench("typeclasses Maybe just map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just(index).map(add_one).bind(traits_maybe_double);
+    current = just(index).map(add_one).bind(typeclasses_maybe_double);
   }
 
   _sink = current;
 });
 
-Deno.bench("traits Maybe just fluent ap", () => {
+Deno.bench("typeclasses Maybe just fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -120,7 +120,7 @@ Deno.bench("traits Maybe just fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Maybe just lift", () => {
+Deno.bench("typeclasses Maybe just lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -195,17 +195,17 @@ Deno.bench("true-myth Maybe just map+andThen", () => {
   _sink = current;
 });
 
-Deno.bench("traits Maybe nothing map+bind", () => {
+Deno.bench("typeclasses Maybe nothing map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = nothing<number>().map(add_one).bind(traits_maybe_double);
+    current = nothing<number>().map(add_one).bind(typeclasses_maybe_double);
   }
 
   _sink = current;
 });
 
-Deno.bench("traits Maybe nothing fluent ap", () => {
+Deno.bench("typeclasses Maybe nothing fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -219,7 +219,7 @@ Deno.bench("traits Maybe nothing fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Maybe nothing lift", () => {
+Deno.bench("typeclasses Maybe nothing lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -292,7 +292,7 @@ Deno.bench("true-myth Maybe nothing map+andThen", () => {
   _sink = current;
 });
 
-Deno.bench("traits Either right construction", () => {
+Deno.bench("typeclasses Either right construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -342,17 +342,17 @@ Deno.bench("true-myth Result ok construction", () => {
   _sink = current;
 });
 
-Deno.bench("traits Either right map+bind", () => {
+Deno.bench("typeclasses Either right map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = right(index).map(add_one).bind(traits_either_double);
+    current = right(index).map(add_one).bind(typeclasses_either_double);
   }
 
   _sink = current;
 });
 
-Deno.bench("traits Either right fluent ap", () => {
+Deno.bench("typeclasses Either right fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -366,7 +366,7 @@ Deno.bench("traits Either right fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Either right lift", () => {
+Deno.bench("typeclasses Either right lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -441,19 +441,19 @@ Deno.bench("true-myth Result ok map+andThen", () => {
   _sink = current;
 });
 
-Deno.bench("traits Either left map+bind", () => {
+Deno.bench("typeclasses Either left map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
     current = left<string, number>(error).map(add_one).bind(
-      traits_either_double,
+      typeclasses_either_double,
     );
   }
 
   _sink = current;
 });
 
-Deno.bench("traits Either left fluent ap", () => {
+Deno.bench("typeclasses Either left fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -467,7 +467,7 @@ Deno.bench("traits Either left fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Either left lift", () => {
+Deno.bench("typeclasses Either left lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -528,7 +528,7 @@ Deno.bench("purify Either Left map+chain", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation valid fluent ap", () => {
+Deno.bench("typeclasses Validation valid fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -542,7 +542,7 @@ Deno.bench("traits Validation valid fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation valid lift", () => {
+Deno.bench("typeclasses Validation valid lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -556,7 +556,7 @@ Deno.bench("traits Validation valid lift", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation invalid fluent ap", () => {
+Deno.bench("typeclasses Validation invalid fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
@@ -570,7 +570,7 @@ Deno.bench("traits Validation invalid fluent ap", () => {
   _sink = current;
 });
 
-Deno.bench("traits Validation invalid lift", () => {
+Deno.bench("typeclasses Validation invalid lift", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {

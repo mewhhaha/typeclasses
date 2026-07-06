@@ -1,9 +1,9 @@
-# Learn You a Traits for Greater Good
+# Learn You Typeclasses for Greater Good
 
 This is an original, Haskell-inspired tutorial for this repository. It is not a
 copy of any book text. The lessons follow the usual functional-programming arc,
-but every example is written against the local TypeScript trait dictionaries and
-data types.
+but every example is written against the local TypeScript typeclass dictionaries
+and data types.
 
 Run the full course smoke test:
 
@@ -14,7 +14,7 @@ deno task learn
 Or run the lessons directly:
 
 ```sh
-deno run learn_you_a_traits_for_greater_good/main.ts
+deno run learn_you_a_typeclasses_for_greater_good/main.ts
 ```
 
 ## Lessons

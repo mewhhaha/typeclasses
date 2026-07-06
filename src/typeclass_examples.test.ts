@@ -1209,7 +1209,7 @@ Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () 
   const data_view = data_view_from_bytes([4, 5]);
   const typed_array = from_typed_array(new Uint8Array([6, 7]));
   const url_params = url_params_from_entries([
-    ["tag", "traits"],
+    ["tag", "typeclasses"],
     ["tag", "typescript"],
   ]);
   const form_data = form_data_from_entries([
@@ -1221,7 +1221,7 @@ Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () 
   const weak_set = weak_set_from_iterable([weak_key]);
   const date = from_date(new Date("2024-01-02T03:04:05.000Z"));
   const same_date = from_date(new Date("2024-01-02T03:04:05.000Z"));
-  const regexp = from_regexp(/^traits$/iu);
+  const regexp = from_regexp(/^typeclasses$/iu);
   const error = from_error(new TypeError("expected value"));
 
   assert_equals([...set_to_set(set)], [10, 20, 30]);
@@ -1241,7 +1241,7 @@ Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () 
     13,
   );
   assert_equals(url_params_to_entries(url_params), [
-    ["tag", "traits"],
+    ["tag", "typeclasses"],
     ["tag", "typescript"],
   ]);
   assert_equals(form_data_to_entries(form_data), [
@@ -1252,7 +1252,7 @@ Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () 
   assert_equals(weak_set.show(), "WeakSet(?)");
   assert_true(Eq.eq(date, same_date), "dates compare by time value");
   assert_equals(date.show(), "2024-01-02T03:04:05.000Z");
-  assert_equals(regexp.show(), "/^traits$/iu");
+  assert_equals(regexp.show(), "/^typeclasses$/iu");
   assert_equals(error.show(), "TypeError: expected value");
 });
 

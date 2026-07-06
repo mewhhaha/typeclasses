@@ -65,8 +65,8 @@ type BadRequestPage = {
 };
 
 export const home_page = Program(function* () {
-  yield* page_start("Traits");
-  yield* emit_body("<h1>Traits</h1>");
+  yield* page_start("Typeclasses");
+  yield* emit_body("<h1>Typeclasses</h1>");
   yield* emit_body("<p>Small typed abstractions for TypeScript.</p>");
   yield* page_end();
 

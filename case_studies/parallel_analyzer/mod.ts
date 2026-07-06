@@ -246,13 +246,13 @@ export function sample_sources(count: number): readonly SourceFile[] {
 
   for (let index = 0; index < count; index += 1) {
     files.push({
-      path: "generated_" + index.toString() + ".traits",
+      path: "generated_" + index.toString() + ".typeclasses",
       source: generated_source(index),
     });
   }
 
   files.push({
-    path: "broken_parallel.traits",
+    path: "broken_parallel.typeclasses",
     source: broken_program,
   });
 

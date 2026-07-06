@@ -9,7 +9,7 @@ import {
 import { format_error } from "./parser.ts";
 
 export function run_programming_language_parser_case_study() {
-  const parsed = parse_program(sample_program, "sample.traits");
+  const parsed = parse_program(sample_program, "sample.typeclasses");
   const [parsed_tag, parsed_payload] = parsed;
 
   switch (parsed_tag) {
@@ -46,7 +46,7 @@ export function run_programming_language_parser_case_study() {
       break;
   }
 
-  const broken = parse_program(broken_program, "broken.traits");
+  const broken = parse_program(broken_program, "broken.typeclasses");
   const [broken_tag, broken_payload] = broken;
 
   switch (broken_tag) {

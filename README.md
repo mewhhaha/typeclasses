@@ -1263,9 +1263,9 @@ Focused repository examples live in `examples/`:
 
 `examples/main.ts` is only a runner for those focused files.
 
-`learn_you_a_traits_for_greater_good/` is a longer Haskell-inspired tutorial
-made of executable lessons. It is included in the published package. Run it from
-the repository with `deno task learn`.
+`learn_you_a_typeclasses_for_greater_good/` is a longer Haskell-inspired
+tutorial made of executable lessons. It is included in the published package.
+Run it from the repository with `deno task learn`.
 
 Larger repository-only application-shaped demos live in `case_studies/`:
 
