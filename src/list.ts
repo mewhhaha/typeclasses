@@ -63,15 +63,7 @@ export function from_array<item>(items: item[]): ListValue<item> {
 }
 
 export function to_array<item>(list: ListValue<item>): item[] {
-  const items: item[] = [];
-  let rest = list.value();
-
-  while (rest.tag === "cons") {
-    items.push(rest.head);
-    rest = rest.tail;
-  }
-
-  return items;
+  return list_to_array(list.value());
 }
 
 function list_from_array<item>(items: item[]): List<item> {
@@ -166,32 +158,46 @@ Applicative.instance(List)({
   },
 
   [applicative_lift_method](fn, rest) {
-    const first = to_array(this);
+    const first = this.value();
 
     switch (rest.length) {
       case 0:
-        return from_array(first.map((value) => fn(value)));
+        return lift_list_one(fn, first);
       case 1:
-        return lift_list_two(fn, first, to_array(rest[0]));
+        return lift_list_two(fn, first, rest[0].value());
       case 2:
-        return lift_list_three(fn, first, to_array(rest[0]), to_array(rest[1]));
+        return lift_list_three(fn, first, rest[0].value(), rest[1].value());
       default:
         return lift_list_many(fn, first, rest);
     }
   },
 
-  ap(values) {
-    const items = to_array(values);
+  ap<from, to>(
+    this: Data<AsList, (value: NoInfer<from>) => to>,
+    values: Data<AsList, from>,
+  ): Data<AsList, to> {
+    const items = values.value();
+    let fns = this.value();
+    let reversed = list_nil<to>();
 
-    return List(
-      list_from_array(to_array(this).flatMap((fn) => items.map(fn))),
-    );
+    while (fns.tag === "cons") {
+      let rest = items;
+
+      while (rest.tag === "cons") {
+        reversed = list_cons(fns.head(rest.head), reversed);
+        rest = rest.tail;
+      }
+
+      fns = fns.tail;
+    }
+
+    return List(list_reverse(reversed));
   },
 });
 
 Semigroup.instance(List)({
   concat(right) {
-    return from_array([...to_array(this), ...to_array(right)]);
+    return List(list_append(this.value(), right.value()));
   },
 });
 
@@ -207,7 +213,7 @@ Alternative.instance(List)({
   },
 
   alt(right) {
-    return from_array([...to_array(this), ...to_array(right)]);
+    return List(list_append(this.value(), right.value()));
   },
 });
 
@@ -237,9 +243,11 @@ Monad.instance(List)({
 Foldable.instance(List)({
   fold(initial, fn) {
     let state = initial;
+    let rest = this.value();
 
-    for (const item of to_array(this)) {
-      state = fn(state, item);
+    while (rest.tag === "cons") {
+      state = fn(state, rest.head);
+      rest = rest.tail;
     }
 
     return state;
@@ -285,6 +293,18 @@ function list_reverse<item>(items: List<item>): List<item> {
   return reversed;
 }
 
+function list_append<item>(left: List<item>, right: List<item>): List<item> {
+  let source = list_reverse(left);
+  let out = right;
+
+  while (source.tag === "cons") {
+    out = list_cons(source.head, out);
+    source = source.tail;
+  }
+
+  return out;
+}
+
 function list_single<item>(item: item): ListValue<item> {
   return cons(item, nil());
 }
@@ -293,50 +313,81 @@ function list_prepend<item>(head: item) {
   return (tail: ListValue<item>) => cons(head, tail);
 }
 
-function lift_list_two<out>(
+function lift_list_one<out>(
   fn: (...values: unknown[]) => out,
-  first: readonly unknown[],
-  second: readonly unknown[],
+  first: List<unknown>,
 ): ListValue<out> {
-  const out: out[] = [];
+  let source = first;
+  let reversed = list_nil<out>();
 
-  for (const left of first) {
-    for (const right of second) {
-      out.push(fn(left, right));
-    }
+  while (source.tag === "cons") {
+    reversed = list_cons(fn(source.head), reversed);
+    source = source.tail;
   }
 
-  return from_array(out);
+  return List(list_reverse(reversed));
+}
+
+function lift_list_two<out>(
+  fn: (...values: unknown[]) => out,
+  first: List<unknown>,
+  second: List<unknown>,
+): ListValue<out> {
+  let left = first;
+  let reversed = list_nil<out>();
+
+  while (left.tag === "cons") {
+    let right = second;
+
+    while (right.tag === "cons") {
+      reversed = list_cons(fn(left.head, right.head), reversed);
+      right = right.tail;
+    }
+
+    left = left.tail;
+  }
+
+  return List(list_reverse(reversed));
 }
 
 function lift_list_three<out>(
   fn: (...values: unknown[]) => out,
-  first: readonly unknown[],
-  second: readonly unknown[],
-  third: readonly unknown[],
+  first: List<unknown>,
+  second: List<unknown>,
+  third: List<unknown>,
 ): ListValue<out> {
-  const out: out[] = [];
+  let left = first;
+  let reversed = list_nil<out>();
 
-  for (const left of first) {
-    for (const middle of second) {
-      for (const right of third) {
-        out.push(fn(left, middle, right));
+  while (left.tag === "cons") {
+    let middle = second;
+
+    while (middle.tag === "cons") {
+      let right = third;
+
+      while (right.tag === "cons") {
+        reversed = list_cons(fn(left.head, middle.head, right.head), reversed);
+        right = right.tail;
       }
+
+      middle = middle.tail;
     }
+
+    left = left.tail;
   }
 
-  return from_array(out);
+  return List(list_reverse(reversed));
 }
 
 function lift_list_many<out>(
   fn: (...values: unknown[]) => out,
-  first: readonly unknown[],
+  first: List<unknown>,
   rest: readonly ListValue<unknown>[],
 ): ListValue<out> {
-  let rows = first.map((value) => [value] as unknown[]);
+  let rows = list_to_array(first).map((value) => [value] as unknown[]);
 
   for (const current of rest) {
-    const source = to_array(current);
+    const source = list_to_array(current.value());
     const next: unknown[][] = [];
 
     for (const row of rows) {
@@ -349,6 +400,18 @@ function lift_list_many<out>(
   }
 
   return from_array(rows.map((row) => fn(...row)));
+}
+
+function list_to_array<item>(list: List<item>): item[] {
+  const items: item[] = [];
+  let rest = list;
+
+  while (rest.tag === "cons") {
+    items.push(rest.head);
+    rest = rest.tail;
+  }
+
+  return items;
 }
 
 function append_item(values: readonly unknown[], item: unknown): unknown[] {

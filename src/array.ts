@@ -246,11 +246,15 @@ function lift_array_two<out>(
   first: readonly unknown[],
   second: readonly unknown[],
 ): ArrayValue<out> {
-  const out: out[] = [];
+  const out = new Array<out>(first.length * second.length);
+  let out_index = 0;
 
-  for (const left of first) {
-    for (const right of second) {
-      out.push(fn(left, right));
+  for (let left_index = 0; left_index < first.length; left_index += 1) {
+    const left = first[left_index];
+
+    for (let right_index = 0; right_index < second.length; right_index += 1) {
+      out[out_index] = fn(left, second[right_index]);
+      out_index += 1;
     }
   }
 
@@ -263,12 +267,22 @@ function lift_array_three<out>(
   second: readonly unknown[],
   third: readonly unknown[],
 ): ArrayValue<out> {
-  const out: out[] = [];
+  const out = new Array<out>(first.length * second.length * third.length);
+  let out_index = 0;
 
-  for (const left of first) {
-    for (const middle of second) {
-      for (const right of third) {
-        out.push(fn(left, middle, right));
+  for (let left_index = 0; left_index < first.length; left_index += 1) {
+    const left = first[left_index];
+
+    for (
+      let middle_index = 0;
+      middle_index < second.length;
+      middle_index += 1
+    ) {
+      const middle = second[middle_index];
+
+      for (let right_index = 0; right_index < third.length; right_index += 1) {
+        out[out_index] = fn(left, middle, third[right_index]);
+        out_index += 1;
       }
     }
   }
