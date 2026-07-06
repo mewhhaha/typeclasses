@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data_cached,
   type Data,
   data,
   type type_data,
@@ -29,11 +30,12 @@ export const FormDataT: AsFormData = data<AsFormData>(
     return this.data(clone_form_data(form_data));
   },
 );
+const form_data_data = as_data_cached(FormDataT);
 
 export function from_entries(
   entries: Iterable<FormDataEntry>,
 ): FormDataValue {
-  return FormDataT(form_data_from_entries(entries)) as FormDataValue;
+  return form_data_data(form_data_from_entries(entries)) as FormDataValue;
 }
 
 export function to_entries(form_data: FormDataValue): FormDataEntry[] {
@@ -76,13 +78,13 @@ Semigroup.instance(FormDataT)({
       out.append(name, value);
     }
 
-    return FormDataT(out);
+    return form_data_data(out);
   },
 });
 
 Monoid.instance(FormDataT)({
   empty() {
-    return FormDataT(new FormData());
+    return form_data_data(new FormData());
   },
 });
 

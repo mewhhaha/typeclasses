@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data_cached,
   type Data,
   data,
   type type_data,
@@ -28,9 +29,10 @@ export const ArrayBufferT: AsArrayBuffer = data<AsArrayBuffer>(
     return this.data(buffer.slice(0));
   },
 );
+const array_buffer_data = as_data_cached(ArrayBufferT);
 
 export function from_bytes(bytes: ArrayLike<number>): ArrayBufferValue {
-  return ArrayBufferT(Uint8Array.from(bytes).buffer);
+  return array_buffer_data(Uint8Array.from(bytes).buffer);
 }
 
 export function to_bytes(buffer: ArrayBufferValue): Uint8Array {
@@ -61,13 +63,13 @@ Semigroup.instance(ArrayBufferT)({
     out.set(left, 0);
     out.set(right_value, left.length);
 
-    return ArrayBufferT(out.buffer);
+    return array_buffer_data(out.buffer);
   },
 });
 
 Monoid.instance(ArrayBufferT)({
   empty() {
-    return ArrayBufferT(new ArrayBuffer(0));
+    return array_buffer_data(new ArrayBuffer(0));
   },
 });
 
