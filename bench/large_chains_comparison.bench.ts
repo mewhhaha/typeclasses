@@ -313,6 +313,18 @@ Deno.bench("large Maybe Do typeclasses", () => {
   _sink = checksum;
 });
 
+Deno.bench("large Maybe transformed Do typeclasses", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    const current = maybe_do_transformed(index);
+
+    checksum += consume_typeclasses_maybe(current);
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("large Maybe gen effect", () => {
   let checksum = 0;
 
@@ -579,6 +591,18 @@ Deno.bench("large Either Do typeclasses", () => {
   _sink = checksum;
 });
 
+Deno.bench("large Either transformed Do typeclasses", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    const current = either_do_transformed(index);
+
+    checksum += consume_typeclasses_either(current);
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("large Either gen effect", () => {
   let checksum = 0;
 
@@ -716,3 +740,47 @@ Deno.bench("large Either map chain true-myth", () => {
 
   _sink = checksum;
 });
+
+function maybe_do_transformed(index: number): Data<AsMaybe, number> {
+  return just(index).bind((value_1) => {
+    return just(add_one(value_1)).bind((value_2) => {
+      return just(add_one(value_2)).bind((value_3) => {
+        return just(add_one(value_3)).bind((value_4) => {
+          return just(add_one(value_4)).bind((value_5) => {
+            return just(add_one(value_5)).bind((value_6) => {
+              return just(add_one(value_6)).bind((value_7) => {
+                return just(add_one(value_7)).bind((value_8) => {
+                  return just(add_one(value_8)).map((value_9) => {
+                    return double(value_9);
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+function either_do_transformed(index: number): Data<AsEither, number> {
+  return typeclasses_right(index).bind((value_1) => {
+    return typeclasses_right(add_one(value_1)).bind((value_2) => {
+      return typeclasses_right(add_one(value_2)).bind((value_3) => {
+        return typeclasses_right(add_one(value_3)).bind((value_4) => {
+          return typeclasses_right(add_one(value_4)).bind((value_5) => {
+            return typeclasses_right(add_one(value_5)).bind((value_6) => {
+              return typeclasses_right(add_one(value_6)).bind((value_7) => {
+                return typeclasses_right(add_one(value_7)).bind((value_8) => {
+                  return typeclasses_right(add_one(value_8)).map((value_9) => {
+                    return double(value_9);
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+}

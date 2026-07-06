@@ -1,5 +1,4 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
   type Typeclass,
@@ -54,11 +53,12 @@ export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
     value: Data<dictionary, from>,
     fn: (value: from) => Data<dictionary, to>,
   ): Data<dictionary, to> {
-    return call_typeclass_method(
-      this.instance_for(value).bind<from, to>,
-      value,
-      fn,
-    );
+    const bind = value[monad_typeclass].bind as (
+      this: Data<dictionary, from>,
+      fn: (value: from) => Data<dictionary, to>,
+    ) => Data<dictionary, to>;
+
+    return bind.call(value, fn);
   },
 });
 
