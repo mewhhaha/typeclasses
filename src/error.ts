@@ -16,7 +16,7 @@ export interface AsError extends As<AsError>, Show<AsError>, Eq<AsError> {
 
 type ErrorValue = Data<AsError, Error>;
 
-export const ErrorT = data<AsError>();
+export const ErrorT: AsError = data<AsError>();
 
 export function from_error(error: Error): ErrorValue {
   return ErrorT(error) as ErrorValue;

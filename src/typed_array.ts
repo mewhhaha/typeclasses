@@ -37,7 +37,7 @@ export interface AsTypedArray
 
 type TypedArrayValue<item> = Data<AsTypedArray, item>;
 
-export const TypedArrayT = data<AsTypedArray>(
+export const TypedArrayT: AsTypedArray = data<AsTypedArray>(
   function (array) {
     return this.data(clone_typed_array(array));
   },

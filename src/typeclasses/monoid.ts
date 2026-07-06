@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -26,7 +27,17 @@ export interface Monoid<dictionary extends Dictionary>
     >,
     SemigroupDictionary<dictionary> {}
 
-export const Monoid = typeclass(monoid_typeclass, {
+type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
+  empty<dictionary extends Monoid<dictionary>, item>(
+    value: Data<dictionary, unknown>,
+  ): Data<dictionary, item>;
+  concat<dictionary extends Monoid<dictionary>, item>(
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
+  ): Data<dictionary, item>;
+}>;
+
+export const Monoid: MonoidTypeclass = typeclass(monoid_typeclass, {
   empty<
     dictionary extends Monoid<dictionary>,
     item,

@@ -23,7 +23,7 @@ export interface AsArrayBuffer
 
 type ArrayBufferValue = Data<AsArrayBuffer, number>;
 
-export const ArrayBufferT = data<AsArrayBuffer>(
+export const ArrayBufferT: AsArrayBuffer = data<AsArrayBuffer>(
   function (buffer) {
     return this.data(buffer.slice(0));
   },

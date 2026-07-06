@@ -31,7 +31,7 @@ export interface AsFn
 
 export type FnValue<input, item> = WrappedData<AsFn, Fn<input, item>, item>;
 
-export const Fn = data<AsFn>();
+export const Fn: AsFn = data<AsFn>();
 
 export function fn<input, item>(value: Fn<input, item>): FnValue<input, item> {
   return Fn(value) as FnValue<input, item>;

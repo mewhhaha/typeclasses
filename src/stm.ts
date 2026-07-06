@@ -36,7 +36,7 @@ export interface AsStm
 
 type StmValue<item> = Data<AsStm, item>;
 
-export const Stm = data<AsStm>();
+export const Stm: AsStm = data<AsStm>();
 
 export class StmError extends Error {
   constructor(message: string) {

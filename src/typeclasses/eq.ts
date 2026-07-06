@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -20,7 +21,14 @@ export interface Eq<dictionary extends Dictionary> extends
     }
   > {}
 
-export const Eq = typeclass(eq_typeclass, {
+type EqTypeclass = Typeclass<typeof eq_typeclass, {
+  eq<dictionary extends Eq<dictionary>, item>(
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
+  ): boolean;
+}>;
+
+export const Eq: EqTypeclass = typeclass(eq_typeclass, {
   eq<
     dictionary extends Eq<dictionary>,
     item,

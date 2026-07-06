@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -27,27 +28,40 @@ export interface Alternative<dictionary extends Dictionary>
     >,
     ApplicativeDictionary<dictionary> {}
 
-export const Alternative = typeclass(alternative_typeclass, {
-  empty<
-    dictionary extends Alternative<dictionary>,
-    item,
-  >(
+type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
+  empty<dictionary extends Alternative<dictionary>, item>(
     value: Data<dictionary, unknown>,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(this.instance_for(value).empty<item>, value);
-  },
-
-  alt<
-    dictionary extends Alternative<dictionary>,
-    item,
-  >(
+  ): Data<dictionary, item>;
+  alt<dictionary extends Alternative<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(
-      this.instance_for(left).alt<item>,
-      left,
-      right,
-    );
+  ): Data<dictionary, item>;
+}>;
+
+export const Alternative: AlternativeTypeclass = typeclass(
+  alternative_typeclass,
+  {
+    empty<
+      dictionary extends Alternative<dictionary>,
+      item,
+    >(
+      value: Data<dictionary, unknown>,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(this.instance_for(value).empty<item>, value);
+    },
+
+    alt<
+      dictionary extends Alternative<dictionary>,
+      item,
+    >(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(
+        this.instance_for(left).alt<item>,
+        left,
+        right,
+      );
+    },
   },
-});
+);

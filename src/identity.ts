@@ -38,7 +38,7 @@ export interface AsIdentity
 
 export type IdentityValue<item> = Data<AsIdentity, item>;
 
-export const Identity = data<AsIdentity>();
+export const Identity: AsIdentity = data<AsIdentity>();
 
 export function identity<item>(value: item): IdentityValue<item> {
   return Identity(value);

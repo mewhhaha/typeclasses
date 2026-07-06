@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
   type WrappedData,
@@ -29,7 +30,20 @@ export interface Arrow<dictionary extends Dictionary>
     >,
     CategoryDictionary<dictionary> {}
 
-export const Arrow = typeclass(arrow_typeclass, {
+type ArrowTypeclass = Typeclass<typeof arrow_typeclass, {
+  arr<dictionary extends Arrow<dictionary>, from, to>(
+    dictionary: dictionary,
+    fn: (value: from) => to,
+  ): WrappedData<dictionary, unknown, to>;
+  first<dictionary extends Arrow<dictionary>, raw, from, to, extra>(
+    arrow: WrappedData<dictionary, raw, to>,
+  ): WrappedData<dictionary, unknown, readonly [to, extra]>;
+  second<dictionary extends Arrow<dictionary>, raw, from, to, extra>(
+    arrow: WrappedData<dictionary, raw, to>,
+  ): WrappedData<dictionary, unknown, readonly [extra, to]>;
+}>;
+
+export const Arrow: ArrowTypeclass = typeclass(arrow_typeclass, {
   arr<
     dictionary extends Arrow<dictionary>,
     from,

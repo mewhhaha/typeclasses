@@ -83,12 +83,12 @@ export function is_right<left, right>(
   return tag === "right";
 }
 
-export function from_number(value: number) {
+export function from_number(value: number): EitherValue<string, number> {
   if (Number.isFinite(value)) {
-    return right(value);
+    return right(value) as EitherValue<string, number>;
   }
 
-  return left("Expected a finite number");
+  return left("Expected a finite number") as EitherValue<string, number>;
 }
 
 Show.instance(Either)({

@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
   type WrappedData,
@@ -22,7 +23,24 @@ export interface Category<dictionary extends Dictionary>
       }
     > {}
 
-export const Category = typeclass(category_typeclass, {
+type CategoryTypeclass = Typeclass<typeof category_typeclass, {
+  id<dictionary extends Category<dictionary>, item>(
+    dictionary: dictionary,
+  ): WrappedData<dictionary, unknown, item>;
+  compose<
+    dictionary extends Category<dictionary>,
+    after_raw,
+    before_raw,
+    from,
+    middle,
+    to,
+  >(
+    after: WrappedData<dictionary, after_raw, to>,
+    before: WrappedData<dictionary, before_raw, middle>,
+  ): WrappedData<dictionary, unknown, to>;
+}>;
+
+export const Category: CategoryTypeclass = typeclass(category_typeclass, {
   id<
     dictionary extends Category<dictionary>,
     item,

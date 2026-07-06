@@ -175,6 +175,11 @@ export type TypeclassDefinition<token extends PropertyKey = PropertyKey> =
     readonly token: token;
   };
 
+export type Typeclass<
+  token extends PropertyKey,
+  methods extends object,
+> = TypeclassDefinition<token> & methods;
+
 type TypeclassDefinitionPrototype<token extends PropertyKey = PropertyKey> = {
   instance<
     dictionary extends Dictionary & { [key in token]: object },

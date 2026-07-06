@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -21,7 +22,14 @@ export interface Functor<dictionary extends Dictionary>
       }
     > {}
 
-export const Functor = typeclass(functor_typeclass, {
+type FunctorTypeclass = Typeclass<typeof functor_typeclass, {
+  map<dictionary extends Functor<dictionary>, from, to>(
+    value: Data<dictionary, from>,
+    fn: (value: from) => to,
+  ): Data<dictionary, to>;
+}>;
+
+export const Functor: FunctorTypeclass = typeclass(functor_typeclass, {
   map<
     dictionary extends Functor<dictionary>,
     from,

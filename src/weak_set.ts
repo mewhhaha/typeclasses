@@ -17,7 +17,7 @@ export interface AsWeakSet
 
 type WeakSetValue<item extends object> = Data<AsWeakSet, item>;
 
-export const WeakSetT = data<AsWeakSet>();
+export const WeakSetT: AsWeakSet = data<AsWeakSet>();
 
 export function from_iterable<item extends object>(
   items: Iterable<item>,

@@ -34,7 +34,7 @@ export interface AsRecord
 
 type RecordValue<item> = Data<AsRecord, item>;
 
-export const RecordT = data<AsRecord>(
+export const RecordT: AsRecord = data<AsRecord>(
   function (record) {
     return this.data({ ...record });
   },

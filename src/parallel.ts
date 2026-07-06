@@ -6,6 +6,7 @@ import {
   type Uses,
 } from "./effects.ts";
 import { type AsTask, from_fn } from "./task.ts";
+import type { Data } from "./typeclass.ts";
 
 export type ParallelMap<input, output> =
   & Operation<readonly output[]>
@@ -72,7 +73,7 @@ export function worker_map<input, output>(
   worker: string | URL,
   inputs: readonly input[],
   options: ParallelOptions = {},
-) {
+): Data<AsTask, readonly output[]> {
   return from_fn(() => run_worker_map<input, output>(worker, inputs, options));
 }
 
@@ -193,7 +194,7 @@ export async function with_worker_pool<input, output, item>(
 export function worker_pool_map<input, output>(
   pool: WorkerPool<input, output>,
   inputs: readonly input[],
-) {
+): Data<AsTask, readonly output[]> {
   return from_fn(() => pool.map(inputs));
 }
 

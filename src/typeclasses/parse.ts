@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
   type WrappedData,
@@ -21,7 +22,14 @@ export interface Parse<dictionary extends Dictionary>
       }
     > {}
 
-export const Parse = typeclass(parse_typeclass, {
+type ParseTypeclass = Typeclass<typeof parse_typeclass, {
+  parse<dictionary extends Parse<dictionary>, raw, item>(
+    parser: WrappedData<dictionary, raw, item>,
+    input: string,
+  ): item;
+}>;
+
+export const Parse: ParseTypeclass = typeclass(parse_typeclass, {
   parse<
     dictionary extends Parse<dictionary>,
     raw,

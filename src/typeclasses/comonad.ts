@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -24,7 +25,17 @@ export interface Comonad<dictionary extends Dictionary>
     >,
     FunctorDictionary<dictionary> {}
 
-export const Comonad = typeclass(comonad_typeclass, {
+type ComonadTypeclass = Typeclass<typeof comonad_typeclass, {
+  extract<dictionary extends Comonad<dictionary>, item>(
+    value: Data<dictionary, item>,
+  ): item;
+  extend<dictionary extends Comonad<dictionary>, from, to>(
+    value: Data<dictionary, from>,
+    fn: (value: Data<dictionary, from>) => to,
+  ): Data<dictionary, to>;
+}>;
+
+export const Comonad: ComonadTypeclass = typeclass(comonad_typeclass, {
   extract<
     dictionary extends Comonad<dictionary>,
     item,

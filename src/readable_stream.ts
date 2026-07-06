@@ -18,7 +18,7 @@ export interface AsReadableStream
 
 type ReadableStreamValue<item> = Data<AsReadableStream, item>;
 
-export const ReadableStreamT = data<AsReadableStream>();
+export const ReadableStreamT: AsReadableStream = data<AsReadableStream>();
 
 export function from_readable_stream<item>(
   stream: ReadableStream<item>,

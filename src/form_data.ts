@@ -24,7 +24,7 @@ export interface AsFormData
 
 type FormDataValue = Data<AsFormData, FormDataEntry>;
 
-export const FormDataT = data<AsFormData>(
+export const FormDataT: AsFormData = data<AsFormData>(
   function (form_data) {
     return this.data(clone_form_data(form_data));
   },

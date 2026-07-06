@@ -16,7 +16,7 @@ export interface AsRegExp extends As<AsRegExp>, Show<AsRegExp>, Eq<AsRegExp> {
 
 type RegExpValue = Data<AsRegExp, RegExp>;
 
-export const RegExpT = data<AsRegExp>(
+export const RegExpT: AsRegExp = data<AsRegExp>(
   function (regexp) {
     return this.data(new RegExp(regexp.source, regexp.flags));
   },

@@ -31,7 +31,7 @@ export interface AsSet
 
 type SetValue<item> = Data<AsSet, item>;
 
-export const SetT = data<AsSet>(
+export const SetT: AsSet = data<AsSet>(
   function (set) {
     return this.data(new Set(set));
   },

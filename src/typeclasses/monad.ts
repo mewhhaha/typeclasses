@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -26,6 +27,13 @@ export interface Monad<dictionary extends Dictionary>
     >,
     ApplicativeDictionary<dictionary> {}
 
+type MonadTypeclass = Typeclass<typeof monad_typeclass, {
+  bind<dictionary extends Monad<dictionary>, from, to>(
+    value: Data<dictionary, from>,
+    fn: (value: from) => Data<dictionary, to>,
+  ): Data<dictionary, to>;
+}>;
+
 type DoGenerator<
   dictionary extends Monad<dictionary>,
   out,
@@ -37,7 +45,7 @@ type DoPath = {
   readonly length: number;
 };
 
-export const Monad = typeclass(monad_typeclass, {
+export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
   bind<
     dictionary extends Monad<dictionary>,
     from,

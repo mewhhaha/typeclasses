@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -27,32 +28,46 @@ export interface MonadError<dictionary extends Dictionary>
     >,
     MonadDictionary<dictionary> {}
 
-export const MonadError = typeclass(monad_error_typeclass, {
-  throw_error<
-    dictionary extends MonadError<dictionary>,
-    item,
-  >(
+type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
+  throw_error<dictionary extends MonadError<dictionary>, item>(
     witness: Data<dictionary, unknown>,
     error: unknown,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(
-      this.instance_for(witness).throw_error<item>,
-      witness,
-      error,
-    );
-  },
-
-  catch_error<
-    dictionary extends MonadError<dictionary>,
-    item,
-  >(
+  ): Data<dictionary, item>;
+  catch_error<dictionary extends MonadError<dictionary>, item>(
     value: Data<dictionary, item>,
     handler: (error: unknown) => Data<dictionary, item>,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(
-      this.instance_for(value).catch_error<item>,
-      value,
-      handler,
-    );
+  ): Data<dictionary, item>;
+}>;
+
+export const MonadError: MonadErrorTypeclass = typeclass(
+  monad_error_typeclass,
+  {
+    throw_error<
+      dictionary extends MonadError<dictionary>,
+      item,
+    >(
+      witness: Data<dictionary, unknown>,
+      error: unknown,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(
+        this.instance_for(witness).throw_error<item>,
+        witness,
+        error,
+      );
+    },
+
+    catch_error<
+      dictionary extends MonadError<dictionary>,
+      item,
+    >(
+      value: Data<dictionary, item>,
+      handler: (error: unknown) => Data<dictionary, item>,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(
+        this.instance_for(value).catch_error<item>,
+        value,
+        handler,
+      );
+    },
   },
-});
+);

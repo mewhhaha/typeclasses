@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -27,38 +28,53 @@ export interface Applicative<dictionary extends Dictionary>
     >,
     FunctorDictionary<dictionary> {}
 
-export const Applicative = typeclass(applicative_typeclass, {
-  pure<
-    dictionary extends Applicative<dictionary>,
-    item,
-  >(
+type ApplicativeTypeclass = Typeclass<typeof applicative_typeclass, {
+  pure<dictionary extends Applicative<dictionary>, item>(
     value: Data<dictionary, unknown>,
     item: item,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(
-      this.instance_for(value).pure<item>,
-      value,
-      item,
-    );
-  },
-
-  lift: applicative_lift,
-
-  ap<
-    dictionary extends Applicative<dictionary>,
-    from,
-    to,
-  >(
+  ): Data<dictionary, item>;
+  lift: typeof applicative_lift;
+  ap<dictionary extends Applicative<dictionary>, from, to>(
     value: Data<dictionary, (value: NoInfer<from>) => to>,
     item: Data<dictionary, from>,
-  ): Data<dictionary, to> {
-    return call_typeclass_method(
-      this.instance_for(value).ap<from, to>,
-      value,
+  ): Data<dictionary, to>;
+}>;
+
+export const Applicative: ApplicativeTypeclass = typeclass(
+  applicative_typeclass,
+  {
+    pure<
+      dictionary extends Applicative<dictionary>,
       item,
-    );
+    >(
+      value: Data<dictionary, unknown>,
+      item: item,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(
+        this.instance_for(value).pure<item>,
+        value,
+        item,
+      );
+    },
+
+    lift: applicative_lift,
+
+    ap<
+      dictionary extends Applicative<dictionary>,
+      from,
+      to,
+    >(
+      value: Data<dictionary, (value: NoInfer<from>) => to>,
+      item: Data<dictionary, from>,
+    ): Data<dictionary, to> {
+      return call_typeclass_method(
+        this.instance_for(value).ap<from, to>,
+        value,
+        item,
+      );
+    },
   },
-});
+);
 
 function applicative_lift<
   dictionary extends Applicative<dictionary>,

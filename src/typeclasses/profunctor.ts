@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
   type WrappedData,
@@ -22,7 +23,42 @@ export interface Profunctor<dictionary extends Dictionary>
       }
     > {}
 
-export const Profunctor = typeclass(profunctor_typeclass, {
+type ProfunctorTypeclass = Typeclass<typeof profunctor_typeclass, {
+  dimap<
+    dictionary extends Profunctor<dictionary>,
+    raw,
+    from,
+    to,
+    next_from,
+    next_to,
+  >(
+    value: WrappedData<dictionary, raw, to>,
+    input: (value: next_from) => from,
+    output: (value: to) => next_to,
+  ): WrappedData<dictionary, unknown, next_to>;
+  lmap<
+    dictionary extends Profunctor<dictionary>,
+    raw,
+    from,
+    to,
+    next_from,
+  >(
+    value: WrappedData<dictionary, raw, to>,
+    input: (value: next_from) => from,
+  ): WrappedData<dictionary, unknown, to>;
+  rmap<
+    dictionary extends Profunctor<dictionary>,
+    raw,
+    from,
+    to,
+    next_to,
+  >(
+    value: WrappedData<dictionary, raw, to>,
+    output: (value: to) => next_to,
+  ): WrappedData<dictionary, unknown, next_to>;
+}>;
+
+export const Profunctor: ProfunctorTypeclass = typeclass(profunctor_typeclass, {
   dimap<
     dictionary extends Profunctor<dictionary>,
     raw,

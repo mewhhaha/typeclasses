@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -18,7 +19,13 @@ export interface Show<dictionary extends Dictionary>
       }
     > {}
 
-export const Show = typeclass(show_typeclass, {
+type ShowTypeclass = Typeclass<typeof show_typeclass, {
+  show<dictionary extends Show<dictionary>>(
+    value: Data<dictionary, unknown>,
+  ): string;
+}>;
+
+export const Show: ShowTypeclass = typeclass(show_typeclass, {
   show<dictionary extends Show<dictionary>>(
     value: Data<dictionary, unknown>,
   ): string {

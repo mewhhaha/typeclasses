@@ -23,7 +23,7 @@ export interface AsDataView
 
 type DataViewValue = Data<AsDataView, number>;
 
-export const DataViewT = data<AsDataView>(
+export const DataViewT: AsDataView = data<AsDataView>(
   function (view) {
     return this.data(clone_data_view(view));
   },

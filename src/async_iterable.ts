@@ -33,7 +33,7 @@ export interface AsAsyncIterable
 
 type AsyncIterableValue<item> = Data<AsAsyncIterable, item>;
 
-export const AsyncIterableT = data<AsAsyncIterable>();
+export const AsyncIterableT: AsAsyncIterable = data<AsAsyncIterable>();
 
 export function from_factory<item>(
   factory: () => AsyncIterable<item>,

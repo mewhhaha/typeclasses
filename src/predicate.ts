@@ -22,7 +22,7 @@ export interface AsPredicate
 
 export type PredicateValue<item> = Data<AsPredicate, item>;
 
-export const Predicate = data<AsPredicate>();
+export const Predicate: AsPredicate = data<AsPredicate>();
 
 export function predicate<item>(
   value: Predicate<item>,

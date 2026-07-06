@@ -17,7 +17,7 @@ export interface AsWeakMap
 
 type WeakMapValue<item> = Data<AsWeakMap, item>;
 
-export const WeakMapT = data<AsWeakMap>();
+export const WeakMapT: AsWeakMap = data<AsWeakMap>();
 
 export function from_entries<item>(
   entries: Iterable<readonly [object, item]>,

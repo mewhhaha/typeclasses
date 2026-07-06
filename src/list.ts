@@ -44,7 +44,7 @@ export interface AsList
 
 type ListValue<item> = Data<AsList, item>;
 
-export const List = data<AsList>();
+export const List: AsList = data<AsList>();
 
 export function nil<item>(): ListValue<item> {
   return List(list_nil<item>());

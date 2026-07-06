@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
   type WrappedData,
@@ -22,7 +23,32 @@ export interface Bifunctor<dictionary extends Dictionary>
       }
     > {}
 
-export const Bifunctor = typeclass(bifunctor_typeclass, {
+type BifunctorTypeclass = Typeclass<typeof bifunctor_typeclass, {
+  bimap<
+    dictionary extends Bifunctor<dictionary>,
+    raw,
+    left,
+    right,
+    next_left,
+    next_right,
+  >(
+    value: WrappedData<dictionary, raw, right>,
+    left: (value: left) => next_left,
+    right: (value: right) => next_right,
+  ): WrappedData<dictionary, unknown, next_right>;
+  map_left<
+    dictionary extends Bifunctor<dictionary>,
+    raw,
+    left,
+    right,
+    next_left,
+  >(
+    value: WrappedData<dictionary, raw, right>,
+    fn: (value: left) => next_left,
+  ): WrappedData<dictionary, unknown, right>;
+}>;
+
+export const Bifunctor: BifunctorTypeclass = typeclass(bifunctor_typeclass, {
   bimap<
     dictionary extends Bifunctor<dictionary>,
     raw,

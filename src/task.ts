@@ -25,7 +25,7 @@ export interface AsTask
 
 type TaskValue<item> = Data<AsTask, item>;
 
-export const Task = data<AsTask>();
+export const Task: AsTask = data<AsTask>();
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));

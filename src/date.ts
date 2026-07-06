@@ -16,7 +16,7 @@ export interface AsDate extends As<AsDate>, Show<AsDate>, Eq<AsDate> {
 
 type DateValue = Data<AsDate, Date>;
 
-export const DateT = data<AsDate>(
+export const DateT: AsDate = data<AsDate>(
   function (date) {
     return this.data(new Date(date.getTime()));
   },

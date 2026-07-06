@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -21,7 +22,14 @@ export interface Semigroup<dictionary extends Dictionary>
       }
     > {}
 
-export const Semigroup = typeclass(semigroup_typeclass, {
+type SemigroupTypeclass = Typeclass<typeof semigroup_typeclass, {
+  concat<dictionary extends Semigroup<dictionary>, item>(
+    left: Data<dictionary, item>,
+    right: Data<dictionary, item>,
+  ): Data<dictionary, item>;
+}>;
+
+export const Semigroup: SemigroupTypeclass = typeclass(semigroup_typeclass, {
   concat<
     dictionary extends Semigroup<dictionary>,
     item,

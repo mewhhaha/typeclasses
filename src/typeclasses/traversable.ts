@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
@@ -31,7 +32,7 @@ export interface Traversable<dictionary extends Dictionary>
     FunctorDictionary<dictionary>,
     FoldableDictionary<dictionary> {}
 
-export const Traversable = typeclass(traversable_typeclass, {
+type TraversableTypeclass = Typeclass<typeof traversable_typeclass, {
   traverse<
     dictionary extends Traversable<dictionary>,
     applicative extends ApplicativeDictionary<applicative>,
@@ -41,15 +42,7 @@ export const Traversable = typeclass(traversable_typeclass, {
     value: Data<dictionary, from>,
     applicative: Data<applicative, unknown>,
     fn: (value: from) => Data<applicative, to>,
-  ): Data<applicative, Data<dictionary, to>> {
-    return call_typeclass_method(
-      this.instance_for(value).traverse<applicative, from, to>,
-      value,
-      applicative,
-      fn,
-    );
-  },
-
+  ): Data<applicative, Data<dictionary, to>>;
   sequence<
     dictionary extends Traversable<dictionary>,
     applicative extends ApplicativeDictionary<applicative>,
@@ -57,15 +50,47 @@ export const Traversable = typeclass(traversable_typeclass, {
   >(
     value: Data<dictionary, Data<applicative, item>>,
     applicative: Data<applicative, unknown>,
-  ): Data<applicative, Data<dictionary, item>> {
-    return call_typeclass_method(
-      this.instance_for(value)
-        .traverse<applicative, Data<applicative, item>, item>,
-      value,
-      applicative,
-      (value: Data<applicative, item>) => {
-        return value;
-      },
-    );
+  ): Data<applicative, Data<dictionary, item>>;
+}>;
+
+export const Traversable: TraversableTypeclass = typeclass(
+  traversable_typeclass,
+  {
+    traverse<
+      dictionary extends Traversable<dictionary>,
+      applicative extends ApplicativeDictionary<applicative>,
+      from,
+      to,
+    >(
+      value: Data<dictionary, from>,
+      applicative: Data<applicative, unknown>,
+      fn: (value: from) => Data<applicative, to>,
+    ): Data<applicative, Data<dictionary, to>> {
+      return call_typeclass_method(
+        this.instance_for(value).traverse<applicative, from, to>,
+        value,
+        applicative,
+        fn,
+      );
+    },
+
+    sequence<
+      dictionary extends Traversable<dictionary>,
+      applicative extends ApplicativeDictionary<applicative>,
+      item,
+    >(
+      value: Data<dictionary, Data<applicative, item>>,
+      applicative: Data<applicative, unknown>,
+    ): Data<applicative, Data<dictionary, item>> {
+      return call_typeclass_method(
+        this.instance_for(value)
+          .traverse<applicative, Data<applicative, item>, item>,
+        value,
+        applicative,
+        (value: Data<applicative, item>) => {
+          return value;
+        },
+      );
+    },
   },
-});
+);

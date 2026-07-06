@@ -39,7 +39,7 @@ export interface AsIterable
 
 type IterableValue<item> = Data<AsIterable, item>;
 
-export const IterableT = data<AsIterable>();
+export const IterableT: AsIterable = data<AsIterable>();
 
 export function from_factory<item>(
   factory: () => Iterable<item>,

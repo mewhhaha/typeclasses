@@ -42,7 +42,7 @@ export interface AsArray
 
 type ArrayValue<item> = Data<AsArray, item>;
 
-export const ArrayT = data<AsArray>();
+export const ArrayT: AsArray = data<AsArray>();
 
 export function from_array<item>(items: readonly item[]): ArrayValue<item> {
   return ArrayT([...items]);

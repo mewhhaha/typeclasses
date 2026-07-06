@@ -34,7 +34,7 @@ export interface AsMap
 
 type MapValue<item> = Data<AsMap, item>;
 
-export const MapT = data<AsMap>(
+export const MapT: AsMap = data<AsMap>(
   function (map) {
     return this.data(new Map(map));
   },

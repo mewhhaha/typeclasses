@@ -43,10 +43,10 @@ export interface AsMaybe
 
 type MaybeValue<item> = Data<AsMaybe, item>;
 
-export const Maybe = data<AsMaybe>();
+export const Maybe: AsMaybe = data<AsMaybe>();
 const nothing_value = Maybe(maybe_nothing<never>());
 
-export function just<item>(value: item) {
+export function just<item>(value: item): MaybeValue<item> {
   return Maybe(maybe_just(value));
 }
 
@@ -68,7 +68,7 @@ export function is_nothing<item>(value: Maybe<item>): value is Nothing {
 
 export function from_nullable<item>(
   value: item | null | undefined,
-) {
+): MaybeValue<item> {
   if (value === null) {
     return nothing<item>();
   }

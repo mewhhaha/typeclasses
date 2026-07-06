@@ -27,7 +27,7 @@ type URLSearchParamsValue = Data<
   URLSearchParamsEntry
 >;
 
-export const URLSearchParamsT = data<AsURLSearchParams>(
+export const URLSearchParamsT: AsURLSearchParams = data<AsURLSearchParams>(
   function (params) {
     return this.data(new URLSearchParams(params));
   },
