@@ -50,6 +50,7 @@ type StateConstructor =
   };
 
 export const State = data<AsState<unknown>>() as StateConstructor;
+const state_kind = State[kind];
 
 export function get<state>(): StateValue<state, state> {
   return State((state: state) => [state, state]);
@@ -75,28 +76,42 @@ export function run_state<requirements, state, item>(
   effect: Effect<requirements, item>,
   state: state,
 ): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
-  if (effect[0] === "pure") {
-    return pure([effect[1], state] as const);
+  let current = effect as Effect<requirements, unknown>;
+  let current_state = state;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return pure([current[1], current_state] as const) as Effect<
+          WithoutLift<requirements, AsState<state>>,
+          readonly [item, state]
+        >;
+      case "impure": {
+        const operation = current[1] as readonly [string, unknown];
+
+        if (operation[0] === "lift" && is_state_value(operation[1])) {
+          const lifted = current[1] as unknown as Lift<
+            AsState<state>,
+            unknown
+          >;
+          const [value, next] = lifted[1].value()(current_state);
+          current = current[2](value) as Effect<requirements, unknown>;
+          current_state = next;
+          continue;
+        }
+
+        const suspended = current;
+        const suspended_state = current_state;
+        return suspend(
+          suspended[1] as WithoutLift<requirements, AsState<state>>,
+          (value) => run_state(suspended[2](value), suspended_state),
+        ) as Effect<
+          WithoutLift<requirements, AsState<state>>,
+          readonly [item, state]
+        >;
+      }
+    }
   }
-
-  const operation = effect[1] as readonly [string, unknown];
-
-  if (operation[0] === "lift" && is_state_value(operation[1])) {
-    const lifted = effect[1] as unknown as Lift<
-      AsState<state>,
-      unknown
-    >;
-    const [value, next] = lifted[1].value()(state);
-    return run_state(effect[2](value), next);
-  }
-
-  return suspend(
-    effect[1] as WithoutLift<requirements, AsState<state>>,
-    (value) => run_state(effect[2](value), state),
-  ) as Effect<
-    WithoutLift<requirements, AsState<state>>,
-    readonly [item, state]
-  >;
 }
 
 function is_state_value(value: unknown): value is Dictionary {
@@ -108,7 +123,7 @@ function is_state_value(value: unknown): value is Dictionary {
     return false;
   }
 
-  return (value as Dictionary)[kind] === State[kind];
+  return (value as Dictionary)[kind] === state_kind;
 }
 
 export function eval_state<state, item>(

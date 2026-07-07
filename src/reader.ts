@@ -51,6 +51,7 @@ type ReaderConstructor =
   };
 
 export const Reader = data<AsReader<unknown>>() as ReaderConstructor;
+const reader_kind = Reader[kind];
 
 export function ask<environment>(): ReaderValue<environment, environment> {
   return Reader((environment: environment) => environment);
@@ -73,27 +74,38 @@ export function run_reader<requirements, environment, item>(
   effect: Effect<requirements, item>,
   environment: environment,
 ): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
-  if (effect[0] === "pure") {
-    return pure(effect[1]);
+  let current = effect as Effect<requirements, unknown>;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return pure(current[1]) as Effect<
+          WithoutLift<requirements, AsReader<environment>>,
+          item
+        >;
+      case "impure": {
+        const operation = current[1] as readonly [string, unknown];
+
+        if (operation[0] === "lift" && is_reader_value(operation[1])) {
+          const lifted = current[1] as unknown as Lift<
+            AsReader<environment>,
+            unknown
+          >;
+          current = current[2](lifted[1].value()(environment)) as Effect<
+            requirements,
+            unknown
+          >;
+          continue;
+        }
+
+        const suspended = current;
+        return suspend(
+          suspended[1] as WithoutLift<requirements, AsReader<environment>>,
+          (value) => run_reader(suspended[2](value), environment),
+        ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
+      }
+    }
   }
-
-  const operation = effect[1] as readonly [string, unknown];
-
-  if (operation[0] === "lift" && is_reader_value(operation[1])) {
-    const lifted = effect[1] as unknown as Lift<
-      AsReader<environment>,
-      unknown
-    >;
-    return run_reader(
-      effect[2](lifted[1].value()(environment)),
-      environment,
-    );
-  }
-
-  return suspend(
-    effect[1] as WithoutLift<requirements, AsReader<environment>>,
-    (value) => run_reader(effect[2](value), environment),
-  ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
 }
 
 function is_reader_value(value: unknown): value is Dictionary {
@@ -105,7 +117,7 @@ function is_reader_value(value: unknown): value is Dictionary {
     return false;
   }
 
-  return (value as Dictionary)[kind] === Reader[kind];
+  return (value as Dictionary)[kind] === reader_kind;
 }
 
 Show.instance(Reader)({

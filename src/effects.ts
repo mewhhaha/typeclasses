@@ -249,7 +249,7 @@ export function from(value: unknown): Effect<unknown, unknown> {
 export function lift<dictionary extends Dictionary, item>(
   value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item> {
-  return suspend(
+  return new NewImpureEffect(
     ["lift", value] as Lift<dictionary, item>,
     resume_pure,
   ) as Effect<Lift<dictionary, item>, item>;
@@ -258,7 +258,7 @@ export function lift<dictionary extends Dictionary, item>(
 export function send<operation extends TaggedOperation & Operation<unknown>>(
   operation: operation,
 ): Effect<operation, OperationOutput<operation>> {
-  return suspend(operation, resume_pure) as Effect<
+  return new NewImpureEffect(operation, resume_pure) as Effect<
     operation,
     OperationOutput<operation>
   >;
@@ -297,7 +297,7 @@ export function map_from<from, to>(
   fn: (value: from) => to,
 ): Effect<unknown, to> {
   if (is_data(value)) {
-    return suspend(
+    return new NewImpureEffect(
       ["lift", value] as unknown as Lift<Dictionary, from>,
       (item) => pure(fn(item as from)),
     ) as Effect<unknown, to>;
@@ -332,7 +332,7 @@ export function bind_from<from, right, to>(
   fn: (value: from) => Effect<right, to>,
 ): Effect<unknown | right, to> {
   if (is_data(value)) {
-    return suspend(
+    return new NewImpureEffect(
       ["lift", value] as unknown,
       fn as unknown as (value: unknown) => Effect<unknown | right, to>,
     ) as Effect<unknown | right, to>;

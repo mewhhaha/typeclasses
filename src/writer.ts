@@ -66,6 +66,7 @@ type WriterConstructor =
 export const Writer = data<
   AsWriter<Dictionary, unknown>
 >() as WriterConstructor;
+const writer_kind = Writer[kind];
 
 export function writer<
   output extends MonoidDictionary<output>,
@@ -100,31 +101,42 @@ export function run_writer<
   WithoutLift<requirements, AsWriter<output, log>>,
   readonly [item, Data<output, log>]
 > {
-  if (effect[0] === "pure") {
-    return pure([effect[1], empty] as const);
+  let current = effect as Effect<requirements, unknown>;
+  let current_output = empty;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return pure([current[1], current_output] as const) as Effect<
+          WithoutLift<requirements, AsWriter<output, log>>,
+          readonly [item, Data<output, log>]
+        >;
+      case "impure": {
+        const operation = current[1] as readonly [string, unknown];
+
+        if (operation[0] === "lift" && is_writer_value(operation[1])) {
+          const lifted = current[1] as unknown as Lift<
+            AsWriter<output, log>,
+            unknown
+          >;
+          const [value, next_output] = lifted[1].value();
+          current = current[2](value) as Effect<requirements, unknown>;
+          current_output = concat_output(current_output, next_output);
+          continue;
+        }
+
+        const suspended = current;
+        const suspended_output = current_output;
+        return suspend(
+          suspended[1] as WithoutLift<requirements, AsWriter<output, log>>,
+          (value) => run_writer(suspended[2](value), suspended_output),
+        ) as Effect<
+          WithoutLift<requirements, AsWriter<output, log>>,
+          readonly [item, Data<output, log>]
+        >;
+      }
+    }
   }
-
-  const operation = effect[1] as readonly [string, unknown];
-
-  if (operation[0] === "lift" && is_writer_value(operation[1])) {
-    const lifted = effect[1] as unknown as Lift<
-      AsWriter<output, log>,
-      unknown
-    >;
-    const [value, next_output] = lifted[1].value();
-    return run_writer(
-      effect[2](value),
-      concat_output(empty, next_output),
-    );
-  }
-
-  return suspend(
-    effect[1] as WithoutLift<requirements, AsWriter<output, log>>,
-    (value) => run_writer(effect[2](value), empty),
-  ) as Effect<
-    WithoutLift<requirements, AsWriter<output, log>>,
-    readonly [item, Data<output, log>]
-  >;
 }
 
 function is_writer_value(value: unknown): value is Dictionary {
@@ -136,7 +148,7 @@ function is_writer_value(value: unknown): value is Dictionary {
     return false;
   }
 
-  return (value as Dictionary)[kind] === Writer[kind];
+  return (value as Dictionary)[kind] === writer_kind;
 }
 
 type WriterOutput<requirements> = requirements extends Lift<

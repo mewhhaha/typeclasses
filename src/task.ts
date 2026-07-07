@@ -32,6 +32,7 @@ export interface AsTask
 type TaskValue<item> = Data<AsTask, item>;
 
 export const Task: AsTask = data<AsTask>();
+const task_kind = Task[kind];
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));
@@ -55,18 +56,28 @@ export async function run_task<
 >(
   effect: Effect<requirements, item>,
 ): Promise<item> {
-  if (effect[0] === "pure") {
-    return effect[1];
+  let current = effect as Effect<Lift<AsTask, unknown>, unknown>;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return current[1] as item;
+      case "impure": {
+        const operation = current[1] as readonly [string, unknown];
+
+        if (operation[0] === "lift" && is_task_value(operation[1])) {
+          const lifted = current[1] as unknown as Lift<AsTask, unknown>;
+          current = current[2](await lifted[1].value()()) as Effect<
+            Lift<AsTask, unknown>,
+            unknown
+          >;
+          continue;
+        }
+
+        throw new TypeError("Unhandled effect operation");
+      }
+    }
   }
-
-  const operation = effect[1] as readonly [string, unknown];
-
-  if (operation[0] === "lift" && is_task_value(operation[1])) {
-    const lifted = effect[1] as unknown as Lift<AsTask, unknown>;
-    return await run_task(effect[2](await lifted[1].value()()));
-  }
-
-  throw new TypeError("Unhandled effect operation");
 }
 
 function is_task_value(value: unknown): value is Dictionary {
@@ -78,7 +89,7 @@ function is_task_value(value: unknown): value is Dictionary {
     return false;
   }
 
-  return (value as Dictionary)[kind] === Task[kind];
+  return (value as Dictionary)[kind] === task_kind;
 }
 
 Show.instance(Task)({
