@@ -154,6 +154,21 @@ type EffectInterpreterTarget<requirements, item> = {
   readonly effect: Effect<requirements, item>;
 };
 
+type PureEffectTarget = {
+  0: "pure";
+  1: unknown;
+};
+
+type ImpureEffectTarget = {
+  0: "impure";
+  1: unknown;
+  2: (value: unknown) => Effect<unknown, unknown>;
+};
+
+type MutableEffectInterpreterTarget = {
+  effect: Effect<unknown, unknown>;
+};
+
 export const Program = Object.assign(program, {
   scope,
 }) as ProgramConstructor;
@@ -172,11 +187,53 @@ export const Effect = {
   interpret,
 };
 
+function PureEffect(this: PureEffectTarget, value: unknown) {
+  this[0] = "pure";
+  this[1] = value;
+}
+
+PureEffect.prototype = EffectPrototype;
+
+const NewPureEffect = PureEffect as unknown as {
+  new <item>(value: item): Effect<never, item>;
+};
+
+function ImpureEffect(
+  this: ImpureEffectTarget,
+  operation: unknown,
+  resume: (value: unknown) => Effect<unknown, unknown>,
+) {
+  this[0] = "impure";
+  this[1] = operation;
+  this[2] = resume;
+}
+
+ImpureEffect.prototype = EffectPrototype;
+
+const NewImpureEffect = ImpureEffect as unknown as {
+  new <requirements, item>(
+    operation: requirements,
+    resume: (value: unknown) => Effect<requirements, item>,
+  ): Effect<requirements, item>;
+};
+
+function EffectInterpreterValue(
+  this: MutableEffectInterpreterTarget,
+  effect: Effect<unknown, unknown>,
+) {
+  this.effect = effect;
+}
+
+EffectInterpreterValue.prototype = EffectInterpreterPrototype;
+
+const NewEffectInterpreter = EffectInterpreterValue as unknown as {
+  new <requirements, item>(
+    effect: Effect<requirements, item>,
+  ): EffectInterpreter<requirements, item>;
+};
+
 export function pure<item>(value: item): Effect<never, item> {
-  return Object.assign(Object.create(EffectPrototype), {
-    0: "pure",
-    1: value,
-  }) as Effect<never, item>;
+  return new NewPureEffect(value);
 }
 
 export function from<requirements, item>(
@@ -211,11 +268,7 @@ export function suspend<requirements, item>(
   operation: requirements,
   resume: (value: unknown) => Effect<requirements, item>,
 ): Effect<requirements, item> {
-  return Object.assign(Object.create(EffectPrototype), {
-    0: "impure",
-    1: operation,
-    2: resume,
-  }) as Effect<requirements, item>;
+  return new NewImpureEffect(operation, resume);
 }
 
 export function map<requirements, from, to>(
@@ -462,9 +515,7 @@ export function handle_with(
 export function interpret<requirements, item>(
   effect: Effect<requirements, item>,
 ): EffectInterpreter<requirements, item> {
-  return Object.assign(Object.create(EffectInterpreterPrototype), {
-    effect,
-  }) as EffectInterpreter<requirements, item>;
+  return new NewEffectInterpreter(effect);
 }
 
 export function run<item>(effect: Effect<never, item>): item {

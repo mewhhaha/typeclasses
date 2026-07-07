@@ -7,6 +7,7 @@ import {
 } from "./examples.ts";
 import {
   Effect,
+  is_effect,
   type Operation as EffectOperation,
   Program,
   run,
@@ -977,6 +978,11 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
   assert_equals(to_array(result_logs), ["step:async:40"]);
 
   assert_equals(Effect.interpret(Effect.pure("done")).run(run), "done");
+  assert_true(is_effect(Effect.pure("done")), "pure values are effects");
+  assert_true(
+    is_effect(Effect.suspend(["test"], () => Effect.pure("done"))),
+    "suspended values are effects",
+  );
 });
 
 Deno.test("Effects allow new capabilities without changing the core", () => {
