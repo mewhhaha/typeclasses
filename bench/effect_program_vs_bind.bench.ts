@@ -1,4 +1,4 @@
-import { Context, Effect as Fx, Ref } from "effect";
+import * as EffectPackage from "effect";
 import * as FpRTE from "fp-ts/ReaderTaskEither";
 import * as FpSRTE from "fp-ts/StateReaderTaskEither";
 import { pipe as fp_pipe } from "fp-ts/function";
@@ -37,11 +37,20 @@ const config: EffectConfig = {
   increment: 2,
 };
 
-class FxConfig extends Context.Tag("FxConfig")<FxConfig, EffectConfig>() {}
-class FxLabelConfig
-  extends Context.Tag("FxLabelConfig")<FxLabelConfig, LabelConfig>() {}
-class FxState extends Context.Tag("FxState")<FxState, Ref.Ref<number>>() {}
-class FxLogs extends Context.Tag("FxLogs")<FxLogs, Ref.Ref<string[]>>() {}
+class FxConfig
+  extends EffectPackage.Context.Tag("FxConfig")<FxConfig, EffectConfig>() {}
+class FxLabelConfig extends EffectPackage.Context.Tag("FxLabelConfig")<
+  FxLabelConfig,
+  LabelConfig
+>() {}
+class FxState extends EffectPackage.Context.Tag("FxState")<
+  FxState,
+  EffectPackage.Ref.Ref<number>
+>() {}
+class FxLogs extends EffectPackage.Context.Tag("FxLogs")<
+  FxLogs,
+  EffectPackage.Ref.Ref<string[]>
+>() {}
 
 Deno.bench("effect Program construct+run", async () => {
   let checksum = 0;
@@ -233,7 +242,7 @@ function make_bind_program() {
 }
 
 function make_fx_label() {
-  return Fx.gen(function* () {
+  return EffectPackage.Effect.gen(function* () {
     const config = yield* FxLabelConfig;
 
     return config.label;
@@ -243,9 +252,11 @@ function make_fx_label() {
 function make_fx_async_label() {
   const label_effect = make_fx_label();
 
-  return Fx.gen(function* () {
+  return EffectPackage.Effect.gen(function* () {
     const label = yield* label_effect;
-    const suffix = yield* Fx.promise(() => Promise.resolve(":async"));
+    const suffix = yield* EffectPackage.Effect.promise(() =>
+      Promise.resolve(":async")
+    );
 
     return label + suffix;
   });
@@ -254,22 +265,26 @@ function make_fx_async_label() {
 function make_fx_program() {
   const label_effect = make_fx_async_label();
 
-  return Fx.gen(function* () {
+  return EffectPackage.Effect.gen(function* () {
     const config = yield* FxConfig;
     const state = yield* FxState;
     const logs = yield* FxLogs;
-    const before = yield* Ref.get(state);
-    const label = yield* Fx.provideService(label_effect, FxLabelConfig, {
-      label: config.label,
-    });
+    const before = yield* EffectPackage.Ref.get(state);
+    const label = yield* EffectPackage.Effect.provideService(
+      label_effect,
+      FxLabelConfig,
+      {
+        label: config.label,
+      },
+    );
 
-    yield* Ref.update(state, (value) => value + config.increment);
-    yield* Ref.update(logs, (items) => [
+    yield* EffectPackage.Ref.update(state, (value) => value + config.increment);
+    yield* EffectPackage.Ref.update(logs, (items) => [
       ...items,
       label + ":" + before.toString(),
     ]);
 
-    const after = yield* Ref.get(state);
+    const after = yield* EffectPackage.Ref.get(state);
 
     return { before, after };
   });
@@ -344,14 +359,14 @@ async function run_effect(program: ReturnType<typeof make_program>) {
 }
 
 async function run_fx(program: ReturnType<typeof make_fx_program>) {
-  return await Fx.runPromise(
-    Fx.gen(function* () {
-      const state = yield* Ref.make(40);
-      const logs = yield* Ref.make<string[]>([]);
-      const provided = Fx.provideService(
-        Fx.provideService(
-          Fx.provideService(
-            Fx.provideService(program, FxConfig, config),
+  return await EffectPackage.Effect.runPromise(
+    EffectPackage.Effect.gen(function* () {
+      const state = yield* EffectPackage.Ref.make(40);
+      const logs = yield* EffectPackage.Ref.make<string[]>([]);
+      const provided = EffectPackage.Effect.provideService(
+        EffectPackage.Effect.provideService(
+          EffectPackage.Effect.provideService(
+            EffectPackage.Effect.provideService(program, FxConfig, config),
             FxState,
             state,
           ),
@@ -362,8 +377,8 @@ async function run_fx(program: ReturnType<typeof make_fx_program>) {
         { label: config.label },
       );
       const result = yield* provided;
-      const next = yield* Ref.get(state);
-      const written = yield* Ref.get(logs);
+      const next = yield* EffectPackage.Ref.get(state);
+      const written = yield* EffectPackage.Ref.get(logs);
 
       return [[result, next], written] as const;
     }),

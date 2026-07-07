@@ -72,9 +72,9 @@ export function report_from_result(result: AnalyzeResult): AnalyzerReport {
   const [tag, payload] = result;
 
   switch (tag) {
-    case "right":
+    case "Right":
       return report_from_summary(payload);
-    case "left":
+    case "Left":
       return report_from_diagnostic(payload);
   }
 }

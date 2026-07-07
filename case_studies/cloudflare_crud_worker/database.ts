@@ -1,6 +1,5 @@
 import {
   Effect,
-  type Effect as AlgebraicEffect,
   type Operation,
   type TaggedOperation,
   type Uses,
@@ -18,40 +17,36 @@ export type DatabaseResult<item> = EitherValue<DatabaseError, item>;
 
 export type ListTodos =
   & Operation<DatabaseResult<readonly Todo[]>>
-  & {
-    readonly tag: "crud.database.list";
-  };
+  & readonly ["crud.database.list"];
 
 export type CreateTodo =
   & Operation<DatabaseResult<Todo>>
-  & {
-    readonly tag: "crud.database.create";
-    readonly input: TodoCreate;
-    readonly now: string;
-  };
+  & readonly [
+    "crud.database.create",
+    {
+      readonly input: TodoCreate;
+      readonly now: string;
+    },
+  ];
 
 export type ReadTodo =
   & Operation<DatabaseResult<Todo>>
-  & {
-    readonly tag: "crud.database.read";
-    readonly id: string;
-  };
+  & readonly ["crud.database.read", { readonly id: string }];
 
 export type UpdateTodo =
   & Operation<DatabaseResult<Todo>>
-  & {
-    readonly tag: "crud.database.update";
-    readonly id: string;
-    readonly patch: TodoPatch;
-    readonly now: string;
-  };
+  & readonly [
+    "crud.database.update",
+    {
+      readonly id: string;
+      readonly patch: TodoPatch;
+      readonly now: string;
+    },
+  ];
 
 export type DeleteTodo =
   & Operation<DatabaseResult<Todo>>
-  & {
-    readonly tag: "crud.database.delete";
-    readonly id: string;
-  };
+  & readonly ["crud.database.delete", { readonly id: string }];
 
 export type Database =
   | ListTodos
@@ -94,53 +89,44 @@ type TodoRow = {
   readonly updated_at: string;
 };
 
-export function list_todos(): AlgebraicEffect<
+export function list_todos(): Effect<
   ListTodos,
   DatabaseResult<readonly Todo[]>
 > {
-  return Effect.send({ tag: "crud.database.list" } as ListTodos);
+  return Effect.send(["crud.database.list"] as ListTodos);
 }
 
 export function create_todo(
   input: TodoCreate,
   now: string,
-): AlgebraicEffect<CreateTodo, DatabaseResult<Todo>> {
-  return Effect.send({
-    tag: "crud.database.create",
-    input,
-    now,
-  } as CreateTodo);
+): Effect<CreateTodo, DatabaseResult<Todo>> {
+  return Effect.send([
+    "crud.database.create",
+    { input, now },
+  ] as CreateTodo);
 }
 
 export function read_todo(
   id: string,
-): AlgebraicEffect<ReadTodo, DatabaseResult<Todo>> {
-  return Effect.send({
-    tag: "crud.database.read",
-    id,
-  } as ReadTodo);
+): Effect<ReadTodo, DatabaseResult<Todo>> {
+  return Effect.send(["crud.database.read", { id }] as ReadTodo);
 }
 
 export function update_todo(
   id: string,
   patch: TodoPatch,
   now: string,
-): AlgebraicEffect<UpdateTodo, DatabaseResult<Todo>> {
-  return Effect.send({
-    tag: "crud.database.update",
-    id,
-    patch,
-    now,
-  } as UpdateTodo);
+): Effect<UpdateTodo, DatabaseResult<Todo>> {
+  return Effect.send([
+    "crud.database.update",
+    { id, patch, now },
+  ] as UpdateTodo);
 }
 
 export function delete_todo(
   id: string,
-): AlgebraicEffect<DeleteTodo, DatabaseResult<Todo>> {
-  return Effect.send({
-    tag: "crud.database.delete",
-    id,
-  } as DeleteTodo);
+): Effect<DeleteTodo, DatabaseResult<Todo>> {
+  return Effect.send(["crud.database.delete", { id }] as DeleteTodo);
 }
 
 export function database_trace_scope(
@@ -148,23 +134,23 @@ export function database_trace_scope(
 ): TraceScope | undefined {
   const tagged = operation as TaggedOperation;
 
-  switch (tagged.tag) {
+  switch (tagged[0]) {
     case "crud.database.list":
       return database_scope("crud.database.list");
     case "crud.database.create":
       return database_scope("crud.database.create");
     case "crud.database.read": {
-      const read = operation as ReadTodo;
+      const [, read] = operation as ReadTodo;
 
       return database_scope("crud.database.read", { todo_id: read.id });
     }
     case "crud.database.update": {
-      const update = operation as UpdateTodo;
+      const [, update] = operation as UpdateTodo;
 
       return database_scope("crud.database.update", { todo_id: update.id });
     }
     case "crud.database.delete": {
-      const remove = operation as DeleteTodo;
+      const [, remove] = operation as DeleteTodo;
 
       return database_scope("crud.database.delete", { todo_id: remove.id });
     }
@@ -174,60 +160,60 @@ export function database_trace_scope(
 }
 
 export function run_database<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
+  effect: Effect<requirements, item>,
   runtime: DatabaseRuntime,
-): AlgebraicEffect<WithoutDatabase<requirements> | Uses<AsTask>, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+): Effect<WithoutDatabase<requirements> | Uses<AsTask>, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  switch (operation.tag) {
+  switch (operation[0]) {
     case "crud.database.list":
       return Effect.bind(
         Effect.lift(from_fn(() => runtime.list())),
-        (result) => run_database(effect.resume(result), runtime),
+        (result) => run_database(effect[2](result), runtime),
       );
     case "crud.database.create": {
-      const create = effect.operation as CreateTodo;
+      const [, create] = effect[1] as CreateTodo;
 
       return Effect.bind(
         Effect.lift(from_fn(() => runtime.create(create.input, create.now))),
-        (result) => run_database(effect.resume(result), runtime),
+        (result) => run_database(effect[2](result), runtime),
       );
     }
     case "crud.database.read": {
-      const read = effect.operation as ReadTodo;
+      const [, read] = effect[1] as ReadTodo;
 
       return Effect.bind(
         Effect.lift(from_fn(() => runtime.read(read.id))),
-        (result) => run_database(effect.resume(result), runtime),
+        (result) => run_database(effect[2](result), runtime),
       );
     }
     case "crud.database.update": {
-      const update = effect.operation as UpdateTodo;
+      const [, update] = effect[1] as UpdateTodo;
 
       return Effect.bind(
         Effect.lift(
           from_fn(() => runtime.update(update.id, update.patch, update.now)),
         ),
-        (result) => run_database(effect.resume(result), runtime),
+        (result) => run_database(effect[2](result), runtime),
       );
     }
     case "crud.database.delete": {
-      const remove = effect.operation as DeleteTodo;
+      const [, remove] = effect[1] as DeleteTodo;
 
       return Effect.bind(
         Effect.lift(from_fn(() => runtime.delete(remove.id))),
-        (result) => run_database(effect.resume(result), runtime),
+        (result) => run_database(effect[2](result), runtime),
       );
     }
   }
 
   return Effect.suspend(
-    effect.operation as WithoutDatabase<requirements>,
-    (value) => run_database(effect.resume(value), runtime),
+    effect[1] as WithoutDatabase<requirements>,
+    (value) => run_database(effect[2](value), runtime),
   );
 }
 
@@ -362,9 +348,9 @@ export function d1_database(database: D1Database): DatabaseRuntime {
       const [tag, payload] = existing.value();
 
       switch (tag) {
-        case "left":
+        case "Left":
           return existing;
-        case "right":
+        case "Right":
           break;
       }
 
@@ -393,9 +379,9 @@ export function d1_database(database: D1Database): DatabaseRuntime {
       const [tag, payload] = existing.value();
 
       switch (tag) {
-        case "left":
+        case "Left":
           return existing;
-        case "right":
+        case "Right":
           break;
       }
 
@@ -468,9 +454,9 @@ function database_result_trace_attributes(value: unknown): TraceAttributes {
   const [tag, payload] = result.value();
 
   switch (tag) {
-    case "right":
+    case "Right":
       return { result: "ok" };
-    case "left": {
+    case "Left": {
       const [error] = payload;
 
       return {

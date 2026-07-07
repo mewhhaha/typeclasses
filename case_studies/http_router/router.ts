@@ -1,8 +1,4 @@
-import type {
-  Effect as EffectValue,
-  Uses,
-  WithoutLift,
-} from "../../src/effects.ts";
+import type { Effect, Uses, WithoutLift } from "../../src/effects.ts";
 import { type AsReader, run_reader } from "../../src/reader.ts";
 import {
   type As,
@@ -262,12 +258,12 @@ export type RouteInput<
   readonly query: QueryValues<query>;
 };
 
-type RoutePage<environment, requirements, item> = EffectValue<
+type RoutePage<environment, requirements, item> = Effect<
   requirements | Uses<AsReader<environment>>,
   item
 >;
 
-type RoutedPage<environment, requirements, item> = EffectValue<
+type RoutedPage<environment, requirements, item> = Effect<
   WithoutLift<
     requirements | Uses<AsReader<environment>>,
     AsReader<environment>

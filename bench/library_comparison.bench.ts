@@ -3,11 +3,11 @@ import * as FpEither from "fp-ts/Either";
 import * as FpOption from "fp-ts/Option";
 import { pipe as fp_pipe } from "fp-ts/function";
 import { Left, Right } from "purify-ts/Either";
-import { Just, Nothing } from "purify-ts/Maybe";
+import { Just as PurifyJust, Nothing as PurifyNothing } from "purify-ts/Maybe";
 import * as TrueMaybe from "true-myth/maybe";
 import * as TrueResult from "true-myth/result";
 
-import { just, nothing } from "../src/maybe.ts";
+import { Just, Nothing } from "../src/maybe.ts";
 import { left, right } from "../src/either.ts";
 import { Applicative } from "../src/typeclasses.ts";
 import { invalid, valid } from "../src/validation.ts";
@@ -20,11 +20,11 @@ const error = "bad";
 const add_one = (value: number) => value + 1;
 const double = (value: number) => value * 2;
 
-const typeclasses_maybe_double = (value: number) => just(double(value));
+const typeclasses_maybe_double = (value: number) => Just(double(value));
 const fp_option_double = (value: number) => FpOption.some(double(value));
 const effect_option_double = (value: number) =>
   EffectOption.some(double(value));
-const purify_maybe_double = (value: number) => Just(double(value));
+const purify_maybe_double = (value: number) => PurifyJust(double(value));
 const true_maybe_double = (value: number) => TrueMaybe.just(double(value));
 
 const fp_option_map_add_one = FpOption.map(add_one);
@@ -50,7 +50,7 @@ Deno.bench("typeclasses Maybe just construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just(index);
+    current = Just(index);
   }
 
   _sink = current;
@@ -80,7 +80,7 @@ Deno.bench("purify Maybe Just construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = Just(index);
+    current = PurifyJust(index);
   }
 
   _sink = current;
@@ -100,7 +100,7 @@ Deno.bench("typeclasses Maybe just map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just(index).map(add_one).bind(typeclasses_maybe_double);
+    current = Just(index).map(add_one).bind(typeclasses_maybe_double);
   }
 
   _sink = current;
@@ -110,11 +110,11 @@ Deno.bench("typeclasses Maybe just fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just((left: number) => {
+    current = Just((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(just(index))
-      .ap(just(index + 1));
+      .ap(Just(index))
+      .ap(Just(index + 1));
   }
 
   _sink = current;
@@ -126,8 +126,8 @@ Deno.bench("typeclasses Maybe just lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      just(index),
-      just(index + 1),
+      Just(index),
+      Just(index + 1),
     );
   }
 
@@ -177,7 +177,7 @@ Deno.bench("purify Maybe Just map+chain", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = Just(index).map(add_one).chain(purify_maybe_double);
+    current = PurifyJust(index).map(add_one).chain(purify_maybe_double);
   }
 
   _sink = current;
@@ -199,7 +199,7 @@ Deno.bench("typeclasses Maybe nothing map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = nothing<number>().map(add_one).bind(typeclasses_maybe_double);
+    current = Nothing<number>().map(add_one).bind(typeclasses_maybe_double);
   }
 
   _sink = current;
@@ -209,11 +209,11 @@ Deno.bench("typeclasses Maybe nothing fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just((left: number) => {
+    current = Just((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(just(index))
-      .ap(nothing<number>());
+      .ap(Just(index))
+      .ap(Nothing<number>());
   }
 
   _sink = current;
@@ -225,8 +225,8 @@ Deno.bench("typeclasses Maybe nothing lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      just(index),
-      nothing<number>(),
+      Just(index),
+      Nothing<number>(),
     );
   }
 
@@ -274,7 +274,7 @@ Deno.bench("purify Maybe Nothing map+chain", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = Nothing.map(add_one).chain(purify_maybe_double);
+    current = PurifyNothing.map(add_one).chain(purify_maybe_double);
   }
 
   _sink = current;

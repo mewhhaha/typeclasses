@@ -104,9 +104,9 @@ function create_response(context: RequestContext) {
     const [input_tag, input_payload] = input.value();
 
     switch (input_tag) {
-      case "left":
+      case "Left":
         return problem_response(input_payload);
-      case "right":
+      case "Right":
         break;
     }
 
@@ -146,9 +146,9 @@ function update_response(context: RequestContext, id: string) {
     const [input_tag, input_payload] = input.value();
 
     switch (input_tag) {
-      case "left":
+      case "Left":
         return problem_response(input_payload);
-      case "right":
+      case "Right":
         break;
     }
 
@@ -189,9 +189,9 @@ function read_create_body(
       const [tag, payload] = parsed.value();
 
       switch (tag) {
-        case "left":
+        case "Left":
           return parsed as EitherValue<HttpProblem, TodoCreate>;
-        case "right":
+        case "Right":
           break;
       }
 
@@ -215,9 +215,9 @@ function read_patch_body(
       const [tag, payload] = parsed.value();
 
       switch (tag) {
-        case "left":
+        case "Left":
           return parsed as EitherValue<HttpProblem, TodoPatch>;
-        case "right":
+        case "Right":
           break;
       }
 
@@ -252,9 +252,9 @@ function database_response<item>(
   const [tag, payload] = result.value();
 
   switch (tag) {
-    case "left":
+    case "Left":
       return problem_response(database_problem(payload));
-    case "right":
+    case "Right":
       return respond(payload);
   }
 }

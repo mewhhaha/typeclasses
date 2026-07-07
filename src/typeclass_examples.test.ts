@@ -7,7 +7,6 @@ import {
 } from "./examples.ts";
 import {
   Effect,
-  type Effect as AlgebraicEffect,
   type Operation as EffectOperation,
   Program,
   run,
@@ -38,20 +37,14 @@ import {
 } from "./iterable.ts";
 import {
   from_array as list_from_array,
-  nil as list_nil,
+  Nil,
   to_array as list_to_array,
 } from "./list.ts";
 import {
   from_entries as map_from_entries,
   to_record as map_to_record,
 } from "./map.ts";
-import {
-  is_just as maybe_is_just,
-  is_nothing as maybe_is_nothing,
-  just as maybe_just,
-  Maybe,
-  nothing as maybe_nothing,
-} from "./maybe.ts";
+import { Just, Maybe, Nothing } from "./maybe.ts";
 import { predicate } from "./predicate.ts";
 import { ask, asks, type AsReader, local, run_reader } from "./reader.ts";
 import {
@@ -162,10 +155,10 @@ Deno.test("Typeclass definitions inherit shared prototype helpers", () => {
 });
 
 Deno.test("Show and Eq typeclasses dispatch through typeclass helpers", () => {
-  assert_equals(Show.show(maybe_just(42)), "Just(42)");
-  assert_equals(Show.show(maybe_nothing()), "Nothing");
-  assert_true(Eq.eq(maybe_just("x"), maybe_just("x")), "boxed same");
-  assert_true(!Eq.eq(maybe_just("x"), maybe_just("y")), "boxed diff");
+  assert_equals(Show.show(Just(42)), "Just(42)");
+  assert_equals(Show.show(Nothing()), "Nothing");
+  assert_true(Eq.eq(Just("x"), Just("x")), "boxed same");
+  assert_true(!Eq.eq(Just("x"), Just("y")), "boxed diff");
 
   const list = list_from_array([1, 2, 3]);
   assert_equals(Show.show(list), "[1, 2, 3]");
@@ -183,8 +176,8 @@ Deno.test("Show and Eq typeclasses dispatch through typeclass helpers", () => {
 });
 
 Deno.test("Ord compares standard contexts", () => {
-  assert_equals(Ord.compare(maybe_nothing<number>(), maybe_just(1)), "lt");
-  assert_equals(Ord.compare(maybe_just(2), maybe_just(1)), "gt");
+  assert_equals(Ord.compare(Nothing<number>(), Just(1)), "lt");
+  assert_equals(Ord.compare(Just(2), Just(1)), "gt");
   assert_equals(
     Ord.compare(either_left<string, number>("missing"), either_right(1)),
     "lt",
@@ -297,8 +290,8 @@ Deno.test("Tuple exposes pair helpers and maps over the second slot", () => {
   );
   const traversed = Traversable.traverse(
     value,
-    maybe_just(undefined),
-    (item) => maybe_just(item + 1),
+    Just(undefined),
+    (item) => Just(item + 1),
   );
   const extended = Comonad.extend(value, (wrapped) => {
     const [label, item] = wrapped.value();
@@ -324,52 +317,52 @@ Deno.test("Tuple exposes pair helpers and maps over the second slot", () => {
   );
 
   switch (traversed_tag) {
-    case "nothing":
+    case "Nothing":
       throw new Error("expected traversed tuple");
-    case "just":
+    case "Just":
       assert_equals(traversed_value.value(), tuple("count", 42).value());
       break;
   }
 });
 
 Deno.test("Tuple tagged values can be matched by tag", () => {
-  const option = match(maybe_just(42).value(), {
-    just(value) {
+  const option = match(Just(42).value(), {
+    Just(value) {
       return value + 1;
     },
-    nothing() {
+    Nothing() {
       return 0;
     },
   });
   const result = match(either_left<string, number>("missing").value(), {
-    right(value) {
+    Right(value) {
       return value.toString();
     },
-    left(message) {
+    Left(message) {
       return message;
     },
   });
-  const wrapped_option = match(maybe_just(42), {
-    just(value) {
+  const wrapped_option = match(Just(42), {
+    Just(value) {
       return value + 1;
     },
-    nothing() {
+    Nothing() {
       return 0;
     },
   });
-  const wrapped_nothing = match(maybe_nothing<number>(), {
-    just(value) {
+  const wrapped_nothing = match(Nothing<number>(), {
+    Just(value) {
       return value + 1;
     },
-    nothing() {
+    Nothing() {
       return 0;
     },
   });
   const wrapped_result = match(either_left<string, number>("missing"), {
-    right(value) {
+    Right(value) {
       return value.toString();
     },
-    left(message) {
+    Left(message) {
       return message;
     },
   });
@@ -382,41 +375,41 @@ Deno.test("Tuple tagged values can be matched by tag", () => {
 });
 
 Deno.test("Tuple tagged guards narrow Maybe and Either payloads", () => {
-  const option = maybe_just(42).value();
+  const option = Just(42).value();
   const result = either_left<string, number>("missing").value();
 
-  assert_true(maybe_is_just(option), "option is just");
-  assert_true(!maybe_is_nothing(option), "option is not nothing");
+  assert_true(Maybe.is_Just(option), "option is just");
+  assert_true(!Maybe.is_Nothing(option), "option is not nothing");
   assert_true(either_is_left(result), "result is left");
   assert_true(!either_is_right(result), "result is not right");
 
   const [maybe_tag, maybe_payload] = option;
 
   switch (maybe_tag) {
-    case "just":
+    case "Just":
       assert_equals(maybe_payload + 1, 43);
       break;
-    case "nothing":
-      assert_equals(maybe_tag, "nothing");
+    case "Nothing":
+      assert_equals(maybe_tag, "Nothing");
       break;
   }
 
   const [either_tag, either_payload] = result;
 
   switch (either_tag) {
-    case "right":
+    case "Right":
       assert_equals(either_payload + 1, 10);
       break;
-    case "left":
+    case "Left":
       assert_equals(either_payload, "missing");
       break;
   }
 });
 
 Deno.test("Functor maps values without leaving the context", () => {
-  const just = Functor.map(maybe_just(2), (value) => value + 1);
+  const just = Functor.map(Just(2), (value) => value + 1);
   const nothing = Functor.map(
-    maybe_nothing<number>(),
+    Nothing<number>(),
     (value) => value + 1,
   );
   const list = Functor.map(
@@ -432,8 +425,8 @@ Deno.test("Functor maps values without leaving the context", () => {
     (value) => value + 1,
   );
 
-  assert_equals(just.value(), maybe_just(3).value());
-  assert_equals(nothing.value(), maybe_nothing().value());
+  assert_equals(just.value(), Just(3).value());
+  assert_equals(nothing.value(), Nothing().value());
   assert_equals(list_to_array(list), [2, 4, 6]);
   assert_equals(right.value(), either_right(21).value());
   assert_equals(left.value(), either_left("missing").value());
@@ -441,12 +434,12 @@ Deno.test("Functor maps values without leaving the context", () => {
 
 Deno.test("Applicative applies contextual functions", () => {
   const option = Applicative.ap(
-    maybe_just((value: number) => value * 2),
-    maybe_just(21),
+    Just((value: number) => value * 2),
+    Just(21),
   );
   const nothing = Applicative.ap(
-    maybe_nothing<(value: number) => number>(),
-    maybe_just(21),
+    Nothing<(value: number) => number>(),
+    Just(21),
   );
   const list = Applicative.ap(
     list_from_array([
@@ -456,21 +449,21 @@ Deno.test("Applicative applies contextual functions", () => {
     list_from_array([1, 2]),
   );
 
-  assert_equals(option.value(), maybe_just(42).value());
-  assert_equals(nothing.value(), maybe_nothing().value());
+  assert_equals(option.value(), Just(42).value());
+  assert_equals(nothing.value(), Nothing().value());
   assert_equals(list_to_array(list), [2, 3, 10, 20]);
 });
 
 Deno.test("Applicative lifts independent contextual values", () => {
   const option = Applicative.lift(
     (left, right) => left + right,
-    maybe_just(20),
-    maybe_just(22),
+    Just(20),
+    Just(22),
   );
   const nothing = Applicative.lift(
     (left, right) => left + right,
-    maybe_just(20),
-    maybe_nothing<number>(),
+    Just(20),
+    Nothing<number>(),
   );
   const result = Applicative.lift(
     (left, right) => left + right,
@@ -488,8 +481,8 @@ Deno.test("Applicative lifts independent contextual values", () => {
     list_from_array([10, 20]),
   );
 
-  assert_equals(option.value(), maybe_just(42).value());
-  assert_equals(nothing.value(), maybe_nothing().value());
+  assert_equals(option.value(), Just(42).value());
+  assert_equals(nothing.value(), Nothing().value());
   assert_equals(result.value(), either_right(42).value());
   assert_equals(error.value(), either_left("missing").value());
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
@@ -498,13 +491,13 @@ Deno.test("Applicative lifts independent contextual values", () => {
 Deno.test("Applicative lift can build named structures", () => {
   const profile = Applicative.lift(
     (name, age) => ({ name, age }),
-    maybe_just("Ada"),
-    maybe_just(37),
+    Just("Ada"),
+    Just(37),
   );
   const missing = Applicative.lift(
     (name, age) => ({ name, age }),
-    maybe_just("Ada"),
-    maybe_nothing<number>(),
+    Just("Ada"),
+    Nothing<number>(),
   );
   const invalid_profile = Applicative.lift(
     (name, email, age) => ({ name, email, age }),
@@ -515,9 +508,9 @@ Deno.test("Applicative lift can build named structures", () => {
 
   assert_equals(
     profile.value(),
-    maybe_just({ name: "Ada", age: 37 }).value(),
+    Just({ name: "Ada", age: 37 }).value(),
   );
-  assert_equals(missing.value(), maybe_nothing().value());
+  assert_equals(missing.value(), Nothing().value());
   const invalid_profile_error = expect_validation_invalid(
     invalid_profile.value(),
     "expected invalid profile",
@@ -530,40 +523,42 @@ Deno.test("Applicative lift can build named structures", () => {
 });
 
 Deno.test("Maybe callable wrapper typeclasses maybe values for fluent methods", () => {
-  const value = maybe_just(41)
+  const value = Just(41)
     .map((item) => item + 1);
-  const nothing = maybe_nothing<number>()
+  const nothing = Nothing<number>()
     .map((item) => item + 1);
 
-  assert_equals(value.value(), maybe_just(42).value());
-  assert_equals(nothing.value(), maybe_nothing().value());
+  assert_equals(value.value(), Just(42).value());
+  assert_equals(nothing.value(), Nothing().value());
   assert_equals(value.show(), "Just(42)");
-  assert_true(value.eq(maybe_just(42)), "option compares");
+  assert_true(value.eq(Just(42)), "option compares");
   assert_true(
-    Maybe(["just", 42]).eq(maybe_just(42)),
+    Maybe(["Just", 42]).eq(Just(42)),
     "constructor boxes raw maybe",
   );
-  assert_true(maybe_nothing().eq(maybe_nothing()), "Nothing compares");
+  assert_equals(Just(42).value(), Just(42).value());
+  assert_equals(Nothing().value(), Nothing().value());
+  assert_true(Nothing().eq(Nothing()), "Nothing compares");
 });
 
 Deno.test("Maybe callable wrapper chains applicative ap through this", () => {
-  const direct = maybe_just((value: number) => value + 22)
-    .ap(maybe_just(20));
-  const sum = maybe_just((left: number) => {
+  const direct = Just((value: number) => value + 22)
+    .ap(Just(20));
+  const sum = Just((left: number) => {
     return (right: number) => left + right;
   })
-    .ap(maybe_just(20))
-    .ap(maybe_just(22));
+    .ap(Just(20))
+    .ap(Just(22));
 
-  const missing = maybe_just((left: number) => {
+  const missing = Just((left: number) => {
     return (right: number) => left + right;
   })
-    .ap(maybe_nothing<number>())
-    .ap(maybe_just(22));
+    .ap(Nothing<number>())
+    .ap(Just(22));
 
-  assert_equals(direct.value(), maybe_just(42).value());
-  assert_equals(sum.value(), maybe_just(42).value());
-  assert_equals(missing.value(), maybe_nothing().value());
+  assert_equals(direct.value(), Just(42).value());
+  assert_equals(sum.value(), Just(42).value());
+  assert_equals(missing.value(), Nothing().value());
 });
 
 Deno.test("Typeclass dictionary methods assert a missing receiver at runtime", () => {
@@ -583,7 +578,7 @@ Deno.test("Typeclass helpers use symbol-scoped implementations", () => {
       return "alias";
     };
 
-    const value = maybe_just(42);
+    const value = Just(42);
 
     assert_equals(value.show(), "alias");
     assert_equals(Show.show(value), "Just(42)");
@@ -622,7 +617,7 @@ Deno.test("Default data dictionaries are cached constructors", () => {
     "default dictionary should be its cached constructor",
   );
 
-  assert_equals(Maybe(["just", 42]).value(), maybe_just(42).value());
+  assert_equals(Maybe(["Just", 42]).value(), Just(42).value());
 });
 
 Deno.test("Either callable wrapper derives fluent methods from its dictionary", () => {
@@ -642,7 +637,7 @@ Deno.test("Either callable wrapper derives fluent methods from its dictionary", 
   assert_equals(value.show(), "Right(42)");
   assert_true(value.eq(either_right(42)), "either compares");
   assert_true(
-    value.eq(Either(["right", 42])),
+    value.eq(Either(["Right", 42])),
     "constructor boxes raw either",
   );
   assert_equals(parsed.value(), either_right(42).value());
@@ -674,21 +669,21 @@ Deno.test("List callable wrapper derives fluent methods from its dictionary", ()
 Deno.test("Monad chains computations that choose the next context", () => {
   function positive(value: number) {
     if (value > 0) {
-      return maybe_just(value);
+      return Just(value);
     }
 
-    return maybe_nothing<number>();
+    return Nothing<number>();
   }
 
-  const kept = Monad.bind(maybe_just(4), positive);
-  const dropped = Monad.bind(maybe_just(-1), positive);
+  const kept = Monad.bind(Just(4), positive);
+  const dropped = Monad.bind(Just(-1), positive);
   const parsed = Monad.bind(
     either_right("42"),
     (text) => either_from_number(Number.parseInt(text, 10)),
   );
 
-  assert_equals(kept.value(), maybe_just(4).value());
-  assert_equals(dropped.value(), maybe_nothing().value());
+  assert_equals(kept.value(), Just(4).value());
+  assert_equals(dropped.value(), Nothing().value());
   assert_equals(parsed.value(), either_right(42).value());
 });
 
@@ -703,7 +698,7 @@ Deno.test("Do chains monadic generator yields with bind", () => {
     account: { id: 42, active: true },
   });
   const missing = Do(function* () {
-    const value = yield* maybe_nothing<number>();
+    const value = yield* Nothing<number>();
 
     return value + 1;
   });
@@ -726,7 +721,7 @@ Deno.test("Do chains monadic generator yields with bind", () => {
     malformed.value(),
     either_left("account.id must be a string").value(),
   );
-  assert_equals(missing.value(), maybe_nothing().value());
+  assert_equals(missing.value(), Nothing().value());
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
 });
 
@@ -987,35 +982,34 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
 Deno.test("Effects allow new capabilities without changing the core", () => {
   type ClockNow =
     & EffectOperation<number>
-    & {
-      readonly tag: "clock.now";
-    };
-  type WithoutClock<requirements> = requirements extends {
-    readonly tag: "clock.now";
-  } ? never
+    & readonly ["clock.now"];
+  type WithoutClock<requirements> = requirements extends readonly [
+    "clock.now",
+    ...readonly unknown[],
+  ] ? never
     : requirements;
 
-  function now(): AlgebraicEffect<ClockNow, number> {
-    return Effect.send({ tag: "clock.now" } as ClockNow);
+  function now(): Effect<ClockNow, number> {
+    return Effect.send(["clock.now"] as ClockNow);
   }
 
   function run_clock<requirements, item>(
-    effect: AlgebraicEffect<requirements, item>,
+    effect: Effect<requirements, item>,
     current: number,
-  ): AlgebraicEffect<WithoutClock<requirements>, item> {
-    if (effect.tag === "pure") {
-      return Effect.pure(effect.value);
+  ): Effect<WithoutClock<requirements>, item> {
+    if (effect[0] === "pure") {
+      return Effect.pure(effect[1]);
     }
 
-    const operation = effect.operation as TaggedOperation;
+    const operation = effect[1] as TaggedOperation;
 
-    if (operation.tag === "clock.now") {
-      return run_clock(effect.resume(current), current);
+    if (operation[0] === "clock.now") {
+      return run_clock(effect[2](current), current);
     }
 
     return Effect.suspend(
-      effect.operation as WithoutClock<requirements>,
-      (value) => run_clock(effect.resume(value), current),
+      effect[1] as WithoutClock<requirements>,
+      (value) => run_clock(effect[2](value), current),
     );
   }
 
@@ -1101,8 +1095,8 @@ Deno.test("Stm or_else retries with the original transaction journal", () => {
 
 Deno.test("Foldable reduces values inside different contexts", () => {
   const list = list_from_array([1, 2, 3, 4]);
-  const just = maybe_just(7);
-  const nothing = maybe_nothing<number>();
+  const just = Just(7);
+  const nothing = Nothing<number>();
   const right = either_right(9);
   const left = either_left<string, number>("no value");
 
@@ -1159,17 +1153,17 @@ Deno.test("Semigroup and Monoid combine collection contexts", () => {
 });
 
 Deno.test("Alternative chooses fallback or combines list-like contexts", () => {
-  const option = Alternative.alt(maybe_nothing<number>(), maybe_just(42));
-  const kept = Alternative.alt(maybe_just(1), maybe_just(2));
+  const option = Alternative.alt(Nothing<number>(), Just(42));
+  const kept = Alternative.alt(Just(1), Just(2));
   const list = Alternative.alt(list_from_array([1, 2]), list_from_array([3]));
   const array = Alternative.alt(ArrayT([1]), ArrayT([2]));
-  const empty_option = Alternative.empty(maybe_just(0));
+  const empty_option = Alternative.empty(Just(0));
 
-  assert_equals(option.value(), maybe_just(42).value());
-  assert_equals(kept.value(), maybe_just(1).value());
+  assert_equals(option.value(), Just(42).value());
+  assert_equals(kept.value(), Just(1).value());
   assert_equals(list_to_array(list), [1, 2, 3]);
   assert_equals(to_array(array), [1, 2]);
-  assert_equals(empty_option.value(), maybe_nothing().value());
+  assert_equals(empty_option.value(), Nothing().value());
 });
 
 Deno.test("Built-in wrappers map and fold over values", () => {
@@ -1288,7 +1282,7 @@ Deno.test("Traversable flips structures through an applicative", () => {
     },
   );
   const option = Traversable.traverse(
-    maybe_just(21),
+    Just(21),
     ArrayT<unknown>([]),
     (value) => ArrayT([value, value * 2]),
   );
@@ -1351,7 +1345,7 @@ Deno.test("Traversable flips structures through an applicative", () => {
   assert_equals(record.value(), either_left("negative: -1").value());
   assert_equals(
     to_array(option).map((value) => value.value()),
-    [maybe_just(21).value(), maybe_just(42).value()],
+    [Just(21).value(), Just(42).value()],
   );
   assert_equals(map_to_record(map_result), { x: 2, y: 3 });
   assert_equals(to_array(empty_array_result), []);
@@ -1361,19 +1355,19 @@ Deno.test("Traversable flips structures through an applicative", () => {
 });
 
 Deno.test("Generic helpers work against typeclass interfaces", () => {
-  const option = label_values(maybe_just(5));
+  const option = label_values(Just(5));
   const list = label_values(list_from_array([1, 2]));
   const result = label_values(either_right(3));
 
-  assert_equals(option.value(), maybe_just("value:5").value());
+  assert_equals(option.value(), Just("value:5").value());
   assert_equals(list_to_array(list), ["value:1", "value:2"]);
   assert_equals(result.value(), either_right("value:3").value());
   assert_equals(sum_values(list_from_array([1, 2, 3])), 6);
 });
 
 Deno.test("Generic applicative helper combines contextual values", () => {
-  const option = add_values(maybe_just(20), maybe_just(22));
-  const nothing = add_values(maybe_just(20), maybe_nothing<number>());
+  const option = add_values(Just(20), Just(22));
+  const nothing = add_values(Just(20), Nothing<number>());
   const result = add_values(either_right(40), either_right(2));
   const left = add_values(
     either_left<string, number>("missing"),
@@ -1384,8 +1378,8 @@ Deno.test("Generic applicative helper combines contextual values", () => {
     list_from_array([2, 20]),
   );
 
-  assert_equals(option.value(), maybe_just(42).value());
-  assert_equals(nothing.value(), maybe_nothing().value());
+  assert_equals(option.value(), Just(42).value());
+  assert_equals(nothing.value(), Nothing().value());
   assert_equals(result.value(), either_right(42).value());
   assert_equals(left.value(), either_left("missing").value());
   assert_equals(list_to_array(list), [3, 21, 12, 30]);
@@ -1393,8 +1387,8 @@ Deno.test("Generic applicative helper combines contextual values", () => {
 
 Deno.test("Generic monad helper lets each context define failure", () => {
   const option = keep_positive(
-    maybe_just(-1),
-    () => maybe_nothing(),
+    Just(-1),
+    () => Nothing(),
   );
   const result = keep_positive(
     either_right(-1),
@@ -1402,10 +1396,10 @@ Deno.test("Generic monad helper lets each context define failure", () => {
   );
   const list = keep_positive(
     list_from_array([2, -1, 3]),
-    () => list_nil(),
+    () => Nil(),
   );
 
-  assert_equals(option.value(), maybe_nothing().value());
+  assert_equals(option.value(), Nothing().value());
   assert_equals(result.value(), either_left("negative: -1").value());
   assert_equals(list_to_array(list), [2, 3]);
 });
@@ -1476,9 +1470,9 @@ function expect_either_right<item, error>(
   const [tag, payload] = result;
 
   switch (tag) {
-    case "right":
+    case "Right":
       return payload;
-    case "left":
+    case "Left":
       throw new Error(message);
   }
 }

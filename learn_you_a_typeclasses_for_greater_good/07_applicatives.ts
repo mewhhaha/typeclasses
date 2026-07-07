@@ -1,5 +1,5 @@
 import { assert_equals } from "../src/assert.ts";
-import { just, nothing } from "../src/maybe.ts";
+import { Just, Nothing } from "../src/maybe.ts";
 import { Applicative } from "../src/typeclasses.ts";
 import { invalid, valid } from "../src/validation.ts";
 
@@ -11,13 +11,13 @@ type User = {
 export function lesson_07_applicatives() {
   const sum = Applicative.lift(
     (left: number, right: number) => left + right,
-    just(20),
-    just(22),
+    Just(20),
+    Just(22),
   );
   const missing = Applicative.lift(
     (left: number, right: number) => left + right,
-    just(20),
-    nothing<number>(),
+    Just(20),
+    Nothing<number>(),
   );
   const user = Applicative.lift(
     make_user,
@@ -31,8 +31,8 @@ export function lesson_07_applicatives() {
   );
   const [error_tag, messages] = errors.value();
 
-  assert_equals(sum.value(), just(42).value());
-  assert_equals(missing.value(), nothing().value());
+  assert_equals(sum.value(), Just(42).value());
+  assert_equals(missing.value(), Nothing().value());
   assert_equals(user.value()[0], "valid");
   assert_equals(error_tag, "invalid");
   assert_equals(messages, ["name is required", "age is required"]);

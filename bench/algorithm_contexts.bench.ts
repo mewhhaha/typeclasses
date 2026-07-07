@@ -6,7 +6,7 @@ import {
 } from "../src/iterable.ts";
 import { type AsList, from_array as list_from_array } from "../src/list.ts";
 import { from_entries as map_from_entries } from "../src/map.ts";
-import { type AsMaybe, just } from "../src/maybe.ts";
+import { type AsMaybe, Just } from "../src/maybe.ts";
 import { from_entries as record_from_entries } from "../src/record.ts";
 import { type AsEither, right } from "../src/either.ts";
 import { from_iterable as set_from_iterable } from "../src/set.ts";
@@ -81,10 +81,10 @@ const record_events = record_from_entries(
 );
 const set_events = set_from_iterable(events);
 
-const maybe_event = just(events[0]);
-const maybe_id = just(1);
-const maybe_weight = just(10);
-const maybe_active = just(true);
+const maybe_event = Just(events[0]);
+const maybe_id = Just(1);
+const maybe_weight = Just(10);
+const maybe_active = Just(true);
 
 const either_event = right(events[0]);
 const either_id = right(1);
@@ -571,14 +571,14 @@ function iterable_active_for(
 }
 
 function maybe_weight_for(id: number): Data<AsMaybe, number> {
-  return just(id * 10);
+  return Just(id * 10);
 }
 
 function maybe_active_for(
   id: number,
   weight: number,
 ): Data<AsMaybe, boolean> {
-  return just(weight % 2 === 0 && id % 2 === 1);
+  return Just(weight % 2 === 0 && id % 2 === 1);
 }
 
 function either_weight_for(id: number): Data<AsEither, number> {

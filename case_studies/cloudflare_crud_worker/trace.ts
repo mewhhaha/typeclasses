@@ -1,7 +1,6 @@
 import { ArrayT, type AsArray } from "../../src/array.ts";
 import {
   Effect,
-  type Effect as AlgebraicEffect,
   type Operation,
   type TaggedOperation,
   type Uses,
@@ -15,11 +14,13 @@ export type TraceAttributes = Readonly<
 
 export type TraceEvent =
   & Operation<void>
-  & {
-    readonly tag: "trace.event";
-    readonly name: string;
-    readonly attributes: TraceAttributes;
-  };
+  & readonly [
+    "trace.event",
+    {
+      readonly name: string;
+      readonly attributes: TraceAttributes;
+    },
+  ];
 
 export type Trace = TraceEvent;
 
@@ -48,28 +49,24 @@ type WithoutTrace<requirements> = requirements extends Trace ? never
 export function trace_event(
   name: string,
   attributes: TraceAttributes = {},
-): AlgebraicEffect<TraceEvent, void> {
-  return Effect.send({
-    tag: "trace.event",
-    name,
-    attributes,
-  } as TraceEvent);
+): Effect<TraceEvent, void> {
+  return Effect.send(["trace.event", { name, attributes }] as TraceEvent);
 }
 
 export function run_trace_scopes<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
+  effect: Effect<requirements, item>,
   select_scope: TraceScopeSelector<requirements>,
-): AlgebraicEffect<requirements | Trace, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+): Effect<requirements | Trace, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const scope = select_scope(effect.operation);
+  const scope = select_scope(effect[1]);
 
   if (scope === undefined) {
     return Effect.suspend(
-      effect.operation as requirements | Trace,
-      (value) => run_trace_scopes(effect.resume(value), select_scope),
+      effect[1] as requirements | Trace,
+      (value) => run_trace_scopes(effect[2](value), select_scope),
     );
   }
 
@@ -77,58 +74,58 @@ export function run_trace_scopes<requirements, item>(
     trace_event(scope.name + ".start", scope.attributes),
     () =>
       Effect.suspend(
-        effect.operation as requirements | Trace,
+        effect[1] as requirements | Trace,
         (value) =>
           Effect.bind(
             trace_event(
               scope.name + ".finish",
               trace_scope_finish_attributes(scope, value),
             ),
-            () => run_trace_scopes(effect.resume(value), select_scope),
+            () => run_trace_scopes(effect[2](value), select_scope),
           ),
       ),
   );
 }
 
 export function run_trace_to_writer<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
-): AlgebraicEffect<
+  effect: Effect<requirements, item>,
+): Effect<
   WithoutTrace<requirements> | Uses<AsWriter<AsArray, string>>,
   item
 > {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  if (operation.tag === "trace.event") {
-    const trace = effect.operation as TraceEvent;
+  if (operation[0] === "trace.event") {
+    const trace = effect[1] as TraceEvent;
 
     return Effect.bind(
       Effect.lift(tell(ArrayT([format_trace(trace)]))),
-      () => run_trace_to_writer(effect.resume(undefined)),
+      () => run_trace_to_writer(effect[2](undefined)),
     );
   }
 
   return Effect.suspend(
-    effect.operation as WithoutTrace<requirements>,
-    (value) => run_trace_to_writer(effect.resume(value)),
+    effect[1] as WithoutTrace<requirements>,
+    (value) => run_trace_to_writer(effect[2](value)),
   );
 }
 
 export function run_trace_with_sink<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
+  effect: Effect<requirements, item>,
   sink: TraceSink,
-): AlgebraicEffect<WithoutTrace<requirements> | Uses<AsTask>, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+): Effect<WithoutTrace<requirements> | Uses<AsTask>, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  if (operation.tag === "trace.event") {
-    const trace = effect.operation as TraceEvent;
+  if (operation[0] === "trace.event") {
+    const [, trace] = effect[1] as TraceEvent;
 
     return Effect.bind(
       Effect.lift(
@@ -139,13 +136,13 @@ export function run_trace_with_sink<requirements, item>(
           })
         ),
       ),
-      () => run_trace_with_sink(effect.resume(undefined), sink),
+      () => run_trace_with_sink(effect[2](undefined), sink),
     );
   }
 
   return Effect.suspend(
-    effect.operation as WithoutTrace<requirements>,
-    (value) => run_trace_with_sink(effect.resume(value), sink),
+    effect[1] as WithoutTrace<requirements>,
+    (value) => run_trace_with_sink(effect[2](value), sink),
   );
 }
 
@@ -159,9 +156,11 @@ export function console_trace_sink(): TraceSink {
 }
 
 export function format_trace(record: TraceEvent): string {
+  const [, payload] = record;
+
   return format_trace_record({
-    name: record.name,
-    attributes: record.attributes,
+    name: payload.name,
+    attributes: payload.attributes,
   });
 }
 

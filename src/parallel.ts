@@ -1,6 +1,5 @@
 import {
   Effect,
-  type Effect as AlgebraicEffect,
   type Operation,
   type TaggedOperation,
   type Uses,
@@ -10,12 +9,20 @@ import type { Data } from "./typeclass.ts";
 
 export type ParallelMap<input, output> =
   & Operation<readonly output[]>
-  & {
-    readonly tag: "parallel.map";
-    readonly worker: string;
-    readonly inputs: readonly input[];
-    readonly workers: number | undefined;
-  };
+  & readonly [
+    "parallel.map",
+    {
+      readonly worker: string;
+      readonly inputs: readonly input[];
+      readonly workers: number | undefined;
+    },
+  ];
+
+type ParallelMapPayload<input> = {
+  readonly worker: string;
+  readonly inputs: readonly input[];
+  readonly workers: number | undefined;
+};
 
 export type Parallel = ParallelMap<unknown, unknown>;
 
@@ -60,13 +67,15 @@ export function parallel_map<input, output>(
   worker: string | URL,
   inputs: readonly input[],
   options: ParallelOptions = {},
-): AlgebraicEffect<ParallelMap<input, output>, readonly output[]> {
-  return Effect.send({
-    tag: "parallel.map",
-    worker: worker_href(worker),
-    inputs,
-    workers: options.workers,
-  } as ParallelMap<input, output>);
+): Effect<ParallelMap<input, output>, readonly output[]> {
+  return Effect.send([
+    "parallel.map",
+    {
+      worker: worker_href(worker),
+      inputs,
+      workers: options.workers,
+    },
+  ] as ParallelMap<input, output>);
 }
 
 export function worker_map<input, output>(
@@ -78,41 +87,41 @@ export function worker_map<input, output>(
 }
 
 export function run_parallel<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
-): AlgebraicEffect<WithoutParallel<requirements> | Uses<AsTask>, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+  effect: Effect<requirements, item>,
+): Effect<WithoutParallel<requirements> | Uses<AsTask>, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  if (operation.tag === "parallel.map") {
-    const map = effect.operation as ParallelMap<unknown, unknown>;
+  if (operation[0] === "parallel.map") {
+    const [, map] = effect[1] as ParallelMap<unknown, unknown>;
 
     return Effect.bind(
       Effect.lift(worker_map(map.worker, map.inputs, { workers: map.workers })),
-      (result) => run_parallel(effect.resume(result)),
+      (result) => run_parallel(effect[2](result)),
     );
   }
 
   return Effect.suspend(
-    effect.operation as WithoutParallel<requirements>,
-    (value) => run_parallel(effect.resume(value)),
+    effect[1] as WithoutParallel<requirements>,
+    (value) => run_parallel(effect[2](value)),
   );
 }
 
 export function run_parallel_with_pool<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
+  effect: Effect<requirements, item>,
   pool: WorkerPool<unknown, unknown>,
-): AlgebraicEffect<WithoutParallel<requirements> | Uses<AsTask>, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+): Effect<WithoutParallel<requirements> | Uses<AsTask>, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  if (operation.tag === "parallel.map") {
-    const map = effect.operation as ParallelMap<unknown, unknown>;
+  if (operation[0] === "parallel.map") {
+    const [, map] = effect[1] as ParallelMap<unknown, unknown>;
     let task = worker_map(map.worker, map.inputs, { workers: map.workers });
 
     if (map.worker === pool.worker) {
@@ -121,13 +130,13 @@ export function run_parallel_with_pool<requirements, item>(
 
     return Effect.bind(
       Effect.lift(task),
-      (result) => run_parallel_with_pool(effect.resume(result), pool),
+      (result) => run_parallel_with_pool(effect[2](result), pool),
     );
   }
 
   return Effect.suspend(
-    effect.operation as WithoutParallel<requirements>,
-    (value) => run_parallel_with_pool(effect.resume(value), pool),
+    effect[1] as WithoutParallel<requirements>,
+    (value) => run_parallel_with_pool(effect[2](value), pool),
   );
 }
 

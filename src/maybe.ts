@@ -1,9 +1,12 @@
 import {
+  $slot,
   type As,
   type Data,
   data,
   type type_data,
   type type_item,
+  union,
+  type UnionDictionary,
 } from "./typeclass.ts";
 import {
   Alternative,
@@ -20,11 +23,11 @@ import {
 } from "./typeclasses.ts";
 
 export type Maybe<item> =
-  | readonly ["just", item]
+  | Just<item>
   | Nothing;
 
-export type Just<item> = readonly ["just", item];
-export type Nothing = readonly ["nothing"];
+export type Just<item> = readonly ["Just", item];
+export type Nothing = readonly ["Nothing"];
 
 export interface AsMaybe
   extends
@@ -42,43 +45,29 @@ export interface AsMaybe
   readonly [type_data]: Maybe<this[typeof type_item]>;
 }
 
-type MaybeValue<item> = Data<AsMaybe, item>;
+export type MaybeValue<item> = Data<AsMaybe, item>;
+export type MaybeConstructor = UnionDictionary<AsMaybe>;
 
-export const Maybe: AsMaybe = data<AsMaybe>();
-const nothing_value = Maybe(maybe_nothing<never>());
+export const Maybe: MaybeConstructor = data<AsMaybe>(
+  union(["Just", $slot], ["Nothing"]),
+);
+export const Just: MaybeConstructor["Just"] = Maybe.Just;
+export const Nothing: MaybeConstructor["Nothing"] = Maybe.Nothing;
 
-export function just<item>(value: item): MaybeValue<item> {
-  return Maybe(maybe_just(value));
-}
-
-export function nothing<item = never>(): MaybeValue<item> {
-  return nothing_value as MaybeValue<item>;
-}
-
-export function is_just<item>(value: Maybe<item>): value is Just<item> {
-  const [tag] = value;
-
-  return tag === "just";
-}
-
-export function is_nothing<item>(value: Maybe<item>): value is Nothing {
-  const [tag] = value;
-
-  return tag === "nothing";
-}
+const nothing_singleton = Nothing<never>();
 
 export function from_nullable<item>(
   value: item | null | undefined,
 ): MaybeValue<item> {
   if (value === null) {
-    return nothing<item>();
+    return nothing_value();
   }
 
   if (value === undefined) {
-    return nothing<item>();
+    return nothing_value();
   }
 
-  return Maybe(maybe_just<item>(value));
+  return Just(value);
 }
 
 Show.instance(Maybe)({
@@ -86,9 +75,9 @@ Show.instance(Maybe)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "just":
+      case "Just":
         return "Just(" + Deno.inspect(payload) + ")";
-      case "nothing":
+      case "Nothing":
         return "Nothing";
     }
   },
@@ -100,13 +89,13 @@ Eq.instance(Maybe)({
     const [right_tag, right_payload] = right.value();
 
     switch (left_tag) {
-      case "nothing":
-        return right_tag === "nothing";
-      case "just":
+      case "Nothing":
+        return right_tag === "Nothing";
+      case "Just":
         switch (right_tag) {
-          case "nothing":
+          case "Nothing":
             return false;
-          case "just":
+          case "Just":
             return Object.is(left_payload, right_payload);
         }
     }
@@ -119,14 +108,14 @@ Ord.instance(Maybe)({
     const [right_tag, right_payload] = right.value();
 
     switch (left_tag) {
-      case "nothing":
-        if (right_tag === "nothing") {
+      case "Nothing":
+        if (right_tag === "Nothing") {
           return "eq";
         }
 
         return "lt";
-      case "just":
-        if (right_tag === "nothing") {
+      case "Just":
+        if (right_tag === "Nothing") {
           return "gt";
         }
 
@@ -137,47 +126,63 @@ Ord.instance(Maybe)({
 
 Functor.instance(Maybe)({
   map(fn) {
+    if (is_Nothing_value(this)) {
+      return same_context(this);
+    }
+
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return same_context(this);
-      case "just":
-        return just(fn(payload));
+      case "Just":
+        return Just(fn(payload));
     }
   },
 });
 
 Applicative.instance(Maybe)({
   pure(value) {
-    return just(value);
+    return Just(value);
   },
 
   [applicative_lift_method](fn, rest) {
+    if (is_Nothing_value(this)) {
+      return same_context(this);
+    }
+
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return same_context(this);
-      case "just":
+      case "Just":
         return lift_just(fn, payload, rest);
     }
   },
 
   ap(value) {
+    if (is_Nothing_value(this)) {
+      return same_context(this);
+    }
+
     const [fn_tag, fn] = this.value();
 
     switch (fn_tag) {
-      case "nothing":
+      case "Nothing":
         return same_context(this);
-      case "just": {
+      case "Just": {
+        if (is_Nothing_value(value)) {
+          return same_context(value);
+        }
+
         const [maybe_tag, maybe] = value.value();
 
         switch (maybe_tag) {
-          case "nothing":
+          case "Nothing":
             return same_context(value);
-          case "just":
-            return just(fn(maybe));
+          case "Just":
+            return Just(fn(maybe));
         }
       }
     }
@@ -186,16 +191,20 @@ Applicative.instance(Maybe)({
 
 Alternative.instance(Maybe)({
   empty() {
-    return nothing();
+    return nothing_value();
   },
 
   alt(right) {
+    if (is_Nothing_value(this)) {
+      return right;
+    }
+
     const [tag] = this.value();
 
     switch (tag) {
-      case "just":
+      case "Just":
         return same_context(this);
-      case "nothing":
+      case "Nothing":
         return right;
     }
   },
@@ -203,12 +212,16 @@ Alternative.instance(Maybe)({
 
 Monad.instance(Maybe)({
   bind(fn) {
+    if (is_Nothing_value(this)) {
+      return same_context(this);
+    }
+
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return same_context(this);
-      case "just":
+      case "Just":
         return fn(payload);
     }
   },
@@ -216,12 +229,16 @@ Monad.instance(Maybe)({
 
 Foldable.instance(Maybe)({
   fold(initial, fn) {
+    if (is_Nothing_value(this)) {
+      return initial;
+    }
+
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return initial;
-      case "just":
+      case "Just":
         return fn(initial, payload);
     }
   },
@@ -229,24 +246,20 @@ Foldable.instance(Maybe)({
 
 Traversable.instance(Maybe)({
   traverse(applicative, fn) {
+    if (is_Nothing_value(this)) {
+      return Applicative.pure(applicative, nothing_value());
+    }
+
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "nothing":
-        return Applicative.pure(applicative, nothing());
-      case "just":
-        return Functor.map(fn(payload), (value) => just(value));
+      case "Nothing":
+        return Applicative.pure(applicative, nothing_value());
+      case "Just":
+        return Functor.map(fn(payload), (value) => Just(value));
     }
   },
 });
-
-function maybe_just<item>(value: item): Just<item> {
-  return ["just", value];
-}
-
-function maybe_nothing<item = never>(): Maybe<item> {
-  return ["nothing"];
-}
 
 function lift_just<out>(
   fn: (...values: unknown[]) => out,
@@ -255,15 +268,19 @@ function lift_just<out>(
 ): MaybeValue<out> {
   switch (rest.length) {
     case 0:
-      return just(fn(first));
+      return Just(fn(first));
     case 1: {
+      if (is_Nothing_value(rest[0])) {
+        return same_context(rest[0]);
+      }
+
       const [tag, payload] = rest[0].value();
 
       switch (tag) {
-        case "nothing":
+        case "Nothing":
           return same_context(rest[0]);
-        case "just":
-          return just(fn(first, payload));
+        case "Just":
+          return Just(fn(first, payload));
       }
     }
   }
@@ -271,18 +288,30 @@ function lift_just<out>(
   const values = [first];
 
   for (const current of rest) {
+    if (is_Nothing_value(current)) {
+      return same_context(current);
+    }
+
     const [tag, payload] = current.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return same_context(current);
-      case "just":
+      case "Just":
         values.push(payload);
         break;
     }
   }
 
-  return just(fn(...values));
+  return Just(fn(...values));
+}
+
+function nothing_value<item>(): MaybeValue<item> {
+  return nothing_singleton as MaybeValue<item>;
+}
+
+function is_Nothing_value(value: unknown): value is MaybeValue<never> {
+  return value === nothing_singleton;
 }
 
 function same_context<out>(value: unknown): out {

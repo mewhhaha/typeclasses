@@ -1,8 +1,4 @@
-import {
-  type Effect as EffectValue,
-  Program,
-  type Uses,
-} from "../../src/effects.ts";
+import { type Effect, Program, type Uses } from "../../src/effects.ts";
 import { ask, type AsReader, run_reader } from "../../src/reader.ts";
 import {
   emit_body,
@@ -17,7 +13,7 @@ import {
 } from "./response.ts";
 import { format_route_rejection, type RouteRejection } from "./router.ts";
 
-export type Handler<input> = EffectValue<
+export type Handler<input> = Effect<
   HttpBody | Uses<AsReader<input>>,
   HttpMetadata
 >;

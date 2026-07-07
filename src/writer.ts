@@ -100,30 +100,27 @@ export function run_writer<
   WithoutLift<requirements, AsWriter<output, log>>,
   readonly [item, Data<output, log>]
 > {
-  if (effect.tag === "pure") {
-    return pure([effect.value, empty] as const);
+  if (effect[0] === "pure") {
+    return pure([effect[1], empty] as const);
   }
 
-  const operation = effect.operation as {
-    readonly tag?: string;
-    readonly value?: unknown;
-  };
+  const operation = effect[1] as readonly [string, unknown];
 
-  if (operation.tag === "lift" && is_writer_value(operation.value)) {
-    const lifted = effect.operation as unknown as Lift<
+  if (operation[0] === "lift" && is_writer_value(operation[1])) {
+    const lifted = effect[1] as unknown as Lift<
       AsWriter<output, log>,
       unknown
     >;
-    const [value, next_output] = lifted.value.value();
+    const [value, next_output] = lifted[1].value();
     return run_writer(
-      effect.resume(value),
+      effect[2](value),
       concat_output(empty, next_output),
     );
   }
 
   return suspend(
-    effect.operation as WithoutLift<requirements, AsWriter<output, log>>,
-    (value) => run_writer(effect.resume(value), empty),
+    effect[1] as WithoutLift<requirements, AsWriter<output, log>>,
+    (value) => run_writer(effect[2](value), empty),
   ) as Effect<
     WithoutLift<requirements, AsWriter<output, log>>,
     readonly [item, Data<output, log>]

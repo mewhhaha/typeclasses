@@ -2,13 +2,7 @@ import {
   type AsAsyncIterable,
   from_factory as async_iterable,
 } from "../../src/async_iterable.ts";
-import {
-  Effect,
-  type Effect as EffectValue,
-  Program,
-  run,
-  type Uses,
-} from "../../src/effects.ts";
+import { Effect, Program, run, type Uses } from "../../src/effects.ts";
 import { type AsWriter, run_writer, tell } from "../../src/writer.ts";
 
 export type HttpBody = Uses<AsWriter<AsAsyncIterable, string>>;
@@ -18,7 +12,7 @@ export type HttpMetadata = {
   readonly content_type: string;
 };
 
-export type HttpProgram = EffectValue<HttpBody, HttpMetadata>;
+export type HttpProgram = Effect<HttpBody, HttpMetadata>;
 
 const empty_body = async_iterable<string>(async function* () {});
 

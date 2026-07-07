@@ -15,16 +15,13 @@ export type Operation<item> = {
 type OperationOutput<operation> = operation extends Operation<infer item> ? item
   : never;
 
-export type TaggedOperation = {
-  readonly tag: string;
-};
+export type TaggedOperation<tag extends string = string> =
+  | readonly [tag]
+  | readonly [tag, unknown];
 
 export type Lift<dictionary extends Dictionary, item> =
   & Operation<item>
-  & {
-    readonly tag: "lift";
-    readonly value: Data<dictionary, item>;
-  };
+  & readonly ["lift", Data<dictionary, item>];
 
 export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
   dictionary,
@@ -32,14 +29,14 @@ export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
 >;
 
 type Pure<item> = {
-  readonly tag: "pure";
-  readonly value: item;
+  readonly 0: "pure";
+  readonly 1: item;
 };
 
 type Impure<requirements, item> = {
-  readonly tag: "impure";
-  readonly operation: requirements;
-  resume(value: unknown): Effect<requirements, item>;
+  readonly 0: "impure";
+  readonly 1: requirements;
+  readonly 2: (value: unknown) => Effect<requirements, item>;
 };
 
 type EffectBase<requirements, item> = {
@@ -175,8 +172,8 @@ export const Effect = {
 
 export function pure<item>(value: item): Effect<never, item> {
   return Object.assign(Object.create(EffectPrototype), {
-    tag: "pure",
-    value,
+    0: "pure",
+    1: value,
   }) as Effect<never, item>;
 }
 
@@ -194,7 +191,7 @@ export function lift<dictionary extends Dictionary, item>(
   value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item> {
   return suspend(
-    { tag: "lift", value } as Lift<dictionary, item>,
+    ["lift", value] as Lift<dictionary, item>,
     resume_pure,
   ) as Effect<Lift<dictionary, item>, item>;
 }
@@ -213,9 +210,9 @@ export function suspend<requirements, item>(
   resume: (value: unknown) => Effect<requirements, item>,
 ): Effect<requirements, item> {
   return Object.assign(Object.create(EffectPrototype), {
-    tag: "impure",
-    operation,
-    resume,
+    0: "impure",
+    1: operation,
+    2: resume,
   }) as Effect<requirements, item>;
 }
 
@@ -223,12 +220,12 @@ export function map<requirements, from, to>(
   effect: Effect<requirements, from>,
   fn: (value: from) => to,
 ): Effect<requirements, to> {
-  if (effect.tag === "pure") {
-    return pure(fn(effect.value));
+  if (effect[0] === "pure") {
+    return pure(fn(effect[1]));
   }
 
-  return suspend(effect.operation, (value) => {
-    return map(effect.resume(value), fn);
+  return suspend(effect[1], (value) => {
+    return map(effect[2](value), fn);
   });
 }
 
@@ -236,12 +233,12 @@ export function bind<left, from, right, to>(
   effect: Effect<left, from>,
   fn: (value: from) => Effect<right, to>,
 ): Effect<left | right, to> {
-  if (effect.tag === "pure") {
-    return fn(effect.value) as Effect<left | right, to>;
+  if (effect[0] === "pure") {
+    return fn(effect[1]) as Effect<left | right, to>;
   }
 
-  return suspend(effect.operation, (value) => {
-    return bind(effect.resume(value), fn);
+  return suspend(effect[1], (value) => {
+    return bind(effect[2](value), fn);
   });
 }
 
@@ -422,12 +419,12 @@ export function interpret<requirements, item>(
 }
 
 export function run<item>(effect: Effect<never, item>): item {
-  if (effect.tag === "pure") {
-    return effect.value;
+  if (effect[0] === "pure") {
+    return effect[1];
   }
 
-  const operation = effect.operation as unknown as TaggedOperation;
-  throw new TypeError("Unhandled effect operation: " + operation.tag);
+  const operation = effect[1] as unknown as TaggedOperation;
+  throw new TypeError("Unhandled effect operation: " + operation[0]);
 }
 
 export function handle_lift<
@@ -442,20 +439,20 @@ export function handle_lift<
   state: state,
   handler: LiftHandler<dictionary, state, item, out>,
 ): Effect<WithoutLift<requirements, dictionary>, out> {
-  if (effect.tag === "pure") {
-    return pure(handler.done(effect.value, state));
+  if (effect[0] === "pure") {
+    return pure(handler.done(effect[1], state));
   }
 
-  if (is_lift_of(effect.operation, runtime_kind)) {
-    const operation = effect.operation as unknown as Lift<dictionary, unknown>;
-    const [value, next] = handler.handle(operation.value, state);
+  if (is_lift_of(effect[1], runtime_kind)) {
+    const operation = effect[1] as unknown as Lift<dictionary, unknown>;
+    const [value, next] = handler.handle(operation[1], state);
 
-    return handle_lift(effect.resume(value), runtime_kind, next, handler);
+    return handle_lift(effect[2](value), runtime_kind, next, handler);
   }
 
   return suspend(
-    effect.operation as WithoutLift<requirements, dictionary>,
-    (value) => handle_lift(effect.resume(value), runtime_kind, state, handler),
+    effect[1] as WithoutLift<requirements, dictionary>,
+    (value) => handle_lift(effect[2](value), runtime_kind, state, handler),
   );
 }
 
@@ -539,7 +536,7 @@ export function is_lift_of<dictionary extends Dictionary>(
     return false;
   }
 
-  const value = (operation as { readonly value?: unknown }).value;
+  const value = operation[1];
 
   if (typeof value !== "object") {
     return false;
@@ -555,7 +552,7 @@ export function is_lift_of<dictionary extends Dictionary>(
 export function has_tag<tag extends string>(
   operation: unknown,
   tag: tag,
-): operation is TaggedOperation & { readonly tag: tag } {
+): operation is TaggedOperation<tag> {
   if (typeof operation !== "object") {
     return false;
   }
@@ -564,7 +561,7 @@ export function has_tag<tag extends string>(
     return false;
   }
 
-  return (operation as TaggedOperation).tag === tag;
+  return (operation as TaggedOperation)[0] === tag;
 }
 
 function as_effect<requirements, item>(
@@ -576,7 +573,7 @@ function as_effect<requirements, item>(
 
   if (is_data(value)) {
     return suspend(
-      { tag: "lift", value } as Lift<Dictionary, item>,
+      ["lift", value] as unknown as Lift<Dictionary, item>,
       resume_pure,
     ) as Effect<requirements, item>;
   }

@@ -75,27 +75,24 @@ export function run_state<requirements, state, item>(
   effect: Effect<requirements, item>,
   state: state,
 ): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
-  if (effect.tag === "pure") {
-    return pure([effect.value, state] as const);
+  if (effect[0] === "pure") {
+    return pure([effect[1], state] as const);
   }
 
-  const operation = effect.operation as {
-    readonly tag?: string;
-    readonly value?: unknown;
-  };
+  const operation = effect[1] as readonly [string, unknown];
 
-  if (operation.tag === "lift" && is_state_value(operation.value)) {
-    const lifted = effect.operation as unknown as Lift<
+  if (operation[0] === "lift" && is_state_value(operation[1])) {
+    const lifted = effect[1] as unknown as Lift<
       AsState<state>,
       unknown
     >;
-    const [value, next] = lifted.value.value()(state);
-    return run_state(effect.resume(value), next);
+    const [value, next] = lifted[1].value()(state);
+    return run_state(effect[2](value), next);
   }
 
   return suspend(
-    effect.operation as WithoutLift<requirements, AsState<state>>,
-    (value) => run_state(effect.resume(value), state),
+    effect[1] as WithoutLift<requirements, AsState<state>>,
+    (value) => run_state(effect[2](value), state),
   ) as Effect<
     WithoutLift<requirements, AsState<state>>,
     readonly [item, state]

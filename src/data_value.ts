@@ -1,4 +1,5 @@
 const data_constructor_key = Symbol("Data.constructor");
+const data_marker = Symbol("Data.marker");
 const data_prototype_key = Symbol("Data.prototype");
 const data_value = Symbol("Data.value");
 const has_own = Object.prototype.hasOwnProperty;
@@ -44,6 +45,21 @@ type DataDictionary<dictionary extends object = object> = object & {
   [data_constructor_key]?: DataConstructor<dictionary>;
   [data_prototype_key]?: object;
 };
+
+export function cache_data_constructor<dictionary extends object>(
+  dictionary: dictionary,
+  construct_data: DataConstructor<dictionary>,
+): void {
+  Object.defineProperty(dictionary, data_constructor_key, {
+    value: construct_data,
+  });
+}
+
+export function mark_data_prototype(prototype: object): void {
+  Object.defineProperty(prototype, data_marker, {
+    value: true,
+  });
+}
 
 export function wrap_data<dictionary extends object, value, item = unknown>(
   dictionary: dictionary,
@@ -143,7 +159,7 @@ export function is_data(
     return false;
   }
 
-  return has_own.call(value, data_value);
+  return has_own.call(value, data_value) || data_marker in value;
 }
 
 function data_prototype(dictionary: object): object {

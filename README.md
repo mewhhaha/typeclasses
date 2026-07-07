@@ -38,7 +38,7 @@ so the first run may download `fp-ts`, `effect`, `purify-ts`, and `true-myth`.
 Use the package from JSR with explicit imports:
 
 ```ts
-import { Do, just, nothing, Show } from "jsr:@mewhhaha/typeclasses";
+import { Do, Just, Nothing, Show } from "jsr:@mewhhaha/typeclasses";
 ```
 
 The published package exposes two entrypoints:
@@ -52,9 +52,10 @@ Before publishing, run the dry-run task:
 deno task publish:dry-run
 ```
 
-The publish tasks intentionally do not use `--allow-slow-types`. Public exports
-carry explicit types so Deno can generate package docs and Node declaration
-files.
+The publish tasks intentionally do not use `--allow-slow-types`. That is why
+repository source files sometimes spell out exported constructor aliases and
+return types that an application would normally let TypeScript infer. Public
+library exports need stable declaration output; app-local definitions do not.
 
 The package is MIT licensed.
 
@@ -66,13 +67,17 @@ and `src/data_value.ts`. Application-level typeclass definitions live in
 
 Each data type exports a type and a same-named function. The function wraps an
 existing contextual value as a fluent `WrappedData<dictionary, value, item>` and
-also acts as the data dictionary. Constructors and other helpers are normal
-exported functions that return wrapped values.
+also acts as the data dictionary. Tuple-tagged data can use `data(union(...))`
+to generate constructors like `Just(...)` and guards like `Maybe.is_Just(...)`
+from the raw value shape.
 
 Each data type declares its raw value shape directly on its dictionary interface
 with type-only phantom symbols. That maps the contextual `item` to the raw value
 the dictionary wraps, so `Data<typeof Maybe, item>` can recover that `Maybe`
 stores `Maybe<item>` without a global registry or a public kind symbol.
+
+In application code, you usually do not need to write the export-safe aliases
+used inside this library. A local data type can be left mostly inferred:
 
 Typeclass instance methods receive the wrapped value as `this`. The installer
 stores that this-based instance in the canonical symbol slot and exposes direct
@@ -82,43 +87,36 @@ sharing a runtime property.
 
 ```ts
 import {
+  $slot,
   type As,
-  type Data,
   data,
   type type_data,
   type type_item,
+  union,
 } from "./typeclass.ts";
 import { Monad, Show } from "./typeclasses.ts";
 
-export type Maybe<item> =
-  | readonly ["just", item]
-  | readonly ["nothing"];
+type Maybe<item> =
+  | readonly ["Just", item]
+  | readonly ["Nothing"];
 
-export interface AsMaybe extends As<AsMaybe>, Show<AsMaybe>, Monad<AsMaybe> {
+interface AsMaybe extends As<AsMaybe>, Show<AsMaybe>, Monad<AsMaybe> {
   readonly [type_item]: unknown;
   readonly [type_data]: Maybe<this[typeof type_item]>;
 }
 
-export const Maybe: AsMaybe = data<AsMaybe>();
-
-export function just<item>(
-  value: item,
-): Data<AsMaybe, item> {
-  return Maybe(["just", value]);
-}
-
-export function nothing<item = never>(): Data<AsMaybe, item> {
-  return Maybe(["nothing"]);
-}
+const Maybe = data<AsMaybe>(union(["Just", $slot], ["Nothing"]));
+const Just = Maybe.Just;
+const Nothing = Maybe.Nothing;
 
 Show.instance(Maybe)({
   show() {
     const [tag, value] = this.value();
 
     switch (tag) {
-      case "nothing":
+      case "Nothing":
         return "Nothing";
-      case "just":
+      case "Just":
         return "Just(" + value + ")";
     }
   },
@@ -129,14 +127,25 @@ Monad.instance(Maybe)({
     const [tag, value] = this.value();
 
     switch (tag) {
-      case "nothing":
-        return nothing();
-      case "just":
+      case "Nothing":
+        return Nothing();
+      case "Just":
         return fn(value);
     }
   },
 });
+
+const raw = Just(42).value();
+
+if (Maybe.is_Just(raw)) {
+  raw[1]; // number
+}
 ```
+
+In this repository's source you may still see aliases such as
+`MaybeConstructor = UnionDictionary<AsMaybe>`. Those are declaration-friendly
+export annotations for publishing without `--allow-slow-types`; they are not
+part of the normal application authoring style.
 
 See `src/maybe.ts`, `src/either.ts`, `src/identity.ts`, `src/predicate.ts`,
 `src/fn.ts`, `src/tuple.ts`, `src/list.ts`, `src/task.ts`, `src/array.ts`,
@@ -147,14 +156,14 @@ See `src/maybe.ts`, `src/either.ts`, `src/identity.ts`, `src/predicate.ts`,
 Wrapped values chain directly through the implemented typeclasses:
 
 ```ts
-const sum = just((left: number) => {
+const sum = Just((left: number) => {
   return (right: number) => left + right;
 })
-  .ap(just(20))
-  .ap(just(22));
+  .ap(Just(20))
+  .ap(Just(22));
 
-sum.value(); // ["just", 42]
-sum.eq(just(42)); // true
+sum.value(); // ["Just", 42]
+sum.eq(Just(42)); // true
 ```
 
 If the wrapped raw value is a function, the wrapper also exposes `.run(...)` as
@@ -260,7 +269,7 @@ const parsed = right("42").bind((text) => {
   return from_number(Number.parseInt(text, 10));
 });
 
-parsed.value(); // ["right", 42]
+parsed.value(); // ["Right", 42]
 ```
 
 `Either` does not fix the error payload to `string`; `left(value)` keeps the
@@ -272,13 +281,13 @@ Data constructors use tuple tags. Deconstruct the raw value and switch on the
 tag when you want direct branching:
 
 ```ts
-const [tag, value] = just(42).value();
+const [tag, value] = Just(42).value();
 
 switch (tag) {
-  case "nothing":
+  case "Nothing":
     value; // undefined
     break;
-  case "just":
+  case "Just":
     value; // number
     break;
 }
@@ -288,9 +297,9 @@ For expression-style branching, use the `match` helper. The handler record must
 cover every tag in the value:
 
 ```ts
-const label = match(just(42), {
-  nothing: () => "missing",
-  just: (value) => "value:" + value.toString(),
+const label = match(Just(42), {
+  Nothing: () => "missing",
+  Just: (value) => "value:" + value.toString(),
 });
 ```
 
@@ -305,7 +314,7 @@ const decoded = Do(function* () {
   return number + 1;
 });
 
-decoded.value(); // ["right", 43]
+decoded.value(); // ["Right", 43]
 ```
 
 `Task` shows the same typeclass shape for deferred async work:
@@ -461,8 +470,8 @@ fmap (+1) (Just 41)
 ```
 
 ```ts
-Functor.map(just(41), (value) => value + 1);
-just(41).map((value) => value + 1);
+Functor.map(Just(41), (value) => value + 1);
+Just(41).map((value) => value + 1);
 ```
 
 ### Applicative
@@ -474,15 +483,15 @@ just(41).map((value) => value + 1);
 ```ts
 Applicative.lift(
   (left, right) => left + right,
-  just(20),
-  just(22),
+  Just(20),
+  Just(22),
 );
 
-just((left: number) => {
+Just((left: number) => {
   return (right: number) => left + right;
 })
-  .ap(just(20))
-  .ap(just(22));
+  .ap(Just(20))
+  .ap(Just(22));
 ```
 
 The applicative API is explicit TypeScript: use `Applicative.lift` when the
@@ -534,20 +543,20 @@ function read_port(text: string) {
   const port = Number.parseInt(text, 10);
 
   if (!Number.isInteger(port)) {
-    return nothing<number>();
+    return Nothing<number>();
   }
 
-  return just(port);
+  return Just(port);
 }
 
 function safe_port(text: string) {
   return read_port(text)
     .bind((port) => {
       if (port > 0) {
-        return just(port);
+        return Just(port);
       }
 
-      return nothing();
+      return Nothing();
     });
 }
 ```
@@ -574,7 +583,7 @@ maximum [20, 42]
 ```
 
 ```ts
-Ord.compare(just(2), just(1)); // "gt"
+Ord.compare(Just(2), Just(1)); // "gt"
 Ord.max(identity(20), identity(42)).value(); // 42
 ```
 
@@ -767,8 +776,8 @@ Traversable.traverse(
 );
 
 Traversable.sequence(
-  ArrayT([just(1), just(2), just(3)]),
-  just(undefined),
+  ArrayT([Just(1), Just(2), Just(3)]),
+  Just(undefined),
 );
 ```
 
@@ -819,7 +828,7 @@ Nothing <|> Just 42
 ```
 
 ```ts
-Alternative.alt(nothing<number>(), just(42));
+Alternative.alt(Nothing<number>(), Just(42));
 
 Alternative.alt(
   ArrayT([1, 2]),
@@ -1305,7 +1314,7 @@ against constructor-cache variants and cheaper construction shapes. Each
 benchmark iteration performs 10,000 inner-loop constructions or read cycles:
 
 - raw maybe payload construction
-- current `just(...)`, `Maybe(raw)`, and `as_data(dictionary, raw)` construction
+- current `Just(...)`, `Maybe(raw)`, and `as_data(dictionary, raw)` construction
 - cached `as_data_cached(dictionary)(raw)` construction
 - WeakMap, hidden-symbol, and lazy self-replacing constructor-cache variants
 - tuple `[dictionary, raw]` construction

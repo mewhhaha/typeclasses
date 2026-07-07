@@ -1,5 +1,5 @@
 import { type EitherValue, right } from "../src/either.ts";
-import { type AsMaybe, just, Maybe, nothing } from "../src/maybe.ts";
+import { type AsMaybe, Just, Maybe, Nothing } from "../src/maybe.ts";
 import type { Data } from "../src/typeclass.ts";
 import { Do, Functor, Monad } from "../src/typeclasses.ts";
 
@@ -8,14 +8,14 @@ const chain_length = 20;
 const do_length = 8;
 let _sink = 0;
 
-type RawMaybe<item> = readonly ["just", item] | readonly ["nothing"];
+type RawMaybe<item> = readonly ["Just", item] | readonly ["Nothing"];
 
 const add_one = (value: number) => value + 1;
-const typeclasses_next = (value: number) => just(add_one(value));
+const typeclasses_next = (value: number) => Just(add_one(value));
 const typeclasses_either_next = (value: number) => right(add_one(value));
 
-const maybe_functor = Functor.instance_for(just(0));
-const maybe_monad = Monad.instance_for(just(0));
+const maybe_functor = Functor.instance_for(Just(0));
+const maybe_monad = Monad.instance_for(Just(0));
 const maybe_map = maybe_functor.map as (
   this: Data<AsMaybe, number>,
   fn: (value: number) => number,
@@ -39,7 +39,7 @@ Deno.bench("breakdown typeclasses just construction", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume_typeclasses(just(index));
+    checksum += consume_typeclasses(Just(index));
   }
 
   _sink = checksum;
@@ -49,7 +49,7 @@ Deno.bench("breakdown typeclasses direct Maybe construction", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume_typeclasses(Maybe(["just", index]));
+    checksum += consume_typeclasses(Maybe(["Just", index]));
   }
 
   _sink = checksum;
@@ -59,7 +59,7 @@ Deno.bench("breakdown typeclasses nothing reuse", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume_typeclasses(nothing<number>());
+    checksum += consume_typeclasses(Nothing<number>());
   }
 
   _sink = checksum;
@@ -77,7 +77,7 @@ Deno.bench("breakdown raw tuple value read", () => {
 });
 
 Deno.bench("breakdown typeclasses value() read", () => {
-  const value = just(1);
+  const value = Just(1);
   let checksum = 0;
 
   for (let index = 0; index < iterations * chain_length; index += 1) {
@@ -107,7 +107,7 @@ Deno.bench("breakdown typeclasses fluent map chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.map(add_one);
@@ -123,7 +123,7 @@ Deno.bench("breakdown typeclasses cached map.call chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = maybe_map.call(value, add_one);
@@ -139,7 +139,7 @@ Deno.bench("breakdown typeclasses Functor.map chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = Functor.map(value, add_one);
@@ -171,7 +171,7 @@ Deno.bench("breakdown typeclasses fluent bind chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.bind(typeclasses_next);
@@ -187,7 +187,7 @@ Deno.bench("breakdown typeclasses cached bind.call chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = maybe_bind.call(value, typeclasses_next);
@@ -203,7 +203,7 @@ Deno.bench("breakdown typeclasses Monad.bind chain", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = Monad.bind(value, typeclasses_next);
@@ -219,10 +219,10 @@ Deno.bench("breakdown typeclasses manual bind do-shape", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < do_length; step += 1) {
-      value = value.bind((item) => just(add_one(item)));
+      value = value.bind((item) => Just(add_one(item)));
     }
 
     checksum += consume_typeclasses(value.map((item) => item * 2));
@@ -236,10 +236,10 @@ Deno.bench("breakdown typeclasses Do generator", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     const value = Do(function* () {
-      let item = yield* just(index);
+      let item = yield* Just(index);
 
       for (let step = 0; step < do_length; step += 1) {
-        item = yield* just(add_one(item));
+        item = yield* Just(add_one(item));
       }
 
       return item * 2;
@@ -255,7 +255,7 @@ Deno.bench("breakdown monomorphic Maybe bind call site", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = bind_maybe_call_site(value);
@@ -291,7 +291,7 @@ Deno.bench("breakdown mixed Maybe/Either bind call site", () => {
     let next: (value: number) => MixedBindable;
 
     if (index % 2 === 0) {
-      value = just(index) as MixedBindable;
+      value = Just(index) as MixedBindable;
       next = mixed_maybe_next;
     } else {
       value = right(index) as MixedBindable;
@@ -309,7 +309,7 @@ Deno.bench("breakdown mixed Maybe/Either bind call site", () => {
 });
 
 function raw_just<item>(item: item): RawMaybe<item> {
-  return ["just", item];
+  return ["Just", item];
 }
 
 type MixedBindable = {
@@ -337,7 +337,7 @@ function bind_mixed_call_site(
 }
 
 function mixed_maybe_next(value: number): MixedBindable {
-  return just(add_one(value)) as MixedBindable;
+  return Just(add_one(value)) as MixedBindable;
 }
 
 function mixed_either_next(value: number): MixedBindable {
@@ -351,9 +351,9 @@ function raw_map<from, to>(
   const [tag, payload] = value;
 
   switch (tag) {
-    case "just":
+    case "Just":
       return raw_just(fn(payload));
-    case "nothing":
+    case "Nothing":
       return value;
   }
 }
@@ -365,9 +365,9 @@ function raw_bind<from, to>(
   const [tag, payload] = value;
 
   switch (tag) {
-    case "just":
+    case "Just":
       return fn(payload);
-    case "nothing":
+    case "Nothing":
       return value;
   }
 }
@@ -380,9 +380,9 @@ function consume_raw(value: RawMaybe<number>): number {
   const [tag, payload] = value;
 
   switch (tag) {
-    case "just":
+    case "Just":
       return payload;
-    case "nothing":
+    case "Nothing":
       return 0;
   }
 }
@@ -391,9 +391,9 @@ function consume_typeclasses(value: Data<AsMaybe, number>): number {
   const [tag, payload] = value.value();
 
   switch (tag) {
-    case "just":
+    case "Just":
       return payload;
-    case "nothing":
+    case "Nothing":
       return 0;
   }
 }
@@ -402,9 +402,9 @@ function consume_either(value: EitherValue<never, number>): number {
   const [tag, payload] = value.value();
 
   switch (tag) {
-    case "right":
+    case "Right":
       return payload;
-    case "left":
+    case "Left":
       return 0;
   }
 }
@@ -413,11 +413,11 @@ function consume_mixed(value: MixedBindable): number {
   const [tag, payload] = value.value();
 
   switch (tag) {
-    case "just":
-    case "right":
+    case "Just":
+    case "Right":
       return payload as number;
-    case "nothing":
-    case "left":
+    case "Nothing":
+    case "Left":
       return 0;
     default:
       return 0;

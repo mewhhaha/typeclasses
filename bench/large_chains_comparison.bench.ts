@@ -2,7 +2,11 @@ import { Either as EffectEither, Option as EffectOption } from "effect";
 import * as FpEither from "fp-ts/Either";
 import * as FpOption from "fp-ts/Option";
 import { type Either as PurifyEither, Left, Right } from "purify-ts/Either";
-import { Just, type Maybe as PurifyMaybe, Nothing } from "purify-ts/Maybe";
+import {
+  Just as PurifyJust,
+  type Maybe as PurifyMaybe,
+  Nothing as PurifyNothing,
+} from "purify-ts/Maybe";
 import * as TrueMaybe from "true-myth/maybe";
 import * as TrueResult from "true-myth/result";
 
@@ -12,7 +16,7 @@ import {
   right as typeclasses_right,
 } from "../src/either.ts";
 import type { AsMaybe } from "../src/maybe.ts";
-import { just, nothing } from "../src/maybe.ts";
+import { Just, Nothing } from "../src/maybe.ts";
 import type { Data } from "../src/typeclass.ts";
 import { Applicative, Do } from "../src/typeclasses.ts";
 
@@ -33,10 +37,10 @@ const sum_numbers = (values: readonly number[]) => {
   return sum;
 };
 
-const typeclasses_maybe_next = (value: number) => just(add_one(value));
+const typeclasses_maybe_next = (value: number) => Just(add_one(value));
 const fp_option_next = (value: number) => FpOption.some(add_one(value));
 const effect_option_next = (value: number) => EffectOption.some(add_one(value));
-const purify_maybe_next = (value: number) => Just(add_one(value));
+const purify_maybe_next = (value: number) => PurifyJust(add_one(value));
 const true_maybe_next = (value: number) => TrueMaybe.just(add_one(value));
 
 const fp_option_map_add_one = FpOption.map(add_one);
@@ -63,9 +67,9 @@ function consume_typeclasses_maybe(value: Data<AsMaybe, number>): number {
   const [tag, payload] = value.value();
 
   switch (tag) {
-    case "just":
+    case "Just":
       return payload;
-    case "nothing":
+    case "Nothing":
       return 0;
   }
 }
@@ -100,9 +104,9 @@ function consume_typeclasses_either(value: Data<AsEither, number>): number {
   const [tag, payload] = value.value();
 
   switch (tag) {
-    case "right":
+    case "Right":
       return payload;
-    case "left":
+    case "Left":
       return 0;
   }
 }
@@ -137,7 +141,7 @@ Deno.bench("large Maybe map chain typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.map(add_one);
@@ -185,7 +189,7 @@ Deno.bench("large Maybe map chain purify", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = Just(index);
+    let value = PurifyJust(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.map(add_one);
@@ -217,7 +221,7 @@ Deno.bench("large Maybe bind chain typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = just(index);
+    let value = Just(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.bind(typeclasses_maybe_next);
@@ -265,7 +269,7 @@ Deno.bench("large Maybe bind chain purify", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = Just(index);
+    let value = PurifyJust(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.chain(purify_maybe_next);
@@ -298,10 +302,10 @@ Deno.bench("large Maybe Do typeclasses", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     const current = Do(function* () {
-      let value = yield* just(index);
+      let value = yield* Just(index);
 
       for (let step = 0; step < do_length; step += 1) {
-        value = yield* just(add_one(value));
+        value = yield* Just(add_one(value));
       }
 
       return double(value);
@@ -351,12 +355,12 @@ Deno.bench("large Maybe lift6 typeclasses", () => {
   for (let index = 0; index < iterations; index += 1) {
     const current = Applicative.lift(
       (...values) => sum_numbers(values as readonly number[]),
-      just(index),
-      just(index + 1),
-      just(index + 2),
-      just(index + 3),
-      just(index + 4),
-      just(index + 5),
+      Just(index),
+      Just(index + 1),
+      Just(index + 2),
+      Just(index + 3),
+      Just(index + 4),
+      Just(index + 5),
     );
 
     checksum += consume_typeclasses_maybe(current);
@@ -412,7 +416,7 @@ Deno.bench("large Maybe nothing bind chain typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = nothing<number>();
+    let value = Nothing<number>();
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.bind(typeclasses_maybe_next);
@@ -460,7 +464,7 @@ Deno.bench("large Maybe nothing bind chain purify", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value: PurifyMaybe<number> = Nothing;
+    let value: PurifyMaybe<number> = PurifyNothing;
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.chain(purify_maybe_next);
@@ -742,15 +746,15 @@ Deno.bench("large Either map chain true-myth", () => {
 });
 
 function maybe_do_transformed(index: number): Data<AsMaybe, number> {
-  return just(index).bind((value_1) => {
-    return just(add_one(value_1)).bind((value_2) => {
-      return just(add_one(value_2)).bind((value_3) => {
-        return just(add_one(value_3)).bind((value_4) => {
-          return just(add_one(value_4)).bind((value_5) => {
-            return just(add_one(value_5)).bind((value_6) => {
-              return just(add_one(value_6)).bind((value_7) => {
-                return just(add_one(value_7)).bind((value_8) => {
-                  return just(add_one(value_8)).map((value_9) => {
+  return Just(index).bind((value_1) => {
+    return Just(add_one(value_1)).bind((value_2) => {
+      return Just(add_one(value_2)).bind((value_3) => {
+        return Just(add_one(value_3)).bind((value_4) => {
+          return Just(add_one(value_4)).bind((value_5) => {
+            return Just(add_one(value_5)).bind((value_6) => {
+              return Just(add_one(value_6)).bind((value_7) => {
+                return Just(add_one(value_7)).bind((value_8) => {
+                  return Just(add_one(value_8)).map((value_9) => {
                     return double(value_9);
                   });
                 });

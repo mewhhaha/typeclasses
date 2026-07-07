@@ -55,18 +55,15 @@ export async function run_task<
 >(
   effect: Effect<requirements, item>,
 ): Promise<item> {
-  if (effect.tag === "pure") {
-    return effect.value;
+  if (effect[0] === "pure") {
+    return effect[1];
   }
 
-  const operation = effect.operation as {
-    readonly tag?: string;
-    readonly value?: unknown;
-  };
+  const operation = effect[1] as readonly [string, unknown];
 
-  if (operation.tag === "lift" && is_task_value(operation.value)) {
-    const lifted = effect.operation as unknown as Lift<AsTask, unknown>;
-    return await run_task(effect.resume(await lifted.value.value()()));
+  if (operation[0] === "lift" && is_task_value(operation[1])) {
+    const lifted = effect[1] as unknown as Lift<AsTask, unknown>;
+    return await run_task(effect[2](await lifted[1].value()()));
   }
 
   throw new TypeError("Unhandled effect operation");

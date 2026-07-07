@@ -73,29 +73,26 @@ export function run_reader<requirements, environment, item>(
   effect: Effect<requirements, item>,
   environment: environment,
 ): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
-  if (effect.tag === "pure") {
-    return pure(effect.value);
+  if (effect[0] === "pure") {
+    return pure(effect[1]);
   }
 
-  const operation = effect.operation as {
-    readonly tag?: string;
-    readonly value?: unknown;
-  };
+  const operation = effect[1] as readonly [string, unknown];
 
-  if (operation.tag === "lift" && is_reader_value(operation.value)) {
-    const lifted = effect.operation as unknown as Lift<
+  if (operation[0] === "lift" && is_reader_value(operation[1])) {
+    const lifted = effect[1] as unknown as Lift<
       AsReader<environment>,
       unknown
     >;
     return run_reader(
-      effect.resume(lifted.value.value()(environment)),
+      effect[2](lifted[1].value()(environment)),
       environment,
     );
   }
 
   return suspend(
-    effect.operation as WithoutLift<requirements, AsReader<environment>>,
-    (value) => run_reader(effect.resume(value), environment),
+    effect[1] as WithoutLift<requirements, AsReader<environment>>,
+    (value) => run_reader(effect[2](value), environment),
   ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
 }
 

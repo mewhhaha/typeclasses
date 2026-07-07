@@ -1,4 +1,4 @@
-import { just, Maybe, type Maybe as MaybeContext } from "../src/maybe.ts";
+import { Just, Maybe, type Maybe as MaybeContext } from "../src/maybe.ts";
 import { as_data, as_data_cached, type WrappedData } from "../src/typeclass.ts";
 
 // Each benchmark iteration performs this many constructions or read cycles.
@@ -77,11 +77,11 @@ Deno.bench("raw maybe payload construction", () => {
   _sink = current;
 });
 
-Deno.bench("current just() value construction", () => {
+Deno.bench("current Just() value construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = just(index);
+    current = Just(index);
   }
 
   _sink = current;
@@ -268,7 +268,7 @@ Deno.bench("prototype symbol object value() read", () => {
 });
 
 function raw_just(value: number): BenchValue {
-  return ["just", value];
+  return ["Just", value];
 }
 
 function weakmap_cached_as_data<dictionary extends object, value>(

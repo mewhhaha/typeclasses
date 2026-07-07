@@ -1,8 +1,11 @@
 import {
+  $slot,
   type As,
   data,
   type type_data,
   type type_item,
+  union,
+  type UnionDictionary,
   type WrappedData,
 } from "./typeclass.ts";
 import {
@@ -24,8 +27,8 @@ export type Either<left, right> =
   | Left<left>
   | Right<right>;
 
-export type Left<left = string> = readonly ["left", left];
-export type Right<right> = readonly ["right", right];
+export type Left<left = string> = readonly ["Left", left];
+export type Right<right> = readonly ["Right", right];
 
 export interface AsEither
   extends
@@ -50,22 +53,26 @@ export type EitherValue<left, right> = WrappedData<
   right
 >;
 
-type EitherConstructor =
-  & AsEither
+export type EitherConstructor =
+  & UnionDictionary<AsEither>
   & {
     <left, right>(value: Either<left, right>): EitherValue<left, right>;
   };
 
-export const Either = data<AsEither>() as EitherConstructor;
+export const Either: EitherConstructor = data<AsEither>(
+  union(["Left", $slot], ["Right", $slot]),
+) as EitherConstructor;
+export const Right: EitherConstructor["Right"] = Either.Right;
+export const Left: EitherConstructor["Left"] = Either.Left;
 
 export function right<right>(value: right): EitherValue<never, right> {
-  return Either(either_right(value)) as EitherValue<never, right>;
+  return Right(value) as EitherValue<never, right>;
 }
 
 export function left<left = string, right = never>(
   value: left,
 ): EitherValue<left, right> {
-  return Either(either_left<left, right>(value)) as EitherValue<left, right>;
+  return Left(value) as EitherValue<left, right>;
 }
 
 export function is_left<left, right>(
@@ -73,7 +80,7 @@ export function is_left<left, right>(
 ): value is Left<left> {
   const [tag] = value;
 
-  return tag === "left";
+  return tag === "Left";
 }
 
 export function is_right<left, right>(
@@ -81,7 +88,7 @@ export function is_right<left, right>(
 ): value is Right<right> {
   const [tag] = value;
 
-  return tag === "right";
+  return tag === "Right";
 }
 
 export function from_number(value: number): EitherValue<string, number> {
@@ -97,9 +104,9 @@ Show.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "right":
+      case "Right":
         return "Right(" + Deno.inspect(payload) + ")";
-      case "left":
+      case "Left":
         return "Left(" + Deno.inspect(payload) + ")";
     }
   },
@@ -111,14 +118,14 @@ Eq.instance(Either)({
     const [right_tag, right_payload] = right.value();
 
     switch (left_tag) {
-      case "left":
-        if (right_tag === "left") {
+      case "Left":
+        if (right_tag === "Left") {
           return Object.is(left_payload, right_payload);
         }
 
         return false;
-      case "right":
-        if (right_tag === "left") {
+      case "Right":
+        if (right_tag === "Left") {
           return false;
         }
 
@@ -133,14 +140,14 @@ Ord.instance(Either)({
     const [right_tag, right_payload] = right.value();
 
     switch (left_tag) {
-      case "left":
-        if (right_tag === "left") {
+      case "Left":
+        if (right_tag === "Left") {
           return compare_unknown(left_payload, right_payload);
         }
 
         return "lt";
-      case "right":
-        if (right_tag === "left") {
+      case "Right":
+        if (right_tag === "Left") {
           return "gt";
         }
 
@@ -158,9 +165,9 @@ Bifunctor.instance(Either)({
     const [tag, payload] = this.value() as Either<left, right>;
 
     switch (tag) {
-      case "left":
+      case "Left":
         return unknown_typeclass<next_right>(left(map_left(payload)));
-      case "right":
+      case "Right":
         return unknown_typeclass<next_right>(right(map_right(payload)));
     }
   },
@@ -171,9 +178,9 @@ Functor.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return same_context(this);
-      case "right":
+      case "Right":
         return right(fn(payload));
     }
   },
@@ -188,9 +195,9 @@ Applicative.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return same_context(this);
-      case "right":
+      case "Right":
         return lift_right(fn, payload, rest);
     }
   },
@@ -199,15 +206,15 @@ Applicative.instance(Either)({
     const [fn_tag, fn] = this.value();
 
     switch (fn_tag) {
-      case "left":
+      case "Left":
         return same_context(this);
-      case "right": {
+      case "Right": {
         const [either_tag, either] = value.value();
 
         switch (either_tag) {
-          case "left":
+          case "Left":
             return same_context(value);
-          case "right":
+          case "Right":
             return right(fn(either));
         }
       }
@@ -220,9 +227,9 @@ Monad.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return same_context(this);
-      case "right":
+      case "Right":
         return fn(payload);
     }
   },
@@ -237,9 +244,9 @@ MonadError.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return handler(payload);
-      case "right":
+      case "Right":
         return same_context(this);
     }
   },
@@ -250,9 +257,9 @@ Foldable.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return initial;
-      case "right":
+      case "Right":
         return fn(initial, payload);
     }
   },
@@ -263,23 +270,13 @@ Traversable.instance(Either)({
     const [tag, payload] = this.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return Applicative.pure(applicative, left(payload));
-      case "right":
+      case "Right":
         return Functor.map(fn(payload), (value) => right(value));
     }
   },
 });
-
-function either_right<right>(value: right): Right<right> {
-  return ["right", value];
-}
-
-function either_left<left = string, right = never>(
-  value: left,
-): Either<left, right> {
-  return ["left", value];
-}
 
 function lift_right<out>(
   fn: (...values: unknown[]) => out,
@@ -293,9 +290,9 @@ function lift_right<out>(
       const [tag, payload] = rest[0].value();
 
       switch (tag) {
-        case "left":
+        case "Left":
           return same_context(rest[0]);
-        case "right":
+        case "Right":
           return right(fn(first, payload)) as EitherValue<unknown, out>;
       }
     }
@@ -307,9 +304,9 @@ function lift_right<out>(
     const [tag, payload] = current.value();
 
     switch (tag) {
-      case "left":
+      case "Left":
         return same_context(current);
-      case "right":
+      case "Right":
         values.push(payload);
         break;
     }

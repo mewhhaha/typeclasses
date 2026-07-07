@@ -1,6 +1,5 @@
 import {
   Effect,
-  type Effect as AlgebraicEffect,
   type Operation,
   type TaggedOperation,
 } from "../../src/effects.ts";
@@ -9,11 +8,13 @@ import type { AnalyzeResult, SourceFile } from "./types.ts";
 
 export type AnalyzeSources =
   & Operation<readonly AnalyzeResult[]>
-  & {
-    readonly tag: "parallel_analyzer.analyze_sources";
-    readonly files: readonly SourceFile[];
-    readonly workers: number | undefined;
-  };
+  & readonly [
+    "parallel_analyzer.analyze_sources",
+    {
+      readonly files: readonly SourceFile[];
+      readonly workers: number | undefined;
+    },
+  ];
 
 export type AnalyzeSourcesOptions = {
   readonly workers?: number;
@@ -26,26 +27,25 @@ type WithoutAnalyzeSources<requirements> = requirements extends AnalyzeSources
 export function analyze_sources(
   files: readonly SourceFile[],
   options: AnalyzeSourcesOptions = {},
-): AlgebraicEffect<AnalyzeSources, readonly AnalyzeResult[]> {
-  return Effect.send({
-    tag: "parallel_analyzer.analyze_sources",
-    files,
-    workers: options.workers,
-  } as AnalyzeSources);
+): Effect<AnalyzeSources, readonly AnalyzeResult[]> {
+  return Effect.send([
+    "parallel_analyzer.analyze_sources",
+    { files, workers: options.workers },
+  ] as AnalyzeSources);
 }
 
 export function run_analyze_sources_with_workers<requirements, item>(
-  effect: AlgebraicEffect<requirements, item>,
+  effect: Effect<requirements, item>,
   worker: string | URL,
-): AlgebraicEffect<WithoutAnalyzeSources<requirements> | Parallel, item> {
-  if (effect.tag === "pure") {
-    return Effect.pure(effect.value);
+): Effect<WithoutAnalyzeSources<requirements> | Parallel, item> {
+  if (effect[0] === "pure") {
+    return Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as TaggedOperation;
+  const operation = effect[1] as TaggedOperation;
 
-  if (operation.tag === "parallel_analyzer.analyze_sources") {
-    const analyze = effect.operation as AnalyzeSources;
+  if (operation[0] === "parallel_analyzer.analyze_sources") {
+    const [, analyze] = effect[1] as AnalyzeSources;
 
     return Effect.bind(
       parallel_map<SourceFile, AnalyzeResult>(worker, analyze.files, {
@@ -53,7 +53,7 @@ export function run_analyze_sources_with_workers<requirements, item>(
       }),
       (results) => {
         return run_analyze_sources_with_workers(
-          effect.resume(results),
+          effect[2](results),
           worker,
         );
       },
@@ -61,7 +61,7 @@ export function run_analyze_sources_with_workers<requirements, item>(
   }
 
   return Effect.suspend(
-    effect.operation as WithoutAnalyzeSources<requirements>,
-    (value) => run_analyze_sources_with_workers(effect.resume(value), worker),
+    effect[1] as WithoutAnalyzeSources<requirements>,
+    (value) => run_analyze_sources_with_workers(effect[2](value), worker),
   );
 }

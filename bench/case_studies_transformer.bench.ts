@@ -144,26 +144,29 @@ function run_analyze_sources_locally(
   modules: ModuleSet,
   effect: import("../src/effects.ts").Effect<unknown, unknown>,
 ): import("../src/effects.ts").Effect<unknown, unknown> {
-  if (effect.tag === "pure") {
-    return modules.effects.Effect.pure(effect.value);
+  if (effect[0] === "pure") {
+    return modules.effects.Effect.pure(effect[1]);
   }
 
-  const operation = effect.operation as { readonly tag?: string };
+  const operation = effect[1] as readonly [string, unknown];
 
-  if (operation.tag === "parallel_analyzer.analyze_sources") {
-    const request = effect.operation as {
-      readonly files:
-        readonly import("../case_studies/parallel_analyzer/types.ts").SourceFile[];
-    };
+  if (operation[0] === "parallel_analyzer.analyze_sources") {
+    const [, request] = effect[1] as readonly [
+      "parallel_analyzer.analyze_sources",
+      {
+        readonly files:
+          readonly import("../case_studies/parallel_analyzer/types.ts").SourceFile[];
+      },
+    ];
     const results = modules.parallel_analyzer.analyze_sources_sequential(
       request.files,
     );
 
-    return run_analyze_sources_locally(modules, effect.resume(results));
+    return run_analyze_sources_locally(modules, effect[2](results));
   }
 
-  return modules.effects.Effect.suspend(effect.operation, (value) => {
-    return run_analyze_sources_locally(modules, effect.resume(value));
+  return modules.effects.Effect.suspend(effect[1], (value) => {
+    return run_analyze_sources_locally(modules, effect[2](value));
   });
 }
 

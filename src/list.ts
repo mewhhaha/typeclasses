@@ -1,9 +1,12 @@
 import {
+  $slot,
   type As,
   type Data,
   data,
   type type_data,
   type type_item,
+  union,
+  type UnionDictionary,
 } from "./typeclass.ts";
 import {
   Alternative,
@@ -22,8 +25,11 @@ import {
 } from "./typeclasses.ts";
 
 export type List<item> =
-  | { tag: "nil" }
-  | { tag: "cons"; head: item; tail: List<item> };
+  | Nil
+  | Cons<item>;
+
+export type Nil = readonly ["Nil"];
+export type Cons<item> = readonly ["Cons", item, List<item>];
 
 export interface AsList
   extends
@@ -44,19 +50,13 @@ export interface AsList
 }
 
 type ListValue<item> = Data<AsList, item>;
+export type ListConstructor = UnionDictionary<AsList>;
 
-export const List: AsList = data<AsList>();
-
-export function nil<item>(): ListValue<item> {
-  return List(list_nil<item>());
-}
-
-export function cons<item>(
-  head: item,
-  tail: ListValue<item>,
-): ListValue<item> {
-  return List(list_cons(head, tail.value()));
-}
+export const List: ListConstructor = data<AsList>(
+  union(["Cons", $slot, $slot], ["Nil"]),
+);
+export const Cons: ListConstructor["Cons"] = List.Cons;
+export const Nil: ListConstructor["Nil"] = List.Nil;
 
 export function from_array<item>(items: item[]): ListValue<item> {
   return List(list_from_array(items));
@@ -89,16 +89,19 @@ Eq.instance(List)({
     let left_rest = this.value();
     let right_rest = right.value();
 
-    while (left_rest.tag === "cons" && right_rest.tag === "cons") {
-      if (!Object.is(left_rest.head, right_rest.head)) {
+    while (List.is_Cons(left_rest) && List.is_Cons(right_rest)) {
+      const [, left_head, left_tail] = left_rest;
+      const [, right_head, right_tail] = right_rest;
+
+      if (!Object.is(left_head, right_head)) {
         return false;
       }
 
-      left_rest = left_rest.tail;
-      right_rest = right_rest.tail;
+      left_rest = left_tail;
+      right_rest = right_tail;
     }
 
-    return left_rest.tag === "nil" && right_rest.tag === "nil";
+    return List.is_Nil(left_rest) && List.is_Nil(right_rest);
   },
 });
 
@@ -107,8 +110,10 @@ Ord.instance(List)({
     let left_rest = this.value();
     let right_rest = right.value();
 
-    while (left_rest.tag === "cons" && right_rest.tag === "cons") {
-      const order = compare_unknown(left_rest.head, right_rest.head);
+    while (List.is_Cons(left_rest) && List.is_Cons(right_rest)) {
+      const [, left_head, left_tail] = left_rest;
+      const [, right_head, right_tail] = right_rest;
+      const order = compare_unknown(left_head, right_head);
 
       switch (order) {
         case "eq":
@@ -118,18 +123,21 @@ Ord.instance(List)({
           return order;
       }
 
-      left_rest = left_rest.tail;
-      right_rest = right_rest.tail;
+      left_rest = left_tail;
+      right_rest = right_tail;
     }
 
-    if (left_rest.tag === right_rest.tag) {
+    const [left_tag] = left_rest;
+    const [right_tag] = right_rest;
+
+    if (left_tag === right_tag) {
       return "eq";
     }
 
-    switch (left_rest.tag) {
-      case "nil":
+    switch (left_tag) {
+      case "Nil":
         return "lt";
-      case "cons":
+      case "Cons":
         return "gt";
     }
   },
@@ -143,9 +151,10 @@ Functor.instance(List)({
     let source = this.value();
     let reversed = list_nil<to>();
 
-    while (source.tag === "cons") {
-      reversed = list_cons(fn(source.head), reversed);
-      source = source.tail;
+    while (List.is_Cons(source)) {
+      const [, head, tail] = source;
+      reversed = list_cons(fn(head), reversed);
+      source = tail;
     }
 
     return List(list_reverse(reversed));
@@ -180,15 +189,17 @@ Applicative.instance(List)({
     let fns = this.value();
     let reversed = list_nil<to>();
 
-    while (fns.tag === "cons") {
+    while (List.is_Cons(fns)) {
+      const [, fn, fn_tail] = fns;
       let rest = items;
 
-      while (rest.tag === "cons") {
-        reversed = list_cons(fns.head(rest.head), reversed);
-        rest = rest.tail;
+      while (List.is_Cons(rest)) {
+        const [, item, item_tail] = rest;
+        reversed = list_cons(fn(item), reversed);
+        rest = item_tail;
       }
 
-      fns = fns.tail;
+      fns = fn_tail;
     }
 
     return List(list_reverse(reversed));
@@ -203,13 +214,13 @@ Semigroup.instance(List)({
 
 Monoid.instance(List)({
   empty() {
-    return nil();
+    return Nil();
   },
 });
 
 Alternative.instance(List)({
   empty() {
-    return nil();
+    return Nil();
   },
 
   alt(right) {
@@ -225,15 +236,17 @@ Monad.instance(List)({
     let source = this.value();
     let reversed = list_nil<to>();
 
-    while (source.tag === "cons") {
-      let bound = fn(source.head).value();
+    while (List.is_Cons(source)) {
+      const [, head, tail] = source;
+      let bound = fn(head).value();
 
-      while (bound.tag === "cons") {
-        reversed = list_cons(bound.head, reversed);
-        bound = bound.tail;
+      while (List.is_Cons(bound)) {
+        const [, bound_head, bound_tail] = bound;
+        reversed = list_cons(bound_head, reversed);
+        bound = bound_tail;
       }
 
-      source = source.tail;
+      source = tail;
     }
 
     return List(list_reverse(reversed));
@@ -245,9 +258,10 @@ Foldable.instance(List)({
     let state = initial;
     let rest = this.value();
 
-    while (rest.tag === "cons") {
-      state = fn(state, rest.head);
-      rest = rest.tail;
+    while (List.is_Cons(rest)) {
+      const [, head, tail] = rest;
+      state = fn(state, head);
+      rest = tail;
     }
 
     return state;
@@ -259,7 +273,7 @@ Traversable.instance(List)({
     const items = to_array(this);
 
     if (items.length === 0) {
-      return Applicative.pure(applicative, nil());
+      return Applicative.pure(applicative, Nil());
     }
 
     let index = items.length - 1;
@@ -274,20 +288,21 @@ Traversable.instance(List)({
 });
 
 function list_nil<item>(): List<item> {
-  return { tag: "nil" };
+  return ["Nil"];
 }
 
 function list_cons<item>(head: item, tail: List<item>): List<item> {
-  return { tag: "cons", head, tail };
+  return ["Cons", head, tail];
 }
 
 function list_reverse<item>(items: List<item>): List<item> {
   let source = items;
   let reversed = list_nil<item>();
 
-  while (source.tag === "cons") {
-    reversed = list_cons(source.head, reversed);
-    source = source.tail;
+  while (List.is_Cons(source)) {
+    const [, head, tail] = source;
+    reversed = list_cons(head, reversed);
+    source = tail;
   }
 
   return reversed;
@@ -297,20 +312,21 @@ function list_append<item>(left: List<item>, right: List<item>): List<item> {
   let source = list_reverse(left);
   let out = right;
 
-  while (source.tag === "cons") {
-    out = list_cons(source.head, out);
-    source = source.tail;
+  while (List.is_Cons(source)) {
+    const [, head, tail] = source;
+    out = list_cons(head, out);
+    source = tail;
   }
 
   return out;
 }
 
 function list_single<item>(item: item): ListValue<item> {
-  return cons(item, nil());
+  return Cons(item, list_nil());
 }
 
 function list_prepend<item>(head: item) {
-  return (tail: ListValue<item>) => cons(head, tail);
+  return (tail: ListValue<item>) => Cons(head, tail.value());
 }
 
 function lift_list_one<out>(
@@ -320,9 +336,10 @@ function lift_list_one<out>(
   let source = first;
   let reversed = list_nil<out>();
 
-  while (source.tag === "cons") {
-    reversed = list_cons(fn(source.head), reversed);
-    source = source.tail;
+  while (List.is_Cons(source)) {
+    const [, head, tail] = source;
+    reversed = list_cons(fn(head), reversed);
+    source = tail;
   }
 
   return List(list_reverse(reversed));
@@ -336,15 +353,17 @@ function lift_list_two<out>(
   let left = first;
   let reversed = list_nil<out>();
 
-  while (left.tag === "cons") {
+  while (List.is_Cons(left)) {
+    const [, left_head, left_tail] = left;
     let right = second;
 
-    while (right.tag === "cons") {
-      reversed = list_cons(fn(left.head, right.head), reversed);
-      right = right.tail;
+    while (List.is_Cons(right)) {
+      const [, right_head, right_tail] = right;
+      reversed = list_cons(fn(left_head, right_head), reversed);
+      right = right_tail;
     }
 
-    left = left.tail;
+    left = left_tail;
   }
 
   return List(list_reverse(reversed));
@@ -359,21 +378,24 @@ function lift_list_three<out>(
   let left = first;
   let reversed = list_nil<out>();
 
-  while (left.tag === "cons") {
+  while (List.is_Cons(left)) {
+    const [, left_head, left_tail] = left;
     let middle = second;
 
-    while (middle.tag === "cons") {
+    while (List.is_Cons(middle)) {
+      const [, middle_head, middle_tail] = middle;
       let right = third;
 
-      while (right.tag === "cons") {
-        reversed = list_cons(fn(left.head, middle.head, right.head), reversed);
-        right = right.tail;
+      while (List.is_Cons(right)) {
+        const [, right_head, right_tail] = right;
+        reversed = list_cons(fn(left_head, middle_head, right_head), reversed);
+        right = right_tail;
       }
 
-      middle = middle.tail;
+      middle = middle_tail;
     }
 
-    left = left.tail;
+    left = left_tail;
   }
 
   return List(list_reverse(reversed));
@@ -406,9 +428,10 @@ function list_to_array<item>(list: List<item>): item[] {
   const items: item[] = [];
   let rest = list;
 
-  while (rest.tag === "cons") {
-    items.push(rest.head);
-    rest = rest.tail;
+  while (List.is_Cons(rest)) {
+    const [, head, tail] = rest;
+    items.push(head);
+    rest = tail;
   }
 
   return items;

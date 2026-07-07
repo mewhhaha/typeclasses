@@ -1,5 +1,5 @@
 import { from_array } from "../src/list.ts";
-import { just, type Maybe, nothing } from "../src/maybe.ts";
+import { Just, type Maybe, Nothing } from "../src/maybe.ts";
 import { type Either, from_number, left, right } from "../src/either.ts";
 import {
   invalid as validation_invalid,
@@ -15,12 +15,12 @@ import {
 import { Applicative, Show } from "../src/typeclasses.ts";
 
 export async function run_basic_examples() {
-  const maybe = just(21);
+  const maybe = Just(21);
   const doubled_maybe = maybe.map((value) => {
     return value * 2;
   });
   const switched_maybe = describe_maybe(maybe.value());
-  const switched_nothing = describe_maybe(nothing<number>().value());
+  const switched_nothing = describe_maybe(Nothing<number>().value());
 
   const list = from_array([1, 2, 3]);
   const labeled_list = label_values(list);
@@ -39,7 +39,7 @@ export async function run_basic_examples() {
     (value: number) => value * 10,
   ])
     .ap(from_array([1, 2]));
-  const generic_maybe_sum = add_values(just(20), just(22));
+  const generic_maybe_sum = add_values(Just(20), Just(22));
   const generic_list_sum = add_values(
     from_array([1, 10]),
     from_array([2, 20]),
@@ -48,11 +48,11 @@ export async function run_basic_examples() {
     right(-1),
     (value) => left("negative: " + value.toString()),
   );
-  const fluent_maybe = just((left: number) => {
+  const fluent_maybe = Just((left: number) => {
     return (right: number) => left + right;
   })
-    .ap(just(20))
-    .ap(just(22));
+    .ap(Just(20))
+    .ap(Just(22));
   const fluent_either = right("42")
     .bind((text) => from_number(Number.parseInt(text, 10)))
     .map((value) => value + 1);
@@ -60,8 +60,8 @@ export async function run_basic_examples() {
     .map((value) => value * 2);
   const optional_profile = Applicative.lift(
     (display_name, email) => ({ display_name, email }),
-    just("Ada"),
-    just("ada@example.test"),
+    Just("Ada"),
+    Just("ada@example.test"),
   );
   const parsed_config = Applicative.lift(
     (host, port) => ({ host, port }),
@@ -111,10 +111,10 @@ function describe_maybe(value: Maybe<number>) {
   const [tag, payload] = value;
 
   switch (tag) {
-    case "just":
+    case "Just":
       return "just:" + payload.toString();
-    case "nothing":
-      return "nothing";
+    case "Nothing":
+      return "Nothing";
   }
 }
 
@@ -122,9 +122,9 @@ function describe_either(value: Either<unknown, number>) {
   const [tag, payload] = value;
 
   switch (tag) {
-    case "right":
+    case "Right":
       return "right:" + payload.toString();
-    case "left":
+    case "Left":
       return "left:" + String(payload);
   }
 }

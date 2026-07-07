@@ -1,12 +1,6 @@
 import { assert_equals } from "../src/assert.ts";
 import { type Either, is_left, is_right, left, right } from "../src/either.ts";
-import {
-  is_just,
-  is_nothing,
-  just,
-  type Maybe,
-  nothing,
-} from "../src/maybe.ts";
+import { Just, Maybe, Nothing } from "../src/maybe.ts";
 import { match } from "../src/tagged.ts";
 
 export function lesson_03_patterns_and_guards() {
@@ -30,10 +24,10 @@ export function lesson_03_patterns_and_guards() {
 
 function safe_reciprocal(value: number) {
   if (value === 0) {
-    return nothing<number>();
+    return Nothing<number>();
   }
 
-  return just(1 / value);
+  return Just(1 / value);
 }
 
 function parse_user_id(text: string) {
@@ -47,11 +41,11 @@ function parse_user_id(text: string) {
 }
 
 function describe_maybe(value: Maybe<number>): string {
-  if (is_just(value)) {
+  if (Maybe.is_Just(value)) {
     return "value " + value[1].toString();
   }
 
-  if (is_nothing(value)) {
+  if (Maybe.is_Nothing(value)) {
     return "missing";
   }
 
@@ -60,7 +54,7 @@ function describe_maybe(value: Maybe<number>): string {
 
 function describe_either(value: Either<string, number>): string {
   return match(value, {
-    left: (message) => "error " + message,
-    right: (id) => "user " + id.toString(),
+    Left: (message) => "error " + message,
+    Right: (id) => "user " + id.toString(),
   });
 }

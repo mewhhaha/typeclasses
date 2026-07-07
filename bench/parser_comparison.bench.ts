@@ -838,9 +838,9 @@ function consume_typeclasses(
   const [tag, payload] = value;
 
   switch (tag) {
-    case "left":
+    case "Left":
       return -String(payload).length;
-    case "right":
+    case "Right":
       return payload.score;
   }
 }
