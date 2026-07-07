@@ -102,11 +102,11 @@ Deno.bench("concrete monads manual run", async () => {
   _sink = checksum;
 });
 
-Deno.bench("raw manual run", async () => {
+Deno.bench("native happy path construct+run", async () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    checksum += consume(await run_raw());
+    checksum += consume(await make_native_program()());
   }
 
   _sink = checksum;
@@ -151,6 +151,17 @@ Deno.bench("fp-ts StateReaderTaskEither reuse+run", async () => {
 
   for (let index = 0; index < iterations; index += 1) {
     checksum += consume(await run_fp(program));
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("native happy path reuse+run", async () => {
+  const program = make_native_program();
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume(await program());
   }
 
   _sink = checksum;
@@ -425,14 +436,16 @@ async function run_concrete_manual() {
   return [[{ before, after }, after_state], array_to_array(logs)] as const;
 }
 
-async function run_raw() {
-  const before = 40;
-  const label = await Promise.resolve(config.label + ":async");
-  const after = before + config.increment;
+function make_native_program() {
+  return async () => {
+    const before = 40;
+    const label = await Promise.resolve(config.label + ":async");
+    const after = before + config.increment;
 
-  return [[{ before, after }, after], [
-    label + ":" + before.toString(),
-  ]] as const;
+    return [[{ before, after }, after], [
+      label + ":" + before.toString(),
+    ]] as const;
+  };
 }
 
 function consume(

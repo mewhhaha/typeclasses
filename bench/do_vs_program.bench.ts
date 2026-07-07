@@ -22,6 +22,16 @@ const config: Config = {
   increment: 2,
 };
 
+Deno.bench("Reader native happy path construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_reader(make_reader_native()(config));
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("Reader Do construct+run", () => {
   let checksum = 0;
 
@@ -61,6 +71,17 @@ Deno.bench("Reader transformed Program construct+run", () => {
     checksum += consume_reader(
       run(run_reader(make_reader_program_transformed(), config)),
     );
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("Reader native happy path reuse+run", () => {
+  const program = make_reader_native();
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_reader(program(config));
   }
 
   _sink = checksum;
@@ -114,6 +135,16 @@ Deno.bench("Reader transformed Program reuse+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("State native happy path construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_state(make_state_native()(40));
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("State Do construct+run", () => {
   let checksum = 0;
 
@@ -153,6 +184,17 @@ Deno.bench("State transformed Program construct+run", () => {
     checksum += consume_state(
       run(run_state(make_state_program_transformed(), 40)),
     );
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("State native happy path reuse+run", () => {
+  const program = make_state_native();
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_state(program(40));
   }
 
   _sink = checksum;
@@ -201,6 +243,16 @@ Deno.bench("State transformed Program reuse+run", () => {
     checksum += consume_state(
       run(run_state(program, 40)),
     );
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("Writer native happy path construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_native_writer(make_writer_native()());
   }
 
   _sink = checksum;
@@ -255,6 +307,17 @@ Deno.bench("Writer transformed Program construct+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("Writer native happy path reuse+run", () => {
+  const program = make_writer_native();
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_native_writer(program());
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("Writer Do reuse+run", () => {
   const program = make_writer_do();
   let checksum = 0;
@@ -303,6 +366,16 @@ Deno.bench("Writer transformed Program reuse+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("Task native happy path construct+run", async () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_task(await make_task_native()());
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("Task Do construct+run", async () => {
   let checksum = 0;
 
@@ -338,6 +411,17 @@ Deno.bench("Task transformed Program construct+run", async () => {
 
   for (let index = 0; index < iterations; index += 1) {
     checksum += consume_task(await run_task(make_task_program_transformed()));
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("Task native happy path reuse+run", async () => {
+  const program = make_task_native();
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_task(await program());
   }
 
   _sink = checksum;
@@ -387,6 +471,14 @@ Deno.bench("Task transformed Program reuse+run", async () => {
   _sink = checksum;
 });
 
+function make_reader_native() {
+  return (config: Config) => {
+    const label = config.label;
+
+    return label.length + config.increment;
+  };
+}
+
 function make_reader_do() {
   return Do(function* () {
     const config = yield* ask<Config>();
@@ -422,6 +514,21 @@ function make_reader_program_transformed() {
       },
     );
   });
+}
+
+function make_state_native() {
+  return (
+    state: number,
+  ): readonly [
+    { readonly before: number; readonly after: number },
+    number,
+  ] => {
+    const before = state;
+    const after_state = state + 2;
+    const after = after_state;
+
+    return [{ before, after }, after_state];
+  };
 }
 
 function make_state_do() {
@@ -471,6 +578,18 @@ function make_state_program_transformed() {
   });
 }
 
+function make_writer_native() {
+  return (): readonly [number, readonly string[]] => {
+    const logs = ["start"];
+    const value = 40;
+
+    logs.push("value");
+    logs.push("end");
+
+    return [value + 2, logs];
+  };
+}
+
 function make_writer_do() {
   return Do(function* () {
     yield* tell(array_from_array(["start"]));
@@ -515,6 +634,15 @@ function make_writer_program_transformed() {
       },
     );
   });
+}
+
+function make_task_native() {
+  return async () => {
+    const left = await Promise.resolve(40);
+    const right = await Promise.resolve(2);
+
+    return left + right;
+  };
 }
 
 function make_task_do() {
@@ -579,6 +707,14 @@ function consume_writer(
 
   return value +
     array_to_array(logs as ReturnType<typeof array_from_array<string>>).length;
+}
+
+function consume_native_writer(
+  result: readonly [number, readonly string[]],
+): number {
+  const [value, logs] = result;
+
+  return value + logs.length;
 }
 
 function consume_task(value: number): number {
