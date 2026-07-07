@@ -5,10 +5,7 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
-import {
-  Applicative,
-  type Applicative as ApplicativeDictionary,
-} from "./applicative.ts";
+import type { Applicative as ApplicativeDictionary } from "./applicative.ts";
 
 export const monad_typeclass = Symbol("Monad");
 
@@ -41,7 +38,6 @@ type DoGenerator<
 type DoPath = {
   readonly previous: DoPath | undefined;
   readonly value: unknown;
-  readonly length: number;
 };
 
 export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
@@ -102,13 +98,13 @@ export function Do<dictionary extends Monad<dictionary>, out>(
   ): Data<dictionary, out> {
     let calls = 0;
 
-    return Monad.bind(current, (value) => {
+    return current.bind((value) => {
       if (calls === 0) {
         calls += 1;
         const next = iterator.next(value);
 
         if (next.done) {
-          return Applicative.pure(current, next.value);
+          return current.pure(next.value);
         }
 
         const next_path = append_do_path(path, value);
@@ -120,7 +116,7 @@ export function Do<dictionary extends Monad<dictionary>, out>(
       const state = run_with(next_path);
 
       if (state.next.done) {
-        return Applicative.pure(current, state.next.value);
+        return current.pure(state.next.value);
       }
 
       return step(next_path, state.next.value, state.iterator);
@@ -132,16 +128,9 @@ function append_do_path(
   previous: DoPath | undefined,
   value: unknown,
 ): DoPath {
-  let length = 1;
-
-  if (previous !== undefined) {
-    length = previous.length + 1;
-  }
-
   return {
     previous,
     value,
-    length,
   };
 }
 
@@ -150,7 +139,7 @@ function values_from_path(path: DoPath | undefined): unknown[] {
     return [];
   }
 
-  const values = new Array<unknown>(path.length);
+  const values = new Array<unknown>(do_path_length(path));
   let index = values.length - 1;
 
   for (
@@ -163,4 +152,18 @@ function values_from_path(path: DoPath | undefined): unknown[] {
   }
 
   return values;
+}
+
+function do_path_length(path: DoPath): number {
+  let length = 0;
+
+  for (
+    let node: DoPath | undefined = path;
+    node !== undefined;
+    node = node.previous
+  ) {
+    length += 1;
+  }
+
+  return length;
 }

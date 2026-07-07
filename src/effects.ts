@@ -121,7 +121,6 @@ export type LiftHandler<
 type ProgramPath = {
   readonly previous: ProgramPath | undefined;
   readonly value: unknown;
-  readonly length: number;
 };
 
 const EffectPrototype: EffectBase<unknown, unknown> = {
@@ -279,9 +278,9 @@ export function map<requirements, from, to>(
     return pure(fn(effect[1]));
   }
 
-  return suspend(effect[1], (value) => {
+  return new NewImpureEffect(effect[1], (value) => {
     return map(effect[2](value), fn);
-  });
+  }) as Effect<requirements, to>;
 }
 
 export function map_from<requirements, from, to>(
@@ -314,9 +313,9 @@ export function bind<left, from, right, to>(
     return fn(effect[1]) as Effect<left | right, to>;
   }
 
-  return suspend(effect[1], (value) => {
+  return new NewImpureEffect(effect[1], (value) => {
     return bind(effect[2](value), fn);
-  });
+  }) as Effect<left | right, to>;
 }
 
 export function bind_from<left, from, right, to>(
@@ -503,6 +502,43 @@ export function handle_with(
   effect: Effect<unknown, unknown>,
   handlers: readonly ((effect: never) => unknown)[],
 ): unknown {
+  switch (handlers.length) {
+    case 0:
+      return effect;
+    case 1:
+      return handlers[0](effect as never);
+    case 2:
+      return handlers[1](handlers[0](effect as never) as never);
+    case 3:
+      return handlers[2](
+        handlers[1](handlers[0](effect as never) as never) as never,
+      );
+    case 4:
+      return handlers[3](
+        handlers[2](
+          handlers[1](handlers[0](effect as never) as never) as never,
+        ) as never,
+      );
+    case 5:
+      return handlers[4](
+        handlers[3](
+          handlers[2](
+            handlers[1](handlers[0](effect as never) as never) as never,
+          ) as never,
+        ) as never,
+      );
+    case 6:
+      return handlers[5](
+        handlers[4](
+          handlers[3](
+            handlers[2](
+              handlers[1](handlers[0](effect as never) as never) as never,
+            ) as never,
+          ) as never,
+        ) as never,
+      );
+  }
+
   let handled: unknown = effect;
 
   for (const handler of handlers) {
@@ -539,21 +575,37 @@ export function handle_lift<
   state: state,
   handler: LiftHandler<dictionary, state, item, out>,
 ): Effect<WithoutLift<requirements, dictionary>, out> {
-  if (effect[0] === "pure") {
-    return pure(handler.done(effect[1], state));
+  let current = effect as Effect<requirements, unknown>;
+  let current_state = state;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return pure(handler.done(current[1] as item, current_state));
+      case "impure": {
+        if (is_lift_of(current[1], runtime_kind)) {
+          const operation = current[1] as unknown as Lift<dictionary, unknown>;
+          const [value, next] = handler.handle(operation[1], current_state);
+          current = current[2](value) as Effect<requirements, unknown>;
+          current_state = next;
+          continue;
+        }
+
+        const suspended = current;
+        const suspended_state = current_state;
+        return new NewImpureEffect(
+          suspended[1] as WithoutLift<requirements, dictionary>,
+          (value) =>
+            handle_lift(
+              suspended[2](value),
+              runtime_kind,
+              suspended_state,
+              handler,
+            ),
+        ) as Effect<WithoutLift<requirements, dictionary>, out>;
+      }
+    }
   }
-
-  if (is_lift_of(effect[1], runtime_kind)) {
-    const operation = effect[1] as unknown as Lift<dictionary, unknown>;
-    const [value, next] = handler.handle(operation[1], state);
-
-    return handle_lift(effect[2](value), runtime_kind, next, handler);
-  }
-
-  return suspend(
-    effect[1] as WithoutLift<requirements, dictionary>,
-    (value) => handle_lift(effect[2](value), runtime_kind, state, handler),
-  );
 }
 
 function program<yielded, item>(
@@ -594,29 +646,32 @@ function program<yielded, item>(
   ): Effect<EffectRequirements<yielded>, item> {
     let calls = 0;
 
-    return bind(as_effect(current), (value) => {
-      if (calls === 0) {
-        calls += 1;
-        const next = iterator.next(value);
+    return bind_from(
+      current as Effect<EffectRequirements<yielded>, unknown>,
+      (value) => {
+        if (calls === 0) {
+          calls += 1;
+          const next = iterator.next(value);
 
-        if (next.done) {
-          return pure(next.value);
+          if (next.done) {
+            return pure(next.value);
+          }
+
+          const next_path = append_program_path(path, value);
+          return step(next_path, next.value, iterator);
         }
 
+        calls += 1;
         const next_path = append_program_path(path, value);
-        return step(next_path, next.value, iterator);
-      }
+        const state = run_with(next_path);
 
-      calls += 1;
-      const next_path = append_program_path(path, value);
-      const state = run_with(next_path);
+        if (state.next.done) {
+          return pure(state.next.value);
+        }
 
-      if (state.next.done) {
-        return pure(state.next.value);
-      }
-
-      return step(next_path, state.next.value, state.iterator);
-    });
+        return step(next_path, state.next.value, state.iterator);
+      },
+    );
   }
 }
 
@@ -672,7 +727,7 @@ function as_effect<requirements, item>(
   }
 
   if (is_data(value)) {
-    return suspend(
+    return new NewImpureEffect(
       ["lift", value] as unknown as Lift<Dictionary, item>,
       resume_pure,
     ) as Effect<requirements, item>;
@@ -701,16 +756,9 @@ function append_program_path(
   previous: ProgramPath | undefined,
   value: unknown,
 ): ProgramPath {
-  let length = 1;
-
-  if (previous !== undefined) {
-    length = previous.length + 1;
-  }
-
   return {
     previous,
     value,
-    length,
   };
 }
 
@@ -719,7 +767,7 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
     return [];
   }
 
-  const values = new Array<unknown>(path.length);
+  const values = new Array<unknown>(program_path_length(path));
   let index = values.length - 1;
 
   for (
@@ -732,6 +780,20 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
   }
 
   return values;
+}
+
+function program_path_length(path: ProgramPath): number {
+  let length = 0;
+
+  for (
+    let node: ProgramPath | undefined = path;
+    node !== undefined;
+    node = node.previous
+  ) {
+    length += 1;
+  }
+
+  return length;
 }
 
 function* effect_iterator<requirements, item>(
