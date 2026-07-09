@@ -1,6 +1,7 @@
 import {
   $slot,
   type As,
+  as_data,
   data,
   type type_data,
   type type_item,
@@ -52,13 +53,7 @@ export type ValidationValue<error, item> = WrappedData<
   item
 >;
 
-type ValidationConstructor =
-  & UnionDictionary<AsValidation>
-  & {
-    <error, item>(
-      value: Validation<error, item>,
-    ): ValidationValue<error, item>;
-  };
+type ValidationConstructor = UnionDictionary<AsValidation>;
 
 export type ValidGuard = {
   <error, item>(value: Validation<error, item>): value is Valid<item>;
@@ -83,17 +78,71 @@ export type InvalidConstructor = {
   readonly is: InvalidGuard;
 };
 
-export const Validation = data<AsValidation>(
+export const Validation: ValidationConstructor = data<AsValidation>(
   union(["valid", $slot], ["invalid", $slot, $slot]),
-) as ValidationConstructor;
-export const Valid = Validation.Valid as ValidConstructor;
-export const Invalid = Validation.Invalid as InvalidConstructor;
+);
+export const Valid: ValidConstructor = Object.assign(construct_valid, {
+  is: is_valid,
+});
+export const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
+  is: is_invalid,
+});
 
 export function InvalidMessages<item = never>(
   first: string,
   ...rest: string[]
 ): ValidationValue<readonly string[], item> {
   return Invalid([first, ...rest], array_semigroup<string>());
+}
+
+function is_valid<error, item>(
+  value: Validation<error, item>,
+): value is Valid<item>;
+function is_valid(value: unknown): value is Valid<unknown>;
+function is_valid<error, item>(
+  value: Validation<error, item> | unknown,
+): value is Valid<item> {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
+  const [tag] = value;
+
+  return tag === "valid";
+}
+
+function is_invalid<error, item>(
+  value: Validation<error, item>,
+): value is Invalid<error>;
+function is_invalid(value: unknown): value is Invalid<unknown>;
+function is_invalid<error, item>(
+  value: Validation<error, item> | unknown,
+): value is Invalid<error> {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
+  const [tag] = value;
+
+  return tag === "invalid";
+}
+
+function construct_valid<item>(value: item): ValidationValue<never, item> {
+  return as_data<AsValidation, Validation<never, item>, item>(Validation, [
+    "valid",
+    value,
+  ]);
+}
+
+function construct_invalid<error, item = never>(
+  error: error,
+  semigroup: ValidationSemigroup<error>,
+): ValidationValue<error, item> {
+  return as_data<AsValidation, Validation<error, item>, item>(Validation, [
+    "invalid",
+    error,
+    semigroup,
+  ]);
 }
 
 Show.instance(Validation)({
@@ -318,7 +367,7 @@ function array_semigroup<item>(): ValidationSemigroup<readonly item[]> {
 }
 
 function concat_errors(left: Invalid<unknown>, right: Invalid<unknown>) {
-  const semigroup = left[2] as ValidationSemigroup<unknown>;
+  const semigroup = left[2];
   return semigroup.concat(left[1], right[1]);
 }
 

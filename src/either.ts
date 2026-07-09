@@ -1,6 +1,7 @@
 import {
   $slot,
   type As,
+  as_data,
   data,
   type type_data,
   type type_item,
@@ -53,11 +54,7 @@ export type EitherValue<left, right> = WrappedData<
   right
 >;
 
-export type EitherConstructor =
-  & UnionDictionary<AsEither>
-  & {
-    <left, right>(value: Either<left, right>): EitherValue<left, right>;
-  };
+export type EitherConstructor = UnionDictionary<AsEither>;
 
 export type LeftGuard = {
   <left, right>(value: Either<left, right>): value is Left<left>;
@@ -82,13 +79,25 @@ export type RightConstructor = {
 
 export const Either: EitherConstructor = data<AsEither>(
   union(["Left", $slot], ["Right", $slot]),
-) as EitherConstructor;
-export const Right = Either.Right as RightConstructor;
-export const Left = Either.Left as LeftConstructor;
+);
+export const Right: RightConstructor = Object.assign(construct_right, {
+  is: is_right,
+});
+export const Left: LeftConstructor = Object.assign(construct_left, {
+  is: is_left,
+});
 
 export function is_left<left, right>(
   value: Either<left, right>,
+): value is Left<left>;
+export function is_left(value: unknown): value is Left<unknown>;
+export function is_left<left, right>(
+  value: Either<left, right> | unknown,
 ): value is Left<left> {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
   const [tag] = value;
 
   return tag === "Left";
@@ -96,10 +105,40 @@ export function is_left<left, right>(
 
 export function is_right<left, right>(
   value: Either<left, right>,
+): value is Right<right>;
+export function is_right(value: unknown): value is Right<unknown>;
+export function is_right<left, right>(
+  value: Either<left, right> | unknown,
 ): value is Right<right> {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
   const [tag] = value;
 
   return tag === "Right";
+}
+
+function construct_left<left = string, right = never>(
+  value: left,
+): EitherValue<left, right> {
+  return as_data<AsEither, Either<left, right>, right>(Either, [
+    "Left",
+    value,
+  ]);
+}
+
+function construct_right<right>(value: right): EitherValue<never, right>;
+function construct_right<left, right>(
+  value: right,
+): EitherValue<left, right>;
+function construct_right<left, right>(
+  value: right,
+): EitherValue<left, right> {
+  return as_data<AsEither, Either<left, right>, right>(Either, [
+    "Right",
+    value,
+  ]);
 }
 
 export function from_number(value: number): EitherValue<string, number> {
@@ -296,7 +335,7 @@ function lift_right<out>(
 ): WrappedData<AsEither, Either<unknown, out>, out> {
   switch (rest.length) {
     case 0:
-      return Right(fn(first)) as EitherValue<unknown, out>;
+      return Right(fn(first));
     case 1: {
       const [tag, payload] = rest[0].value();
 
@@ -304,7 +343,7 @@ function lift_right<out>(
         case "Left":
           return same_context(rest[0]);
         case "Right":
-          return Right(fn(first, payload)) as EitherValue<unknown, out>;
+          return Right(fn(first, payload));
       }
     }
   }
@@ -323,7 +362,7 @@ function lift_right<out>(
     }
   }
 
-  return Right(fn(...values)) as EitherValue<unknown, out>;
+  return Right(fn(...values));
 }
 
 function same_context<out>(value: unknown): out {
