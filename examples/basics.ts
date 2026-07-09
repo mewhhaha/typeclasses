@@ -1,9 +1,9 @@
 import { from_array } from "../src/list.ts";
 import { Just, type Maybe, Nothing } from "../src/maybe.ts";
-import { type Either, from_number, left, right } from "../src/either.ts";
+import { type Either, from_number, Left, Right } from "../src/either.ts";
 import {
-  invalid as validation_invalid,
-  valid as validation_valid,
+  InvalidMessages as ValidationInvalidMessages,
+  Valid as ValidationValid,
 } from "../src/validation.ts";
 import { from_fn } from "../src/task.ts";
 import {
@@ -24,12 +24,12 @@ export async function run_basic_examples() {
 
   const list = from_array([1, 2, 3]);
   const labeled_list = label_values(list);
-  const either = right("42")
+  const either = Right("42")
     .bind((text) => from_number(Number.parseInt(text, 10)));
   const switched_left = describe_either(
     keep_positive(
-      right(-1),
-      (value) => left("negative: " + value.toString()),
+      Right(-1),
+      (value) => Left("negative: " + value.toString()),
     ).value(),
   );
   const switched_right = describe_either(either.value());
@@ -45,15 +45,15 @@ export async function run_basic_examples() {
     from_array([2, 20]),
   );
   const positive_either = keep_positive(
-    right(-1),
-    (value) => left("negative: " + value.toString()),
+    Right(-1),
+    (value) => Left("negative: " + value.toString()),
   );
   const fluent_maybe = Just((left: number) => {
     return (right: number) => left + right;
   })
     .ap(Just(20))
     .ap(Just(22));
-  const fluent_either = right("42")
+  const fluent_either = Right("42")
     .bind((text) => from_number(Number.parseInt(text, 10)))
     .map((value) => value + 1);
   const fluent_list = from_array([1, 2, 3])
@@ -131,26 +131,26 @@ function describe_either(value: Either<unknown, number>) {
 
 function non_empty_string(value: string, name: string) {
   if (value.length > 0) {
-    return right(value);
+    return Right(value);
   }
 
-  return left<string, string>(name + " must not be empty");
+  return Left<string, string>(name + " must not be empty");
 }
 
 function validate_username(value: string) {
   if (value.length > 0) {
-    return validation_valid(value);
+    return ValidationValid(value);
   }
 
-  return validation_invalid<string>("username is required");
+  return ValidationInvalidMessages<string>("username is required");
 }
 
 function validate_email(value: string) {
   if (value.includes("@")) {
-    return validation_valid(value);
+    return ValidationValid(value);
   }
 
-  return validation_invalid<string>("email must contain @");
+  return ValidationInvalidMessages<string>("email must contain @");
 }
 
 function validate_password(value: string) {
@@ -165,8 +165,8 @@ function validate_password(value: string) {
   }
 
   if (errors.length === 0) {
-    return validation_valid(value);
+    return ValidationValid(value);
   }
 
-  return validation_invalid<string>(errors[0], ...errors.slice(1));
+  return ValidationInvalidMessages<string>(errors[0], ...errors.slice(1));
 }

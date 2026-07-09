@@ -59,21 +59,32 @@ export type EitherConstructor =
     <left, right>(value: Either<left, right>): EitherValue<left, right>;
   };
 
+export type LeftGuard = {
+  <left, right>(value: Either<left, right>): value is Left<left>;
+  (value: unknown): value is Left<unknown>;
+};
+
+export type RightGuard = {
+  <left, right>(value: Either<left, right>): value is Right<right>;
+  (value: unknown): value is Right<unknown>;
+};
+
+export type LeftConstructor = {
+  <left = string, right = never>(value: left): EitherValue<left, right>;
+  readonly is: LeftGuard;
+};
+
+export type RightConstructor = {
+  <right>(value: right): EitherValue<never, right>;
+  <left, right>(value: right): EitherValue<left, right>;
+  readonly is: RightGuard;
+};
+
 export const Either: EitherConstructor = data<AsEither>(
   union(["Left", $slot], ["Right", $slot]),
 ) as EitherConstructor;
-export const Right: EitherConstructor["Right"] = Either.Right;
-export const Left: EitherConstructor["Left"] = Either.Left;
-
-export function right<right>(value: right): EitherValue<never, right> {
-  return Right(value) as EitherValue<never, right>;
-}
-
-export function left<left = string, right = never>(
-  value: left,
-): EitherValue<left, right> {
-  return Left(value) as EitherValue<left, right>;
-}
+export const Right = Either.Right as RightConstructor;
+export const Left = Either.Left as LeftConstructor;
 
 export function is_left<left, right>(
   value: Either<left, right>,
@@ -93,10 +104,10 @@ export function is_right<left, right>(
 
 export function from_number(value: number): EitherValue<string, number> {
   if (Number.isFinite(value)) {
-    return right(value) as EitherValue<string, number>;
+    return Right<string, number>(value);
   }
 
-  return left("Expected a finite number") as EitherValue<string, number>;
+  return Left<string, number>("Expected a finite number");
 }
 
 Show.instance(Either)({
@@ -166,9 +177,9 @@ Bifunctor.instance(Either)({
 
     switch (tag) {
       case "Left":
-        return unknown_typeclass<next_right>(left(map_left(payload)));
+        return unknown_typeclass<next_right>(Left(map_left(payload)));
       case "Right":
-        return unknown_typeclass<next_right>(right(map_right(payload)));
+        return unknown_typeclass<next_right>(Right(map_right(payload)));
     }
   },
 });
@@ -181,14 +192,14 @@ Functor.instance(Either)({
       case "Left":
         return same_context(this);
       case "Right":
-        return right(fn(payload));
+        return Right(fn(payload));
     }
   },
 });
 
 Applicative.instance(Either)({
   pure(value) {
-    return right(value);
+    return Right(value);
   },
 
   [applicative_lift_method](fn, rest) {
@@ -215,7 +226,7 @@ Applicative.instance(Either)({
           case "Left":
             return same_context(value);
           case "Right":
-            return right(fn(either));
+            return Right(fn(either));
         }
       }
     }
@@ -237,7 +248,7 @@ Monad.instance(Either)({
 
 MonadError.instance(Either)({
   throw_error(error) {
-    return left(error);
+    return Left(error);
   },
 
   catch_error(handler) {
@@ -271,9 +282,9 @@ Traversable.instance(Either)({
 
     switch (tag) {
       case "Left":
-        return Applicative.pure(applicative, left(payload));
+        return Applicative.pure(applicative, Left(payload));
       case "Right":
-        return Functor.map(fn(payload), (value) => right(value));
+        return Functor.map(fn(payload), (value) => Right(value));
     }
   },
 });
@@ -285,7 +296,7 @@ function lift_right<out>(
 ): WrappedData<AsEither, Either<unknown, out>, out> {
   switch (rest.length) {
     case 0:
-      return right(fn(first)) as EitherValue<unknown, out>;
+      return Right(fn(first)) as EitherValue<unknown, out>;
     case 1: {
       const [tag, payload] = rest[0].value();
 
@@ -293,7 +304,7 @@ function lift_right<out>(
         case "Left":
           return same_context(rest[0]);
         case "Right":
-          return right(fn(first, payload)) as EitherValue<unknown, out>;
+          return Right(fn(first, payload)) as EitherValue<unknown, out>;
       }
     }
   }
@@ -312,7 +323,7 @@ function lift_right<out>(
     }
   }
 
-  return right(fn(...values)) as EitherValue<unknown, out>;
+  return Right(fn(...values)) as EitherValue<unknown, out>;
 }
 
 function same_context<out>(value: unknown): out {

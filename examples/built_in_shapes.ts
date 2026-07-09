@@ -19,7 +19,7 @@ import {
   from_entries as map_from_entries,
   to_record as map_to_record,
 } from "../src/map.ts";
-import { right } from "../src/either.ts";
+import { Right } from "../src/either.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
@@ -104,8 +104,8 @@ export async function run_builtin_shape_examples() {
   const error_value = from_error(new TypeError("expected value"));
   const traversed_record = Traversable.traverse(
     record_from_entries<number>([["id", 42], ["limit", 10]]),
-    right(undefined),
-    (value) => right(value.toString()),
+    Right(undefined),
+    (value) => Right(value.toString()),
   ).map((record) => record_to_record(record));
 
   console.log("array monad", array_monad.show());

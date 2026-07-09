@@ -1,8 +1,11 @@
 import {
+  $slot,
   type As,
   data,
   type type_data,
   type type_item,
+  union,
+  type UnionDictionary,
   type WrappedData,
 } from "./typeclass.ts";
 import {
@@ -50,34 +53,47 @@ export type ValidationValue<error, item> = WrappedData<
 >;
 
 type ValidationConstructor =
-  & AsValidation
+  & UnionDictionary<AsValidation>
   & {
     <error, item>(
       value: Validation<error, item>,
     ): ValidationValue<error, item>;
   };
 
-export const Validation = data<AsValidation>() as ValidationConstructor;
+export type ValidGuard = {
+  <error, item>(value: Validation<error, item>): value is Valid<item>;
+  (value: unknown): value is Valid<unknown>;
+};
 
-export function valid<item>(value: item): ValidationValue<never, item> {
-  return Validation(validation_valid(value)) as ValidationValue<never, item>;
-}
+export type InvalidGuard = {
+  <error, item>(value: Validation<error, item>): value is Invalid<error>;
+  (value: unknown): value is Invalid<unknown>;
+};
 
-export function invalid<item = never>(
+export type ValidConstructor = {
+  <item>(value: item): ValidationValue<never, item>;
+  readonly is: ValidGuard;
+};
+
+export type InvalidConstructor = {
+  <error, item = never>(
+    error: error,
+    semigroup: ValidationSemigroup<error>,
+  ): ValidationValue<error, item>;
+  readonly is: InvalidGuard;
+};
+
+export const Validation = data<AsValidation>(
+  union(["valid", $slot], ["invalid", $slot, $slot]),
+) as ValidationConstructor;
+export const Valid = Validation.Valid as ValidConstructor;
+export const Invalid = Validation.Invalid as InvalidConstructor;
+
+export function InvalidMessages<item = never>(
   first: string,
   ...rest: string[]
 ): ValidationValue<readonly string[], item> {
-  return invalid_with([first, ...rest], array_semigroup<string>());
-}
-
-export function invalid_with<error, item = never>(
-  error: error,
-  semigroup: ValidationSemigroup<error>,
-): ValidationValue<error, item> {
-  return Validation(validation_invalid(error, semigroup)) as ValidationValue<
-    error,
-    item
-  >;
+  return Invalid([first, ...rest], array_semigroup<string>());
 }
 
 Show.instance(Validation)({
@@ -123,14 +139,14 @@ Functor.instance(Validation)({
       case "invalid":
         return same_context(this);
       case "valid":
-        return valid(fn(payload));
+        return Valid(fn(payload));
     }
   },
 });
 
 Applicative.instance(Validation)({
   pure(value) {
-    return valid(value);
+    return Valid(value);
   },
 
   [applicative_lift_method](fn, rest) {
@@ -170,7 +186,7 @@ Applicative.instance(Validation)({
           );
         }
 
-        return valid(fn_payload(validation_payload));
+        return Valid(fn_payload(validation_payload));
     }
   },
 });
@@ -202,30 +218,16 @@ Traversable.instance(Validation)({
           ),
         );
       case "valid":
-        return Functor.map(fn(payload), (value) => valid(value));
+        return Functor.map(fn(payload), (value) => Valid(value));
     }
   },
 });
-
-function validation_valid<item>(value: item): Valid<item> {
-  return ["valid", value];
-}
-
-function validation_invalid<error>(
-  error: error,
-  semigroup: ValidationSemigroup<error>,
-): Validation<error, never> {
-  return ["invalid", error, semigroup];
-}
 
 function invalid_from_error<error, item = never>(
   error: error,
   semigroup: ValidationSemigroup<error>,
 ): ValidationValue<error, item> {
-  return Validation(validation_invalid(error, semigroup)) as ValidationValue<
-    error,
-    item
-  >;
+  return Invalid(error, semigroup);
 }
 
 function lift_validation_valid<out>(
@@ -235,7 +237,7 @@ function lift_validation_valid<out>(
 ): ValidationValue<unknown, out> {
   switch (rest.length) {
     case 0:
-      return valid(fn(first));
+      return Valid(fn(first));
     case 1: {
       const [tag, payload, semigroup] = rest[0].value();
 
@@ -243,7 +245,7 @@ function lift_validation_valid<out>(
         case "invalid":
           return invalid_from_error(payload, semigroup);
         case "valid":
-          return valid(fn(first, payload));
+          return Valid(fn(first, payload));
       }
     }
   }
@@ -274,7 +276,7 @@ function lift_validation_valid<out>(
     return invalid_from_error(error, semigroup);
   }
 
-  return valid(fn(...values));
+  return Valid(fn(...values));
 }
 
 function lift_validation_invalid<out>(

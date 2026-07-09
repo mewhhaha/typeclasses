@@ -45,7 +45,14 @@ import {
   from_entries as map_from_entries,
   to_record as map_to_record,
 } from "./map.ts";
-import { Just, Maybe, Nothing } from "./maybe.ts";
+import {
+  Just,
+  type Just as MaybeJustRaw,
+  Maybe,
+  type Maybe as MaybeRaw,
+  Nothing,
+  type Nothing as MaybeNothingRaw,
+} from "./maybe.ts";
 import { predicate } from "./predicate.ts";
 import { ask, asks, type AsReader, local, run_reader } from "./reader.ts";
 import {
@@ -59,11 +66,14 @@ import {
 import { from_regexp } from "./regexp.ts";
 import {
   Either,
+  type Either as EitherRaw,
   from_number as either_from_number,
   is_left as either_is_left,
   is_right as either_is_right,
-  left as either_left,
-  right as either_right,
+  Left as EitherLeft,
+  type Left as EitherLeftRaw,
+  Right as EitherRight,
+  type Right as EitherRightRaw,
 } from "./either.ts";
 import {
   from_iterable as set_from_iterable,
@@ -110,8 +120,11 @@ import {
   write_tvar,
 } from "./stm.ts";
 import {
-  invalid as validation_invalid,
-  valid as validation_valid,
+  Invalid as ValidationInvalid,
+  type Invalid as ValidationInvalidRaw,
+  InvalidMessages as ValidationInvalidMessages,
+  Valid as ValidationValid,
+  type Valid as ValidationValidRaw,
   type Validation,
 } from "./validation.ts";
 import { from_entries as weak_map_from_entries } from "./weak_map.ts";
@@ -168,10 +181,10 @@ Deno.test("Show and Eq typeclasses dispatch through typeclass helpers", () => {
     "boxed list",
   );
 
-  assert_equals(Show.show(either_right("done")), 'Right("done")');
-  assert_equals(Show.show(either_left("bad")), 'Left("bad")');
+  assert_equals(Show.show(EitherRight("done")), 'Right("done")');
+  assert_equals(Show.show(EitherLeft("bad")), 'Left("bad")');
   assert_true(
-    Eq.eq(either_right("done"), either_right("done")),
+    Eq.eq(EitherRight("done"), EitherRight("done")),
     "boxed result",
   );
 });
@@ -180,7 +193,7 @@ Deno.test("Ord compares standard contexts", () => {
   assert_equals(Ord.compare(Nothing<number>(), Just(1)), "lt");
   assert_equals(Ord.compare(Just(2), Just(1)), "gt");
   assert_equals(
-    Ord.compare(either_left<string, number>("missing"), either_right(1)),
+    Ord.compare(EitherLeft<string, number>("missing"), EitherRight(1)),
     "lt",
   );
   assert_equals(
@@ -196,28 +209,28 @@ Deno.test("Ord compares standard contexts", () => {
 
 Deno.test("Bifunctor and MonadError work for Either", () => {
   const mapped_left = Bifunctor.bimap(
-    either_left<string, number>("missing"),
+    EitherLeft<string, number>("missing"),
     (message: string) => message.length,
     (value) => value + 1,
   );
   const mapped_right = Bifunctor.bimap(
-    either_right<number>(41),
+    EitherRight<number>(41),
     (message: string) => message.length,
     (value) => value + 1,
   );
   const recovered = MonadError.catch_error(
-    either_left<string, number>("missing"),
-    (error) => either_right(String(error).length),
+    EitherLeft<string, number>("missing"),
+    (error) => EitherRight(String(error).length),
   );
   const thrown = MonadError.throw_error(
-    either_right<unknown>(undefined),
+    EitherRight<unknown>(undefined),
     "missing",
   );
 
-  assert_equals(mapped_left.value(), either_left(7).value());
-  assert_equals(mapped_right.value(), either_right(42).value());
-  assert_equals(recovered.value(), either_right(7).value());
-  assert_equals(thrown.value(), either_left("missing").value());
+  assert_equals(mapped_left.value(), EitherLeft(7).value());
+  assert_equals(mapped_right.value(), EitherRight(42).value());
+  assert_equals(recovered.value(), EitherRight(7).value());
+  assert_equals(thrown.value(), EitherLeft("missing").value());
 });
 
 Deno.test("Contravariant maps input into Predicate", () => {
@@ -335,7 +348,7 @@ Deno.test("Tuple tagged values can be matched by tag", () => {
       return 0;
     },
   });
-  const result = match(either_left<string, number>("missing").value(), {
+  const result = match(EitherLeft<string, number>("missing").value(), {
     Right(value) {
       return value.toString();
     },
@@ -359,7 +372,7 @@ Deno.test("Tuple tagged values can be matched by tag", () => {
       return 0;
     },
   });
-  const wrapped_result = match(either_left<string, number>("missing"), {
+  const wrapped_result = match(EitherLeft<string, number>("missing"), {
     Right(value) {
       return value.toString();
     },
@@ -377,7 +390,7 @@ Deno.test("Tuple tagged values can be matched by tag", () => {
 
 Deno.test("Tuple tagged guards narrow Maybe and Either payloads", () => {
   const option = Just(42).value();
-  const result = either_left<string, number>("missing").value();
+  const result = EitherLeft<string, number>("missing").value();
 
   assert_true(Just.is(option), "option is just");
   assert_true(!Nothing.is(option), "option is not nothing");
@@ -407,6 +420,29 @@ Deno.test("Tuple tagged guards narrow Maybe and Either payloads", () => {
   }
 });
 
+Deno.test("Constructor guards disambiguate tagged union branches", () => {
+  assert_equals(describe_maybe_branch(Just(42).value()), "just:42");
+  assert_equals(describe_maybe_branch(Nothing<number>().value()), "nothing");
+  assert_equals(
+    describe_either_branch(EitherLeft<string, number>("missing").value()),
+    "left:missing",
+  );
+  assert_equals(
+    describe_either_branch(EitherRight<string, number>(9).value()),
+    "right:9",
+  );
+  assert_equals(
+    describe_validation_branch(
+      ValidationInvalidMessages<number>("missing name").value(),
+    ),
+    "invalid:missing name",
+  );
+  assert_equals(
+    describe_validation_branch(ValidationValid(7).value()),
+    "valid:7",
+  );
+});
+
 Deno.test("Functor maps values without leaving the context", () => {
   const just = Functor.map(Just(2), (value) => value + 1);
   const nothing = Functor.map(
@@ -418,19 +454,19 @@ Deno.test("Functor maps values without leaving the context", () => {
     (value) => value * 2,
   );
   const right = Functor.map(
-    either_right(20),
+    EitherRight(20),
     (value) => value + 1,
   );
   const left = Functor.map(
-    either_left<string, number>("missing"),
+    EitherLeft<string, number>("missing"),
     (value) => value + 1,
   );
 
   assert_equals(just.value(), Just(3).value());
   assert_equals(nothing.value(), Nothing().value());
   assert_equals(list_to_array(list), [2, 4, 6]);
-  assert_equals(right.value(), either_right(21).value());
-  assert_equals(left.value(), either_left("missing").value());
+  assert_equals(right.value(), EitherRight(21).value());
+  assert_equals(left.value(), EitherLeft("missing").value());
 });
 
 Deno.test("Applicative applies contextual functions", () => {
@@ -468,13 +504,13 @@ Deno.test("Applicative lifts independent contextual values", () => {
   );
   const result = Applicative.lift(
     (left, right) => left + right,
-    either_right(40),
-    either_right(2),
+    EitherRight(40),
+    EitherRight(2),
   );
   const error = Applicative.lift(
     (left, right) => left + right,
-    either_left<string, number>("missing"),
-    either_right(2),
+    EitherLeft<string, number>("missing"),
+    EitherRight(2),
   );
   const list = Applicative.lift(
     (left, right) => left + right,
@@ -484,8 +520,8 @@ Deno.test("Applicative lifts independent contextual values", () => {
 
   assert_equals(option.value(), Just(42).value());
   assert_equals(nothing.value(), Nothing().value());
-  assert_equals(result.value(), either_right(42).value());
-  assert_equals(error.value(), either_left("missing").value());
+  assert_equals(result.value(), EitherRight(42).value());
+  assert_equals(error.value(), EitherLeft("missing").value());
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
 });
 
@@ -502,9 +538,9 @@ Deno.test("Applicative lift can build named structures", () => {
   );
   const invalid_profile = Applicative.lift(
     (name, email, age) => ({ name, email, age }),
-    validation_invalid<string>("name is required"),
-    validation_invalid<string>("email is invalid"),
-    validation_valid(37),
+    ValidationInvalidMessages<string>("name is required"),
+    ValidationInvalidMessages<string>("email is invalid"),
+    ValidationValid(37),
   );
 
   assert_equals(
@@ -622,29 +658,29 @@ Deno.test("Default data dictionaries are cached constructors", () => {
 });
 
 Deno.test("Either callable wrapper derives fluent methods from its dictionary", () => {
-  const value = either_right(40)
+  const value = EitherRight(40)
     .map((item) => item + 2);
-  const parsed = either_right("42")
+  const parsed = EitherRight("42")
     .bind((text) => either_from_number(Number.parseInt(text, 10)));
-  const sum = either_right((left: number) => {
+  const sum = EitherRight((left: number) => {
     return (right: number) => left + right;
   })
-    .ap(either_right(40))
-    .ap(either_right(2));
-  const missing = either_left<string, number>("missing")
+    .ap(EitherRight(40))
+    .ap(EitherRight(2));
+  const missing = EitherLeft<string, number>("missing")
     .map((item) => item + 1);
 
-  assert_equals(value.value(), either_right(42).value());
+  assert_equals(value.value(), EitherRight(42).value());
   assert_equals(value.show(), "Right(42)");
-  assert_true(value.eq(either_right(42)), "either compares");
+  assert_true(value.eq(EitherRight(42)), "either compares");
   assert_true(
     value.eq(Either(["Right", 42])),
     "constructor boxes raw either",
   );
-  assert_equals(parsed.value(), either_right(42).value());
+  assert_equals(parsed.value(), EitherRight(42).value());
   assert_equals(parsed.show(), "Right(42)");
-  assert_equals(sum.value(), either_right(42).value());
-  assert_equals(missing.value(), either_left("missing").value());
+  assert_equals(sum.value(), EitherRight(42).value());
+  assert_equals(missing.value(), EitherLeft("missing").value());
 });
 
 Deno.test("List callable wrapper derives fluent methods from its dictionary", () => {
@@ -679,13 +715,13 @@ Deno.test("Monad chains computations that choose the next context", () => {
   const kept = Monad.bind(Just(4), positive);
   const dropped = Monad.bind(Just(-1), positive);
   const parsed = Monad.bind(
-    either_right("42"),
+    EitherRight("42"),
     (text) => either_from_number(Number.parseInt(text, 10)),
   );
 
   assert_equals(kept.value(), Just(4).value());
   assert_equals(dropped.value(), Nothing().value());
-  assert_equals(parsed.value(), either_right(42).value());
+  assert_equals(parsed.value(), EitherRight(42).value());
 });
 
 Deno.test("Do chains monadic generator yields with bind", () => {
@@ -712,15 +748,15 @@ Deno.test("Do chains monadic generator yields with bind", () => {
 
   assert_equals(
     decoded.value(),
-    either_right({ id: 42, label: "account:42" }).value(),
+    EitherRight({ id: 42, label: "account:42" }).value(),
   );
   assert_equals(
     inactive.value(),
-    either_left("account must be active").value(),
+    EitherLeft("account must be active").value(),
   );
   assert_equals(
     malformed.value(),
-    either_left("account.id must be a string").value(),
+    EitherLeft("account.id must be a string").value(),
   );
   assert_equals(missing.value(), Nothing().value());
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
@@ -783,19 +819,19 @@ Deno.test("Applicative lift supports promise-returning Task combiners", async ()
 Deno.test("Applicative lift lets Validation accumulate independent errors", () => {
   const valid_profile = Applicative.lift(
     (name, age) => ({ name, age }),
-    validation_valid("Ada"),
-    validation_valid(37),
+    ValidationValid("Ada"),
+    ValidationValid(37),
   );
   const invalid_profile = Applicative.lift(
     (name, email, age) => ({ name, email, age }),
-    validation_invalid<string>("name is required"),
-    validation_invalid<string>("email is invalid"),
-    validation_valid(37),
+    ValidationInvalidMessages<string>("name is required"),
+    ValidationInvalidMessages<string>("email is invalid"),
+    ValidationValid(37),
   );
 
   assert_equals(
     valid_profile.value(),
-    validation_valid({ name: "Ada", age: 37 }).value(),
+    ValidationValid({ name: "Ada", age: 37 }).value(),
   );
   const invalid_profile_error = expect_validation_invalid(
     invalid_profile.value(),
@@ -1103,8 +1139,8 @@ Deno.test("Foldable reduces values inside different contexts", () => {
   const list = list_from_array([1, 2, 3, 4]);
   const just = Just(7);
   const nothing = Nothing<number>();
-  const right = either_right(9);
-  const left = either_left<string, number>("no value");
+  const right = EitherRight(9);
+  const left = EitherLeft<string, number>("no value");
 
   assert_equals(
     Foldable.fold(
@@ -1273,18 +1309,18 @@ Deno.test("JavaScript shape wrappers expose conservative typeclasses", async () 
 Deno.test("Traversable flips structures through an applicative", () => {
   const array = Traversable.traverse(
     ArrayT([1, 2, 3]),
-    either_right(undefined),
-    (value) => either_right("value:" + value.toString()),
+    EitherRight(undefined),
+    (value) => EitherRight("value:" + value.toString()),
   );
   const record = Traversable.traverse(
     record_from_entries<number>([["a", 1], ["b", -1]]),
-    either_right(undefined),
+    EitherRight(undefined),
     (value) => {
       if (value > 0) {
-        return either_right(value * 2);
+        return EitherRight(value * 2);
       }
 
-      return either_left<string, number>("negative: " + value.toString());
+      return EitherLeft<string, number>("negative: " + value.toString());
     },
   );
   const option = Traversable.traverse(
@@ -1294,28 +1330,28 @@ Deno.test("Traversable flips structures through an applicative", () => {
   );
   const map = Traversable.traverse(
     map_from_entries<number>([["x", 1], ["y", 2]]),
-    either_right(undefined),
-    (value) => either_right(value + 1),
+    EitherRight(undefined),
+    (value) => EitherRight(value + 1),
   );
   const empty_array = Traversable.traverse(
     ArrayT<number>([]),
-    either_right(undefined),
-    (value) => either_right(value.toString()),
+    EitherRight(undefined),
+    (value) => EitherRight(value.toString()),
   );
   const empty_list = Traversable.traverse(
     list_from_array<number>([]),
-    either_right(undefined),
-    (value) => either_right(value.toString()),
+    EitherRight(undefined),
+    (value) => EitherRight(value.toString()),
   );
   const empty_map = Traversable.traverse(
     map_from_entries<number>([]),
-    either_right(undefined),
-    (value) => either_right(value.toString()),
+    EitherRight(undefined),
+    (value) => EitherRight(value.toString()),
   );
   const empty_record = Traversable.traverse(
     record_from_entries<number>([]),
-    either_right(undefined),
-    (value) => either_right(value.toString()),
+    EitherRight(undefined),
+    (value) => EitherRight(value.toString()),
   );
 
   const array_result = expect_either_right(
@@ -1348,7 +1384,7 @@ Deno.test("Traversable flips structures through an applicative", () => {
     "value:2",
     "value:3",
   ]);
-  assert_equals(record.value(), either_left("negative: -1").value());
+  assert_equals(record.value(), EitherLeft("negative: -1").value());
   assert_equals(
     to_array(option).map((value) => value.value()),
     [Just(21).value(), Just(42).value()],
@@ -1363,21 +1399,21 @@ Deno.test("Traversable flips structures through an applicative", () => {
 Deno.test("Generic helpers work against typeclass interfaces", () => {
   const option = label_values(Just(5));
   const list = label_values(list_from_array([1, 2]));
-  const result = label_values(either_right(3));
+  const result = label_values(EitherRight(3));
 
   assert_equals(option.value(), Just("value:5").value());
   assert_equals(list_to_array(list), ["value:1", "value:2"]);
-  assert_equals(result.value(), either_right("value:3").value());
+  assert_equals(result.value(), EitherRight("value:3").value());
   assert_equals(sum_values(list_from_array([1, 2, 3])), 6);
 });
 
 Deno.test("Generic applicative helper combines contextual values", () => {
   const option = add_values(Just(20), Just(22));
   const nothing = add_values(Just(20), Nothing<number>());
-  const result = add_values(either_right(40), either_right(2));
+  const result = add_values(EitherRight(40), EitherRight(2));
   const left = add_values(
-    either_left<string, number>("missing"),
-    either_right(2),
+    EitherLeft<string, number>("missing"),
+    EitherRight(2),
   );
   const list = add_values(
     list_from_array([1, 10]),
@@ -1386,8 +1422,8 @@ Deno.test("Generic applicative helper combines contextual values", () => {
 
   assert_equals(option.value(), Just(42).value());
   assert_equals(nothing.value(), Nothing().value());
-  assert_equals(result.value(), either_right(42).value());
-  assert_equals(left.value(), either_left("missing").value());
+  assert_equals(result.value(), EitherRight(42).value());
+  assert_equals(left.value(), EitherLeft("missing").value());
   assert_equals(list_to_array(list), [3, 21, 12, 30]);
 });
 
@@ -1397,8 +1433,8 @@ Deno.test("Generic monad helper lets each context define failure", () => {
     () => Nothing(),
   );
   const result = keep_positive(
-    either_right(-1),
-    (value) => either_left("negative: " + value.toString()),
+    EitherRight(-1),
+    (value) => EitherLeft("negative: " + value.toString()),
   );
   const list = keep_positive(
     list_from_array([2, -1, 3]),
@@ -1406,9 +1442,41 @@ Deno.test("Generic monad helper lets each context define failure", () => {
   );
 
   assert_equals(option.value(), Nothing().value());
-  assert_equals(result.value(), either_left("negative: -1").value());
+  assert_equals(result.value(), EitherLeft("negative: -1").value());
   assert_equals(list_to_array(list), [2, 3]);
 });
+
+function describe_maybe_branch(value: MaybeRaw<number>): string {
+  if (Just.is(value)) {
+    const just: MaybeJustRaw<number> = value;
+    return "just:" + just[1].toString();
+  }
+
+  const nothing: MaybeNothingRaw = value;
+  return nothing[0].toLowerCase();
+}
+
+function describe_either_branch(value: EitherRaw<string, number>): string {
+  if (EitherLeft.is(value)) {
+    const left: EitherLeftRaw<string> = value;
+    return "left:" + left[1];
+  }
+
+  const right: EitherRightRaw<number> = value;
+  return "right:" + right[1].toString();
+}
+
+function describe_validation_branch(
+  value: Validation<readonly string[], number>,
+): string {
+  if (ValidationInvalid.is(value)) {
+    const invalid: ValidationInvalidRaw<readonly string[]> = value;
+    return "invalid:" + invalid[1].join(", ");
+  }
+
+  const valid: ValidationValidRaw<number> = value;
+  return "valid:" + valid[1].toString();
+}
 
 function decode_account_payload(input: unknown) {
   return Do(function* () {
@@ -1429,44 +1497,44 @@ function decode_account_payload(input: unknown) {
 
 function object_value(value: unknown, name: string) {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return either_right(value as Record<string, unknown>);
+    return EitherRight(value as Record<string, unknown>);
   }
 
-  return either_left<string, Record<string, unknown>>(
+  return EitherLeft<string, Record<string, unknown>>(
     name + " must be an object",
   );
 }
 
 function field(record: Record<string, unknown>, name: string) {
   if (Object.hasOwn(record, name)) {
-    return either_right(record[name]);
+    return EitherRight(record[name]);
   }
 
-  return either_left<string, unknown>(name + " is missing");
+  return EitherLeft<string, unknown>(name + " is missing");
 }
 
 function string_value(value: unknown, name: string) {
   if (typeof value === "string") {
-    return either_right(value);
+    return EitherRight(value);
   }
 
-  return either_left<string>(name + " must be a string");
+  return EitherLeft<string>(name + " must be a string");
 }
 
 function boolean_value(value: unknown, name: string) {
   if (typeof value === "boolean") {
-    return either_right(value);
+    return EitherRight(value);
   }
 
-  return either_left<string, boolean>(name + " must be a boolean");
+  return EitherLeft<string, boolean>(name + " must be a boolean");
 }
 
 function require_true(value: boolean, message: string) {
   if (value) {
-    return either_right(undefined);
+    return EitherRight(undefined);
   }
 
-  return either_left<string, void>(message);
+  return EitherLeft<string, void>(message);
 }
 
 function expect_either_right<item, error>(

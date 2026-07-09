@@ -1,4 +1,4 @@
-import { type EitherValue, right } from "../src/either.ts";
+import { type EitherValue, Right } from "../src/either.ts";
 import { type AsMaybe, Just, Maybe, Nothing } from "../src/maybe.ts";
 import type { Data } from "../src/typeclass.ts";
 import { Do, Functor, Monad } from "../src/typeclasses.ts";
@@ -12,7 +12,7 @@ type RawMaybe<item> = readonly ["Just", item] | readonly ["Nothing"];
 
 const add_one = (value: number) => value + 1;
 const typeclasses_next = (value: number) => Just(add_one(value));
-const typeclasses_either_next = (value: number) => right(add_one(value));
+const typeclasses_either_next = (value: number) => Right(add_one(value));
 
 const maybe_functor = Functor.instance_for(Just(0));
 const maybe_monad = Monad.instance_for(Just(0));
@@ -271,7 +271,7 @@ Deno.bench("breakdown monomorphic Either bind call site", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value = right(index);
+    let value = Right(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = bind_either_call_site(value);
@@ -294,7 +294,7 @@ Deno.bench("breakdown mixed Maybe/Either bind call site", () => {
       value = Just(index) as MixedBindable;
       next = mixed_maybe_next;
     } else {
-      value = right(index) as MixedBindable;
+      value = Right(index) as MixedBindable;
       next = mixed_either_next;
     }
 
@@ -341,7 +341,7 @@ function mixed_maybe_next(value: number): MixedBindable {
 }
 
 function mixed_either_next(value: number): MixedBindable {
-  return right(add_one(value)) as MixedBindable;
+  return Right(add_one(value)) as MixedBindable;
 }
 
 function raw_map<from, to>(

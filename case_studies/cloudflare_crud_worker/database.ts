@@ -4,7 +4,7 @@ import {
   type TaggedOperation,
   type Uses,
 } from "../../src/effects.ts";
-import { type EitherValue, left, right } from "../../src/either.ts";
+import { type EitherValue, Left, Right } from "../../src/either.ts";
 import { type AsTask, from_fn } from "../../src/task.ts";
 import type { TraceAttributes, TraceScope } from "./trace.ts";
 import type { HttpProblem, Todo, TodoCreate, TodoPatch } from "./types.ts";
@@ -411,13 +411,13 @@ export function database_problem(error: DatabaseError): HttpProblem {
 }
 
 export function database_ok<item>(value: item): DatabaseResult<item> {
-  return right(value) as DatabaseResult<item>;
+  return Right(value) as DatabaseResult<item>;
 }
 
 export function database_err<item = never>(
   error: DatabaseError,
 ): DatabaseResult<item> {
-  return left<DatabaseError, item>(error);
+  return Left<DatabaseError, item>(error);
 }
 
 function todo_from_row(row: TodoRow): Todo {

@@ -1,6 +1,6 @@
 import { ArrayT, to_array } from "../src/array.ts";
 import { assert_equals } from "../src/assert.ts";
-import { left, right } from "../src/either.ts";
+import { Left, Right } from "../src/either.ts";
 import { Just, Nothing } from "../src/maybe.ts";
 import { Alternative, Traversable } from "../src/typeclasses.ts";
 
@@ -12,21 +12,21 @@ export function lesson_13_alternative_and_traversable() {
   );
   const parsed = Traversable.traverse(
     ArrayT(["1", "2", "x"]),
-    right(undefined),
+    Right(undefined),
     parse_int,
   );
 
   assert_equals(fallback.value(), Just(42).value());
   assert_equals(to_array(combined), [1, 2, 3]);
-  assert_equals(parsed.value(), left("expected integer: x").value());
+  assert_equals(parsed.value(), Left("expected integer: x").value());
 }
 
 function parse_int(text: string) {
   const value = Number.parseInt(text, 10);
 
   if (Number.isFinite(value)) {
-    return right(value);
+    return Right(value);
   }
 
-  return left("expected integer: " + text);
+  return Left("expected integer: " + text);
 }

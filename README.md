@@ -262,17 +262,17 @@ Size.instance(List)({
 There is no `MaybeBox` or `MaybeInstance` type. The fluent methods are derived
 from the dictionary shape plus the wrapped value and item type.
 
-Direct fluent aliases still work when a data type opts into them:
+Exported data constructors keep the fluent methods:
 
 ```ts
-const parsed = right("42").bind((text) => {
+const parsed = Right("42").bind((text) => {
   return from_number(Number.parseInt(text, 10));
 });
 
 parsed.value(); // ["Right", 42]
 ```
 
-`Either` does not fix the error payload to `string`; `left(value)` keeps the
+`Either` does not fix the error payload to `string`; `Left(value)` keeps the
 error value's type. The examples use strings because they are easy to inspect.
 
 ## Tagged Values
@@ -308,7 +308,7 @@ dictionary and uses `yield*` to bind each wrapped value:
 
 ```ts
 const decoded = Do(function* () {
-  const text = yield* right("42");
+  const text = yield* Right("42");
   const number = yield* from_number(Number.parseInt(text, 10));
 
   return number + 1;
@@ -607,14 +607,14 @@ catchError (Left "missing") (\error -> Right (length error))
 
 ```ts
 Bifunctor.bimap(
-  either_left<string, number>("missing"),
+  Left<string, number>("missing"),
   (message) => message.length,
   (value) => value + 1,
 );
 
 MonadError.catch_error(
-  either_left<string, number>("missing"),
-  (error) => either_right(String(error).length),
+  Left<string, number>("missing"),
+  (error) => Right(String(error).length),
 );
 ```
 
@@ -778,7 +778,7 @@ sequenceA [Just 1, Just 2, Just 3]
 ```ts
 Traversable.traverse(
   ArrayT(["1", "2", "3"]),
-  either_right(undefined),
+  Right(undefined),
   (text) => either_from_number(Number.parseInt(text, 10)),
 );
 
@@ -1129,10 +1129,10 @@ Applicative.lift(
 but not `Monad`: a lawful monad would make later validations depend on earlier
 values and lose independent error accumulation.
 
-Like `Writer`, `Validation` now separates the accumulation rule from the default
-error shape. `invalid("message")` is a convenience for `readonly string[]`
-errors, while `invalid_with(error, semigroup)` can accumulate any error payload
-with an explicit semigroup.
+Like `Writer`, `Validation` separates the accumulation rule from the default
+error shape. `InvalidMessages("message")` is a convenience for
+`readonly string[]` errors, while `Invalid(error, semigroup)` can accumulate any
+error payload with an explicit semigroup.
 
 ## JavaScript Shapes
 

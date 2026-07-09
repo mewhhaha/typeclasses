@@ -1,5 +1,5 @@
 import { Effect, Program, type Uses } from "../../src/effects.ts";
-import { type EitherValue, left, right } from "../../src/either.ts";
+import { type EitherValue, Left, Right } from "../../src/either.ts";
 import { ask, type AsReader } from "../../src/reader.ts";
 import { type AsTask, from_fn } from "../../src/task.ts";
 import { type Clock, now } from "./clock.ts";
@@ -198,10 +198,10 @@ function read_create_body(
       const decoded = decode_create(payload);
 
       if (is_problem(decoded)) {
-        return left<HttpProblem, TodoCreate>(decoded);
+        return Left<HttpProblem, TodoCreate>(decoded);
       }
 
-      return right(decoded) as EitherValue<HttpProblem, TodoCreate>;
+      return Right(decoded) as EitherValue<HttpProblem, TodoCreate>;
     }),
   );
 }
@@ -224,10 +224,10 @@ function read_patch_body(
       const decoded = decode_patch(payload);
 
       if (is_problem(decoded)) {
-        return left<HttpProblem, TodoPatch>(decoded);
+        return Left<HttpProblem, TodoPatch>(decoded);
       }
 
-      return right(decoded) as EitherValue<HttpProblem, TodoPatch>;
+      return Right(decoded) as EitherValue<HttpProblem, TodoPatch>;
     }),
   );
 }
@@ -236,9 +236,9 @@ async function read_json(
   request: Request,
 ): Promise<EitherValue<HttpProblem, unknown>> {
   try {
-    return right(await request.json()) as EitherValue<HttpProblem, unknown>;
+    return Right(await request.json()) as EitherValue<HttpProblem, unknown>;
   } catch (error) {
-    return left<HttpProblem, unknown>([
+    return Left<HttpProblem, unknown>([
       "bad_json",
       { message: json_error_message(error) },
     ]);

@@ -5,8 +5,8 @@ import { Left, Right } from "purify-ts/Either";
 import * as TrueResult from "true-myth/result";
 
 import {
-  left as typeclasses_left,
-  right as typeclasses_right,
+  Left as TypeclassesLeft,
+  Right as TypeclassesRight,
 } from "../src/either.ts";
 import { Applicative, Do } from "../src/typeclasses.ts";
 
@@ -583,9 +583,9 @@ function typeclasses_from_plain<item>(result: PlainResult<item>) {
 
   switch (tag) {
     case "err":
-      return typeclasses_left<string, item>(payload);
+      return TypeclassesLeft<string, item>(payload);
     case "ok":
-      return typeclasses_right(payload);
+      return TypeclassesRight(payload);
   }
 }
 

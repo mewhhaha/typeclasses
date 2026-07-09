@@ -1,7 +1,7 @@
 import { assert_equals } from "../src/assert.ts";
 import { Just, Nothing } from "../src/maybe.ts";
 import { Applicative } from "../src/typeclasses.ts";
-import { invalid, valid } from "../src/validation.ts";
+import { InvalidMessages, Valid } from "../src/validation.ts";
 
 type User = {
   readonly name: string;
@@ -21,13 +21,13 @@ export function lesson_07_applicatives() {
   );
   const user = Applicative.lift(
     make_user,
-    valid("Ada"),
-    valid(42),
+    Valid("Ada"),
+    Valid(42),
   );
   const errors = Applicative.lift(
     make_user,
-    invalid<string>("name is required"),
-    invalid<number>("age is required"),
+    InvalidMessages<string>("name is required"),
+    InvalidMessages<number>("age is required"),
   );
   const [error_tag, messages] = errors.value();
 

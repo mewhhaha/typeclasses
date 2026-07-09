@@ -1,5 +1,5 @@
 import { assert_equals } from "../src/assert.ts";
-import { from_number, right } from "../src/either.ts";
+import { from_number, Right } from "../src/either.ts";
 import {
   from_array as list_from_array,
   to_array as list_to_array,
@@ -15,7 +15,7 @@ export function lesson_08_monads_and_do() {
     return value + 1;
   });
   const either = Do(function* () {
-    const text = yield* right("41");
+    const text = yield* Right("41");
     const value = yield* from_number(Number.parseInt(text, 10));
 
     return value + 1;
@@ -34,7 +34,7 @@ export function lesson_08_monads_and_do() {
   });
 
   assert_equals(maybe.value(), Just(43).value());
-  assert_equals(either.value(), right(42).value());
+  assert_equals(either.value(), Right(42).value());
   assert_equals(rejected.value(), Nothing().value());
   assert_equals(list_to_array(pairs), [11, 21, 12, 22]);
 }

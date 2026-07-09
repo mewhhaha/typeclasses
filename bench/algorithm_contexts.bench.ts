@@ -8,7 +8,7 @@ import { type AsList, from_array as list_from_array } from "../src/list.ts";
 import { from_entries as map_from_entries } from "../src/map.ts";
 import { type AsMaybe, Just } from "../src/maybe.ts";
 import { from_entries as record_from_entries } from "../src/record.ts";
-import { type AsEither, right } from "../src/either.ts";
+import { type AsEither, Right } from "../src/either.ts";
 import { from_iterable as set_from_iterable } from "../src/set.ts";
 import type { Data } from "../src/typeclass.ts";
 import {
@@ -19,7 +19,7 @@ import {
   Monad,
   type Monad as MonadDictionary,
 } from "../src/typeclasses.ts";
-import { invalid, valid } from "../src/validation.ts";
+import { InvalidMessages, Valid } from "../src/validation.ts";
 
 const iterations = 10_000;
 let _sink: unknown;
@@ -86,17 +86,17 @@ const maybe_id = Just(1);
 const maybe_weight = Just(10);
 const maybe_active = Just(true);
 
-const either_event = right(events[0]);
-const either_id = right(1);
-const either_weight = right(10);
-const either_active = right(true);
+const either_event = Right(events[0]);
+const either_id = Right(1);
+const either_weight = Right(10);
+const either_active = Right(true);
 
-const validation_event = valid(events[0]);
-const validation_id = valid(1);
-const validation_weight = valid(10);
-const validation_active = valid(true);
-const validation_invalid_id = invalid<number>("missing id");
-const validation_invalid_weight = invalid<number>("missing weight");
+const validation_event = Valid(events[0]);
+const validation_id = Valid(1);
+const validation_weight = Valid(10);
+const validation_active = Valid(true);
+const validation_invalid_id = InvalidMessages<number>("missing id");
+const validation_invalid_weight = InvalidMessages<number>("missing weight");
 
 Deno.bench("algorithm functor native Array", () => {
   let current: unknown;
@@ -582,12 +582,12 @@ function maybe_active_for(
 }
 
 function either_weight_for(id: number): Data<AsEither, number> {
-  return right(id * 10);
+  return Right(id * 10);
 }
 
 function either_active_for(
   id: number,
   weight: number,
 ): Data<AsEither, boolean> {
-  return right(weight % 2 === 0 && id % 2 === 1);
+  return Right(weight % 2 === 0 && id % 2 === 1);
 }

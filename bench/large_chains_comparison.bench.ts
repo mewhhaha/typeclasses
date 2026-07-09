@@ -12,8 +12,8 @@ import * as TrueResult from "true-myth/result";
 
 import {
   type AsEither,
-  left as typeclasses_left,
-  right as typeclasses_right,
+  Left as TypeclassesLeft,
+  Right as TypeclassesRight,
 } from "../src/either.ts";
 import type { AsMaybe } from "../src/maybe.ts";
 import { Just, Nothing } from "../src/maybe.ts";
@@ -49,7 +49,7 @@ const true_maybe_map_add_one = TrueMaybe.map(add_one);
 const true_maybe_and_then_next = TrueMaybe.andThen(true_maybe_next);
 
 const typeclasses_either_next = (value: number) =>
-  typeclasses_right(add_one(value));
+  TypeclassesRight(add_one(value));
 const fp_either_next = <error>(value: number) => {
   return FpEither.right<error, number>(add_one(value));
 };
@@ -496,7 +496,7 @@ Deno.bench("large Either bind chain typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value: Data<AsEither, number> = typeclasses_right(index);
+    let value: Data<AsEither, number> = TypeclassesRight(index);
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.bind(typeclasses_either_next);
@@ -580,10 +580,10 @@ Deno.bench("large Either Do typeclasses", () => {
 
   for (let index = 0; index < iterations; index += 1) {
     const current = Do(function* () {
-      let value = yield* typeclasses_right(index);
+      let value = yield* TypeclassesRight(index);
 
       for (let step = 0; step < do_length; step += 1) {
-        value = yield* typeclasses_right(add_one(value));
+        value = yield* TypeclassesRight(add_one(value));
       }
 
       return double(value);
@@ -631,7 +631,7 @@ Deno.bench("large Either left bind chain typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    let value: Data<AsEither, number> = typeclasses_left<string, number>("bad");
+    let value: Data<AsEither, number> = TypeclassesLeft<string, number>("bad");
 
     for (let step = 0; step < chain_length; step += 1) {
       value = value.bind(typeclasses_either_next);
@@ -768,15 +768,15 @@ function maybe_do_transformed(index: number): Data<AsMaybe, number> {
 }
 
 function either_do_transformed(index: number): Data<AsEither, number> {
-  return typeclasses_right(index).bind((value_1) => {
-    return typeclasses_right(add_one(value_1)).bind((value_2) => {
-      return typeclasses_right(add_one(value_2)).bind((value_3) => {
-        return typeclasses_right(add_one(value_3)).bind((value_4) => {
-          return typeclasses_right(add_one(value_4)).bind((value_5) => {
-            return typeclasses_right(add_one(value_5)).bind((value_6) => {
-              return typeclasses_right(add_one(value_6)).bind((value_7) => {
-                return typeclasses_right(add_one(value_7)).bind((value_8) => {
-                  return typeclasses_right(add_one(value_8)).map((value_9) => {
+  return TypeclassesRight(index).bind((value_1) => {
+    return TypeclassesRight(add_one(value_1)).bind((value_2) => {
+      return TypeclassesRight(add_one(value_2)).bind((value_3) => {
+        return TypeclassesRight(add_one(value_3)).bind((value_4) => {
+          return TypeclassesRight(add_one(value_4)).bind((value_5) => {
+            return TypeclassesRight(add_one(value_5)).bind((value_6) => {
+              return TypeclassesRight(add_one(value_6)).bind((value_7) => {
+                return TypeclassesRight(add_one(value_7)).bind((value_8) => {
+                  return TypeclassesRight(add_one(value_8)).map((value_9) => {
                     return double(value_9);
                   });
                 });

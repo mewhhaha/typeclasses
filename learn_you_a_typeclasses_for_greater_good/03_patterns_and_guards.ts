@@ -1,5 +1,5 @@
 import { assert_equals } from "../src/assert.ts";
-import { type Either, is_left, is_right, left, right } from "../src/either.ts";
+import { type Either, is_left, is_right, Left, Right } from "../src/either.ts";
 import { Just, type Maybe, Nothing } from "../src/maybe.ts";
 import { match } from "../src/tagged.ts";
 
@@ -34,10 +34,10 @@ function parse_user_id(text: string) {
   const id = Number.parseInt(text, 10);
 
   if (Number.isInteger(id)) {
-    return right(id);
+    return Right(id);
   }
 
-  return left<string, number>("invalid user id");
+  return Left<string, number>("invalid user id");
 }
 
 function describe_maybe(value: Maybe<number>): string {

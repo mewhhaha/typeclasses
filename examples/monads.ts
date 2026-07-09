@@ -1,6 +1,6 @@
 import { ArrayT } from "../src/array.ts";
 import { ask, asks, local } from "../src/reader.ts";
-import { from_number, left, right } from "../src/either.ts";
+import { from_number, Left, Right } from "../src/either.ts";
 import { exec_state, get, gets, modify } from "../src/state.ts";
 import {
   atomically,
@@ -111,40 +111,40 @@ function decode_account_payload(input: unknown) {
 
 function object_value(value: unknown, name: string) {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return right(value as Record<string, unknown>);
+    return Right(value as Record<string, unknown>);
   }
 
-  return left<string, Record<string, unknown>>(name + " must be an object");
+  return Left<string, Record<string, unknown>>(name + " must be an object");
 }
 
 function field(record: Record<string, unknown>, name: string) {
   if (Object.hasOwn(record, name)) {
-    return right(record[name]);
+    return Right(record[name]);
   }
 
-  return left<string, unknown>(name + " is missing");
+  return Left<string, unknown>(name + " is missing");
 }
 
 function string_value(value: unknown, name: string) {
   if (typeof value === "string") {
-    return right(value);
+    return Right(value);
   }
 
-  return left<string, string>(name + " must be a string");
+  return Left<string, string>(name + " must be a string");
 }
 
 function boolean_value(value: unknown, name: string) {
   if (typeof value === "boolean") {
-    return right(value);
+    return Right(value);
   }
 
-  return left<string, boolean>(name + " must be a boolean");
+  return Left<string, boolean>(name + " must be a boolean");
 }
 
 function require_true(value: boolean, message: string) {
   if (value) {
-    return right(undefined);
+    return Right(undefined);
   }
 
-  return left<string, void>(message);
+  return Left<string, void>(message);
 }

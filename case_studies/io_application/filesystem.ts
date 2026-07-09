@@ -4,7 +4,7 @@ import {
   type TaggedOperation,
   type Uses,
 } from "../../src/effects.ts";
-import { type EitherValue, left, right } from "../../src/either.ts";
+import { type EitherValue, Left, Right } from "../../src/either.ts";
 import { type AsTask, from_fn } from "../../src/task.ts";
 
 export type FileSystemError =
@@ -89,13 +89,13 @@ export function run_file_system<requirements, item>(
 }
 
 export function file_system_ok<item>(value: item): FileSystemResult<item> {
-  return right(value) as FileSystemResult<item>;
+  return Right(value) as FileSystemResult<item>;
 }
 
 export function file_system_err<item = never>(
   error: FileSystemError,
 ): FileSystemResult<item> {
-  return left<FileSystemError, item>(error);
+  return Left<FileSystemError, item>(error);
 }
 
 export function missing_file(path: string): FileSystemError {

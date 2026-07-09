@@ -8,9 +8,12 @@ import * as TrueMaybe from "true-myth/maybe";
 import * as TrueResult from "true-myth/result";
 
 import { Just, Nothing } from "../src/maybe.ts";
-import { left, right } from "../src/either.ts";
+import {
+  Left as TypeclassesLeft,
+  Right as TypeclassesRight,
+} from "../src/either.ts";
 import { Applicative } from "../src/typeclasses.ts";
-import { invalid, valid } from "../src/validation.ts";
+import { InvalidMessages, Valid } from "../src/validation.ts";
 
 // Each benchmark iteration performs this many constructions or compositions.
 const iterations = 10_000;
@@ -32,7 +35,8 @@ const fp_option_chain_double = FpOption.chain(fp_option_double);
 const true_maybe_map_add_one = TrueMaybe.map(add_one);
 const true_maybe_and_then_double = TrueMaybe.andThen(true_maybe_double);
 
-const typeclasses_either_double = (value: number) => right(double(value));
+const typeclasses_either_double = (value: number) =>
+  TypeclassesRight(double(value));
 const fp_either_double = <error>(value: number) => {
   return FpEither.right<error, number>(double(value));
 };
@@ -296,7 +300,7 @@ Deno.bench("typeclasses Either right construction", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = right(index);
+    current = TypeclassesRight(index);
   }
 
   _sink = current;
@@ -346,7 +350,9 @@ Deno.bench("typeclasses Either right map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = right(index).map(add_one).bind(typeclasses_either_double);
+    current = TypeclassesRight(index).map(add_one).bind(
+      typeclasses_either_double,
+    );
   }
 
   _sink = current;
@@ -356,11 +362,11 @@ Deno.bench("typeclasses Either right fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = right((left: number) => {
+    current = TypeclassesRight((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(right(index))
-      .ap(right(index + 1));
+      .ap(TypeclassesRight(index))
+      .ap(TypeclassesRight(index + 1));
   }
 
   _sink = current;
@@ -372,8 +378,8 @@ Deno.bench("typeclasses Either right lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      right(index),
-      right(index + 1),
+      TypeclassesRight(index),
+      TypeclassesRight(index + 1),
     );
   }
 
@@ -445,7 +451,7 @@ Deno.bench("typeclasses Either left map+bind", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = left<string, number>(error).map(add_one).bind(
+    current = TypeclassesLeft<string, number>(error).map(add_one).bind(
       typeclasses_either_double,
     );
   }
@@ -457,11 +463,11 @@ Deno.bench("typeclasses Either left fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = right((left: number) => {
+    current = TypeclassesRight((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(right(index))
-      .ap(left<string, number>(error));
+      .ap(TypeclassesRight(index))
+      .ap(TypeclassesLeft<string, number>(error));
   }
 
   _sink = current;
@@ -473,8 +479,8 @@ Deno.bench("typeclasses Either left lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      right(index),
-      left<string, number>(error),
+      TypeclassesRight(index),
+      TypeclassesLeft<string, number>(error),
     );
   }
 
@@ -532,11 +538,11 @@ Deno.bench("typeclasses Validation valid fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = valid((left: number) => {
+    current = Valid((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(valid(index))
-      .ap(valid(index + 1));
+      .ap(Valid(index))
+      .ap(Valid(index + 1));
   }
 
   _sink = current;
@@ -548,8 +554,8 @@ Deno.bench("typeclasses Validation valid lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      valid(index),
-      valid(index + 1),
+      Valid(index),
+      Valid(index + 1),
     );
   }
 
@@ -560,11 +566,11 @@ Deno.bench("typeclasses Validation invalid fluent ap", () => {
   let current: unknown;
 
   for (let index = 0; index < iterations; index += 1) {
-    current = valid((left: number) => {
+    current = Valid((left: number) => {
       return (right: number) => left + right;
     })
-      .ap(invalid<number>("left"))
-      .ap(invalid<number>("right"));
+      .ap(InvalidMessages<number>("left"))
+      .ap(InvalidMessages<number>("right"));
   }
 
   _sink = current;
@@ -576,8 +582,8 @@ Deno.bench("typeclasses Validation invalid lift", () => {
   for (let index = 0; index < iterations; index += 1) {
     current = Applicative.lift(
       (left, right) => left + right,
-      invalid<number>("left"),
-      invalid<number>("right"),
+      InvalidMessages<number>("left"),
+      InvalidMessages<number>("right"),
     );
   }
 
