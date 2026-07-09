@@ -29,13 +29,7 @@ type StmJournal = {
 
 export type Stm<item> = (journal: StmJournal) => item;
 
-export interface AsStm
-  extends
-    As<AsStm>,
-    Show<AsStm>,
-    Functor<AsStm>,
-    Applicative<AsStm>,
-    Monad<AsStm> {
+export interface AsStm extends As<AsStm>, Show<AsStm>, Monad<AsStm> {
   readonly [type_item]: unknown;
   readonly [type_data]: Stm<this[typeof type_item]>;
 }

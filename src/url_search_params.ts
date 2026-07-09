@@ -15,7 +15,6 @@ export interface AsURLSearchParams
     As<AsURLSearchParams>,
     Show<AsURLSearchParams>,
     Eq<AsURLSearchParams>,
-    Semigroup<AsURLSearchParams>,
     Monoid<AsURLSearchParams>,
     Foldable<AsURLSearchParams> {
   readonly [type_item]: unknown;

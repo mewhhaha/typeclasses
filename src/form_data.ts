@@ -15,7 +15,6 @@ export interface AsFormData
     As<AsFormData>,
     Show<AsFormData>,
     Eq<AsFormData>,
-    Semigroup<AsFormData>,
     Monoid<AsFormData>,
     Foldable<AsFormData> {
   readonly [type_item]: unknown;

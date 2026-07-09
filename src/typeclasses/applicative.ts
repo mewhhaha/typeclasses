@@ -13,7 +13,7 @@ export const applicative_lift_method = Symbol("Applicative.lift");
 
 type ApplicativeImplementation<dictionary extends Dictionary> = {
   pure: <item>(
-    this: Data<dictionary, unknown>,
+    this: dictionary,
     value: item,
   ) => Data<dictionary, item>;
   ap: <from, to>(
@@ -38,7 +38,11 @@ export interface Applicative<dictionary extends Dictionary>
 
 type ApplicativeTypeclass = Typeclass<typeof applicative_typeclass, {
   pure<dictionary extends Applicative<dictionary>, item>(
-    value: Data<dictionary, unknown>,
+    witness: Data<dictionary, unknown>,
+    item: item,
+  ): Data<dictionary, item>;
+  pure<dictionary extends Applicative<dictionary>, item>(
+    dictionary: Applicative<dictionary>,
     item: item,
   ): Data<dictionary, item>;
   lift: typeof applicative_lift;
@@ -55,12 +59,12 @@ export const Applicative: ApplicativeTypeclass = typeclass(
       dictionary extends Applicative<dictionary>,
       item,
     >(
-      value: Data<dictionary, unknown>,
+      witness: dictionary | Data<dictionary, unknown>,
       item: item,
     ): Data<dictionary, item> {
       return call_typeclass_method(
-        this.instance_for(value).pure<item>,
-        value,
+        this.instance_for(witness).pure<item>,
+        witness as dictionary,
         item,
       );
     },

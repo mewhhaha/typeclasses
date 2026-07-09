@@ -19,7 +19,7 @@ export interface Monoid<dictionary extends Dictionary>
       dictionary,
       typeof monoid_typeclass,
       {
-        empty: <item>(this: Data<dictionary, unknown>) => Data<
+        empty: <item>(this: dictionary) => Data<
           dictionary,
           item
         >;
@@ -29,7 +29,10 @@ export interface Monoid<dictionary extends Dictionary>
 
 type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
   empty<dictionary extends Monoid<dictionary>, item>(
-    value: Data<dictionary, unknown>,
+    witness: Data<dictionary, unknown>,
+  ): Data<dictionary, item>;
+  empty<dictionary extends Monoid<dictionary>, item>(
+    dictionary: Monoid<dictionary>,
   ): Data<dictionary, item>;
   concat<dictionary extends Monoid<dictionary>, item>(
     left: Data<dictionary, item>,
@@ -42,9 +45,12 @@ export const Monoid: MonoidTypeclass = typeclass(monoid_typeclass, {
     dictionary extends Monoid<dictionary>,
     item,
   >(
-    value: Data<dictionary, unknown>,
+    witness: dictionary | Data<dictionary, unknown>,
   ): Data<dictionary, item> {
-    return call_typeclass_method(this.instance_for(value).empty<item>, value);
+    return call_typeclass_method(
+      this.instance_for(witness).empty<item>,
+      witness as dictionary,
+    );
   },
 
   concat<

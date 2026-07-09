@@ -41,9 +41,10 @@ Use the package from JSR with explicit imports:
 import { Do, Just, Nothing, Show } from "jsr:@mewhhaha/typeclasses";
 ```
 
-The published package exposes two entrypoints:
+The published package exposes three entrypoints:
 
 - `jsr:@mewhhaha/typeclasses` for the library.
+- `jsr:@mewhhaha/typeclasses/prelude` for Haskell-style standalone functions.
 - `jsr:@mewhhaha/typeclasses/transform` for the source transformer.
 
 Before publishing, run the dry-run task:
@@ -75,6 +76,9 @@ Each data type declares its raw value shape directly on its dictionary interface
 with type-only phantom symbols. That maps the contextual `item` to the raw value
 the dictionary wraps, so `Data<typeof Maybe, item>` can recover that `Maybe`
 stores `Maybe<item>` without a global registry or a public kind symbol.
+TypeScript still has no native higher-kinded types, so this small open-HKT
+encoding and its `type_item`/`type_data` symbols remain part of dictionary
+definitions even though most callers never mention them.
 
 In application code, you usually do not need to write the export-safe
 annotations used inside this library. A local data type can be left mostly
@@ -145,6 +149,13 @@ if (Just.is(raw)) {
 }
 ```
 
+The declaration only lists the strongest required capabilities. Superclasses are
+transitive: `Monad` includes `Applicative` and `Functor`, `Traversable` includes
+`Functor` and `Foldable`, and `Ord` includes `Eq`, so those interfaces do not
+need to be repeated on `AsMaybe`. Each superclass implementation still needs to
+be installed; the shorter heritage list removes duplicate typing, not runtime
+instance definitions.
+
 In this repository's source you may still see exported constructor types such as
 `MaybeConstructor = UnionDictionary<AsMaybe>`. Those are declaration-friendly
 annotations for publishing without `--allow-slow-types`; they are not part of
@@ -205,16 +216,16 @@ fluent aliases can use the instance functions directly.
 Data type modules use the same callable dictionary for public wrapping and their
 own constructors.
 
-Each data type exports an open dictionary interface. Typeclass instances are
-validated and installed through curried typeclass-level installers like
-`Show.instance(Maybe)({ ... })`. The first call fixes the dictionary, which lets
-TypeScript infer generic implementation parameters from the `this`-based method
-shape. Typeclass definitions are prototype-backed objects made with `typeclass`;
-each definition inherits the shared installer and instance accessor, while
-public helper methods keep typeclass-specific types. Their bodies usually
-dispatch through `call_typeclass_method`. Outside the declaring module, extend a
-dictionary by augmenting its exported `As...` interface and installing the
-implementation on the callable dictionary.
+Each data type exports an open dictionary interface. Typeclass instances use the
+curried `Typeclass.instance(dictionary)(implementation)` form when generic
+methods need contextual typing. The first call fixes the dictionary before
+TypeScript checks the implementation's higher-rank methods. Typeclass
+definitions are prototype-backed objects made with `typeclass`; each definition
+inherits the shared installer and instance accessor, while public helper methods
+keep typeclass-specific types. Their bodies usually dispatch through
+`call_typeclass_method`. Outside the declaring module, extend a dictionary by
+augmenting its exported `As...` interface and installing the implementation on
+the callable dictionary.
 
 Implementation methods usually do not need explicit generic parameters. For
 `Traversable.traverse`, collection implementations split empty and non-empty
@@ -280,6 +291,73 @@ error value's type. The examples use strings because they are easy to inspect.
 `Left` and `Right` are typed constructor exports over the `Either` dictionary,
 so callers do not need casts to preserve the left payload type.
 
+Fixed context parameters are part of the open dictionary too. `AsEither<left>`,
+`AsTuple<left>`, `AsValidation<error>`, and `AsFn<input>` keep their fixed
+parameter while the `type_item` slot varies, so typeclass operations no longer
+erase it to `unknown`:
+
+```ts
+const parsed: Data<AsEither<string>, number> = Right<string, number>(42);
+const counted: Data<AsTuple<string>, number> = tuple("count", 42);
+const checked: Data<AsValidation<readonly string[]>, number> = Invalid<
+  readonly string[],
+  number
+>(["missing"], {
+  concat: (left, right) => [...left, ...right],
+});
+
+const StringResult = Either.withLeft<string>();
+const returned: Data<AsEither<string>, number> = Do(
+  StringResult,
+  function* () {
+    return 42;
+  },
+);
+
+const named: Data<AsFn<{ readonly name: string }>, string> = fn(
+  (text: string) => text.length,
+).dimap(
+  (user) => user.name,
+  (length) => "length:" + length,
+);
+
+named.run({ name: "Ada" });
+```
+
+`Tuple.withLeft<left>()` and `Validation.withError<error>()` provide the same
+typed dictionary view when a context-free operation needs the fixed parameter;
+`Fn.withInput<input>()` provides one for function dictionaries. `Bifunctor`,
+`Profunctor`, `Category`, and `Arrow` carry a small associated context mapping
+so operations that change a fixed parameter return the corresponding new
+dictionary type.
+
+## Function Prelude
+
+Import `./prelude` when function-first operations read more naturally than
+fluent chains. The functions dispatch through the same dictionaries and wrapped
+values; this is an additional surface, not a second implementation:
+
+```ts
+import {
+  bind,
+  empty,
+  fmap,
+  foldl,
+  mempty,
+  pure,
+  traverse,
+} from "jsr:@mewhhaha/typeclasses/prelude";
+
+const answer = pure(Maybe, 41);
+const incremented = fmap((value) => value + 1, answer);
+const rendered = bind(incremented, (value) => Just(value.toString()));
+const total = foldl((sum, value) => sum + value, 0, ArrayT([1, 2, 3]));
+const checked = traverse((value) => Just(value + 1), Maybe, ArrayT([1, 2]));
+
+empty(Maybe); // Nothing
+mempty(ArrayT); // []
+```
+
 ## Tagged Values
 
 Data constructors use tuple tags. Deconstruct the raw value and switch on the
@@ -321,18 +399,28 @@ if (Left.is(result)) {
 ```
 
 `Do` is generator-based do notation. It runs a generator over one monad
-dictionary and uses `yield*` to bind each wrapped value:
+dictionary and uses `yield*` to bind each wrapped value. Pass the dictionary
+explicitly when you want the monad to be visible at the call site:
 
 ```ts
-const decoded = Do(function* () {
-  const text = yield* Right("42");
-  const number = yield* from_number(Number.parseInt(text, 10));
+const incremented = Do(Maybe, function* () {
+  const number = yield* Just(42);
 
   return number + 1;
 });
 
-decoded.value(); // ["Right", 43]
+incremented.value(); // ["Just", 43]
+
+const answer = Do(Maybe, function* () {
+  return 42;
+});
+
+answer.value(); // ["Just", 42]
 ```
+
+The explicit dictionary makes yield-free blocks possible because `Do` can call
+its `pure`. The original `Do(function* () { ... })` form remains available when
+the first yielded value can supply the dictionary.
 
 `Task` shows the same typeclass shape for deferred async work:
 
@@ -494,6 +582,7 @@ fmap (+1) (Just 41)
 ```
 
 ```ts
+fmap((value) => value + 1, Just(41));
 Functor.map(Just(41), (value) => value + 1);
 Just(41).map((value) => value + 1);
 ```
@@ -523,6 +612,15 @@ inputs are independent, or fluent `ap` when you already have a contextual
 function. Parser-style applicatives can use the same shape by lifting a field
 constructor over independent parser values.
 
+Operations that have no input value use a dictionary witness rather than a dummy
+wrapped value:
+
+```ts
+Maybe.pure(42);
+Applicative.pure(Maybe, 42);
+pure(Maybe, 42); // from ./prelude
+```
+
 ### Monad
 
 ```hs
@@ -530,6 +628,8 @@ parse input >>= validate >>= save
 ```
 
 ```ts
+bind(bind(parse(input), validate), save);
+
 parse(input)
   .bind(validate)
   .bind(save);
@@ -774,6 +874,8 @@ foldl' (+) 0 [1, 2, 3]
 ```
 
 ```ts
+foldl((sum, item) => sum + item, 0, ArrayT([1, 2, 3]));
+
 Foldable.fold(
   ArrayT([1, 2, 3]),
   0,
@@ -795,20 +897,20 @@ sequenceA [Just 1, Just 2, Just 3]
 ```ts
 Traversable.traverse(
   ArrayT(["1", "2", "3"]),
-  Right(undefined),
+  Either,
   (text) => either_from_number(Number.parseInt(text, 10)),
 );
 
 Traversable.sequence(
   ArrayT([Just(1), Just(2), Just(3)]),
-  Just(undefined),
+  Maybe,
 );
 ```
 
 `Traversable` flips a container of effects into an effect containing a
 container. This is the same shape as Haskell's `traverse` and `sequenceA`, but
-the TypeScript version receives one value from the target applicative as the
-dictionary witness.
+the TypeScript version receives the target applicative dictionary explicitly.
+Representative wrapped values remain accepted for compatibility.
 
 ### Semigroup and Monoid
 
@@ -825,7 +927,7 @@ Semigroup.concat(
 );
 
 Monoid.concat(
-  Monoid.empty(ArrayT<string>([])),
+  Monoid.empty(ArrayT),
   ArrayT(["done"]),
 );
 
@@ -835,14 +937,15 @@ Foldable.fold(
     ArrayT([2]),
     ArrayT([3]),
   ]),
-  Monoid.empty(ArrayT<number>([])),
+  Monoid.empty(ArrayT),
   Monoid.concat,
 );
 ```
 
 `Semigroup` provides associative combination. `Monoid` adds `empty`. The
-receiver value is the runtime dictionary witness, so `Monoid.empty` takes a
-representative value of the data type whose empty value should be produced.
+callable data dictionary is the runtime witness, so no placeholder value is
+needed. `mempty(ArrayT)` is the equivalent `./prelude` spelling. A
+representative wrapped value remains accepted for compatibility.
 
 ### Alternative
 
@@ -852,6 +955,7 @@ Nothing <|> Just 42
 ```
 
 ```ts
+Alternative.empty(Maybe); // Nothing
 Alternative.alt(Nothing<number>(), Just(42));
 
 Alternative.alt(
@@ -862,7 +966,8 @@ Alternative.alt(
 
 `Alternative` is the common "empty plus choice" interface. `Maybe` chooses the
 first successful branch, arrays concatenate branches, and parser examples use
-the same idea for backtracking choices.
+the same idea for backtracking choices. The `./prelude` equivalents are
+`empty(Maybe)` and `alt(left, right)`.
 
 ### Parser Combinators
 
@@ -968,6 +1073,25 @@ to_array(logs); // ["start"]
 `Writer` is parameterized by the monoidal output. Arrays are just one concrete
 choice through `ArrayT`; the same `Writer` machinery can accumulate any output
 with a `Monoid` implementation.
+
+For direct Writer programs, `Writer.with(emptyOutput)` creates a configured
+dictionary that captures the output monoid and its identity once:
+
+```ts
+const LogWriter = Writer.with(ArrayT<string>([]));
+
+const direct = Do(LogWriter, function* () {
+  const value = yield* LogWriter([1, ArrayT(["start"])]);
+  return value + 41;
+});
+
+LogWriter.pure(42); // Writer(42, [])
+```
+
+That configured dictionary gives `pure` and yield-free `Do` blocks a real empty
+log without requiring a dummy Writer value. The unconfigured `Writer` export
+remains useful for `writer`, `tell`, and effect handlers where an output value
+already supplies its `Monoid`.
 
 ### Effects Instead of Transformers
 

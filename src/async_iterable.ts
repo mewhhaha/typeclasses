@@ -22,9 +22,6 @@ export interface AsAsyncIterable
   extends
     As<AsAsyncIterable>,
     Show<AsAsyncIterable>,
-    Functor<AsAsyncIterable>,
-    Applicative<AsAsyncIterable>,
-    Semigroup<AsAsyncIterable>,
     Monoid<AsAsyncIterable>,
     Alternative<AsAsyncIterable>,
     Monad<AsAsyncIterable> {

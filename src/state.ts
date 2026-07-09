@@ -26,12 +26,7 @@ import {
 export type State<state, item> = (state: state) => readonly [item, state];
 
 export interface AsState<state>
-  extends
-    As<AsState<state>>,
-    Show<AsState<state>>,
-    Functor<AsState<state>>,
-    Applicative<AsState<state>>,
-    Monad<AsState<state>> {
+  extends As<AsState<state>>, Show<AsState<state>>, Monad<AsState<state>> {
   readonly [type_item]: unknown;
   readonly [type_data]: State<state, this[typeof type_item]>;
   <item>(value: State<state, item>): StateValue<state, item>;

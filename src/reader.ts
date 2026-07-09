@@ -28,8 +28,6 @@ export interface AsReader<environment>
   extends
     As<AsReader<environment>>,
     Show<AsReader<environment>>,
-    Functor<AsReader<environment>>,
-    Applicative<AsReader<environment>>,
     Monad<AsReader<environment>> {
   readonly [type_item]: unknown;
   readonly [type_data]: Reader<environment, this[typeof type_item]>;

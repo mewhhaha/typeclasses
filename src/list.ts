@@ -35,14 +35,9 @@ export interface AsList
   extends
     As<AsList>,
     Show<AsList>,
-    Eq<AsList>,
-    Functor<AsList>,
-    Applicative<AsList>,
-    Semigroup<AsList>,
     Monoid<AsList>,
     Alternative<AsList>,
     Monad<AsList>,
-    Foldable<AsList>,
     Traversable<AsList>,
     Ord<AsList> {
   readonly [type_item]: unknown;

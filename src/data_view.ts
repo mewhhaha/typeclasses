@@ -14,7 +14,6 @@ export interface AsDataView
     As<AsDataView>,
     Show<AsDataView>,
     Eq<AsDataView>,
-    Semigroup<AsDataView>,
     Monoid<AsDataView>,
     Foldable<AsDataView> {
   readonly [type_item]: unknown;

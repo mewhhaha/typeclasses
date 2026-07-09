@@ -17,7 +17,7 @@ export interface MonadError<dictionary extends Dictionary>
       typeof monad_error_typeclass,
       {
         throw_error: <item>(
-          this: Data<dictionary, unknown>,
+          this: dictionary,
           error: unknown,
         ) => Data<dictionary, item>;
         catch_error: <item>(
@@ -33,6 +33,10 @@ type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
     witness: Data<dictionary, unknown>,
     error: unknown,
   ): Data<dictionary, item>;
+  throw_error<dictionary extends MonadError<dictionary>, item>(
+    dictionary: MonadError<dictionary>,
+    error: unknown,
+  ): Data<dictionary, item>;
   catch_error<dictionary extends MonadError<dictionary>, item>(
     value: Data<dictionary, item>,
     handler: (error: unknown) => Data<dictionary, item>,
@@ -46,12 +50,12 @@ export const MonadError: MonadErrorTypeclass = typeclass(
       dictionary extends MonadError<dictionary>,
       item,
     >(
-      witness: Data<dictionary, unknown>,
+      witness: dictionary | Data<dictionary, unknown>,
       error: unknown,
     ): Data<dictionary, item> {
       return call_typeclass_method(
         this.instance_for(witness).throw_error<item>,
-        witness,
+        witness as dictionary,
         error,
       );
     },

@@ -20,7 +20,6 @@ import {
   applicative_lift_method,
   Functor,
   Monad,
-  Monoid,
   type Monoid as MonoidDictionary,
   Show,
 } from "./typeclasses.ts";
@@ -37,8 +36,6 @@ export interface AsWriter<
 > extends
   As<AsWriter<output, log>>,
   Show<AsWriter<output, log>>,
-  Functor<AsWriter<output, log>>,
-  Applicative<AsWriter<output, log>>,
   Monad<AsWriter<output, log>> {
   readonly [type_item]: unknown;
   readonly [type_data]: Writer<output, log, this[typeof type_item]>;
@@ -56,17 +53,27 @@ export type WriterValue<
 >;
 
 type WriterConstructor =
-  & AsWriter<Dictionary, unknown>
+  & Omit<AsWriter<Dictionary, unknown>, "pure">
   & {
+    <item>(
+      value: Writer<Dictionary, unknown, item>,
+    ): Data<AsWriter<Dictionary, unknown>, item>;
     <output extends MonoidDictionary<output>, log, item>(
       value: Writer<output, log, item>,
     ): WriterValue<output, log, item>;
+    with<output extends MonoidDictionary<output>, log>(
+      empty: Data<output, log>,
+    ): AsWriter<output, log>;
   };
 
 export const Writer = data<
   AsWriter<Dictionary, unknown>
->() as WriterConstructor;
+>() as unknown as WriterConstructor;
 const writer_kind = Writer[kind];
+
+Object.defineProperty(Writer, "with", {
+  value: configured_writer,
+});
 
 export function writer<
   output extends MonoidDictionary<output>,
@@ -180,7 +187,10 @@ Functor.instance(Writer)({
 
 Applicative.instance(Writer)({
   pure(value) {
-    const [_ignored, output] = this.value();
+    const [_ignored, output] = (this as unknown as Data<
+      AsWriter<Dictionary, unknown>,
+      unknown
+    >).value();
     return writer_any(value, empty_output(output));
   },
 
@@ -227,7 +237,9 @@ function writer_any<item>(
 }
 
 function empty_output(output: unknown): unknown {
-  return Monoid.empty(output as Data<MonoidDictionary<Dictionary>, unknown>);
+  const monoid = output as Data<MonoidDictionary<Dictionary>, unknown>;
+
+  return monoid.empty();
 }
 
 function concat_output<output extends Dictionary, log>(
@@ -236,8 +248,76 @@ function concat_output<output extends Dictionary, log>(
 ): Data<output, log>;
 function concat_output(left: unknown, right: unknown): unknown;
 function concat_output(left: unknown, right: unknown): unknown {
-  return Monoid.concat(
-    left as Data<MonoidDictionary<Dictionary>, unknown>,
+  const monoid = left as Data<MonoidDictionary<Dictionary>, unknown>;
+
+  return monoid.concat(
     right as Data<MonoidDictionary<Dictionary>, unknown>,
   );
+}
+
+function configured_writer<
+  output extends MonoidDictionary<output>,
+  log,
+>(empty: Data<output, log>): AsWriter<output, log> {
+  const dictionary = data<AsWriter<output, log>>();
+
+  dictionary[kind] = writer_kind;
+
+  Show.instance(dictionary)({
+    show() {
+      const [value, output] = this.value();
+      return "Writer(" + Deno.inspect(value) + ", " +
+        Deno.inspect(output.value()) + ")";
+    },
+  });
+
+  Functor.instance(dictionary)({
+    map(fn) {
+      const [value, output] = this.value();
+      return wrap(fn(value), output);
+    },
+  });
+
+  Applicative.instance(dictionary)({
+    pure(value) {
+      return wrap(value, empty.empty());
+    },
+
+    [applicative_lift_method](fn, rest) {
+      const [first, output] = this.value();
+      const values = [first];
+      let combined_output = output;
+
+      for (const current of rest) {
+        const [value, next_output] = current.value();
+        values.push(value);
+        combined_output = combined_output.concat(next_output);
+      }
+
+      return wrap(fn(...values), combined_output);
+    },
+
+    ap(value) {
+      const [fn, left_output] = this.value();
+      const [item, right_output] = value.value();
+      return wrap(fn(item), left_output.concat(right_output));
+    },
+  });
+
+  Monad.instance(dictionary)({
+    bind(fn) {
+      const [value, left_output] = this.value();
+      const [item, right_output] = fn(value).value();
+      return wrap(item, left_output.concat(right_output));
+    },
+  });
+
+  return dictionary;
+
+  function wrap<item>(
+    value: item,
+    output: Data<output, log>,
+  ): WriterValue<output, log, item> {
+    return dictionary([value, output] as const);
+  }
 }

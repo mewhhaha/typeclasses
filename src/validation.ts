@@ -1,7 +1,7 @@
 import {
   $slot,
   type As,
-  as_data,
+  type Data,
   data,
   type type_data,
   type type_item,
@@ -34,26 +34,46 @@ export type ValidationSemigroup<error> = {
   concat(left: error, right: error): error;
 };
 
-export interface AsValidation
+// deno-lint-ignore no-explicit-any -- a bare Valid is polymorphic in its error type
+type AnyError = any;
+
+export interface AsValidation<error = AnyError>
   extends
-    As<AsValidation>,
-    Show<AsValidation>,
-    Eq<AsValidation>,
-    Functor<AsValidation>,
-    Applicative<AsValidation>,
-    Foldable<AsValidation>,
-    Traversable<AsValidation> {
+    As<AsValidation<error>>,
+    Show<AsValidation<error>>,
+    Eq<AsValidation<error>>,
+    Applicative<AsValidation<error>>,
+    Traversable<AsValidation<error>> {
   readonly [type_item]: unknown;
-  readonly [type_data]: Validation<unknown, this[typeof type_item]>;
+  readonly [type_data]: Validation<error, this[typeof type_item]>;
 }
 
-export type ValidationValue<error, item> = WrappedData<
-  AsValidation,
-  Validation<error, item>,
-  item
+export type ValidationValue<error, item> = [error] extends [never]
+  ? WrappedData<AsValidation<AnyError>, Valid<item>, item>
+  : Data<AsValidation<error>, item>;
+
+export type ValidationDictionary<error> = UnionDictionary<
+  AsValidation<error>
 >;
 
-type ValidationConstructor = UnionDictionary<AsValidation>;
+type ValidationError<value> = value extends Invalid<infer error> ? error
+  : never;
+type ValidationItem<value> = value extends Valid<infer item> ? item : never;
+
+type ValidationConstructor =
+  & {
+    <value extends Validation<AnyError, AnyError>>(
+      value: value,
+    ): ValidationValue<ValidationError<value>, ValidationItem<value>>;
+    <error, item>(
+      value: Validation<error, item>,
+    ): ValidationValue<error, item>;
+    withError<error>(): ValidationDictionary<error>;
+  }
+  & {
+    readonly [key in keyof UnionDictionary<AsValidation<unknown>>]:
+      UnionDictionary<AsValidation<unknown>>[key];
+  };
 
 export type ValidGuard = {
   <error, item>(value: Validation<error, item>): value is Valid<item>;
@@ -78,15 +98,24 @@ export type InvalidConstructor = {
   readonly is: InvalidGuard;
 };
 
-export const Validation: ValidationConstructor = data<AsValidation>(
+export const Validation = data<AsValidation<unknown>>(
   union(["valid", $slot], ["invalid", $slot, $slot]),
-);
+) as ValidationConstructor;
+
+Object.defineProperty(Validation, "withError", {
+  value: validation_with_error,
+});
+
 export const Valid: ValidConstructor = Object.assign(construct_valid, {
   is: is_valid,
 });
 export const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
   is: is_invalid,
 });
+
+function validation_with_error<error>(): ValidationDictionary<error> {
+  return Validation as unknown as ValidationDictionary<error>;
+}
 
 export function InvalidMessages<item = never>(
   first: string,
@@ -128,17 +157,17 @@ function is_invalid<error, item>(
 }
 
 function construct_valid<item>(value: item): ValidationValue<never, item> {
-  return as_data<AsValidation, Validation<never, item>, item>(Validation, [
+  return Validation<never, item>([
     "valid",
     value,
-  ]);
+  ]) as ValidationValue<never, item>;
 }
 
 function construct_invalid<error, item = never>(
   error: error,
   semigroup: ValidationSemigroup<error>,
 ): ValidationValue<error, item> {
-  return as_data<AsValidation, Validation<error, item>, item>(Validation, [
+  return Validation<error, item>([
     "invalid",
     error,
     semigroup,

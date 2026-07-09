@@ -19,15 +19,7 @@ import {
 export type MapT<item> = ReadonlyMap<string, item>;
 
 export interface AsMap
-  extends
-    As<AsMap>,
-    Show<AsMap>,
-    Eq<AsMap>,
-    Functor<AsMap>,
-    Semigroup<AsMap>,
-    Monoid<AsMap>,
-    Foldable<AsMap>,
-    Traversable<AsMap> {
+  extends As<AsMap>, Show<AsMap>, Eq<AsMap>, Monoid<AsMap>, Traversable<AsMap> {
   readonly [type_item]: unknown;
   readonly [type_data]: MapT<this[typeof type_item]>;
 }

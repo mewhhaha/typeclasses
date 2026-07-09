@@ -14,7 +14,6 @@ export interface AsArrayBuffer
     As<AsArrayBuffer>,
     Show<AsArrayBuffer>,
     Eq<AsArrayBuffer>,
-    Semigroup<AsArrayBuffer>,
     Monoid<AsArrayBuffer>,
     Foldable<AsArrayBuffer> {
   readonly [type_item]: unknown;

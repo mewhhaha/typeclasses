@@ -59,11 +59,29 @@ export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
 });
 
 export function Do<dictionary extends Monad<dictionary>, out>(
+  dictionary: Monad<dictionary>,
   run: () => DoGenerator<dictionary, out>,
+): Data<dictionary, out>;
+export function Do<dictionary extends Monad<dictionary>, out>(
+  run: () => DoGenerator<dictionary, out>,
+): Data<dictionary, out>;
+export function Do<dictionary extends Monad<dictionary>, out>(
+  dictionary_or_run: dictionary | (() => DoGenerator<dictionary, out>),
+  explicit_run?: () => DoGenerator<dictionary, out>,
 ): Data<dictionary, out> {
+  const dictionary = explicit_run === undefined
+    ? undefined
+    : dictionary_or_run as dictionary;
+  const run = explicit_run === undefined
+    ? dictionary_or_run as () => DoGenerator<dictionary, out>
+    : explicit_run;
   const first = run_with(undefined);
 
   if (first.next.done) {
+    if (dictionary !== undefined) {
+      return dictionary.pure(first.next.value);
+    }
+
     throw new TypeError("Do requires at least one yielded value");
   }
 

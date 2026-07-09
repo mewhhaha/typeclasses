@@ -25,11 +25,7 @@ export interface AsIdentity
   extends
     As<AsIdentity>,
     Show<AsIdentity>,
-    Eq<AsIdentity>,
-    Functor<AsIdentity>,
-    Applicative<AsIdentity>,
     Monad<AsIdentity>,
-    Foldable<AsIdentity>,
     Traversable<AsIdentity>,
     Comonad<AsIdentity>,
     Ord<AsIdentity> {

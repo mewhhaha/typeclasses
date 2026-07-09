@@ -23,10 +23,7 @@ export interface AsRecord
     As<AsRecord>,
     Show<AsRecord>,
     Eq<AsRecord>,
-    Functor<AsRecord>,
-    Semigroup<AsRecord>,
     Monoid<AsRecord>,
-    Foldable<AsRecord>,
     Traversable<AsRecord> {
   readonly [type_item]: unknown;
   readonly [type_data]: RecordT<this[typeof type_item]>;

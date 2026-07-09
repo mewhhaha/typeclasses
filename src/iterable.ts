@@ -26,13 +26,9 @@ export interface AsIterable
     As<AsIterable>,
     Show<AsIterable>,
     Eq<AsIterable>,
-    Functor<AsIterable>,
-    Applicative<AsIterable>,
-    Semigroup<AsIterable>,
     Monoid<AsIterable>,
     Alternative<AsIterable>,
     Monad<AsIterable>,
-    Foldable<AsIterable>,
     Traversable<AsIterable> {
   readonly [type_item]: unknown;
   readonly [type_data]: IterableT<this[typeof type_item]>;

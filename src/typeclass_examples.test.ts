@@ -273,24 +273,12 @@ Deno.test("Function typeclasses cover Profunctor, Category, Arrow, and Parse", (
     "42",
   );
 
-  const run_named_length = named_length.value() as (
-    value: { readonly name: string },
-  ) => string;
-  const run_identity = identity_fn.value() as (value: string) => string;
-  const run_composed = composed.value() as (value: number) => number;
-  const run_first = first.value() as (
-    value: readonly [number, string],
-  ) => readonly [number, string];
-  const run_second = second.value() as (
-    value: readonly [string, number],
-  ) => readonly [string, number];
-
   assert_equals(direct.run(41), 42);
-  assert_equals(run_named_length({ name: "Ada" }), "len:3");
-  assert_equals(run_identity("same"), "same");
-  assert_equals(run_composed(20), 42);
-  assert_equals(run_first([41, "ok"]), [42, "ok"]);
-  assert_equals(run_second(["ok", 41]), ["ok", 42]);
+  assert_equals(named_length.run({ name: "Ada" }), "len:3");
+  assert_equals(identity_fn.run("same"), "same");
+  assert_equals(composed.run(20), 42);
+  assert_equals(first.run([41, "ok"]), [42, "ok"]);
+  assert_equals(second.run(["ok", 41]), ["ok", 42]);
   assert_equals(parsed, 42);
 });
 

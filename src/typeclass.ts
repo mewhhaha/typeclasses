@@ -861,25 +861,7 @@ type TypeclassDefinitionReceiver<token extends PropertyKey = PropertyKey> = {
 };
 
 export const TypeclassDefinition: TypeclassDefinitionPrototype = {
-  instance<
-    token extends PropertyKey,
-    dictionary extends Dictionary & { [key in token]: object },
-  >(
-    this: TypeclassDefinitionReceiver<token>,
-    dictionary: dictionary,
-  ): (
-    implementation: TypeclassInstance<token, dictionary>,
-  ) => TypeclassInstance<token, dictionary> {
-    const token = this.token;
-
-    return (implementation) => {
-      return install_instance(
-        dictionary,
-        token,
-        implementation,
-      ) as TypeclassInstance<token, dictionary>;
-    };
-  },
+  instance: install_typeclass_instance,
 
   instance_for<
     token extends PropertyKey,
@@ -891,3 +873,23 @@ export const TypeclassDefinition: TypeclassDefinitionPrototype = {
     return receiver[this.token];
   },
 };
+
+function install_typeclass_instance<
+  token extends PropertyKey,
+  dictionary extends Dictionary & { [key in token]: object },
+>(
+  this: TypeclassDefinitionReceiver<token>,
+  dictionary: dictionary,
+): (
+  implementation: TypeclassInstance<token, dictionary>,
+) => TypeclassInstance<token, dictionary> {
+  const token = this.token;
+
+  return (implementation) => {
+    return install_instance(
+      dictionary,
+      token,
+      implementation,
+    ) as TypeclassInstance<token, dictionary>;
+  };
+}

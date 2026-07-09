@@ -1,7 +1,7 @@
 import {
   $slot,
   type As,
-  as_data,
+  type Data,
   data,
   type type_data,
   type type_item,
@@ -13,6 +13,7 @@ import {
   Applicative,
   applicative_lift_method,
   Bifunctor,
+  type BifunctorContext,
   compare_unknown,
   Eq,
   Foldable,
@@ -31,30 +32,47 @@ export type Either<left, right> =
 export type Left<left = string> = readonly ["Left", left];
 export type Right<right> = readonly ["Right", right];
 
-export interface AsEither
-  extends
-    As<AsEither>,
-    Show<AsEither>,
-    Eq<AsEither>,
-    Functor<AsEither>,
-    Applicative<AsEither>,
-    Monad<AsEither>,
-    MonadError<AsEither>,
-    Foldable<AsEither>,
-    Traversable<AsEither>,
-    Bifunctor<AsEither>,
-    Ord<AsEither> {
-  readonly [type_item]: unknown;
-  readonly [type_data]: Either<unknown, this[typeof type_item]>;
+// deno-lint-ignore no-explicit-any -- a bare Right is polymorphic in its left type
+type AnyLeft = any;
+
+interface EitherBifunctorContext extends BifunctorContext {
+  readonly [type_data]: AsEither<this[typeof type_item]>;
 }
 
-export type EitherValue<left, right> = WrappedData<
-  AsEither,
-  Either<left, right>,
-  right
->;
+export interface AsEither<left = AnyLeft>
+  extends
+    As<AsEither<left>>,
+    Show<AsEither<left>>,
+    MonadError<AsEither<left>>,
+    Traversable<AsEither<left>>,
+    Bifunctor<AsEither<left>, left, EitherBifunctorContext>,
+    Ord<AsEither<left>> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: Either<left, this[typeof type_item]>;
+}
 
-export type EitherConstructor = UnionDictionary<AsEither>;
+export type EitherValue<left, right> = [left] extends [never]
+  ? WrappedData<AsEither<AnyLeft>, Either<never, right>, right>
+  : Data<AsEither<left>, right>;
+
+export type EitherDictionary<left> = UnionDictionary<AsEither<left>>;
+
+type EitherLeft<value> = value extends Left<infer left> ? left : never;
+type EitherRight<value> = value extends Right<infer right> ? right : never;
+
+export type EitherConstructor =
+  & {
+    <value extends Either<AnyLeft, AnyLeft>>(
+      value: value,
+    ): EitherValue<EitherLeft<value>, EitherRight<value>>;
+    <left, right>(value: Either<left, right>): EitherValue<left, right>;
+    withLeft<left>(): EitherDictionary<left>;
+  }
+  & {
+    readonly [key in keyof UnionDictionary<AsEither<unknown>>]: UnionDictionary<
+      AsEither<unknown>
+    >[key];
+  };
 
 export type LeftGuard = {
   <left, right>(value: Either<left, right>): value is Left<left>;
@@ -77,15 +95,24 @@ export type RightConstructor = {
   readonly is: RightGuard;
 };
 
-export const Either: EitherConstructor = data<AsEither>(
+export const Either = data<AsEither<unknown>>(
   union(["Left", $slot], ["Right", $slot]),
-);
+) as EitherConstructor;
+
+Object.defineProperty(Either, "withLeft", {
+  value: either_with_left,
+});
+
 export const Right: RightConstructor = Object.assign(construct_right, {
   is: is_right,
 });
 export const Left: LeftConstructor = Object.assign(construct_left, {
   is: is_left,
 });
+
+function either_with_left<left>(): EitherDictionary<left> {
+  return Either as unknown as EitherDictionary<left>;
+}
 
 export function is_left<left, right>(
   value: Either<left, right>,
@@ -122,7 +149,7 @@ export function is_right<left, right>(
 function construct_left<left = string, right = never>(
   value: left,
 ): EitherValue<left, right> {
-  return as_data<AsEither, Either<left, right>, right>(Either, [
+  return Either<left, right>([
     "Left",
     value,
   ]);
@@ -135,10 +162,10 @@ function construct_right<left, right>(
 function construct_right<left, right>(
   value: right,
 ): EitherValue<left, right> {
-  return as_data<AsEither, Either<left, right>, right>(Either, [
+  return Either<left, right>([
     "Right",
     value,
-  ]);
+  ]) as EitherValue<left, right>;
 }
 
 export function from_number(value: number): EitherValue<string, number> {
@@ -207,18 +234,22 @@ Ord.instance(Either)({
 });
 
 Bifunctor.instance(Either)({
-  bimap<raw, left, right, next_left, next_right>(
-    this: WrappedData<AsEither, raw, right>,
-    map_left: (value: left) => next_left,
+  bimap<right, next_left, next_right>(
+    this: Data<AsEither<unknown>, right>,
+    map_left: (value: unknown) => next_left,
     map_right: (value: right) => next_right,
   ) {
-    const [tag, payload] = this.value() as Either<left, right>;
+    const [tag, payload] = this.value();
 
     switch (tag) {
       case "Left":
-        return unknown_typeclass<next_right>(Left(map_left(payload)));
+        return Either.withLeft<next_left>().Left<next_right>(
+          map_left(payload),
+        );
       case "Right":
-        return unknown_typeclass<next_right>(Right(map_right(payload)));
+        return Either.withLeft<next_left>().Right(
+          map_right(payload),
+        );
     }
   },
 });
@@ -367,10 +398,4 @@ function lift_right<out>(
 
 function same_context<out>(value: unknown): out {
   return value as out;
-}
-
-function unknown_typeclass<item>(
-  value: unknown,
-): WrappedData<AsEither, unknown, item> {
-  return value as WrappedData<AsEither, unknown, item>;
 }

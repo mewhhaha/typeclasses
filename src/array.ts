@@ -27,14 +27,9 @@ export interface AsArray
   extends
     As<AsArray>,
     Show<AsArray>,
-    Eq<AsArray>,
-    Functor<AsArray>,
-    Applicative<AsArray>,
-    Semigroup<AsArray>,
     Monoid<AsArray>,
     Alternative<AsArray>,
     Monad<AsArray>,
-    Foldable<AsArray>,
     Traversable<AsArray>,
     Ord<AsArray> {
   readonly [type_item]: unknown;

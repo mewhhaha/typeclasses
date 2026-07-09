@@ -16,7 +16,7 @@ export interface Alternative<dictionary extends Dictionary>
       dictionary,
       typeof alternative_typeclass,
       {
-        empty: <item>(this: Data<dictionary, unknown>) => Data<
+        empty: <item>(this: dictionary) => Data<
           dictionary,
           item
         >;
@@ -30,7 +30,10 @@ export interface Alternative<dictionary extends Dictionary>
 
 type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
   empty<dictionary extends Alternative<dictionary>, item>(
-    value: Data<dictionary, unknown>,
+    witness: Data<dictionary, unknown>,
+  ): Data<dictionary, item>;
+  empty<dictionary extends Alternative<dictionary>, item>(
+    dictionary: Alternative<dictionary>,
   ): Data<dictionary, item>;
   alt<dictionary extends Alternative<dictionary>, item>(
     left: Data<dictionary, item>,
@@ -45,9 +48,12 @@ export const Alternative: AlternativeTypeclass = typeclass(
       dictionary extends Alternative<dictionary>,
       item,
     >(
-      value: Data<dictionary, unknown>,
+      witness: dictionary | Data<dictionary, unknown>,
     ): Data<dictionary, item> {
-      return call_typeclass_method(this.instance_for(value).empty<item>, value);
+      return call_typeclass_method(
+        this.instance_for(witness).empty<item>,
+        witness as dictionary,
+      );
     },
 
     alt<

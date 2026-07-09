@@ -24,7 +24,7 @@ export interface Traversable<dictionary extends Dictionary>
           to,
         >(
           this: Data<dictionary, from>,
-          applicative: Data<applicative, unknown>,
+          applicative: applicative,
           fn: (value: from) => Data<applicative, to>,
         ) => Data<applicative, Data<dictionary, to>>;
       }
@@ -43,6 +43,16 @@ type TraversableTypeclass = Typeclass<typeof traversable_typeclass, {
     applicative: Data<applicative, unknown>,
     fn: (value: from) => Data<applicative, to>,
   ): Data<applicative, Data<dictionary, to>>;
+  traverse<
+    dictionary extends Traversable<dictionary>,
+    applicative extends ApplicativeDictionary<applicative>,
+    from,
+    to,
+  >(
+    value: Data<dictionary, from>,
+    applicative: ApplicativeDictionary<applicative>,
+    fn: (value: from) => Data<applicative, to>,
+  ): Data<applicative, Data<dictionary, to>>;
   sequence<
     dictionary extends Traversable<dictionary>,
     applicative extends ApplicativeDictionary<applicative>,
@@ -50,6 +60,14 @@ type TraversableTypeclass = Typeclass<typeof traversable_typeclass, {
   >(
     value: Data<dictionary, Data<applicative, item>>,
     applicative: Data<applicative, unknown>,
+  ): Data<applicative, Data<dictionary, item>>;
+  sequence<
+    dictionary extends Traversable<dictionary>,
+    applicative extends ApplicativeDictionary<applicative>,
+    item,
+  >(
+    value: Data<dictionary, Data<applicative, item>>,
+    applicative: ApplicativeDictionary<applicative>,
   ): Data<applicative, Data<dictionary, item>>;
 }>;
 
@@ -63,13 +81,13 @@ export const Traversable: TraversableTypeclass = typeclass(
       to,
     >(
       value: Data<dictionary, from>,
-      applicative: Data<applicative, unknown>,
+      applicative: applicative | Data<applicative, unknown>,
       fn: (value: from) => Data<applicative, to>,
     ): Data<applicative, Data<dictionary, to>> {
       return call_typeclass_method(
         this.instance_for(value).traverse<applicative, from, to>,
         value,
-        applicative,
+        applicative as applicative,
         fn,
       );
     },
@@ -80,13 +98,13 @@ export const Traversable: TraversableTypeclass = typeclass(
       item,
     >(
       value: Data<dictionary, Data<applicative, item>>,
-      applicative: Data<applicative, unknown>,
+      applicative: applicative | Data<applicative, unknown>,
     ): Data<applicative, Data<dictionary, item>> {
       return call_typeclass_method(
         this.instance_for(value)
           .traverse<applicative, Data<applicative, item>, item>,
         value,
-        applicative,
+        applicative as applicative,
         (value: Data<applicative, item>) => {
           return value;
         },

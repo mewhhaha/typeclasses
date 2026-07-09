@@ -14,7 +14,6 @@ export interface AsPredicate
     As<AsPredicate>,
     Show<AsPredicate>,
     Contravariant<AsPredicate>,
-    Semigroup<AsPredicate>,
     Monoid<AsPredicate> {
   readonly [type_item]: unknown;
   readonly [type_data]: Predicate<this[typeof type_item]>;

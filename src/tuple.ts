@@ -1,12 +1,13 @@
 import {
   type As,
+  type Data,
   data,
   type type_data,
   type type_item,
-  type WrappedData,
 } from "./typeclass.ts";
 import {
   Bifunctor,
+  type BifunctorContext,
   Comonad,
   compare_unknown,
   Eq,
@@ -19,34 +20,44 @@ import {
 
 export type Tuple<left, right> = readonly [left, right];
 
-export interface AsTuple
-  extends
-    As<AsTuple>,
-    Show<AsTuple>,
-    Eq<AsTuple>,
-    Ord<AsTuple>,
-    Bifunctor<AsTuple>,
-    Functor<AsTuple>,
-    Foldable<AsTuple>,
-    Traversable<AsTuple>,
-    Comonad<AsTuple> {
-  readonly [type_item]: unknown;
-  readonly [type_data]: Tuple<unknown, this[typeof type_item]>;
+interface TupleBifunctorContext extends BifunctorContext {
+  readonly [type_data]: AsTuple<this[typeof type_item]>;
 }
 
-export type TupleValue<left, right> = WrappedData<
-  AsTuple,
-  Tuple<left, right>,
-  right
->;
+export interface AsTuple<left = unknown>
+  extends
+    As<AsTuple<left>>,
+    Show<AsTuple<left>>,
+    Ord<AsTuple<left>>,
+    Bifunctor<AsTuple<left>, left, TupleBifunctorContext>,
+    Traversable<AsTuple<left>>,
+    Comonad<AsTuple<left>> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: Tuple<left, this[typeof type_item]>;
+}
+
+export type TupleValue<left, right> = Data<AsTuple<left>, right>;
+
+export type TupleDictionary<left> = AsTuple<left>;
 
 type TupleConstructor =
-  & AsTuple
   & {
     <left, right>(value: Tuple<left, right>): TupleValue<left, right>;
+    withLeft<left>(): TupleDictionary<left>;
+  }
+  & {
+    readonly [key in keyof AsTuple<unknown>]: AsTuple<unknown>[key];
   };
 
-export const Tuple = data<AsTuple>() as TupleConstructor;
+export const Tuple = data<AsTuple<unknown>>() as TupleConstructor;
+
+Object.defineProperty(Tuple, "withLeft", {
+  value: tuple_with_left,
+});
+
+function tuple_with_left<left>(): TupleDictionary<left> {
+  return Tuple as unknown as TupleDictionary<left>;
+}
 
 export function tuple<left, right>(
   left: left,
@@ -109,16 +120,14 @@ Ord.instance(Tuple)({
 });
 
 Bifunctor.instance(Tuple)({
-  bimap<raw, left, right, next_left, next_right>(
-    this: WrappedData<AsTuple, raw, right>,
-    map_left: (value: left) => next_left,
+  bimap<right, next_left, next_right>(
+    this: Data<AsTuple<unknown>, right>,
+    map_left: (value: unknown) => next_left,
     map_right: (value: right) => next_right,
   ) {
-    const [left, right] = this.value() as Tuple<left, right>;
+    const [left, right] = this.value();
 
-    return unknown_typeclass<next_right>(
-      tuple(map_left(left), map_right(right)),
-    );
+    return tuple(map_left(left), map_right(right));
   },
 });
 
@@ -159,9 +168,3 @@ Comonad.instance(Tuple)({
     return tuple(left, fn(this));
   },
 });
-
-function unknown_typeclass<item>(
-  value: unknown,
-): WrappedData<AsTuple, unknown, item> {
-  return value as WrappedData<AsTuple, unknown, item>;
-}

@@ -18,13 +18,7 @@ import {
 
 export type Task<item> = () => Promise<item>;
 
-export interface AsTask
-  extends
-    As<AsTask>,
-    Show<AsTask>,
-    Functor<AsTask>,
-    Applicative<AsTask>,
-    Monad<AsTask> {
+export interface AsTask extends As<AsTask>, Show<AsTask>, Monad<AsTask> {
   readonly [type_item]: unknown;
   readonly [type_data]: Task<this[typeof type_item]>;
 }

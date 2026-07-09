@@ -33,12 +33,8 @@ export interface AsMaybe
   extends
     As<AsMaybe>,
     Show<AsMaybe>,
-    Eq<AsMaybe>,
-    Functor<AsMaybe>,
-    Applicative<AsMaybe>,
     Alternative<AsMaybe>,
     Monad<AsMaybe>,
-    Foldable<AsMaybe>,
     Traversable<AsMaybe>,
     Ord<AsMaybe> {
   readonly [type_item]: unknown;

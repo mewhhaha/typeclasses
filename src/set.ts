@@ -22,7 +22,6 @@ export interface AsSet
     Show<AsSet>,
     Eq<AsSet>,
     Functor<AsSet>,
-    Semigroup<AsSet>,
     Monoid<AsSet>,
     Foldable<AsSet> {
   readonly [type_item]: unknown;
