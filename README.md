@@ -53,7 +53,7 @@ deno task publish:dry-run
 ```
 
 The publish tasks intentionally do not use `--allow-slow-types`. That is why
-repository source files sometimes spell out exported constructor aliases and
+repository source files sometimes spell out exported constructor types and
 return types that an application would normally let TypeScript infer. Public
 library exports need stable declaration output; app-local definitions do not.
 
@@ -76,8 +76,9 @@ with type-only phantom symbols. That maps the contextual `item` to the raw value
 the dictionary wraps, so `Data<typeof Maybe, item>` can recover that `Maybe`
 stores `Maybe<item>` without a global registry or a public kind symbol.
 
-In application code, you usually do not need to write the export-safe aliases
-used inside this library. A local data type can be left mostly inferred:
+In application code, you usually do not need to write the export-safe
+annotations used inside this library. A local data type can be left mostly
+inferred:
 
 Typeclass instance methods receive the wrapped value as `this`. The installer
 stores that this-based instance in the canonical symbol slot and exposes direct
@@ -139,13 +140,15 @@ const raw = Just(42).value();
 
 if (Just.is(raw)) {
   raw[1]; // number
+} else {
+  raw[0]; // "Nothing"
 }
 ```
 
-In this repository's source you may still see aliases such as
+In this repository's source you may still see exported constructor types such as
 `MaybeConstructor = UnionDictionary<AsMaybe>`. Those are declaration-friendly
-export annotations for publishing without `--allow-slow-types`; they are not
-part of the normal application authoring style.
+annotations for publishing without `--allow-slow-types`; they are not part of
+the normal application authoring style.
 
 See `src/maybe.ts`, `src/either.ts`, `src/identity.ts`, `src/predicate.ts`,
 `src/fn.ts`, `src/tuple.ts`, `src/list.ts`, `src/task.ts`, `src/array.ts`,
@@ -274,6 +277,8 @@ parsed.value(); // ["Right", 42]
 
 `Either` does not fix the error payload to `string`; `Left(value)` keeps the
 error value's type. The examples use strings because they are easy to inspect.
+`Left` and `Right` are typed constructor exports over the `Either` dictionary,
+so callers do not need casts to preserve the left payload type.
 
 ## Tagged Values
 
@@ -301,6 +306,18 @@ const label = match(Just(42), {
   Nothing: () => "missing",
   Just: (value) => "value:" + value.toString(),
 });
+```
+
+Constructor guards narrow the false branch too:
+
+```ts
+const result = from_number(Number.parseInt("42", 10)).value();
+
+if (Left.is(result)) {
+  result[1]; // string
+} else {
+  result[1]; // number
+}
 ```
 
 `Do` is generator-based do notation. It runs a generator over one monad
@@ -1125,6 +1142,16 @@ Applicative.lift(
 );
 ```
 
+```ts
+const checked_profile = Applicative.lift(
+  (name, age) => ({ name, age }),
+  Valid("Ada"),
+  InvalidMessages<number>("age is required"),
+);
+
+checked_profile.value()[0]; // "invalid"
+```
+
 `Validation` implements `Applicative`, `Functor`, `Foldable`, and `Traversable`,
 but not `Monad`: a lawful monad would make later validations depend on earlier
 values and lose independent error accumulation.
@@ -1132,7 +1159,9 @@ values and lose independent error accumulation.
 Like `Writer`, `Validation` separates the accumulation rule from the default
 error shape. `InvalidMessages("message")` is a convenience for
 `readonly string[]` errors, while `Invalid(error, semigroup)` can accumulate any
-error payload with an explicit semigroup.
+error payload with an explicit semigroup. `Valid` and `Invalid` are typed
+constructor exports over the `Validation` dictionary, so custom error payloads
+can be represented without caller-side casts.
 
 ## JavaScript Shapes
 
