@@ -6,6 +6,7 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
+import { append_item } from "../internal.ts";
 import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
 
 export const applicative_typeclass = Symbol("Applicative");
@@ -27,6 +28,15 @@ type ApplicativeImplementation<dictionary extends Dictionary> = {
   ) => Data<dictionary, out>;
 };
 
+/** The minimal complete definition of an Applicative instance. */
+export type MinimalApplicative<dictionary extends Applicative<dictionary>> = {
+  pure: <item>(this: dictionary, value: item) => Data<dictionary, item>;
+  ap: <from, to>(
+    this: Data<dictionary, (value: NoInfer<from>) => to>,
+    value: Data<dictionary, from>,
+  ) => Data<dictionary, to>;
+};
+
 export interface Applicative<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -36,25 +46,51 @@ export interface Applicative<dictionary extends Dictionary>
     >,
     FunctorDictionary<dictionary> {}
 
-type ApplicativeTypeclass = Typeclass<typeof applicative_typeclass, {
-  pure<dictionary extends Applicative<dictionary>, item>(
-    witness: Data<dictionary, unknown>,
-    item: item,
-  ): Data<dictionary, item>;
-  pure<dictionary extends Applicative<dictionary>, item>(
-    dictionary: Applicative<dictionary>,
-    item: item,
-  ): Data<dictionary, item>;
-  lift: typeof applicative_lift;
-  ap<dictionary extends Applicative<dictionary>, from, to>(
-    value: Data<dictionary, (value: NoInfer<from>) => to>,
-    item: Data<dictionary, from>,
-  ): Data<dictionary, to>;
-}>;
+type ApplicativeTypeclass =
+  & Typeclass<typeof applicative_typeclass, {
+    pure<dictionary extends Applicative<dictionary>, item>(
+      witness: Data<dictionary, unknown>,
+      item: item,
+    ): Data<dictionary, item>;
+    pure<dictionary extends Applicative<dictionary>, item>(
+      dictionary: Applicative<dictionary>,
+      item: item,
+    ): Data<dictionary, item>;
+    lift: typeof applicative_lift;
+    ap<dictionary extends Applicative<dictionary>, from, to>(
+      value: Data<dictionary, (value: NoInfer<from>) => to>,
+      item: Data<dictionary, from>,
+    ): Data<dictionary, to>;
+  }>
+  & {
+    derive<dictionary extends Applicative<dictionary>>(
+      dictionary: dictionary,
+    ): (minimal: MinimalApplicative<dictionary>) => void;
+  };
 
 export const Applicative: ApplicativeTypeclass = typeclass(
   applicative_typeclass,
   {
+    derive<dictionary extends Applicative<dictionary>>(
+      dictionary: dictionary,
+    ): (minimal: MinimalApplicative<dictionary>) => void {
+      return (minimal) => {
+        Functor.instance(dictionary)({
+          map<from, to>(
+            this: Data<dictionary, from>,
+            fn: (value: from) => to,
+          ): Data<dictionary, to> {
+            return this.pure(fn).ap(this);
+          },
+        });
+
+        Applicative.instance(dictionary)({
+          pure: minimal.pure,
+          ap: minimal.ap,
+        });
+      };
+    },
+
     pure<
       dictionary extends Applicative<dictionary>,
       item,
@@ -221,16 +257,4 @@ function applicative_lift<
   return Functor.map(combined, (items) => {
     return fn(...items);
   });
-}
-
-function append_item(values: unknown[], item: unknown): unknown[] {
-  const next = new Array<unknown>(values.length + 1);
-
-  for (let index = 0; index < values.length; index += 1) {
-    next[index] = values[index];
-  }
-
-  next[values.length] = item;
-
-  return next;
 }

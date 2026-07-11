@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type ArrayBufferT = ArrayBuffer;
@@ -38,7 +39,7 @@ export function to_bytes(buffer: ArrayBufferValue): Uint8Array {
 
 Show.instance(ArrayBufferT)({
   show() {
-    return Deno.inspect(new Uint8Array(this.value()));
+    return inspect(new Uint8Array(this.value()));
   },
 });
 

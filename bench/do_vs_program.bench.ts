@@ -3,6 +3,7 @@ import {
   to_array as array_to_array,
 } from "../src/array.ts";
 import { Effect, Program, run } from "../src/effects.ts";
+import { Just, Maybe } from "../src/maybe.ts";
 import { ask, asks, run_reader } from "../src/reader.ts";
 import { get, modify, run_state } from "../src/state.ts";
 import { from_fn, run_task } from "../src/task.ts";
@@ -21,6 +22,22 @@ const config: Config = {
   label: "step",
   increment: 2,
 };
+
+Deno.bench("Maybe explicit-dictionary Do construct+run", () => {
+  let checksum = 0;
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += maybe_explicit_do().value()[1] as number;
+  }
+  _sink = checksum;
+});
+
+Deno.bench("Maybe explicit-dictionary transformed Do construct+run", () => {
+  let checksum = 0;
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += maybe_explicit_do_transformed().value()[1] as number;
+  }
+  _sink = checksum;
+});
 
 Deno.bench("Reader native happy path construct+run", () => {
   let checksum = 0;
@@ -486,6 +503,17 @@ function make_reader_do() {
 
     return label.length + config.increment;
   });
+}
+
+function maybe_explicit_do() {
+  return Do(Maybe, function* () {
+    const value = yield* Just(40);
+    return value + 2;
+  });
+}
+
+function maybe_explicit_do_transformed() {
+  return Just(40).map((value) => value + 2);
 }
 
 function make_reader_do_transformed() {

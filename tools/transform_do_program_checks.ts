@@ -37,7 +37,6 @@ const program = Do(function* () {
     );
   },
 });
-
 Deno.test({
   name: "transformer lowers Program generators to Effect bind/map chains",
   permissions: { env: true },
@@ -476,7 +475,57 @@ const program = Program(function* () {
 });
 
 Deno.test({
-  name: "transformer skips unsupported nested loops",
+  name:
+    "transformer lowers explicit Do dictionaries including yield-free blocks",
+  permissions: { env: true },
+  async fn() {
+    const result = await transform(`
+import { Do } from "../src/typeclasses.ts";
+
+const yielded = Do(Maybe, function* () {
+  const value = yield* load();
+  return value + 1;
+});
+
+const yielded_free = Do(Maybe, function* () {
+  return 42;
+});
+`);
+
+    assert_equals(result.transformed, 2);
+    assert_equals(result.diagnostics, []);
+    assert_includes(result.code, "const yielded = load().map");
+    assert_includes(result.code, "const yielded_free = Maybe.pure(42);");
+  },
+});
+
+Deno.test({
+  name:
+    "transformer evaluates an explicit complex Do dictionary once before its yields",
+  permissions: { env: true },
+  async fn() {
+    const result = await transform(`
+import { Do } from "../src/typeclasses.ts";
+
+const program = Do(Writer.with(ArrayT([])), function* () {
+  const value = yield* load();
+  return value;
+});
+`);
+
+    assert_equals(result.transformed, 1);
+    assert_equals(result.diagnostics, []);
+    assert_includes(result.code, "const dictionary_");
+    assert_includes(result.code, "= Writer.with(ArrayT([]));");
+    assert_equals(
+      (result.code.match(/Writer\.with\(ArrayT\(\[\]\)\)/g) ?? []).length,
+      1,
+    );
+  },
+});
+
+Deno.test({
+  name: "transformer lowers while, do/while, for-of, and loop breaks",
   permissions: { env: true },
   async fn() {
     const result = await transform(`
@@ -484,20 +533,297 @@ import { Program } from "../src/effects.ts";
 
 const program = Program(function* () {
   while (enabled) {
-    yield* task;
+    const value = yield* load();
+    if (value === "done") break;
+  }
+
+  do {
+    yield* tick();
+  } while (again);
+
+  for (const item of items()) {
+    yield* visit(item);
+    if (stop(item)) break;
   }
 
   return 1;
 });
 `);
 
+    assert_equals(result.transformed, 1);
+    assert_equals(result.diagnostics, []);
+    assert_includes(result.code, "function loop");
+    assert_includes(result.code, "const items_");
+    assert_includes(result.code, "[...items()]");
+    assert_true(
+      !result.code.includes("break;"),
+      "expected loop breaks to lower\n\n" + result.code,
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "transformer lowers explicit Do try/catch and retains unsupported diagnostics",
+  permissions: { env: true },
+  async fn() {
+    const handled = await transform(`
+import { Do } from "../src/typeclasses.ts";
+const program = Do(Either, function* () {
+  try {
+    return yield* load();
+  } catch (error) {
+    return recover(error);
+  }
+});
+`);
+    assert_equals(handled.transformed, 1);
+    assert_equals(handled.diagnostics, []);
+    assert_includes(handled.code, ".catch_error(error =>");
+    assert_true(
+      !handled.code.includes(".bind(() =>"),
+      "expected terminal try/catch to preserve its returned value",
+    );
+
+    const continued = await transform(`
+import { Do } from "../src/typeclasses.ts";
+const program = Do(Either, function* () {
+  try { yield* load(); } catch (error) { yield* recover(error); }
+  return 1;
+});
+`);
+    assert_equals(continued.transformed, 1);
+    assert_equals(continued.diagnostics, []);
+    assert_includes(continued.code, ".catch_error(error =>");
+    assert_includes(continued.code, ".map(() => {");
+    assert_includes(continued.code, "return 1;");
+
+    const unsupported = await transform(`
+import { Program } from "../src/effects.ts";
+const program = Program(function* () {
+  try { return yield* load(); } catch (error) { return recover(error); }
+});
+`);
+    assert_equals(unsupported.transformed, 0);
+    assert_true(
+      unsupported.diagnostics[0].message.includes("catch_error"),
+      "expected Program catch diagnostic",
+    );
+
+    const labeled = await transform(`
+import { Program } from "../src/effects.ts";
+const program = Program(function* () {
+  loop: while (enabled) { yield* load(); break loop; }
+  return 1;
+});
+`);
+    assert_equals(labeled.transformed, 0);
+    assert_true(
+      labeled.diagnostics[0].message.includes("labeled"),
+      "expected retained label diagnostic",
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "transformer executes lowered loop control flow with the same Maybe result",
+  permissions: { env: true, read: true },
+  async fn() {
+    await assert_do_equivalent(`
+import { Do } from "../src/typeclasses.ts";
+
+const program = Do(Maybe, function* () {
+  let total = 0;
+
+  while (total < 4) {
+    const increment = yield* Just(1);
+    total += increment;
+    if (total === 2) continue;
+    if (total === 4) break;
+  }
+
+  do {
+    const increment = yield* Just(2);
+    total += increment;
+  } while (false);
+
+  for (const item of [1, 2, 3]) {
+    const increment = yield* Just(item);
+    total += increment;
+    if (item === 2) break;
+  }
+
+  return total;
+});
+`);
+  },
+});
+
+Deno.test({
+  name: "transformer preserves representative ArrayT multi-shot raw results",
+  permissions: { env: true, read: true },
+  async fn() {
+    await assert_do_equivalent(`
+import { Do } from "../src/typeclasses.ts";
+
+const program = Do(ArrayT, function* () {
+  for (const item of [1, 2]) {
+    const choice = yield* ArrayT([item, item + 10]);
+    yield* ArrayT([choice]);
+  }
+
+  return "done";
+});
+`);
+  },
+});
+
+Deno.test({
+  name:
+    "transformer evaluates an explicit complex Do dictionary once at runtime",
+  permissions: { env: true, read: true },
+  async fn() {
+    await assert_do_equivalent(`
+import { Do } from "../src/typeclasses.ts";
+
+let calls = 0;
+const dictionary = () => {
+  calls += 1;
+  return Maybe;
+};
+
+const program = Do(dictionary(), function* () {
+  const value = yield* Just(1);
+  return [value, calls];
+});
+`);
+  },
+});
+
+Deno.test({
+  name: "explicit Do try/catch handles monadic Left values like runtime Do",
+  permissions: { env: true, read: true },
+  async fn() {
+    const source = `
+import { Do } from "../src/typeclasses.ts";
+
+const load = () => Left("missing");
+const recover = (error) => Right("recovered:" + error);
+
+const program = Do(Either, function* () {
+  try {
+    return yield* load();
+  } catch (error) {
+    return yield* recover(error);
+  }
+});
+`;
+    await assert_do_equivalent(source);
+  },
+});
+
+Deno.test({
+  name: "transformer diagnoses a zero-argument anchored Do call",
+  permissions: { env: true },
+  async fn() {
+    const result = await transform(`
+import { Do } from "../src/typeclasses.ts";
+const program = Do();
+`);
+
     assert_equals(result.transformed, 0);
     assert_equals(result.diagnostics.length, 1);
     assert_true(
-      result.diagnostics[0].message.includes("top level"),
-      "diagnostic mentions unsupported nested control flow",
+      result.diagnostics[0].message.includes("function* argument"),
+      "expected zero-argument Do diagnostic",
     );
-    assert_includes(result.code, "Program(function*");
+  },
+});
+
+Deno.test({
+  name: "transformer CLI --check fails when a tracked fixture has diagnostics",
+  permissions: { env: true, read: true, run: true },
+  async fn() {
+    const command = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env",
+        "--allow-read",
+        new URL("./transform_do_program.ts", import.meta.url).pathname,
+        "--check",
+        new URL("./fixtures/unsupported_do_try.ts", import.meta.url).pathname,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const output = await command.output();
+
+    assert_equals(output.code, 1);
+    assert_true(
+      new TextDecoder().decode(output.stderr).includes("try/catch requires"),
+      "expected CLI diagnostic on stderr",
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "transformer anchors Do, Program, and Effect to imports including aliases and namespaces",
+  permissions: { env: true },
+  async fn() {
+    const aliased = await transform(`
+import { Do as monadDo } from "../src/typeclasses.ts";
+import { Program as P } from "../src/effects.ts";
+const one = monadDo(Maybe, function* () { return 1; });
+const two = P(function* () { return 2; });
+`);
+    assert_equals(aliased.transformed, 2);
+    assert_equals(aliased.diagnostics, []);
+    assert_includes(aliased.code, "Maybe.pure(1)");
+    assert_includes(aliased.code, "Effect.pure(2)");
+
+    const namespaced = await transform(`
+import * as tc from "../src/typeclasses.ts";
+const value = tc.Do(Maybe, function* () { return 1; });
+`);
+    assert_equals(namespaced.transformed, 1);
+    assert_equals(namespaced.diagnostics, []);
+
+    const namespaced_program = await transform(`
+import * as tc from "../src/effects.ts";
+const value = tc.Program(function* () { return 1; });
+`);
+    assert_equals(namespaced_program.transformed, 1);
+    assert_equals(namespaced_program.diagnostics, []);
+    assert_includes(namespaced_program.code, "Effect.pure(1)");
+
+    const local = await transform(`
+function Do(run: () => Generator<unknown>) { return run(); }
+const value = Do(function* () { return 1; });
+`);
+    assert_equals(local.transformed, 0);
+    assert_equals(local.diagnostics.length, 1);
+    assert_includes(local.code, "Do(function*");
+
+    const local_effect = await transform(`
+const Effect = { handle_with: (value: unknown) => value };
+const value = Effect.handle_with(effect, [run]);
+`);
+    assert_equals(local_effect.transformed, 0);
+    assert_includes(local_effect.code, "Effect.handle_with(effect");
+
+    const configured_transformer = await import("./transform_do_program.ts");
+    const configured = configured_transformer.transform_do_program_source(
+      `
+import { Do as run } from "./local-reexport.ts";
+const value = run(Maybe, function* () { return 1; });
+`,
+      "input.ts",
+      { library_specifiers: ["./local-reexport.ts"] },
+    );
+    assert_equals(configured.transformed, 1);
+    assert_equals(configured.diagnostics, []);
   },
 });
 
@@ -505,6 +831,45 @@ async function transform(source: string) {
   const transformer = await import("./transform_do_program.ts");
 
   return transformer.transform_do_program_source(source);
+}
+
+async function assert_do_equivalent(source: string) {
+  const transformed = await transform(source);
+
+  assert_equals(transformed.transformed, 1);
+  assert_equals(transformed.diagnostics, []);
+  assert_equals(
+    await evaluate_do_raw(transformed.code),
+    await evaluate_do_raw(source),
+    "lowered Do raw result differs from runtime Do\n\n" + transformed.code,
+  );
+}
+
+async function evaluate_do_raw(source: string): Promise<unknown> {
+  const typeclasses = new URL("../src/typeclasses.ts", import.meta.url).href;
+  const maybe = new URL("../src/maybe.ts", import.meta.url).href;
+  const array = new URL("../src/array.ts", import.meta.url).href;
+  const either = new URL("../src/either.ts", import.meta.url).href;
+  const executable = `
+import { Do } from ${JSON.stringify(typeclasses)};
+import { Maybe, Just } from ${JSON.stringify(maybe)};
+import { ArrayT } from ${JSON.stringify(array)};
+import { Either, Left, Right } from ${JSON.stringify(either)};
+${strip_anchoring_import(source)}
+export default program.value();
+`;
+  const module = await import(
+    "data:application/javascript," + encodeURIComponent(executable)
+  );
+
+  return module.default;
+}
+
+function strip_anchoring_import(source: string): string {
+  return source.replace(
+    /^import \{ Do \} from "\.\.\/src\/typeclasses\.ts";\s*$/gm,
+    "",
+  );
 }
 
 function assert_includes(value: string, part: string) {

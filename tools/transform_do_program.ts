@@ -17,6 +17,11 @@ export type TransformResult = {
   readonly transformed: number;
 };
 
+export type TransformConfig = {
+  /** Additional module specifiers which export this package's public API. */
+  readonly library_specifiers?: readonly string[];
+};
+
 type TransformKind = "do" | "program";
 
 type TransformState = {
@@ -24,6 +29,8 @@ type TransformState = {
   readonly factory: ts.NodeFactory;
   readonly source_file: ts.SourceFile;
   readonly diagnostics: TransformDiagnostic[];
+  /** The explicit dictionary supplied to `Do(dictionary, generator)`. */
+  readonly dictionary?: ts.Expression;
 };
 
 type TransformBlock = {
@@ -33,6 +40,7 @@ type TransformBlock = {
 
 type TransformOptions = {
   readonly continue_expression?: ts.Expression;
+  readonly break_expression?: ts.Expression;
 };
 
 type YieldStatement =
@@ -52,6 +60,7 @@ class UnsupportedGenerator extends Error {}
 export function transform_do_program_source(
   source: string,
   file_name = "input.ts",
+  config: TransformConfig = {},
 ): TransformResult {
   const source_file = ts.createSourceFile(
     file_name,
@@ -61,7 +70,8 @@ export function transform_do_program_source(
     ts.ScriptKind.TS,
   );
   const diagnostics: TransformDiagnostic[] = [];
-  const program_scopes = collect_program_scopes(source_file);
+  const imports = collect_imports(source_file, config);
+  const program_scopes = collect_program_scopes(source_file, imports);
   let transformed = 0;
   let needs_program_helpers = false;
 
@@ -99,7 +109,7 @@ export function transform_do_program_source(
         }
 
         if (ts.isCallExpression(node)) {
-          const kind = transform_kind(node, program_scopes);
+          const kind = transform_kind(node, program_scopes, imports);
 
           if (kind !== undefined) {
             const transformed_node = transform_call(
@@ -126,14 +136,22 @@ export function transform_do_program_source(
           const visited = ts.visitEachChild(node, visit, context);
 
           if (ts.isCallExpression(visited)) {
-            const interpreted = transform_interpreter_call(visited, factory);
+            const interpreted = transform_interpreter_call(
+              visited,
+              factory,
+              imports,
+            );
 
             if (interpreted !== undefined) {
               transformed += 1;
               return interpreted;
             }
 
-            const handled = transform_handle_with_call(visited, factory);
+            const handled = transform_handle_with_call(
+              visited,
+              factory,
+              imports,
+            );
 
             if (handled !== undefined) {
               transformed += 1;
@@ -141,6 +159,12 @@ export function transform_do_program_source(
             }
           }
 
+          add_unanchored_target_diagnostic(visited, {
+            factory,
+            source_file,
+            diagnostics,
+            kind: "do",
+          }, imports);
           return visited;
         }
 
@@ -154,6 +178,7 @@ export function transform_do_program_source(
         factory,
         needs_program_helpers,
         diagnostics,
+        imports,
       );
     };
   };
@@ -181,14 +206,19 @@ if (import.meta.main) {
 
 async function run_cli(args: readonly string[]) {
   const write = args.includes("--write");
-  const files = args.filter((arg) => arg !== "--write");
+  const check = args.includes("--check");
+  const files = args.filter((arg) =>
+    arg !== "--" && arg !== "--write" && arg !== "--check"
+  );
 
   if (files.length === 0) {
     console.error(
-      "usage: deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts [--write] <file...>",
+      "usage: deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts [--write] [--check] <file...>",
     );
     Deno.exit(2);
   }
+
+  let failed = false;
 
   for (const file of files) {
     const source = await Deno.readTextFile(file);
@@ -197,6 +227,8 @@ async function run_cli(args: readonly string[]) {
     for (const diagnostic of result.diagnostics) {
       console.error(format_diagnostic(diagnostic));
     }
+
+    failed = failed || (check && result.diagnostics.length > 0);
 
     if (write) {
       await Deno.writeTextFile(file, result.code);
@@ -209,15 +241,24 @@ async function run_cli(args: readonly string[]) {
 
     console.log(result.code);
   }
+
+  if (failed) {
+    Deno.exit(1);
+  }
 }
 
 function transform_call(
   node: ts.CallExpression,
   state: TransformState,
 ): ts.Expression | undefined {
-  const [run] = node.arguments;
+  const explicit_dictionary = state.kind === "do" && node.arguments.length === 2
+    ? node.arguments[0]
+    : undefined;
+  const run = explicit_dictionary === undefined
+    ? node.arguments[0]
+    : node.arguments[1];
 
-  if (!ts.isFunctionExpression(run)) {
+  if (run === undefined || !ts.isFunctionExpression(run)) {
     add_diagnostic(
       state,
       node,
@@ -236,20 +277,54 @@ function transform_call(
   }
 
   try {
+    const dictionary = explicit_dictionary === undefined
+      ? undefined
+      : is_plain_identifier(explicit_dictionary)
+      ? explicit_dictionary
+      : state.factory.createUniqueName("dictionary");
+    const transformed_state: TransformState = {
+      ...state,
+      dictionary,
+    };
     const transformed = transform_statements(
       [...run.body.statements],
       undefined,
-      state,
+      transformed_state,
       {},
     );
 
-    if (state.kind === "do" && !transformed.yielded) {
+    if (
+      state.kind === "do" && !transformed.yielded && dictionary === undefined
+    ) {
       add_diagnostic(
         state,
         node,
         "Skipped Do: Do requires at least one top-level yield*.",
       );
       return undefined;
+    }
+
+    if (
+      explicit_dictionary !== undefined && dictionary !== explicit_dictionary
+    ) {
+      const dictionary_name = dictionary as ts.Identifier;
+      return block_to_expression(
+        state.factory.createBlock([
+          state.factory.createVariableStatement(
+            undefined,
+            state.factory.createVariableDeclarationList([
+              state.factory.createVariableDeclaration(
+                dictionary_name,
+                undefined,
+                undefined,
+                explicit_dictionary,
+              ),
+            ], ts.NodeFlags.Const),
+          ),
+          ...transformed.block.statements,
+        ], true),
+        state.factory,
+      );
     }
 
     return block_to_expression(transformed.block, state.factory);
@@ -313,7 +388,22 @@ function transform_statements(
       };
     }
 
-    if (ts.isIfStatement(statement) && contains_yield_or_return(statement)) {
+    if (ts.isBreakStatement(statement)) {
+      const expression = transform_break(statement, state, options);
+
+      return {
+        block: state.factory.createBlock([
+          ...prefix,
+          state.factory.createReturnStatement(expression),
+        ], true),
+        yielded: true,
+      };
+    }
+
+    if (
+      ts.isIfStatement(statement) &&
+      contains_yield_or_return_or_break(statement)
+    ) {
       const rest = statements.slice(index + 1);
       const transformed = transform_if(
         statement,
@@ -333,7 +423,8 @@ function transform_statements(
     }
 
     if (
-      ts.isSwitchStatement(statement) && contains_yield_or_return(statement)
+      ts.isSwitchStatement(statement) &&
+      contains_yield_or_return_or_break(statement)
     ) {
       const rest = statements.slice(index + 1);
       const transformed = transform_switch(
@@ -370,6 +461,90 @@ function transform_statements(
         ], true),
         yielded: transformed.yielded,
       };
+    }
+
+    if (ts.isWhileStatement(statement) && contains_yield_or_return(statement)) {
+      const transformed = transform_while(
+        statement,
+        statements.slice(index + 1),
+        current_context,
+        state,
+        options,
+      );
+
+      return {
+        block: state.factory.createBlock([
+          ...prefix,
+          ...transformed.block.statements,
+        ], true),
+        yielded: transformed.yielded,
+      };
+    }
+
+    if (ts.isDoStatement(statement) && contains_yield_or_return(statement)) {
+      const transformed = transform_do_while(
+        statement,
+        statements.slice(index + 1),
+        current_context,
+        state,
+        options,
+      );
+
+      return {
+        block: state.factory.createBlock([
+          ...prefix,
+          ...transformed.block.statements,
+        ], true),
+        yielded: transformed.yielded,
+      };
+    }
+
+    if (ts.isForOfStatement(statement) && contains_yield_or_return(statement)) {
+      const transformed = transform_for_of(
+        statement,
+        statements.slice(index + 1),
+        current_context,
+        state,
+        options,
+      );
+
+      return {
+        block: state.factory.createBlock([
+          ...prefix,
+          ...transformed.block.statements,
+        ], true),
+        yielded: transformed.yielded,
+      };
+    }
+
+    if (ts.isTryStatement(statement) && contains_yield_or_return(statement)) {
+      const transformed = transform_try(
+        statement,
+        statements.slice(index + 1),
+        current_context,
+        state,
+        options,
+      );
+
+      return {
+        block: state.factory.createBlock([
+          ...prefix,
+          ...transformed.block.statements,
+        ], true),
+        yielded: transformed.yielded,
+      };
+    }
+
+    if (
+      ts.isLabeledStatement(statement) &&
+      contains_yield_or_return_or_break(statement)
+    ) {
+      add_diagnostic(
+        state,
+        statement,
+        "Skipped " + state.kind + ": labeled control flow is not supported.",
+      );
+      throw new UnsupportedGenerator();
     }
 
     if (contains_yield_or_return(statement)) {
@@ -519,6 +694,33 @@ function transform_continue(
   }
 
   return options.continue_expression;
+}
+
+function transform_break(
+  statement: ts.BreakStatement,
+  state: TransformState,
+  options: TransformOptions,
+): ts.Expression {
+  if (statement.label !== undefined) {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped " + state.kind + ": labeled breaks are not supported.",
+    );
+    throw new UnsupportedGenerator();
+  }
+
+  if (options.break_expression === undefined) {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped " + state.kind +
+        ": break is only supported inside transformed loops.",
+    );
+    throw new UnsupportedGenerator();
+  }
+
+  return options.break_expression;
 }
 
 function transform_if(
@@ -678,6 +880,8 @@ function transform_for(
 ): TransformBlock {
   const loop = read_for_loop(statement, state);
   const loop_name = state.factory.createUniqueName("loop");
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_expression = block_to_expression(exit.block, state.factory);
   const next_call = state.factory.createCallExpression(
     loop_name,
     undefined,
@@ -693,9 +897,9 @@ function transform_for(
     {
       ...options,
       continue_expression: next_call,
+      break_expression: exit_expression,
     },
   );
-  const exit = transform_statements(rest, current_context, state, options);
 
   return {
     block: state.factory.createBlock([
@@ -724,6 +928,304 @@ function transform_for(
         state.factory.createCallExpression(loop_name, undefined, [
           loop.initializer,
         ]),
+      ),
+    ], true),
+    yielded: true,
+  };
+}
+
+function transform_while(
+  statement: ts.WhileStatement,
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+): TransformBlock {
+  const loop_name = state.factory.createUniqueName("loop");
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_expression = block_to_expression(exit.block, state.factory);
+  const next_call = state.factory.createCallExpression(
+    loop_name,
+    undefined,
+    [],
+  );
+  const body = transform_statements(
+    [
+      ...unwrap_statement(statement.statement),
+      state.factory.createContinueStatement(),
+    ],
+    current_context,
+    state,
+    {
+      ...options,
+      continue_expression: next_call,
+      break_expression: exit_expression,
+    },
+  );
+
+  return recursive_loop_block(
+    loop_name,
+    [],
+    state.factory.createIfStatement(statement.expression, body.block),
+    exit,
+    state,
+  );
+}
+
+function transform_do_while(
+  statement: ts.DoStatement,
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+): TransformBlock {
+  const loop_name = state.factory.createUniqueName("loop");
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_expression = block_to_expression(exit.block, state.factory);
+  const next_expression = state.factory.createConditionalExpression(
+    statement.expression,
+    state.factory.createToken(ts.SyntaxKind.QuestionToken),
+    state.factory.createCallExpression(loop_name, undefined, []),
+    state.factory.createToken(ts.SyntaxKind.ColonToken),
+    exit_expression,
+  );
+  const body = transform_statements(
+    [
+      ...unwrap_statement(statement.statement),
+      state.factory.createContinueStatement(),
+    ],
+    current_context,
+    state,
+    {
+      ...options,
+      continue_expression: next_expression,
+      break_expression: exit_expression,
+    },
+  );
+
+  return recursive_loop_block(loop_name, [], body.block, exit, state);
+}
+
+function transform_for_of(
+  statement: ts.ForOfStatement,
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+): TransformBlock {
+  if (
+    statement.awaitModifier !== undefined ||
+    !ts.isVariableDeclarationList(statement.initializer)
+  ) {
+    return unsupported_for_loop(statement, state, "of-loop initializer");
+  }
+
+  const [declaration] = statement.initializer.declarations;
+  if (
+    statement.initializer.declarations.length !== 1 ||
+    declaration === undefined || !ts.isIdentifier(declaration.name)
+  ) {
+    return unsupported_for_loop(statement, state, "of-loop initializer");
+  }
+
+  const items = state.factory.createUniqueName("items");
+  const index = state.factory.createUniqueName("index");
+  const loop_name = state.factory.createUniqueName("loop");
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_expression = block_to_expression(exit.block, state.factory);
+  const next_call = state.factory.createCallExpression(loop_name, undefined, [
+    state.factory.createAdd(index, state.factory.createNumericLiteral(1)),
+  ]);
+  const item_statement = state.factory.createVariableStatement(
+    undefined,
+    state.factory.createVariableDeclarationList([
+      state.factory.createVariableDeclaration(
+        declaration.name,
+        undefined,
+        declaration.type,
+        state.factory.createElementAccessExpression(items, index),
+      ),
+    ], ts.NodeFlags.Const),
+  );
+  const body = transform_statements(
+    [
+      item_statement,
+      ...unwrap_statement(statement.statement),
+      state.factory.createContinueStatement(),
+    ],
+    current_context,
+    state,
+    {
+      ...options,
+      continue_expression: next_call,
+      break_expression: exit_expression,
+    },
+  );
+  const condition = state.factory.createLessThan(
+    index,
+    state.factory.createPropertyAccessExpression(items, "length"),
+  );
+
+  return {
+    block: state.factory.createBlock([
+      state.factory.createVariableStatement(
+        undefined,
+        state.factory.createVariableDeclarationList([
+          state.factory.createVariableDeclaration(
+            items,
+            undefined,
+            undefined,
+            state.factory.createArrayLiteralExpression([
+              state.factory.createSpreadElement(statement.expression),
+            ]),
+          ),
+        ], ts.NodeFlags.Const),
+      ),
+      state.factory.createFunctionDeclaration(
+        undefined,
+        undefined,
+        loop_name,
+        undefined,
+        [state.factory.createParameterDeclaration(undefined, undefined, index)],
+        undefined,
+        state.factory.createBlock([
+          state.factory.createIfStatement(condition, body.block),
+          ...exit.block.statements,
+        ], true),
+      ),
+      state.factory.createReturnStatement(
+        state.factory.createCallExpression(loop_name, undefined, [
+          state.factory.createNumericLiteral(0),
+        ]),
+      ),
+    ], true),
+    yielded: true,
+  };
+}
+
+function recursive_loop_block(
+  loop_name: ts.Identifier,
+  parameters: readonly ts.ParameterDeclaration[],
+  body: ts.Statement,
+  exit: TransformBlock,
+  state: TransformState,
+): TransformBlock {
+  return {
+    block: state.factory.createBlock([
+      state.factory.createFunctionDeclaration(
+        undefined,
+        undefined,
+        loop_name,
+        undefined,
+        parameters,
+        undefined,
+        state.factory.createBlock([body, ...exit.block.statements], true),
+      ),
+      state.factory.createReturnStatement(
+        state.factory.createCallExpression(loop_name, undefined, []),
+      ),
+    ], true),
+    yielded: true,
+  };
+}
+
+function transform_try(
+  statement: ts.TryStatement,
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+): TransformBlock {
+  if (state.kind === "program") {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped Program: try/catch requires an Effect-level catch_error API.",
+    );
+    throw new UnsupportedGenerator();
+  }
+  if (state.dictionary === undefined) {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped Do: try/catch requires the explicit dictionary form Do(dictionary, function* () { ... }).",
+    );
+    throw new UnsupportedGenerator();
+  }
+  if (
+    statement.finallyBlock !== undefined || statement.catchClause === undefined
+  ) {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped Do: try/finally and try without catch are not supported.",
+    );
+    throw new UnsupportedGenerator();
+  }
+
+  const tried = transform_statements(
+    [...statement.tryBlock.statements],
+    current_context,
+    state,
+    options,
+  );
+  const caught = transform_statements(
+    [...statement.catchClause.block.statements],
+    current_context,
+    state,
+    options,
+  );
+  const variable = statement.catchClause.variableDeclaration;
+  const parameters = variable === undefined
+    ? []
+    : [state.factory.createParameterDeclaration(
+      undefined,
+      undefined,
+      variable.name,
+      undefined,
+      variable.type,
+    )];
+  const caught_expression = state.factory.createCallExpression(
+    state.factory.createPropertyAccessExpression(
+      block_to_expression(tried.block, state.factory),
+      "catch_error",
+    ),
+    undefined,
+    [create_arrow(parameters, caught.block, state.factory)],
+  );
+
+  if (rest.length === 0) {
+    return {
+      block: state.factory.createBlock([
+        state.factory.createReturnStatement(caught_expression),
+      ], true),
+      yielded: true,
+    };
+  }
+
+  if (
+    contains_return(statement.tryBlock) ||
+    contains_return(statement.catchClause.block)
+  ) {
+    add_diagnostic(
+      state,
+      statement,
+      "Skipped Do: try/catch with a return followed by more generator statements is not supported.",
+    );
+    throw new UnsupportedGenerator();
+  }
+
+  const continuation = transform_statements(
+    rest,
+    caught_expression,
+    state,
+    options,
+  );
+
+  return {
+    block: state.factory.createBlock([
+      state.factory.createReturnStatement(
+        create_bind(caught_expression, [], continuation.block, state),
       ),
     ], true),
     yielded: true,
@@ -944,7 +1446,7 @@ function create_bind(
   if (state.kind === "do") {
     const mapped = create_final_map(
       expression,
-      expression,
+      state.dictionary ?? expression,
       parameters,
       body,
       factory,
@@ -986,7 +1488,7 @@ function create_direct_do_bind(
 ): ts.Expression | undefined {
   const mapped = create_final_map(
     expression,
-    context,
+    state.dictionary ?? context,
     parameters,
     body,
     state.factory,
@@ -1228,6 +1730,14 @@ function create_pure(
   }
 
   if (current_context === undefined) {
+    if (state.dictionary !== undefined) {
+      return factory.createCallExpression(
+        factory.createPropertyAccessExpression(state.dictionary, "pure"),
+        undefined,
+        [expression],
+      );
+    }
+
     add_diagnostic(
       state,
       expression,
@@ -1237,7 +1747,10 @@ function create_pure(
   }
 
   return factory.createCallExpression(
-    factory.createPropertyAccessExpression(current_context, "pure"),
+    factory.createPropertyAccessExpression(
+      state.dictionary ?? current_context,
+      "pure",
+    ),
     undefined,
     [expression],
   );
@@ -1775,15 +2288,87 @@ function is_generated_variable_statement(statement: ts.Statement): boolean {
   });
 }
 
+type ImportedBindings = {
+  readonly do_names: ReadonlySet<string>;
+  readonly program_names: ReadonlySet<string>;
+  readonly effect_names: ReadonlySet<string>;
+  readonly namespaces: ReadonlySet<string>;
+  readonly program_module?: string;
+};
+
+function collect_imports(
+  source_file: ts.SourceFile,
+  config: TransformConfig,
+): ImportedBindings {
+  const do_names = new Set<string>();
+  const program_names = new Set<string>();
+  const effect_names = new Set<string>();
+  const namespaces = new Set<string>();
+  let program_module: string | undefined;
+
+  for (const statement of source_file.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!is_library_specifier(specifier, config)) {
+      continue;
+    }
+    const clause = statement.importClause;
+    if (
+      clause === undefined || clause.isTypeOnly ||
+      clause.namedBindings === undefined
+    ) {
+      continue;
+    }
+    if (ts.isNamespaceImport(clause.namedBindings)) {
+      namespaces.add(clause.namedBindings.name.text);
+      program_module ??= specifier;
+      continue;
+    }
+    for (const element of clause.namedBindings.elements) {
+      if (element.isTypeOnly) continue;
+      const imported = (element.propertyName ?? element.name).text;
+      if (imported === "Do") do_names.add(element.name.text);
+      if (imported === "Program") {
+        program_names.add(element.name.text);
+        program_module ??= specifier;
+      }
+      if (imported === "Effect") effect_names.add(element.name.text);
+    }
+  }
+
+  return { do_names, program_names, effect_names, namespaces, program_module };
+}
+
+function is_library_specifier(
+  specifier: string,
+  config: TransformConfig,
+): boolean {
+  if (config.library_specifiers?.includes(specifier)) return true;
+  if (
+    specifier === "@mewhhaha/typeclasses" ||
+    specifier.startsWith("@mewhhaha/typeclasses/")
+  ) return true;
+  // The source tree is intentionally supported for local examples, benchmarks,
+  // and package tests without needing a TypeScript program/type checker.
+  return /(?:^|\/)src\/(?:typeclasses|effects|mod)(?:\.ts)?$/.test(specifier);
+}
+
 function collect_program_scopes(
   source_file: ts.SourceFile,
+  imports: ImportedBindings,
 ): ReadonlySet<string> {
-  const scopes = new Set<string>(["Program"]);
+  const scopes = new Set<string>(imports.program_names);
 
   function visit(node: ts.Node) {
     if (ts.isVariableDeclaration(node)) {
       if (
-        ts.isIdentifier(node.name) && is_program_scope_call(node.initializer)
+        ts.isIdentifier(node.name) &&
+        is_program_scope_call(node.initializer, imports)
       ) {
         scopes.add(node.name.text);
       }
@@ -1797,7 +2382,10 @@ function collect_program_scopes(
   return scopes;
 }
 
-function is_program_scope_call(expression: ts.Expression | undefined): boolean {
+function is_program_scope_call(
+  expression: ts.Expression | undefined,
+  imports: ImportedBindings,
+): boolean {
   if (expression === undefined) {
     return false;
   }
@@ -1812,39 +2400,88 @@ function is_program_scope_call(expression: ts.Expression | undefined): boolean {
     return false;
   }
 
-  if (!ts.isIdentifier(callee.expression)) {
-    return false;
-  }
-
-  return callee.expression.text === "Program" && callee.name.text === "scope";
+  return callee.name.text === "scope" &&
+    is_imported_target(callee.expression, "Program", imports);
 }
 
 function transform_kind(
   node: ts.CallExpression,
   program_scopes: ReadonlySet<string>,
+  imports: ImportedBindings,
 ): TransformKind | undefined {
   const callee = node.expression;
 
-  if (!ts.isIdentifier(callee)) {
-    return undefined;
-  }
-
-  if (callee.text === "Do") {
+  if (is_imported_target(callee, "Do", imports)) {
     return "do";
   }
 
-  if (program_scopes.has(callee.text)) {
+  if (ts.isIdentifier(callee) && program_scopes.has(callee.text)) {
+    return "program";
+  }
+
+  if (is_imported_target(callee, "Program", imports)) {
     return "program";
   }
 
   return undefined;
 }
 
+function is_imported_target(
+  expression: ts.Expression,
+  name: "Do" | "Program" | "Effect",
+  imports: ImportedBindings,
+): boolean {
+  if (ts.isIdentifier(expression)) {
+    const names = name === "Do"
+      ? imports.do_names
+      : name === "Program"
+      ? imports.program_names
+      : imports.effect_names;
+    return names.has(expression.text);
+  }
+  return ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === name &&
+    ts.isIdentifier(expression.expression) &&
+    imports.namespaces.has(expression.expression.text);
+}
+
+function add_unanchored_target_diagnostic(
+  node: ts.CallExpression,
+  state: TransformState,
+  imports: ImportedBindings,
+) {
+  const callee = node.expression;
+  const target = ts.isIdentifier(callee)
+    ? callee.text
+    : ts.isPropertyAccessExpression(callee)
+    ? callee.name.text
+    : undefined;
+  if (
+    (target !== "Do" && target !== "Program") ||
+    transform_kind(node, new Set(), imports) !== undefined
+  ) return;
+  const run = node.arguments[node.arguments.length - 1];
+  if (!ts.isFunctionExpression(run) || run.asteriskToken === undefined) return;
+  add_diagnostic(
+    state,
+    node,
+    "Skipped " + target +
+      ": callee is not imported from @mewhhaha/typeclasses.",
+  );
+}
+
+function is_plain_identifier(
+  expression: ts.Expression,
+): expression is ts.Identifier {
+  return ts.isIdentifier(expression);
+}
+
 function transform_handle_with_call(
   node: ts.CallExpression,
   factory: ts.NodeFactory,
+  imports: ImportedBindings,
 ): ts.Expression | undefined {
-  if (!is_effect_handle_with(node.expression)) {
+  if (!is_effect_handle_with(node.expression, imports)) {
     return undefined;
   }
 
@@ -1885,12 +2522,17 @@ function transform_handle_with_call(
 function transform_interpreter_call(
   node: ts.CallExpression,
   factory: ts.NodeFactory,
+  imports: ImportedBindings,
 ): ts.Expression | undefined {
   if (!ts.isPropertyAccessExpression(node.expression)) {
     return undefined;
   }
 
-  const effect = read_interpreter_effect(node.expression.expression, factory);
+  const effect = read_interpreter_effect(
+    node.expression.expression,
+    factory,
+    imports,
+  );
 
   if (effect === undefined) {
     return undefined;
@@ -1925,12 +2567,13 @@ function transform_interpreter_call(
 function read_interpreter_effect(
   expression: ts.Expression,
   factory: ts.NodeFactory,
+  imports: ImportedBindings,
 ): ts.Expression | undefined {
   if (!ts.isCallExpression(expression)) {
     return undefined;
   }
 
-  if (is_effect_interpret(expression.expression)) {
+  if (is_effect_interpret(expression.expression, imports)) {
     return expression.arguments[0];
   }
 
@@ -1954,6 +2597,7 @@ function read_interpreter_effect(
   const effect = read_interpreter_effect(
     expression.expression.expression,
     factory,
+    imports,
   );
 
   if (effect === undefined) {
@@ -1963,29 +2607,27 @@ function read_interpreter_effect(
   return apply_static_effect_handler(handler, effect, factory);
 }
 
-function is_effect_handle_with(expression: ts.Expression): boolean {
+function is_effect_handle_with(
+  expression: ts.Expression,
+  imports: ImportedBindings,
+): boolean {
   if (!ts.isPropertyAccessExpression(expression)) {
     return false;
   }
 
-  if (!ts.isIdentifier(expression.expression)) {
-    return false;
-  }
-
-  return expression.expression.text === "Effect" &&
+  return is_imported_target(expression.expression, "Effect", imports) &&
     expression.name.text === "handle_with";
 }
 
-function is_effect_interpret(expression: ts.Expression): boolean {
+function is_effect_interpret(
+  expression: ts.Expression,
+  imports: ImportedBindings,
+): boolean {
   if (!ts.isPropertyAccessExpression(expression)) {
     return false;
   }
 
-  if (!ts.isIdentifier(expression.expression)) {
-    return false;
-  }
-
-  return expression.expression.text === "Effect" &&
+  return is_imported_target(expression.expression, "Effect", imports) &&
     expression.name.text === "interpret";
 }
 
@@ -2104,6 +2746,7 @@ function update_imports(
   factory: ts.NodeFactory,
   needs_program_helpers: boolean,
   diagnostics: TransformDiagnostic[],
+  imports: ImportedBindings,
 ): ts.SourceFile {
   let added_program_helpers = !needs_program_helpers;
 
@@ -2124,13 +2767,37 @@ function update_imports(
     return statement;
   });
 
+  if (
+    needs_program_helpers && !added_program_helpers &&
+    imports.program_module !== undefined
+  ) {
+    // Namespace imports cannot be amended in place; add the tiny named import
+    // needed by generated `Effect.*` calls beside the source import.
+    statements.push(factory.createImportDeclaration(
+      undefined,
+      factory.createImportClause(
+        false,
+        undefined,
+        factory.createNamedImports([
+          factory.createImportSpecifier(
+            false,
+            undefined,
+            factory.createIdentifier("Effect"),
+          ),
+        ]),
+      ),
+      factory.createStringLiteral(imports.program_module),
+    ));
+    added_program_helpers = true;
+  }
+
   if (!added_program_helpers) {
     diagnostics.push({
       file_name: source_file.fileName,
       line: 1,
       column: 1,
       message:
-        "Transformed Program but could not find a named Program import to add Effect.",
+        "Transformed Program but could not find a Program import to add Effect.",
     });
   }
 
@@ -2234,6 +2901,45 @@ function contains_yield_or_return(node: ts.Node): boolean {
 
   ts.forEachChild(node, visit);
 
+  return found;
+}
+
+function contains_return(node: ts.Node): boolean {
+  let found = false;
+
+  function visit(child: ts.Node) {
+    if (found || (ts.isFunctionLike(child) && child.parent !== undefined)) {
+      return;
+    }
+    if (ts.isReturnStatement(child)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  }
+
+  ts.forEachChild(node, visit);
+  return found;
+}
+
+function contains_yield_or_return_or_break(node: ts.Node): boolean {
+  let found = false;
+
+  function visit(child: ts.Node) {
+    if (found || (ts.isFunctionLike(child) && child.parent !== undefined)) {
+      return;
+    }
+    if (
+      ts.isYieldExpression(child) || ts.isReturnStatement(child) ||
+      ts.isBreakStatement(child) || ts.isContinueStatement(child)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  }
+
+  ts.forEachChild(node, visit);
   return found;
 }
 

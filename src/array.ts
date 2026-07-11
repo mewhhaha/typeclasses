@@ -5,6 +5,8 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { append_item } from "./internal.ts";
+import { inspect } from "./inspect.ts";
 import {
   Alternative,
   Applicative,
@@ -51,7 +53,7 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
 Show.instance(ArrayT)({
   show() {
     const array = this.value();
-    return Deno.inspect(array);
+    return inspect(array);
   },
 });
 
@@ -108,6 +110,7 @@ Applicative.instance(ArrayT)({
     return ArrayT([value]);
   },
 
+  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
   [applicative_lift_method](fn, rest) {
     const first = this.value();
 
@@ -306,16 +309,4 @@ function lift_array_many<out>(
   }
 
   return ArrayT(rows.map((row) => fn(...row)));
-}
-
-function append_item(values: readonly unknown[], item: unknown): unknown[] {
-  const next = new Array<unknown>(values.length + 1);
-
-  for (let index = 0; index < values.length; index += 1) {
-    next[index] = values[index];
-  }
-
-  next[values.length] = item;
-
-  return next;
 }

@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/mod.ts",
     "./prelude": "./src/prelude.ts",
-    "./transform": "./tools/transform_do_program.ts"
+    "./transform": "./tools/transform_do_program.ts",
+    "./transform/plugin": "./tools/transform_plugin.ts"
   },
   "publish": {
     "include": [
@@ -16,6 +17,7 @@
       "deno.lock",
       "src/**/*.ts",
       "tools/transform_do_program.ts",
+      "tools/transform_plugin.ts",
       "learn_you_a_typeclasses_for_greater_good/README.md",
       "learn_you_a_typeclasses_for_greater_good/**/*.ts"
     ],
@@ -25,6 +27,7 @@
   },
   "imports": {
     "effect": "npm:effect@3.21.4",
+    "esbuild": "npm:esbuild@0.25.12",
     "fp-ts/Either": "npm:fp-ts@2.16.11/lib/Either.js",
     "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
     "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
@@ -32,6 +35,7 @@
     "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
     "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
     "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
+    "rolldown": "npm:rolldown@1.1.5",
     "typescript": "npm:typescript@5.9.3",
     "true-myth/maybe": "npm:true-myth@9.1.0/maybe",
     "true-myth/result": "npm:true-myth@9.1.0/result"
@@ -41,12 +45,14 @@
     "bench:case-studies": "deno bench --allow-env --allow-read --allow-write=/tmp bench/case_studies_transformer.bench.ts",
     "case-study": "deno run --allow-read case_studies/main.ts",
     "transform": "deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts",
+    "check:portability": "deno run --allow-read tools/check_portability.ts",
+    "test:node": "node --experimental-strip-types tools/node_portability_smoke.ts",
     "publish": "deno publish",
-    "publish:dry-run": "deno publish --dry-run",
+    "publish:dry-run": "deno publish --dry-run --allow-dirty",
     "check": "deno check src/mod.ts src/*.test.ts examples/*.ts case_studies/**/*.ts bench/*.bench.ts tools/*.ts learn_you_a_typeclasses_for_greater_good/**/*.ts",
     "example": "deno run examples/main.ts",
     "learn": "deno run learn_you_a_typeclasses_for_greater_good/main.ts",
     "test": "deno test",
-    "test:transformer": "deno test --allow-env tools/transform_do_program_checks.ts"
+    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts"
   }
 }

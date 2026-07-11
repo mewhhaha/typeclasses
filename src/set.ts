@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import {
   Eq,
   Foldable,
@@ -52,7 +53,7 @@ export function to_set<item>(set: SetValue<item>): Set<item> {
 
 Show.instance(SetT)({
   show() {
-    return Deno.inspect(this.value());
+    return inspect(this.value());
   },
 });
 

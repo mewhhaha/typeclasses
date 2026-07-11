@@ -8,6 +8,7 @@ import {
   union,
   type UnionDictionary,
 } from "./typeclass.ts";
+import { same_context } from "./internal.ts";
 import {
   Alternative,
   Applicative,
@@ -17,10 +18,14 @@ import {
   Foldable,
   Functor,
   Monad,
+  Monoid,
   Ord,
+  Semigroup,
   Show,
   Traversable,
 } from "./typeclasses.ts";
+import { type EitherValue, Left, Right } from "./either.ts";
+import { inspect } from "./inspect.ts";
 
 export type Maybe<item> =
   | Just<item>
@@ -35,6 +40,7 @@ export interface AsMaybe
     Show<AsMaybe>,
     Alternative<AsMaybe>,
     Monad<AsMaybe>,
+    Monoid<AsMaybe>,
     Traversable<AsMaybe>,
     Ord<AsMaybe> {
   readonly [type_item]: unknown;
@@ -66,13 +72,71 @@ export function from_nullable<item>(
   return Just(value);
 }
 
+/** Haskell `toNullable :: Maybe a -> a | null`. */
+export function to_nullable<item>(value: MaybeValue<item>): item | null {
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return payload;
+    case "Nothing":
+      return null;
+  }
+}
+
+/** Haskell `fromMaybe :: a -> Maybe a -> a`. */
+export function from_maybe<item>(
+  fallback: item,
+  value: MaybeValue<item>,
+): item {
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return payload;
+    case "Nothing":
+      return fallback;
+  }
+}
+
+/** Haskell `maybe :: b -> (a -> b) -> Maybe a -> b`. */
+export function maybe<item, out>(
+  fallback: out,
+  fn: (value: item) => out,
+  value: MaybeValue<item>,
+): out {
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return fn(payload);
+    case "Nothing":
+      return fallback;
+  }
+}
+
+/** Haskell `maybeToEither :: e -> Maybe a -> Either e a`. */
+export function to_either<error, item>(
+  error: error,
+  value: MaybeValue<item>,
+): EitherValue<error, item> {
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return Right<error, item>(payload);
+    case "Nothing":
+      return Left<error, item>(error);
+  }
+}
+
 Show.instance(Maybe)({
   show() {
     const [tag, payload] = this.value();
 
     switch (tag) {
       case "Just":
-        return "Just(" + Deno.inspect(payload) + ")";
+        return "Just(" + inspect(payload) + ")";
       case "Nothing":
         return "Nothing";
     }
@@ -142,6 +206,7 @@ Applicative.instance(Maybe)({
     return Just(value);
   },
 
+  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
   [applicative_lift_method](fn, rest) {
     if (is_Nothing_value(this)) {
       return same_context(this);
@@ -203,6 +268,29 @@ Alternative.instance(Maybe)({
       case "Nothing":
         return right;
     }
+  },
+});
+
+Semigroup.instance(Maybe)({
+  concat(right) {
+    if (is_Nothing_value(this)) {
+      return right;
+    }
+
+    const [tag] = this.value();
+
+    switch (tag) {
+      case "Just":
+        return same_context(this);
+      case "Nothing":
+        return right;
+    }
+  },
+});
+
+Monoid.instance(Maybe)({
+  empty() {
+    return nothing_value();
   },
 });
 
@@ -308,8 +396,4 @@ function nothing_value<item>(): MaybeValue<item> {
 
 function is_Nothing_value(value: unknown): value is MaybeValue<never> {
   return value === nothing_singleton;
-}
-
-function same_context<out>(value: unknown): out {
-  return value as out;
 }

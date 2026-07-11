@@ -33,15 +33,15 @@ Deno.test("fixed context parameters survive typeclass operations", () => {
   ).ap(Valid(41));
   const valid_raw: Validation<readonly string[], number> = ["valid", 41];
   const valid = ValidationT(valid_raw).map((value) => value + 1);
-  const StringEither = EitherT.withLeft<string>();
+  const StringEither = EitherT.with_left<string>();
   // deno-lint-ignore require-yield -- verifies fixed-parameter pure through Do
   const fixed_do = Do(StringEither, function* () {
     return 42;
   });
   const fixed_right = StringEither.Right(41).map((value) => value + 1);
-  const StringTuple = Tuple.withLeft<string>();
+  const StringTuple = Tuple.with_left<string>();
   const fixed_pair = StringTuple(["count", 42]);
-  const Errors = ValidationT.withError<readonly string[]>();
+  const Errors = ValidationT.with_error<readonly string[]>();
   const fixed_valid = Errors.pure(42);
   const fixed_constructor_valid = Errors.Valid(42);
   const bimapped_either = Left<string, number>("missing").bimap(
@@ -65,7 +65,7 @@ Deno.test("fixed context parameters survive typeclass operations", () => {
   const fluent_composed = fn((value: number) => value * 2).compose(
     fn((text: string) => text.length),
   );
-  const StringFn = Fn.withInput<string>();
+  const StringFn = Fn.with_input<string>();
   const fixed_fn = StringFn((text) => text.length);
   const identity_fn = Fn.id<string>();
   const arrow_fn = Fn.arr((value: number) => value + 1);

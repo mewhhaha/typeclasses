@@ -1,13 +1,18 @@
-export { is_data } from "./data_value.ts";
-export type { WrappedData } from "./data_value.ts";
+export { is_data, match_tagged } from "./data_value.ts";
+export type {
+  TaggedMatchCases,
+  TaggedValue,
+  WrappedData,
+} from "./data_value.ts";
 import {
   cache_data_constructor as raw_cache_data_constructor,
   data_constructor as raw_as_data_cached,
   data_dictionary as raw_data_dictionary,
   mark_data_prototype as raw_mark_data_prototype,
+  match_tagged,
   wrap_data as raw_as_data,
 } from "./data_value.ts";
-import type { WrappedData } from "./data_value.ts";
+import type { TaggedMatchCases, WrappedData } from "./data_value.ts";
 
 export const kind = Symbol("Data.kind");
 const data_type = Symbol("Data.type");
@@ -740,6 +745,9 @@ function tagged_data_prototype<
     run: {
       value: tagged_data_run,
     },
+    match: {
+      value: tagged_data_match,
+    },
     [Symbol.iterator]: {
       value: tagged_data_iterator,
     },
@@ -747,6 +755,13 @@ function tagged_data_prototype<
   raw_mark_data_prototype(prototype);
 
   return prototype;
+}
+
+function tagged_data_match(
+  this: { value(): TaggedData },
+  cases: TaggedMatchCases<TaggedData, unknown>,
+): unknown {
+  return match_tagged(this.value(), cases);
 }
 
 function tagged_data_run(this: { value(): unknown }, ...args: unknown[]) {

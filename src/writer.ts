@@ -10,11 +10,12 @@ import {
 } from "./typeclass.ts";
 import {
   type Effect,
+  handle_lift,
   type Lift,
-  pure,
-  suspend,
   type WithoutLift,
 } from "./effects.ts";
+import { configured_dictionary } from "./internal.ts";
+import { inspect } from "./inspect.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -108,54 +109,15 @@ export function run_writer<
   WithoutLift<requirements, AsWriter<output, log>>,
   readonly [item, Data<output, log>]
 > {
-  let current = effect as Effect<requirements, unknown>;
-  let current_output = empty;
-
-  while (true) {
-    switch (current[0]) {
-      case "pure":
-        return pure([current[1], current_output] as const) as Effect<
-          WithoutLift<requirements, AsWriter<output, log>>,
-          readonly [item, Data<output, log>]
-        >;
-      case "impure": {
-        const operation = current[1] as readonly [string, unknown];
-
-        if (operation[0] === "lift" && is_writer_value(operation[1])) {
-          const lifted = current[1] as unknown as Lift<
-            AsWriter<output, log>,
-            unknown
-          >;
-          const [value, next_output] = lifted[1].value();
-          current = current[2](value) as Effect<requirements, unknown>;
-          current_output = concat_output(current_output, next_output);
-          continue;
-        }
-
-        const suspended = current;
-        const suspended_output = current_output;
-        return suspend(
-          suspended[1] as WithoutLift<requirements, AsWriter<output, log>>,
-          (value) => run_writer(suspended[2](value), suspended_output),
-        ) as Effect<
-          WithoutLift<requirements, AsWriter<output, log>>,
-          readonly [item, Data<output, log>]
-        >;
-      }
-    }
-  }
-}
-
-function is_writer_value(value: unknown): value is Dictionary {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return (value as Dictionary)[kind] === writer_kind;
+  return handle_lift(effect, writer_kind, empty, {
+    done(value, output) {
+      return [value as item, output] as const;
+    },
+    handle(value, output) {
+      const [item, next_output] = value.value();
+      return [item, concat_output(output, next_output)] as const;
+    },
+  });
 }
 
 type WriterOutput<requirements> = requirements extends Lift<
@@ -173,8 +135,8 @@ type WriterLog<requirements> = requirements extends Lift<
 Show.instance(Writer)({
   show() {
     const [value, output] = this.value();
-    return "Writer(" + Deno.inspect(value) + ", " +
-      Deno.inspect((output as Data<Dictionary, unknown>).value()) + ")";
+    return "Writer(" + inspect(value) + ", " +
+      inspect((output as Data<Dictionary, unknown>).value()) + ")";
   },
 });
 
@@ -259,15 +221,16 @@ function configured_writer<
   output extends MonoidDictionary<output>,
   log,
 >(empty: Data<output, log>): AsWriter<output, log> {
-  const dictionary = data<AsWriter<output, log>>();
-
-  dictionary[kind] = writer_kind;
+  const dictionary = configured_dictionary(
+    Writer,
+    data<AsWriter<output, log>>(),
+  );
 
   Show.instance(dictionary)({
     show() {
       const [value, output] = this.value();
-      return "Writer(" + Deno.inspect(value) + ", " +
-        Deno.inspect(output.value()) + ")";
+      return "Writer(" + inspect(value) + ", " +
+        inspect(output.value()) + ")";
     },
   });
 

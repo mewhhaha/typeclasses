@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type DataViewT = DataView;
@@ -38,7 +39,7 @@ export function to_bytes(view: DataViewValue): Uint8Array {
 
 Show.instance(DataViewT)({
   show() {
-    return Deno.inspect(to_view_bytes(this.value()));
+    return inspect(to_view_bytes(this.value()));
   },
 });
 

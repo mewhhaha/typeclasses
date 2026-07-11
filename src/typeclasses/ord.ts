@@ -6,7 +6,8 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
-import type { Eq as EqDictionary } from "./eq.ts";
+import { inspect } from "../inspect.ts";
+import { Eq, type Eq as EqDictionary } from "./eq.ts";
 
 export type Ordering = "lt" | "eq" | "gt";
 
@@ -25,38 +26,71 @@ export interface Ord<dictionary extends Dictionary> extends
   >,
   EqDictionary<dictionary> {}
 
-type OrdTypeclass = Typeclass<typeof ord_typeclass, {
-  compare<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
+/** The minimal complete definition of an Ord instance. */
+export type MinimalOrd<dictionary extends Ord<dictionary>> = {
+  compare: <item>(
+    this: Data<dictionary, item>,
     right: Data<dictionary, item>,
-  ): Ordering;
-  lt<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): boolean;
-  lte<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): boolean;
-  gt<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): boolean;
-  gte<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): boolean;
-  min<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): Data<dictionary, item>;
-  max<dictionary extends Ord<dictionary>, item>(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): Data<dictionary, item>;
-}>;
+  ) => Ordering;
+};
+
+type OrdTypeclass =
+  & Typeclass<typeof ord_typeclass, {
+    compare<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): Ordering;
+    lt<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): boolean;
+    lte<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): boolean;
+    gt<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): boolean;
+    gte<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): boolean;
+    min<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): Data<dictionary, item>;
+    max<dictionary extends Ord<dictionary>, item>(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): Data<dictionary, item>;
+  }>
+  & {
+    derive<dictionary extends Ord<dictionary>>(
+      dictionary: dictionary,
+    ): (minimal: MinimalOrd<dictionary>) => void;
+  };
 
 export const Ord: OrdTypeclass = typeclass(ord_typeclass, {
+  derive<dictionary extends Ord<dictionary>>(
+    dictionary: dictionary,
+  ): (minimal: MinimalOrd<dictionary>) => void {
+    return (minimal) => {
+      Ord.instance(dictionary)({
+        compare: minimal.compare,
+      });
+
+      Eq.instance(dictionary)({
+        eq<item>(
+          this: Data<dictionary, item>,
+          right: Data<dictionary, item>,
+        ): boolean {
+          return this.compare(right) === "eq";
+        },
+      });
+    };
+  },
+
   compare<
     dictionary extends Ord<dictionary>,
     item,
@@ -154,7 +188,7 @@ export function compare_unknown(left: unknown, right: unknown): Ordering {
   }
 
   return compare_number(
-    Deno.inspect(left).localeCompare(Deno.inspect(right)),
+    inspect(left).localeCompare(inspect(right)),
     0,
   );
 }

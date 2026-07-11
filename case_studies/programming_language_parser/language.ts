@@ -10,6 +10,7 @@ import {
   optional,
   parse_all,
   type ParseOutcome,
+  Parser,
   type ParserValue,
   right,
   satisfy,
@@ -260,7 +261,7 @@ export const program: ParserValue<Program> = lazy("program", () => {
   return label(
     right(
       skip_hidden(),
-      Do(function* () {
+      Do(Parser, function* () {
         const declarations = yield* many(declaration);
 
         return {

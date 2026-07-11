@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { append_item } from "./internal.ts";
 import {
   Alternative,
   Applicative,
@@ -82,6 +83,7 @@ Applicative.instance(AsyncIterableT)({
     });
   },
 
+  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
   [applicative_lift_method](fn, rest) {
     const first = this.value();
 
@@ -231,16 +233,4 @@ async function* iterate_async_iterable_product<out>(
       append_item(values, item),
     );
   }
-}
-
-function append_item(values: readonly unknown[], item: unknown): unknown[] {
-  const next = new Array<unknown>(values.length + 1);
-
-  for (let index = 0; index < values.length; index += 1) {
-    next[index] = values[index];
-  }
-
-  next[values.length] = item;
-
-  return next;
 }

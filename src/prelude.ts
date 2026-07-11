@@ -1,4 +1,6 @@
 import type { Data } from "./typeclass.ts";
+export { from_maybe, maybe, to_either, to_nullable } from "./maybe.ts";
+export { either, from_left, from_right, hush, note } from "./either.ts";
 import {
   Alternative,
   type Alternative as AlternativeDictionary,
@@ -55,7 +57,7 @@ export function mempty<
 }
 
 /** Construct a failed value using an explicit MonadError dictionary. */
-export function throwError<
+export function throw_error<
   dictionary extends MonadErrorDictionary<dictionary>,
   item,
 >(
@@ -93,7 +95,7 @@ export function ap<
 }
 
 /** Lift a unary function into an applicative. */
-export function liftA<
+export function lift_A<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   out,
@@ -105,7 +107,7 @@ export function liftA<
 }
 
 /** Lift a binary function into an applicative. */
-export function liftA2<
+export function lift_A2<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   second,
@@ -119,7 +121,7 @@ export function liftA2<
 }
 
 /** Lift a ternary function into an applicative. */
-export function liftA3<
+export function lift_A3<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   second,
@@ -135,7 +137,7 @@ export function liftA3<
 }
 
 /** Lift a four-argument function into an applicative. */
-export function liftA4<
+export function lift_A4<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   second,
@@ -153,7 +155,7 @@ export function liftA4<
 }
 
 /** Lift a five-argument function into an applicative. */
-export function liftA5<
+export function lift_A5<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   second,
@@ -190,6 +192,96 @@ export function bind<
   return Monad.bind(value, fn);
 }
 
+/** Haskell `join :: Monad m => m (m a) -> m a`. */
+export function join<dictionary extends MonadDictionary<dictionary>, item>(
+  value: Data<dictionary, Data<dictionary, item>>,
+): Data<dictionary, item> {
+  return Monad.bind(value, (inner) => inner);
+}
+
+/** Haskell `void :: Functor f => f a -> f ()`. */
+export function voided<dictionary extends FunctorDictionary<dictionary>>(
+  value: Data<dictionary, unknown>,
+): Data<dictionary, undefined> {
+  return Functor.map(value, () => undefined);
+}
+
+/** Haskell `when :: Applicative f => Bool -> f () -> f ()`. */
+export function when<dictionary extends ApplicativeDictionary<dictionary>>(
+  dictionary: ApplicativeDictionary<dictionary>,
+  condition: boolean,
+  action: Data<dictionary, undefined>,
+): Data<dictionary, undefined> {
+  if (condition) {
+    return action;
+  }
+
+  return Applicative.pure<dictionary, undefined>(
+    dictionary as dictionary,
+    undefined,
+  );
+}
+
+/** Haskell `unless :: Applicative f => Bool -> f () -> f ()`. */
+export function unless<dictionary extends ApplicativeDictionary<dictionary>>(
+  dictionary: ApplicativeDictionary<dictionary>,
+  condition: boolean,
+  action: Data<dictionary, undefined>,
+): Data<dictionary, undefined> {
+  return when(dictionary, !condition, action);
+}
+
+/** Haskell `guard :: Alternative f => Bool -> f ()`. */
+export function guard<dictionary extends AlternativeDictionary<dictionary>>(
+  dictionary: AlternativeDictionary<dictionary>,
+  condition: boolean,
+): Data<dictionary, undefined> {
+  if (condition) {
+    return Applicative.pure<dictionary, undefined>(
+      dictionary as dictionary,
+      undefined,
+    );
+  }
+
+  return Alternative.empty<dictionary, undefined>(dictionary as dictionary);
+}
+
+/** Haskell `<*`: sequence two effects and keep the value on the left. */
+export function ap_first<
+  dictionary extends ApplicativeDictionary<dictionary>,
+  first,
+  second,
+>(
+  left: Data<dictionary, first>,
+  right: Data<dictionary, second>,
+): Data<dictionary, first> {
+  return Applicative.lift((kept: first, _: second) => kept, left, right);
+}
+
+/** Haskell `*>`: sequence two effects and keep the value on the right. */
+export function ap_second<
+  dictionary extends ApplicativeDictionary<dictionary>,
+  first,
+  second,
+>(
+  left: Data<dictionary, first>,
+  right: Data<dictionary, second>,
+): Data<dictionary, second> {
+  return Applicative.lift((_: first, kept: second) => kept, left, right);
+}
+
+/** Haskell `>>`: sequence monadic computations and keep the right context. */
+export function then<
+  dictionary extends MonadDictionary<dictionary>,
+  first,
+  second,
+>(
+  left: Data<dictionary, first>,
+  right: Data<dictionary, second>,
+): Data<dictionary, second> {
+  return Monad.bind(left, () => right);
+}
+
 /** Fold a structure from left to right. */
 export function foldl<
   dictionary extends FoldableDictionary<dictionary>,
@@ -201,6 +293,114 @@ export function foldl<
   value: Data<dictionary, item>,
 ): out {
   return Foldable.fold(value, initial, fn);
+}
+
+/** Haskell `foldMap :: Monoid m => (a -> m) -> t a -> m`. */
+export function fold_map<
+  dictionary extends FoldableDictionary<dictionary>,
+  monoid extends MonoidDictionary<monoid>,
+  item,
+  out,
+>(
+  monoid: MonoidDictionary<monoid>,
+  fn: (value: item) => Data<monoid, out>,
+  value: Data<dictionary, item>,
+): Data<monoid, out> {
+  return Foldable.fold(
+    value,
+    Monoid.empty<monoid, out>(monoid as monoid),
+    (state, item) => Semigroup.concat(state, fn(item)),
+  );
+}
+
+/** Haskell `mconcat :: Monoid m => [m] -> m`. */
+export function mconcat<
+  dictionary extends FoldableDictionary<dictionary>,
+  monoid extends MonoidDictionary<monoid>,
+  item,
+>(
+  monoid: MonoidDictionary<monoid>,
+  values: Data<dictionary, Data<monoid, item>>,
+): Data<monoid, item> {
+  return fold_map(monoid, (value) => value, values);
+}
+
+/** Haskell `toList :: Foldable t => t a -> [a]`. */
+export function to_array<
+  dictionary extends FoldableDictionary<dictionary>,
+  item,
+>(
+  value: Data<dictionary, item>,
+): item[] {
+  return Foldable.fold(value, [] as item[], (items, item) => {
+    items.push(item);
+    return items;
+  });
+}
+
+/** Haskell `length :: Foldable t => t a -> Int`. */
+export function length<dictionary extends FoldableDictionary<dictionary>>(
+  value: Data<dictionary, unknown>,
+): number {
+  return Foldable.fold(value, 0, (count) => count + 1);
+}
+
+/** Haskell `sum :: (Foldable t, Num a) => t a -> a`, specialized to number. */
+export function sum<dictionary extends FoldableDictionary<dictionary>>(
+  value: Data<dictionary, number>,
+): number {
+  return Foldable.fold(value, 0, (total, item) => total + item);
+}
+
+/** Haskell `product :: (Foldable t, Num a) => t a -> a`, specialized to number. */
+export function product<dictionary extends FoldableDictionary<dictionary>>(
+  value: Data<dictionary, number>,
+): number {
+  return Foldable.fold(value, 1, (total, item) => total * item);
+}
+
+/** Haskell `elem :: (Foldable t, Eq a) => a -> t a -> Bool`. */
+export function elem<dictionary extends FoldableDictionary<dictionary>, item>(
+  item: item,
+  value: Data<dictionary, item>,
+): boolean;
+/** Test membership using an explicit Eq dictionary for wrapped items. */
+export function elem<
+  dictionary extends FoldableDictionary<dictionary>,
+  item_dictionary extends EqDictionary<item_dictionary>,
+  item,
+>(
+  dictionary: EqDictionary<item_dictionary>,
+  item: Data<item_dictionary, item>,
+  value: Data<dictionary, Data<item_dictionary, item>>,
+): boolean;
+export function elem<
+  dictionary extends FoldableDictionary<dictionary>,
+  item_dictionary extends EqDictionary<item_dictionary>,
+  item,
+>(
+  item_or_dictionary: item | EqDictionary<item_dictionary>,
+  value_or_item: Data<dictionary, item> | Data<item_dictionary, item>,
+  contextual_value?: Data<dictionary, Data<item_dictionary, item>>,
+): boolean {
+  if (contextual_value === undefined) {
+    const expected = item_or_dictionary as item;
+    const value = value_or_item as Data<dictionary, item>;
+
+    return Foldable.fold(
+      value,
+      false,
+      (found, current) => found || Object.is(expected, current),
+    );
+  }
+
+  const expected = value_or_item as Data<item_dictionary, item>;
+
+  return Foldable.fold(
+    contextual_value,
+    false,
+    (found, current) => found || Eq.eq(expected, current),
+  );
 }
 
 /** Traverse a structure with an applicative-producing function. */
@@ -218,6 +418,26 @@ export function traverse<
     value,
     applicative as applicative,
     fn,
+  );
+}
+
+/** Haskell `traverse_ :: (Foldable t, Applicative f) => (a -> f b) -> t a -> f ()`. */
+export function traverse_<
+  dictionary extends FoldableDictionary<dictionary>,
+  applicative extends ApplicativeDictionary<applicative>,
+  item,
+>(
+  applicative: ApplicativeDictionary<applicative>,
+  fn: (value: item) => Data<applicative, unknown>,
+  value: Data<dictionary, item>,
+): Data<applicative, undefined> {
+  return Foldable.fold(
+    value,
+    Applicative.pure<applicative, undefined>(
+      applicative as applicative,
+      undefined,
+    ),
+    (state, item) => ap_second(state, Functor.map(fn(item), () => undefined)),
   );
 }
 
@@ -333,3 +553,33 @@ export function alt<
 ): Data<dictionary, item> {
   return Alternative.alt(left, right);
 }
+
+/** @deprecated Use {@link throw_error}. */
+export const throwError: typeof throw_error = throw_error;
+
+/** @deprecated Use {@link lift_A}. */
+export const liftA: typeof lift_A = lift_A;
+
+/** @deprecated Use {@link lift_A2}. */
+export const liftA2: typeof lift_A2 = lift_A2;
+
+/** @deprecated Use {@link lift_A3}. */
+export const liftA3: typeof lift_A3 = lift_A3;
+
+/** @deprecated Use {@link lift_A4}. */
+export const liftA4: typeof lift_A4 = lift_A4;
+
+/** @deprecated Use {@link lift_A5}. */
+export const liftA5: typeof lift_A5 = lift_A5;
+
+/** @deprecated Use {@link ap_first}. */
+export const apFirst: typeof ap_first = ap_first;
+
+/** @deprecated Use {@link ap_second}. */
+export const apSecond: typeof ap_second = ap_second;
+
+/** @deprecated Use {@link fold_map}. */
+export const foldMap: typeof fold_map = fold_map;
+
+/** @deprecated Use {@link to_array}. */
+export const toArray: typeof to_array = to_array;

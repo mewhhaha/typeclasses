@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Show } from "./typeclasses.ts";
 
 export type NumericTypedArray =
@@ -57,7 +58,7 @@ export function to_typed_array<item>(
 
 Show.instance(TypedArrayT)({
   show() {
-    return Deno.inspect(this.value());
+    return inspect(this.value());
   },
 });
 

@@ -5,12 +5,15 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import {
   Applicative,
+  compare_unknown,
   Eq,
   Foldable,
   Functor,
   Monoid,
+  Ord,
   Semigroup,
   Show,
   Traversable,
@@ -24,7 +27,8 @@ export interface AsRecord
     Show<AsRecord>,
     Eq<AsRecord>,
     Monoid<AsRecord>,
-    Traversable<AsRecord> {
+    Traversable<AsRecord>,
+    Ord<AsRecord> {
   readonly [type_item]: unknown;
   readonly [type_data]: RecordT<this[typeof type_item]>;
 }
@@ -52,7 +56,7 @@ export function to_record<item>(
 Show.instance(RecordT)({
   show() {
     const record = this.value();
-    return Deno.inspect(record);
+    return inspect(record);
   },
 });
 
@@ -78,6 +82,43 @@ Eq.instance(RecordT)({
     }
 
     return true;
+  },
+});
+
+Ord.instance(RecordT)({
+  compare(right) {
+    const left = Object.entries(this.value()).sort(compare_entry_keys);
+    const right_entries = Object.entries(right.value()).sort(
+      compare_entry_keys,
+    );
+    const length = Math.min(left.length, right_entries.length);
+
+    for (let index = 0; index < length; index += 1) {
+      const key_order = compare_unknown(
+        left[index][0],
+        right_entries[index][0],
+      );
+
+      switch (key_order) {
+        case "lt":
+        case "gt":
+          return key_order;
+        case "eq": {
+          const value_order = compare_unknown(
+            left[index][1],
+            right_entries[index][1],
+          );
+
+          if (value_order !== "eq") {
+            return value_order;
+          }
+
+          break;
+        }
+      }
+    }
+
+    return compare_unknown(left.length, right_entries.length);
   },
 });
 
@@ -152,4 +193,11 @@ function record_prepend<item>(key: string) {
       return RecordT({ [key]: value, ...tail.value() });
     };
   };
+}
+
+function compare_entry_keys(
+  left: readonly [string, unknown],
+  right: readonly [string, unknown],
+): number {
+  return left[0].localeCompare(right[0]);
 }

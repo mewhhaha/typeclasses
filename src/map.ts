@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import {
   Applicative,
   Eq,
@@ -57,7 +58,7 @@ export function to_record<item>(
 Show.instance(MapT)({
   show() {
     const map = this.value();
-    return Deno.inspect(map);
+    return inspect(map);
   },
 });
 

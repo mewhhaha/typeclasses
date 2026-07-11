@@ -1,19 +1,12 @@
 import {
   type As,
   data,
-  type Dictionary,
   kind,
   type type_data,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
-import {
-  type Effect,
-  type Lift,
-  pure,
-  suspend,
-  type WithoutLift,
-} from "./effects.ts";
+import { type Effect, handle_lift, type WithoutLift } from "./effects.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -72,50 +65,14 @@ export function run_reader<requirements, environment, item>(
   effect: Effect<requirements, item>,
   environment: environment,
 ): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
-  let current = effect as Effect<requirements, unknown>;
-
-  while (true) {
-    switch (current[0]) {
-      case "pure":
-        return pure(current[1]) as Effect<
-          WithoutLift<requirements, AsReader<environment>>,
-          item
-        >;
-      case "impure": {
-        const operation = current[1] as readonly [string, unknown];
-
-        if (operation[0] === "lift" && is_reader_value(operation[1])) {
-          const lifted = current[1] as unknown as Lift<
-            AsReader<environment>,
-            unknown
-          >;
-          current = current[2](lifted[1].value()(environment)) as Effect<
-            requirements,
-            unknown
-          >;
-          continue;
-        }
-
-        const suspended = current;
-        return suspend(
-          suspended[1] as WithoutLift<requirements, AsReader<environment>>,
-          (value) => run_reader(suspended[2](value), environment),
-        ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
-      }
-    }
-  }
-}
-
-function is_reader_value(value: unknown): value is Dictionary {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return (value as Dictionary)[kind] === reader_kind;
+  return handle_lift(effect, reader_kind, environment, {
+    done(value) {
+      return value as item;
+    },
+    handle(value, state) {
+      return [value.value()(state), state] as const;
+    },
+  });
 }
 
 Show.instance(Reader)({

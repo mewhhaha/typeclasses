@@ -2,19 +2,12 @@ import {
   type As,
   type Data,
   data,
-  type Dictionary,
   kind,
   type type_data,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
-import {
-  type Effect,
-  type Lift,
-  pure,
-  suspend,
-  type WithoutLift,
-} from "./effects.ts";
+import { type Effect, handle_lift, type WithoutLift } from "./effects.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -71,54 +64,14 @@ export function run_state<requirements, state, item>(
   effect: Effect<requirements, item>,
   state: state,
 ): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
-  let current = effect as Effect<requirements, unknown>;
-  let current_state = state;
-
-  while (true) {
-    switch (current[0]) {
-      case "pure":
-        return pure([current[1], current_state] as const) as Effect<
-          WithoutLift<requirements, AsState<state>>,
-          readonly [item, state]
-        >;
-      case "impure": {
-        const operation = current[1] as readonly [string, unknown];
-
-        if (operation[0] === "lift" && is_state_value(operation[1])) {
-          const lifted = current[1] as unknown as Lift<
-            AsState<state>,
-            unknown
-          >;
-          const [value, next] = lifted[1].value()(current_state);
-          current = current[2](value) as Effect<requirements, unknown>;
-          current_state = next;
-          continue;
-        }
-
-        const suspended = current;
-        const suspended_state = current_state;
-        return suspend(
-          suspended[1] as WithoutLift<requirements, AsState<state>>,
-          (value) => run_state(suspended[2](value), suspended_state),
-        ) as Effect<
-          WithoutLift<requirements, AsState<state>>,
-          readonly [item, state]
-        >;
-      }
-    }
-  }
-}
-
-function is_state_value(value: unknown): value is Dictionary {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return (value as Dictionary)[kind] === state_kind;
+  return handle_lift(effect, state_kind, state, {
+    done(value, current_state) {
+      return [value as item, current_state] as const;
+    },
+    handle(value, current_state) {
+      return value.value()(current_state);
+    },
+  });
 }
 
 export function eval_state<state, item>(

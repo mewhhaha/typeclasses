@@ -3,22 +3,23 @@ import {
   type Data,
   data,
   type Dictionary,
-  kind,
   type type_data,
   type type_item,
 } from "./typeclass.ts";
 import type { Effect, Lift } from "./effects.ts";
+import { is_kind_of } from "./internal.ts";
 import {
   Applicative,
   applicative_lift_method,
   Functor,
   Monad,
+  MonadError,
   Show,
 } from "./typeclasses.ts";
 
 export type Task<item> = () => Promise<item>;
 
-export interface AsTask extends As<AsTask>, Show<AsTask>, Monad<AsTask> {
+export interface AsTask extends As<AsTask>, Show<AsTask>, MonadError<AsTask> {
   readonly [type_item]: unknown;
   readonly [type_data]: Task<this[typeof type_item]>;
 }
@@ -26,7 +27,6 @@ export interface AsTask extends As<AsTask>, Show<AsTask>, Monad<AsTask> {
 type TaskValue<item> = Data<AsTask, item>;
 
 export const Task: AsTask = data<AsTask>();
-const task_kind = Task[kind];
 
 export function succeed<item>(value: item): TaskValue<item> {
   return Task(() => Promise.resolve(value));
@@ -75,15 +75,7 @@ export async function run_task<
 }
 
 function is_task_value(value: unknown): value is Dictionary {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return (value as Dictionary)[kind] === task_kind;
+  return is_kind_of(value, Task);
 }
 
 Show.instance(Task)({
@@ -133,6 +125,22 @@ Monad.instance(Task)({
     return Task(async () => {
       const value = await this.value()();
       return await fn(value).value()();
+    });
+  },
+});
+
+MonadError.instance(Task)({
+  throw_error(error) {
+    return Task(() => Promise.reject(error));
+  },
+
+  catch_error(handler) {
+    return Task(async () => {
+      try {
+        return await this.value()();
+      } catch (error) {
+        return await handler(error).value()();
+      }
     });
   },
 });

@@ -84,5 +84,6 @@ function deep_equal(left: unknown, right: unknown): boolean {
 }
 
 function format(value: unknown): string {
-  return Deno.inspect(value, { depth: 20, sorted: true });
+  return inspect(value);
 }
+import { inspect } from "./inspect.ts";

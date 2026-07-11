@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type FormDataEntry = readonly [string, FormDataEntryValue];
@@ -41,7 +42,7 @@ export function to_entries(form_data: FormDataValue): FormDataEntry[] {
 
 Show.instance(FormDataT)({
   show() {
-    return Deno.inspect([...this.value().entries()]);
+    return inspect([...this.value().entries()]);
   },
 });
 

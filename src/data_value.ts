@@ -4,6 +4,25 @@ const data_prototype_key = Symbol("Data.prototype");
 const data_value = Symbol("Data.value");
 const has_own = Object.prototype.hasOwnProperty;
 
+/** A tuple value whose first member selects a tagged variant. */
+export type TaggedValue = readonly [PropertyKey, ...readonly unknown[]];
+
+type TaggedTag<value extends TaggedValue> = value[0];
+type TaggedVariant<value extends TaggedValue, tag extends TaggedTag<value>> =
+  Extract<value, readonly [tag, ...readonly unknown[]]>;
+type TaggedPayload<value extends TaggedValue> = value extends readonly [
+  PropertyKey,
+  ...infer payload,
+] ? payload
+  : never;
+
+/** Exhaustive handlers for every variant of a tagged tuple. */
+export type TaggedMatchCases<value extends TaggedValue, out> = {
+  readonly [tag in TaggedTag<value>]: (
+    ...payload: TaggedPayload<TaggedVariant<value, tag>>
+  ) => out;
+};
+
 type WrappedDataBase<dictionary, value, item> = {
   readonly [data_value]: value;
   [Symbol.iterator]: () => Generator<
@@ -13,6 +32,12 @@ type WrappedDataBase<dictionary, value, item> = {
   >;
   run: DataRunner<value>;
   value: () => value;
+  /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
+  match<out>(
+    cases: [value] extends [TaggedValue]
+      ? TaggedMatchCases<Extract<value, TaggedValue>, out>
+      : never,
+  ): out;
 };
 
 type DataRunner<value> = value extends (...args: infer args) => infer out
@@ -179,6 +204,9 @@ function data_prototype(dictionary: object): object {
     run: {
       value: data_run,
     },
+    match: {
+      value: data_match,
+    },
     [Symbol.iterator]: {
       value: data_iterator,
     },
@@ -189,6 +217,22 @@ function data_prototype(dictionary: object): object {
   });
 
   return prototype;
+}
+
+/** Run a handler selected by the tag of a raw tagged tuple. */
+export function match_tagged<value extends TaggedValue, out>(
+  value: value,
+  cases: TaggedMatchCases<value, out>,
+): out {
+  const [tag, ...payload] = value;
+  const handler =
+    (cases as Record<PropertyKey, (...payload: unknown[]) => out>)[tag];
+
+  if (handler === undefined) {
+    throw new TypeError("No match handler for tag " + String(tag));
+  }
+
+  return handler(...payload);
 }
 
 function data_value_of<dictionary, value, item>(
@@ -208,6 +252,19 @@ function data_run<dictionary, value, item>(
   }
 
   return Reflect.apply(value, undefined, args);
+}
+
+function data_match<dictionary, value, item>(
+  this: WrappedDataTarget<dictionary, value, item>,
+  cases: TaggedMatchCases<TaggedValue, unknown>,
+): unknown {
+  const value = this[data_value];
+
+  if (!Array.isArray(value)) {
+    throw new TypeError("Data value is not a tagged tuple");
+  }
+
+  return match_tagged(value as TaggedValue, cases);
 }
 
 function* data_iterator<dictionary, value, item>(

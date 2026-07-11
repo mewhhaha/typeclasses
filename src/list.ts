@@ -8,6 +8,8 @@ import {
   union,
   type UnionDictionary,
 } from "./typeclass.ts";
+import { append_item } from "./internal.ts";
+import { inspect } from "./inspect.ts";
 import {
   Alternative,
   Applicative,
@@ -74,7 +76,7 @@ function list_from_array<item>(items: item[]): List<item> {
 
 Show.instance(List)({
   show() {
-    const items = to_array(this).map((item) => Deno.inspect(item));
+    const items = to_array(this).map((item) => inspect(item));
     return "[" + items.join(", ") + "]";
   },
 });
@@ -161,6 +163,7 @@ Applicative.instance(List)({
     return List(list_cons(value, list_nil()));
   },
 
+  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
   [applicative_lift_method](fn, rest) {
     const first = this.value();
 
@@ -430,16 +433,4 @@ function list_to_array<item>(list: List<item>): item[] {
   }
 
   return items;
-}
-
-function append_item(values: readonly unknown[], item: unknown): unknown[] {
-  const next = new Array<unknown>(values.length + 1);
-
-  for (let index = 0; index < values.length; index += 1) {
-    next[index] = values[index];
-  }
-
-  next[values.length] = item;
-
-  return next;
 }

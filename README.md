@@ -1,8 +1,8 @@
 # Typeclasses
 
-Typeclasses is a Deno and TypeScript library for Haskell-style typeclasses with
-runtime dictionaries and fluent wrapped values. It is published as
-`@mewhhaha/typeclasses`.
+Typeclasses is a TypeScript library for Haskell-style typeclasses with runtime
+dictionaries and fluent wrapped values. It is developed with Deno, runs across
+JavaScript runtimes, and is published as `@mewhhaha/typeclasses`.
 
 It provides reusable typeclass definitions, data types, effect programs,
 examples, case studies, benchmarks, and a source transformer:
@@ -21,6 +21,18 @@ examples, case studies, benchmarks, and a source transformer:
 - `MonadError` for monads with recoverable failures
 - `Parse` for parser-like values that can consume string input
 - `Show` and `Eq` as small utility typeclasses
+
+Core instance coverage is intentionally visible:
+
+| Data dictionary              | Principal instances                                                                |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                |
+| `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                    |
+| `Validation`                 | accumulating `Applicative`, `Traversable`, `Bifunctor`, `Ord`                      |
+| `Task`                       | parallel `Applicative`, sequential `Monad`, `MonadError`                           |
+| `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                   |
+| `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid` |
+| `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                      |
 
 ## Run
 
@@ -41,11 +53,13 @@ Use the package from JSR with explicit imports:
 import { Do, Just, Nothing, Show } from "jsr:@mewhhaha/typeclasses";
 ```
 
-The published package exposes three entrypoints:
+The published package exposes four entrypoints:
 
 - `jsr:@mewhhaha/typeclasses` for the library.
 - `jsr:@mewhhaha/typeclasses/prelude` for Haskell-style standalone functions.
 - `jsr:@mewhhaha/typeclasses/transform` for the source transformer.
+- `jsr:@mewhhaha/typeclasses/transform/plugin` for esbuild, Vite, Rollup, and
+  Rolldown adapters.
 
 Before publishing, run the dry-run task:
 
@@ -156,6 +170,36 @@ need to be repeated on `AsMaybe`. Each superclass implementation still needs to
 be installed; the shorter heritage list removes duplicate typing, not runtime
 instance definitions.
 
+Haskell-style minimal complete definitions remove the common superclass
+boilerplate:
+
+| Typeclass     | Define         | Derived automatically |
+| ------------- | -------------- | --------------------- |
+| `Applicative` | `pure`, `ap`   | `map`                 |
+| `Monad`       | `pure`, `bind` | `map`, `ap`           |
+| `Ord`         | `compare`      | `eq`                  |
+
+Use `Applicative.derive(dictionary)(minimal)`,
+`Monad.derive(dictionary)(minimal)`, or `Ord.derive(dictionary)(minimal)`.
+Constructors should be closed over inside `pure`; instance-method `this` is a
+wrapped value, not the callable dictionary. A later `Functor.instance(...)` or
+`Applicative.instance(...)` replaces a derived method, so a type can derive
+first and then install a hot-path specialization.
+
+```ts
+Monad.derive<AsMaybe>(Maybe)({
+  pure(value) {
+    return Just(value);
+  },
+  bind(fn) {
+    return this.match({
+      Just: fn,
+      Nothing: () => Nothing(),
+    });
+  },
+});
+```
+
 In this repository's source you may still see exported constructor types such as
 `MaybeConstructor = UnionDictionary<AsMaybe>`. Those are declaration-friendly
 annotations for publishing without `--allow-slow-types`; they are not part of
@@ -215,6 +259,12 @@ fluent aliases can use the instance functions directly.
 
 Data type modules use the same callable dictionary for public wrapping and their
 own constructors.
+
+`Show` implementations use the library's runtime-neutral structural inspector.
+It delegates to the host inspector when Deno provides one and otherwise renders
+primitives, collections, objects, special numeric values, and cycles
+deterministically, so calling `.show()` or the `Ord` fallback does not require a
+`Deno` global in Node, Bun, browsers, or workerd.
 
 Each data type exports an open dictionary interface. Typeclass instances use the
 curried `Typeclass.instance(dictionary)(implementation)` form when generic
@@ -306,7 +356,7 @@ const checked: Data<AsValidation<readonly string[]>, number> = Invalid<
   concat: (left, right) => [...left, ...right],
 });
 
-const StringResult = Either.withLeft<string>();
+const StringResult = Either.with_left<string>();
 const returned: Data<AsEither<string>, number> = Do(
   StringResult,
   function* () {
@@ -324,9 +374,9 @@ const named: Data<AsFn<{ readonly name: string }>, string> = fn(
 named.run({ name: "Ada" });
 ```
 
-`Tuple.withLeft<left>()` and `Validation.withError<error>()` provide the same
+`Tuple.with_left<left>()` and `Validation.with_error<error>()` provide the same
 typed dictionary view when a context-free operation needs the fixed parameter;
-`Fn.withInput<input>()` provides one for function dictionaries. `Bifunctor`,
+`Fn.with_input<input>()` provides one for function dictionaries. `Bifunctor`,
 `Profunctor`, `Category`, and `Arrow` carry a small associated context mapping
 so operations that change a fixed parameter return the corresponding new
 dictionary type.
@@ -339,13 +389,21 @@ values; this is an additional surface, not a second implementation:
 
 ```ts
 import {
+  ap_first,
+  ap_second,
   bind,
   empty,
   fmap,
+  fold_map,
   foldl,
+  from_maybe,
+  guard,
+  join,
   mempty,
   pure,
+  sum,
   traverse,
+  voided,
 } from "jsr:@mewhhaha/typeclasses/prelude";
 
 const answer = pure(Maybe, 41);
@@ -353,10 +411,29 @@ const incremented = fmap((value) => value + 1, answer);
 const rendered = bind(incremented, (value) => Just(value.toString()));
 const total = foldl((sum, value) => sum + value, 0, ArrayT([1, 2, 3]));
 const checked = traverse((value) => Just(value + 1), Maybe, ArrayT([1, 2]));
+const flattened = join(Just(Just(42)));
+const defaulted = from_maybe(0, Nothing<number>());
 
 empty(Maybe); // Nothing
 mempty(ArrayT); // []
 ```
+
+The prelude keeps familiar Haskell vocabulary where JavaScript syntax allows it:
+
+| Area                          | Functions                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `then`, `bind` |
+| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`            |
+| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                         |
+| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                    |
+
+`voided` is the spelling of Haskell's `void` because `void` is a JavaScript
+operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
+
+The earlier camel-case spellings remain deprecated aliases for compatibility,
+but new code should use the snake-case names shown above. The same applies to
+the configured dictionary factories such as `Either.with_left` and
+`Tuple.with_monoid`.
 
 ## Tagged Values
 
@@ -385,6 +462,24 @@ const label = match(Just(42), {
   Just: (value) => "value:" + value.toString(),
 });
 ```
+
+Tagged wrapped values expose the same exhaustive operation fluently, so a chain
+does not need to return to standalone syntax:
+
+```ts
+const label = Just(41)
+  .map((value) => value + 1)
+  .match({
+    Just: (value) => "value:" + value.toString(),
+    Nothing: () => "missing",
+  });
+```
+
+The cases are inferred from the wrapped raw tuple and are exhaustive for
+`Maybe`, `Either`, `Validation`, `List`, and custom tagged unions. Non-tagged
+wrappers such as `Task` and `Fn` do not expose a callable `match` type. `match`
+is reserved by the wrapped-data protocol, so custom typeclass instances should
+not reuse that direct method name.
 
 Constructor guards narrow the false branch too:
 
@@ -421,6 +516,12 @@ answer.value(); // ["Just", 42]
 The explicit dictionary makes yield-free blocks possible because `Do` can call
 its `pure`. The original `Do(function* () { ... })` form remains available when
 the first yielded value can supply the dictionary.
+
+Runtime `Do` replays a generator for every branch of a multi-shot monad such as
+`List` or `ArrayT`. Code before a yield can therefore run more than once, and a
+block with many yields has replay overhead. Keep side effects out of runtime
+`Do` blocks; the build-time transformer below lowers supported blocks to direct
+chains and avoids replay.
 
 `Task` shows the same typeclass shape for deferred async work:
 
@@ -492,23 +593,62 @@ result.transformed; // number of rewritten sites
 ```
 
 The transformer is meant for bundlers, build scripts, or local workflows that
-want the ergonomic `Do(function* () { ... })` and
-`Program(function* () { ... })` syntax in source code, but cheaper raw bindings
-in emitted code. It currently lowers supported `Do` blocks to direct typeclass
-method chains, supported `Program` blocks to `Effect.bind`/`Effect.map`/
-`Effect.pure`, `return yield* value` to the monadic right identity, and static
+want the ergonomic `Do(function* () { ... })`, explicit
+`Do(dictionary, function* () { ... })`, and `Program(function* () { ... })`
+syntax in source code, but cheaper raw bindings in emitted code. It currently
+lowers supported `Do` blocks to direct typeclass method chains, supported
+`Program` blocks to `Effect.bind`/`Effect.map`/ `Effect.pure`,
+`return yield* value` to the monadic right identity, and static
 `Effect.handle_with(program, [handlers...])` calls to nested runner calls. The
 transform also removes generated wrapper IIFEs where it can preserve evaluation
 order.
 
-Unsupported control-flow shapes are left unchanged and reported through
-`diagnostics`, so a bundler plugin can decide whether to fail the build or keep
-the original source. The repository task exposes the same tool on the command
-line:
+Supported generator control flow includes `if`, non-fallthrough `switch`,
+classic `for`, `while`, `do/while`, and `for...of`, including unlabeled
+`break`/`continue`. Iterables in `for...of` are materialized once. An explicit
+dictionary `Do` can lower `try/catch` through `MonadError.catch_error`;
+`Program` try/catch remains diagnosed until an Effect-level error handler
+exists. Labeled jumps, switch fallthrough, `for await`, and `try/finally` stay
+unsupported.
+
+Loop lowering uses named recursive binding functions. This preserves per-
+iteration `let` bindings, but very large strict-monad loops can still exhaust
+the JavaScript stack; use the library's stack-safe `loop`/`rec`/`done` API for
+unbounded iteration.
+
+Detection is anchored to package imports, including aliases and namespace
+imports. Local functions that merely happen to be named `Do` or `Program` are
+not rewritten. Relative source imports in this repository are recognized, and
+other re-export specifiers can be supplied through `library_specifiers`.
+
+Unsupported shapes are left unchanged and reported through `diagnostics`. The
+repository task exposes the same tool on the command line; `--check` makes any
+diagnostic fail CI:
 
 ```sh
 deno task transform --write src/file.ts
+deno task transform --check src/file.ts
 ```
+
+Bundlers can use the dependency-free adapters from `./transform/plugin`:
+
+```ts
+import {
+  typeclasses_esbuild_plugin,
+  typeclasses_rolldown_plugin,
+  typeclasses_rollup_plugin,
+} from "@mewhhaha/typeclasses/transform/plugin";
+
+const esbuild = typeclasses_esbuild_plugin({ check: true });
+const vite_or_rollup = typeclasses_rollup_plugin({ check: true });
+const rolldown = typeclasses_rolldown_plugin({ check: true });
+```
+
+The adapters skip non-TypeScript files and sources without likely transform
+targets, and forward file/line/column diagnostics to the host warning or error
+channel. The Rolldown adapter also exposes a native hook filter so skipped files
+do not cross into JavaScript. Printer output currently has no source map, so the
+Rollup-shaped hooks return `map: null`.
 
 ## Tail Loops
 
@@ -712,8 +852,8 @@ Ord.max(identity(20), identity(42)).value(); // 42
 ```
 
 `Ord` extends `Eq` and returns `"lt"`, `"eq"`, or `"gt"`. `Maybe`, `Either`,
-`Identity`, `ArrayT`, and `List` implement it with the usual tag ordering and
-lexicographic collection comparison.
+`Validation`, `Identity`, `ArrayT`, `List`, and `RecordT` implement the expected
+tag or lexicographic ordering.
 
 ### Bifunctor and MonadError
 
@@ -735,9 +875,11 @@ MonadError.catch_error(
 );
 ```
 
-`Either` is the natural implementation for both typeclasses. `Validation` stays
-applicative-only here: changing the error type would also need a new semigroup
-for the new error type, so a general `Bifunctor` instance would be misleading.
+`Either` is the natural implementation for both typeclasses. `Validation` also
+implements `Bifunctor`; mapping an `Invalid` installs a first-biased semigroup
+for the new error type because an arbitrary mapping cannot transport the old
+semigroup backward. `Task` implements `MonadError` by rejecting and recovering
+deferred promises.
 
 ### Tuple
 
@@ -760,12 +902,20 @@ Bifunctor.bimap(
 fst(value); // "count"
 snd(value); // 41
 swap(value).value(); // [41, "count"]
+
+const Logged = Tuple.with_monoid(ArrayT<string>([]));
+const logged = Logged([ArrayT(["start"]), 20] as const)
+  .bind((item) => Logged([ArrayT(["finish"]), item + 22] as const));
+
+logged.value()[0].value(); // ["start", "finish"]
+logged.value()[1]; // 42
 ```
 
 `Tuple<left, right>` stores a plain pair as `readonly [left, right]`. Its normal
 `item` slot is the right side, so `Functor`, `Foldable`, `Traversable`, and
 `Comonad` work over the second value just like Haskell's `(,) left`. `Bifunctor`
-maps both slots.
+maps both slots. `Tuple.with_monoid(empty)` creates the classic writer-monad
+dictionary, accumulating wrapped values in the left slot.
 
 ### Contravariant
 
@@ -840,9 +990,11 @@ const parsed = Parse.parse(
 );
 ```
 
-`Fn` is the small function carrier for these typeclasses. Use `fn(...)` or
-`arr(...)` to keep `.run(...)` typed. The higher-arity typeclasses are
-represented with raw-value generics because this library's core
+`Fn` is the small function carrier for these typeclasses and also has the
+Reader-style applicative and monad: `pure` ignores the shared input, while
+`bind` gives both the produced value and that input to the next function. Use
+`fn(...)` or `arr(...)` to keep `.run(...)` typed. The higher-arity typeclasses
+are represented with raw-value generics because this library's core
 `Data<dictionary, item>` tracks one item slot, while Haskell's function-like
 classes are parameterized over both input and output.
 
@@ -883,9 +1035,9 @@ Foldable.fold(
 );
 ```
 
-`Foldable` is intentionally just the core fold operation. Haskell helpers such
-as `sum`, `length`, `foldMap`, and `mconcat` can be written on top of that
-operation when an example needs them.
+`Foldable` stays the minimal core operation. The function prelude builds
+`fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, and
+`traverse_` on top of it.
 
 ### Traversable
 
@@ -945,7 +1097,9 @@ Foldable.fold(
 `Semigroup` provides associative combination. `Monoid` adds `empty`. The
 callable data dictionary is the runtime witness, so no placeholder value is
 needed. `mempty(ArrayT)` is the equivalent `./prelude` spelling. A
-representative wrapped value remains accepted for compatibility.
+representative wrapped value remains accepted for compatibility. `Maybe` uses
+the deliberate `First` interpretation: `Nothing` is empty and the first `Just`
+wins.
 
 ### Alternative
 
@@ -1151,7 +1305,9 @@ await program.run();
 ```
 
 `Task` is deferred async work. It is intentionally a thunk,
-`() => Promise<item>`, so construction does not start the operation.
+`() => Promise<item>`, so construction does not start the operation. Its
+`MonadError` instance turns `throw_error` into a deferred rejection and
+`catch_error` into deferred promise recovery.
 
 ### Async and Concurrency
 
@@ -1276,9 +1432,9 @@ const checked_profile = Applicative.lift(
 checked_profile.value()[0]; // "invalid"
 ```
 
-`Validation` implements `Applicative`, `Functor`, `Foldable`, and `Traversable`,
-but not `Monad`: a lawful monad would make later validations depend on earlier
-values and lose independent error accumulation.
+`Validation` implements `Applicative`, `Functor`, `Foldable`, `Traversable`,
+`Bifunctor`, and `Ord`, but not `Monad`: a lawful monad would make later
+validations depend on earlier values and lose independent error accumulation.
 
 Like `Writer`, `Validation` separates the accumulation rule from the default
 error shape. `InvalidMessages("message")` is a convenience for
@@ -1297,10 +1453,10 @@ surprising runtime behavior.
 | `readonly item[]`                | `ArrayT`                         | `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`                  |
 | recursive list                   | `List`                           | Same list-like typeclasses, useful for generator-heavy algorithms                                                   |
 | `ReadonlyMap<string, item>`      | `MapT`                           | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                         |
-| `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused typeclasses as `MapT`                                                                            |
+| `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused typeclasses as `MapT`, plus lexicographic `Ord`                                                  |
 | `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates    |
 | `PromiseLike<item>`              | `Task` via `from_promise`        | Use `Task` so work is deferred; raw promises are already running                                                    |
-| `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`                                                               |
+| `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`, `MonadError`                                                 |
 | `Iterable<item>` / generator     | `IterableT`                      | replayable lazy `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`  |
 | `AsyncIterable<item>`            | `AsyncIterableT`                 | replayable async `Functor`, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Alternative`; collect with `to_array`   |
 | `ReadableStream<item>`           | `ReadableStreamT`                | opaque stream wrapper plus `to_async_iterable`; native streams are stateful and can be locked/consumed              |

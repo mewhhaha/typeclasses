@@ -5,7 +5,12 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
-import type { Applicative as ApplicativeDictionary } from "./applicative.ts";
+import {
+  Applicative,
+  type Applicative as ApplicativeDictionary,
+} from "./applicative.ts";
+import { Functor } from "./functor.ts";
+import { monad_error_typeclass } from "./monad_error.ts";
 
 export const monad_typeclass = Symbol("Monad");
 
@@ -23,12 +28,27 @@ export interface Monad<dictionary extends Dictionary>
     >,
     ApplicativeDictionary<dictionary> {}
 
-type MonadTypeclass = Typeclass<typeof monad_typeclass, {
-  bind<dictionary extends Monad<dictionary>, from, to>(
-    value: Data<dictionary, from>,
+/** The minimal complete definition of a Monad instance. */
+export type MinimalMonad<dictionary extends Monad<dictionary>> = {
+  pure: <item>(this: dictionary, value: item) => Data<dictionary, item>;
+  bind: <from, to>(
+    this: Data<dictionary, from>,
     fn: (value: from) => Data<dictionary, to>,
-  ): Data<dictionary, to>;
-}>;
+  ) => Data<dictionary, to>;
+};
+
+type MonadTypeclass =
+  & Typeclass<typeof monad_typeclass, {
+    bind<dictionary extends Monad<dictionary>, from, to>(
+      value: Data<dictionary, from>,
+      fn: (value: from) => Data<dictionary, to>,
+    ): Data<dictionary, to>;
+  }>
+  & {
+    derive<dictionary extends Monad<dictionary>>(
+      dictionary: dictionary,
+    ): (minimal: MinimalMonad<dictionary>) => void;
+  };
 
 type DoGenerator<
   dictionary extends Monad<dictionary>,
@@ -41,6 +61,35 @@ type DoPath = {
 };
 
 export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
+  derive<dictionary extends Monad<dictionary>>(
+    dictionary: dictionary,
+  ): (minimal: MinimalMonad<dictionary>) => void {
+    return (minimal) => {
+      Monad.instance(dictionary)({
+        bind: minimal.bind,
+      });
+
+      Functor.instance(dictionary)({
+        map<from, to>(
+          this: Data<dictionary, from>,
+          fn: (value: from) => to,
+        ): Data<dictionary, to> {
+          return this.bind((value) => this.pure(fn(value)));
+        },
+      });
+
+      Applicative.instance(dictionary)({
+        pure: minimal.pure,
+        ap<from, to>(
+          this: Data<dictionary, (value: NoInfer<from>) => to>,
+          value: Data<dictionary, from>,
+        ): Data<dictionary, to> {
+          return this.bind((fn) => value.bind((item) => this.pure(fn(item))));
+        },
+      });
+    };
+  },
+
   bind<
     dictionary extends Monad<dictionary>,
     from,
@@ -116,7 +165,7 @@ export function Do<dictionary extends Monad<dictionary>, out>(
   ): Data<dictionary, out> {
     let calls = 0;
 
-    return current.bind((value) => {
+    const bound = current.bind((value) => {
       if (calls === 0) {
         calls += 1;
         const next = iterator.next(value);
@@ -138,6 +187,49 @@ export function Do<dictionary extends Monad<dictionary>, out>(
       }
 
       return step(next_path, state.next.value, state.iterator);
+    });
+
+    return catch_generator_error(bound, path, current, iterator);
+  }
+
+  function catch_generator_error(
+    failed: Data<dictionary, out>,
+    path: DoPath | undefined,
+    witness: Data<dictionary, unknown>,
+    iterator: DoGenerator<dictionary, out>,
+  ): Data<dictionary, out> {
+    const catchable = failed as Data<dictionary, out> & {
+      [monad_error_typeclass]?: {
+        catch_error: (
+          this: Data<dictionary, out>,
+          handler: (error: unknown) => Data<dictionary, out>,
+        ) => Data<dictionary, out>;
+      };
+    };
+    const implementation = catchable[monad_error_typeclass];
+
+    if (implementation === undefined) {
+      return failed;
+    }
+
+    return implementation.catch_error.call(failed, (error) => {
+      let next: IteratorResult<Data<dictionary, unknown>, out>;
+
+      try {
+        next = iterator.throw(error);
+      } catch (thrown) {
+        if (thrown === error) {
+          return failed;
+        }
+
+        throw thrown;
+      }
+
+      if (next.done) {
+        return witness.pure(next.value);
+      }
+
+      return step(path, next.value, iterator);
     });
   }
 }

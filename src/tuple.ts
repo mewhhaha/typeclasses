@@ -2,10 +2,15 @@ import {
   type As,
   type Data,
   data,
+  type Dictionary,
   type type_data,
   type type_item,
+  type WrappedData,
 } from "./typeclass.ts";
+import { configured_dictionary } from "./internal.ts";
+import { inspect } from "./inspect.ts";
 import {
+  Applicative,
   Bifunctor,
   type BifunctorContext,
   Comonad,
@@ -13,6 +18,8 @@ import {
   Eq,
   Foldable,
   Functor,
+  Monad,
+  type Monoid as MonoidDictionary,
   Ord,
   Show,
   Traversable,
@@ -38,25 +45,118 @@ export interface AsTuple<left = unknown>
 
 export type TupleValue<left, right> = Data<AsTuple<left>, right>;
 
+export interface AsTupleMonoid<
+  output extends Dictionary,
+  left,
+> extends As<AsTupleMonoid<output, left>>, Monad<AsTupleMonoid<output, left>> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: Tuple<
+    Data<output, left>,
+    this[typeof type_item]
+  >;
+  <right>(
+    value: Tuple<Data<output, left>, right>,
+  ): TupleMonoidValue<output, left, right>;
+}
+
+export type TupleMonoidValue<
+  output extends Dictionary,
+  left,
+  right,
+> = WrappedData<
+  AsTupleMonoid<output, left>,
+  Tuple<Data<output, left>, right>,
+  right
+>;
+
+export type TupleMonoidDictionary<
+  output extends Dictionary,
+  left,
+> = AsTupleMonoid<output, left>;
+
 export type TupleDictionary<left> = AsTuple<left>;
 
 type TupleConstructor =
   & {
     <left, right>(value: Tuple<left, right>): TupleValue<left, right>;
+    with_left<left>(): TupleDictionary<left>;
+    with_monoid<output extends MonoidDictionary<output>, left>(
+      empty: Data<output, left>,
+    ): TupleMonoidDictionary<output, left>;
+    /** @deprecated Use with_left. */
     withLeft<left>(): TupleDictionary<left>;
+    /** @deprecated Use with_monoid. */
+    withMonoid<output extends MonoidDictionary<output>, left>(
+      empty: Data<output, left>,
+    ): TupleMonoidDictionary<output, left>;
   }
   & {
     readonly [key in keyof AsTuple<unknown>]: AsTuple<unknown>[key];
   };
 
-export const Tuple = data<AsTuple<unknown>>() as TupleConstructor;
+export const Tuple = data<AsTuple<unknown>>() as unknown as TupleConstructor;
 
-Object.defineProperty(Tuple, "withLeft", {
+Object.defineProperty(Tuple, "with_left", {
   value: tuple_with_left,
 });
 
+Object.defineProperty(Tuple, "with_monoid", {
+  value: tuple_with_monoid,
+});
+
+Object.defineProperty(Tuple, "withLeft", { value: tuple_with_left });
+Object.defineProperty(Tuple, "withMonoid", { value: tuple_with_monoid });
+
 function tuple_with_left<left>(): TupleDictionary<left> {
   return Tuple as unknown as TupleDictionary<left>;
+}
+
+function tuple_with_monoid<
+  output extends MonoidDictionary<output>,
+  left,
+>(empty: Data<output, left>): TupleMonoidDictionary<output, left> {
+  const dictionary = configured_dictionary(
+    Tuple,
+    data<AsTupleMonoid<output, left>>(),
+  );
+
+  Functor.instance(dictionary)({
+    map(fn) {
+      const [output, value] = this.value();
+      return wrap(output, fn(value));
+    },
+  });
+
+  Applicative.instance(dictionary)({
+    pure(value) {
+      return wrap(empty.empty(), value);
+    },
+
+    ap(value) {
+      const [left_output, fn] = this.value();
+      const [right_output, item] = value.value();
+
+      return wrap(left_output.concat(right_output), fn(item));
+    },
+  });
+
+  Monad.instance(dictionary)({
+    bind(fn) {
+      const [left_output, value] = this.value();
+      const [right_output, item] = fn(value).value();
+
+      return wrap(left_output.concat(right_output), item);
+    },
+  });
+
+  return dictionary;
+
+  function wrap<right>(
+    output: Data<output, left>,
+    value: right,
+  ): TupleMonoidValue<output, left, right> {
+    return dictionary([output, value] as const);
+  }
 }
 
 export function tuple<left, right>(
@@ -86,7 +186,7 @@ Show.instance(Tuple)({
   show() {
     const [left, right] = this.value();
 
-    return "Tuple(" + Deno.inspect(left) + ", " + Deno.inspect(right) + ")";
+    return "Tuple(" + inspect(left) + ", " + inspect(right) + ")";
   },
 });
 

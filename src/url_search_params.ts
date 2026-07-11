@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 export type URLSearchParamsEntry = readonly [string, string];
@@ -52,7 +53,7 @@ export function to_entries(
 
 Show.instance(URLSearchParamsT)({
   show() {
-    return Deno.inspect([...this.value().entries()]);
+    return inspect([...this.value().entries()]);
   },
 });
 

@@ -5,6 +5,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { inspect } from "./inspect.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -43,7 +44,7 @@ export function identity<item>(value: item): IdentityValue<item> {
 
 Show.instance(Identity)({
   show() {
-    return "Identity(" + Deno.inspect(this.value()) + ")";
+    return "Identity(" + inspect(this.value()) + ")";
   },
 });
 

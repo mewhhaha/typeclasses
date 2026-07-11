@@ -9,12 +9,18 @@ import {
   type UnionDictionary,
   type WrappedData,
 } from "./typeclass.ts";
+import { same_context } from "./internal.ts";
+import { inspect } from "./inspect.ts";
 import {
   Applicative,
   applicative_lift_method,
+  Bifunctor,
+  type BifunctorContext,
+  compare_unknown,
   Eq,
   Foldable,
   Functor,
+  Ord,
   Show,
   Traversable,
 } from "./typeclasses.ts";
@@ -37,13 +43,23 @@ export type ValidationSemigroup<error> = {
 // deno-lint-ignore no-explicit-any -- a bare Valid is polymorphic in its error type
 type AnyError = any;
 
+interface ValidationBifunctorContext extends BifunctorContext {
+  readonly [type_data]: AsValidation<this[typeof type_item]>;
+}
+
 export interface AsValidation<error = AnyError>
   extends
     As<AsValidation<error>>,
     Show<AsValidation<error>>,
     Eq<AsValidation<error>>,
     Applicative<AsValidation<error>>,
-    Traversable<AsValidation<error>> {
+    Traversable<AsValidation<error>>,
+    Bifunctor<
+      AsValidation<error>,
+      error,
+      ValidationBifunctorContext
+    >,
+    Ord<AsValidation<error>> {
   readonly [type_item]: unknown;
   readonly [type_data]: Validation<error, this[typeof type_item]>;
 }
@@ -68,6 +84,8 @@ type ValidationConstructor =
     <error, item>(
       value: Validation<error, item>,
     ): ValidationValue<error, item>;
+    with_error<error>(): ValidationDictionary<error>;
+    /** @deprecated Use with_error. */
     withError<error>(): ValidationDictionary<error>;
   }
   & {
@@ -101,6 +119,10 @@ export type InvalidConstructor = {
 export const Validation = data<AsValidation<unknown>>(
   union(["valid", $slot], ["invalid", $slot, $slot]),
 ) as ValidationConstructor;
+
+Object.defineProperty(Validation, "with_error", {
+  value: validation_with_error,
+});
 
 Object.defineProperty(Validation, "withError", {
   value: validation_with_error,
@@ -180,9 +202,9 @@ Show.instance(Validation)({
 
     switch (tag) {
       case "valid":
-        return "Valid(" + Deno.inspect(payload) + ")";
+        return "Valid(" + inspect(payload) + ")";
       case "invalid":
-        return "Invalid(" + Deno.inspect(payload) + ")";
+        return "Invalid(" + inspect(payload) + ")";
     }
   },
 });
@@ -209,6 +231,48 @@ Eq.instance(Validation)({
   },
 });
 
+Ord.instance(Validation)({
+  compare(right) {
+    const [left_tag, left_payload] = this.value();
+    const [right_tag, right_payload] = right.value();
+
+    switch (left_tag) {
+      case "invalid":
+        if (right_tag === "valid") {
+          return "lt";
+        }
+
+        return compare_unknown(left_payload, right_payload);
+      case "valid":
+        if (right_tag === "invalid") {
+          return "gt";
+        }
+
+        return compare_unknown(left_payload, right_payload);
+    }
+  },
+});
+
+Bifunctor.instance(Validation)({
+  bimap<right, next_error, next_right>(
+    this: Data<AsValidation<unknown>, right>,
+    map_error: (value: unknown) => next_error,
+    map_right: (value: right) => next_right,
+  ) {
+    const [tag, payload] = this.value();
+
+    switch (tag) {
+      case "invalid":
+        return Validation.with_error<next_error>().Invalid<next_right>(
+          map_error(payload),
+          first_semigroup<next_error>(),
+        );
+      case "valid":
+        return Validation.with_error<next_error>().Valid(map_right(payload));
+    }
+  },
+});
+
 Functor.instance(Validation)({
   map(fn) {
     const [tag, payload] = this.value();
@@ -227,6 +291,7 @@ Applicative.instance(Validation)({
     return Valid(value);
   },
 
+  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
   [applicative_lift_method](fn, rest) {
     const validation = this.value();
     const [tag, payload, semigroup] = validation;
@@ -395,6 +460,14 @@ function array_semigroup<item>(): ValidationSemigroup<readonly item[]> {
   };
 }
 
+function first_semigroup<item>(): ValidationSemigroup<item> {
+  return {
+    concat(left, _right) {
+      return left;
+    },
+  };
+}
+
 function concat_errors(left: Invalid<unknown>, right: Invalid<unknown>) {
   const semigroup = left[2];
   return semigroup.concat(left[1], right[1]);
@@ -412,8 +485,4 @@ function errors_equal(left: unknown, right: unknown) {
   }
 
   return Object.is(left, right);
-}
-
-function same_context<out>(value: unknown): out {
-  return value as out;
 }
