@@ -3,6 +3,7 @@ import {
   type Data,
   data,
   type Dictionary,
+  is_data,
   kind,
   type type_data,
   type type_item,
@@ -11,6 +12,7 @@ import {
 import {
   type Effect,
   handle_lift,
+  is_effect,
   is_lift_of,
   type Lift,
   type TaggedOperation,
@@ -122,7 +124,15 @@ export function run_writer<
   });
 }
 
-/** Runs an effect containing only Writer lifts. */
+/** Runs one Writer value or an effect containing only Writer lifts. */
+export function run_writer_terminal<
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  writer: WriterValue<output, log, item>,
+  empty: Data<output, log>,
+): readonly [item, Data<output, log>];
 export function run_writer_terminal<
   output extends MonoidDictionary<output>,
   log,
@@ -130,7 +140,42 @@ export function run_writer_terminal<
 >(
   effect: Effect<Lift<AsWriter<output, log>, unknown>, item>,
   empty: Data<output, log>,
+): readonly [item, Data<output, log>];
+export function run_writer_terminal<
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  value:
+    | WriterValue<output, log, item>
+    | Effect<Lift<AsWriter<output, log>, unknown>, item>,
+  empty: Data<output, log>,
+): readonly [item, Data<output, log>];
+export function run_writer_terminal<
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  effect:
+    | WriterValue<output, log, item>
+    | Effect<Lift<AsWriter<output, log>, unknown>, item>,
+  empty: Data<output, log>,
 ): readonly [item, Data<output, log>] {
+  if (is_data(effect)) {
+    if (
+      (effect as unknown as Data<AsWriter<Dictionary, unknown>, unknown>)[
+        kind
+      ] !==
+        writer_kind
+    ) {
+      throw new TypeError("Unhandled effect operation: lift");
+    }
+
+    const [value, next_output] = (effect as WriterValue<output, log, item>)
+      .value();
+    return [value, empty.concat(next_output)];
+  }
+
   let current = effect as Effect<
     Lift<AsWriter<output, log>, unknown>,
     unknown
@@ -138,8 +183,16 @@ export function run_writer_terminal<
   let current_output = empty;
 
   while (true) {
+    if (!is_effect(current)) {
+      throw new TypeError("Invalid effect value");
+    }
+
     if (current[0] === "pure") {
       return [current[1] as item, current_output];
+    }
+
+    if (current[0] !== "impure") {
+      throw new TypeError("Invalid effect value");
     }
 
     const operation = current[1];

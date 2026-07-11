@@ -579,6 +579,10 @@ export function handle_lift_terminal<
   let current_state = state;
 
   while (true) {
+    if (!is_effect(current)) {
+      throw new TypeError("Invalid effect value");
+    }
+
     switch (current[0]) {
       case "pure":
         return handler.done(current[1] as item, current_state);
@@ -597,6 +601,8 @@ export function handle_lift_terminal<
         const operation = current[1] as TaggedOperation;
         throw new TypeError("Unhandled effect operation: " + operation[0]);
       }
+      default:
+        throw new TypeError("Invalid effect value");
     }
   }
 }

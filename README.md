@@ -602,7 +602,17 @@ lowers supported `Do` blocks to direct typeclass method chains, supported
 `Effect.handle_with(program, [handlers...])` calls to nested runner calls. The
 transform also lowers terminal `run(run_reader(...))`, `run(run_state(...))`,
 and `run(run_writer(...))` calls to direct runners, and removes generated
-wrapper IIFEs where it can preserve evaluation order.
+wrapper IIFEs where it can preserve evaluation order. An immediate,
+straight-line terminal `Program(function* () { ... })` is fused further into
+direct Reader, State, or Writer steps, avoiding the intermediate `Effect` spine.
+Exact imports of the built-in `ask`/`asks`, State primitives, and
+`writer`/`tell` lower to their raw operations; mixed or delegated yields retain
+checked terminal dispatch. Named/reusable programs and generators with effectful
+control flow retain the general lowering.
+
+The intrinsic tier assumes the built-in dictionaries' `kind` and iterator
+behavior have not been monkey-patched. Code that intentionally changes those
+runtime identities should not use the source transform for those calls.
 
 Supported generator control flow includes `if`, non-fallthrough `switch`,
 classic `for`, `while`, `do/while`, and `for...of`, including unlabeled
@@ -1296,9 +1306,12 @@ defining `ReaderT`, `StateT`, `WriterT`, and every concrete stack combination.
 When a synchronous Reader, State, or Writer lift is the only remaining
 capability, `run_reader_terminal`, `run_state_terminal`, and
 `run_writer_terminal` return the final value without allocating a residual
-`Effect`. The source transformer selects these runners automatically for exact
-terminal shapes such as `run(run_state(program, initial))`; composable
-`run_reader`/`run_state`/`run_writer` calls keep their existing behavior.
+`Effect`. They also accept one matching Reader, State, or Writer data value
+directly. The source transformer selects these runners automatically for exact
+terminal shapes such as `run(run_state(program, initial))` and fuses immediate
+straight-line `Program` bodies step by step. Composable
+`run_reader`/`run_state`/`run_writer` calls keep their existing behavior, while
+unsupported terminal shapes fall back to the general `Effect` path.
 
 ### IO and Task
 

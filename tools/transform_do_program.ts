@@ -36,6 +36,16 @@ type ImportedTerminalFunction = {
   readonly imported: TerminalFunctionName;
 };
 
+type PrimitiveFunctionName =
+  | "ask"
+  | "asks"
+  | "get"
+  | "gets"
+  | "put"
+  | "modify"
+  | "writer"
+  | "tell";
+
 type TerminalImportRequest = {
   readonly source_local_name: string;
   readonly imported_name:
@@ -50,6 +60,7 @@ type TransformState = {
   readonly factory: ts.NodeFactory;
   readonly source_file: ts.SourceFile;
   readonly diagnostics: TransformDiagnostic[];
+  readonly effect_helper_shadowed: boolean;
   /** The explicit dictionary supplied to `Do(dictionary, generator)`. */
   readonly dictionary?: ts.Expression;
 };
@@ -75,6 +86,35 @@ type YieldStatement =
     readonly kind: "return";
     readonly expression: ts.Expression;
   };
+
+type FusedProgramYield = {
+  readonly kind: "yield";
+  readonly expression: ts.Expression;
+  readonly declaration?: {
+    readonly statement: ts.VariableStatement;
+    readonly declaration: ts.VariableDeclaration;
+  };
+  readonly returns: boolean;
+};
+
+type FusedProgramPart =
+  | FusedProgramYield
+  | {
+    readonly kind: "statement";
+    readonly statement: ts.Statement;
+  };
+
+type FusedProgramBody = {
+  readonly parts: readonly FusedProgramPart[];
+  readonly result: ts.Expression | undefined;
+};
+
+type FusedTerminalKind = "reader" | "state" | "writer";
+
+type FusedTerminalProgram = {
+  readonly expression: ts.Expression;
+  readonly needs_program_helpers: boolean;
+};
 
 class UnsupportedGenerator extends Error {}
 
@@ -129,6 +169,7 @@ export function transform_do_program_source(
       factory,
       source_file,
       diagnostics,
+      effect_helper_shadowed: imports.effect_helper_shadowed,
     };
 
     return (source_file) => {
@@ -162,6 +203,22 @@ export function transform_do_program_source(
         }
 
         if (ts.isCallExpression(node)) {
+          if (might_transform_generator && might_transform_terminal) {
+            const fused = transform_terminal_program_run(
+              node,
+              factory,
+              imports,
+              program_scopes,
+              terminal_imports,
+            );
+
+            if (fused !== undefined) {
+              transformed += 1;
+              needs_program_helpers ||= fused.needs_program_helpers;
+              return fused.expression;
+            }
+          }
+
           const kind = might_transform_generator
             ? transform_kind(node, program_scopes, imports)
             : undefined;
@@ -174,6 +231,7 @@ export function transform_do_program_source(
                 factory,
                 source_file,
                 diagnostics,
+                effect_helper_shadowed: imports.effect_helper_shadowed,
               },
             );
 
@@ -345,10 +403,6 @@ function might_contain_unanchored_target(source: string): boolean {
     source.includes("\\u");
 }
 
-if (import.meta.main) {
-  await run_cli(Deno.args);
-}
-
 async function run_cli(args: readonly string[]) {
   const write = args.includes("--write");
   const check = args.includes("--check");
@@ -403,6 +457,15 @@ function transform_call(
     ? node.arguments[0]
     : node.arguments[1];
 
+  if (state.kind === "program" && state.effect_helper_shadowed) {
+    add_diagnostic(
+      state,
+      node,
+      "Skipped program: local Effect binding conflicts with generated helpers.",
+    );
+    return undefined;
+  }
+
   if (run === undefined || !ts.isFunctionExpression(run)) {
     add_diagnostic(
       state,
@@ -417,6 +480,16 @@ function transform_call(
       state,
       node,
       "Skipped " + state.kind + ": expected a function* argument.",
+    );
+    return undefined;
+  }
+
+  if (contains_fusion_lexical_hazard(run.body)) {
+    add_diagnostic(
+      state,
+      node,
+      "Skipped " + state.kind +
+        ": generator lexical this, arguments, new.target, super, and direct eval are not supported.",
     );
     return undefined;
   }
@@ -1926,7 +1999,8 @@ function read_yield_statement(
   }
 
   if (
-    ts.isExpressionStatement(statement) && is_yield_star(statement.expression)
+    ts.isExpressionStatement(statement) &&
+    is_yield_star(statement.expression)
   ) {
     return {
       kind: "bind",
@@ -2443,13 +2517,22 @@ type ImportedBindings = {
     string,
     ReadonlySet<TerminalFunctionName>
   >;
+  readonly primitive_functions: ReadonlyMap<string, PrimitiveFunctionName>;
+  readonly primitive_namespaces: ReadonlyMap<
+    string,
+    ReadonlySet<PrimitiveFunctionName>
+  >;
+  readonly effect_helper_shadowed: boolean;
   readonly program_module?: string;
 };
 
 function has_imported_transform_target(imports: ImportedBindings): boolean {
   return imports.do_names.size > 0 || imports.program_names.size > 0 ||
     imports.effect_names.size > 0 || imports.namespaces.size > 0 ||
-    imports.terminal_functions.size > 0 || imports.terminal_namespaces.size > 0;
+    imports.terminal_functions.size > 0 ||
+    imports.terminal_namespaces.size > 0 ||
+    imports.primitive_functions.size > 0 ||
+    imports.primitive_namespaces.size > 0;
 }
 
 const all_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
@@ -2483,6 +2566,11 @@ function collect_imports(
   const terminal_namespaces = new Map<
     string,
     ReadonlySet<TerminalFunctionName>
+  >();
+  const primitive_functions = new Map<string, PrimitiveFunctionName>();
+  const primitive_namespaces = new Map<
+    string,
+    ReadonlySet<PrimitiveFunctionName>
   >();
   let program_module: string | undefined;
 
@@ -2529,6 +2617,28 @@ function collect_imports(
       }
     }
 
+    const primitive_exports = primitive_exports_from_specifier(specifier);
+
+    if (primitive_exports !== undefined) {
+      if (ts.isNamespaceImport(clause.namedBindings)) {
+        primitive_namespaces.set(
+          clause.namedBindings.name.text,
+          primitive_exports,
+        );
+      } else {
+        for (const element of clause.namedBindings.elements) {
+          if (element.isTypeOnly) continue;
+          const imported = (element.propertyName ?? element.name).text;
+          if (
+            is_primitive_function_name(imported) &&
+            primitive_exports.has(imported)
+          ) {
+            primitive_functions.set(element.name.text, imported);
+          }
+        }
+      }
+    }
+
     if (!is_library_specifier(specifier, config)) {
       continue;
     }
@@ -2550,10 +2660,16 @@ function collect_imports(
     }
   }
 
-  remove_shadowed_terminal_bindings(
+  remove_shadowed_import_bindings(
     source_file,
+    do_names,
+    program_names,
+    effect_names,
+    namespaces,
     terminal_functions,
     terminal_namespaces,
+    primitive_functions,
+    primitive_namespaces,
   );
 
   return {
@@ -2563,25 +2679,140 @@ function collect_imports(
     namespaces,
     terminal_functions,
     terminal_namespaces,
+    primitive_functions,
+    primitive_namespaces,
+    effect_helper_shadowed: (program_names.size > 0 || namespaces.size > 0) &&
+      source_file.text.includes("Effect") &&
+      collect_non_import_value_bindings(source_file, new Set(["Effect"]))
+        .has("Effect"),
     program_module,
   };
 }
 
-function remove_shadowed_terminal_bindings(
+function remove_shadowed_import_bindings(
   source_file: ts.SourceFile,
+  do_names: Set<string>,
+  program_names: Set<string>,
+  effect_names: Set<string>,
+  namespaces: Set<string>,
   terminal_functions: Map<string, ImportedTerminalFunction>,
   terminal_namespaces: Map<string, ReadonlySet<TerminalFunctionName>>,
+  primitive_functions: Map<string, PrimitiveFunctionName>,
+  primitive_namespaces: Map<string, ReadonlySet<PrimitiveFunctionName>>,
 ) {
   const candidates = new Set([
+    ...do_names,
+    ...program_names,
+    ...effect_names,
+    ...namespaces,
     ...terminal_functions.keys(),
     ...terminal_namespaces.keys(),
+    ...primitive_functions.keys(),
+    ...primitive_namespaces.keys(),
   ]);
 
   if (candidates.size === 0) {
     return;
   }
 
-  const shadowed = new Set<string>();
+  const bindings = collect_non_import_value_bindings(source_file, candidates);
+
+  for (const name of bindings.keys()) {
+    do_names.delete(name);
+    program_names.delete(name);
+    effect_names.delete(name);
+    namespaces.delete(name);
+    terminal_functions.delete(name);
+    terminal_namespaces.delete(name);
+    primitive_functions.delete(name);
+    primitive_namespaces.delete(name);
+  }
+}
+
+const all_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
+  "ask",
+  "asks",
+  "get",
+  "gets",
+  "put",
+  "modify",
+  "writer",
+  "tell",
+]);
+const reader_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
+  "ask",
+  "asks",
+]);
+const state_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
+  "get",
+  "gets",
+  "put",
+  "modify",
+]);
+const writer_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
+  "writer",
+  "tell",
+]);
+const canonical_source_specifiers = new Map<string, string>();
+
+for (
+  const module of [
+    "effects",
+    "mod",
+    "reader",
+    "state",
+    "typeclasses",
+    "writer",
+  ] as const
+) {
+  try {
+    const url = new URL(`../src/${module}.ts`, import.meta.url);
+    canonical_source_specifiers.set(url.href, module);
+    canonical_source_specifiers.set(url.pathname, module);
+  } catch {
+    // Non-hierarchical bundle URLs still use package or relative matching.
+  }
+}
+
+function primitive_exports_from_specifier(
+  specifier: string,
+): ReadonlySet<PrimitiveFunctionName> | undefined {
+  const package_match = specifier.match(
+    /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(mod|reader|state|writer))?\/?$/,
+  );
+  const source_module = canonical_source_specifiers.get(specifier) ??
+    specifier.match(
+      /^(?:\.\.?\/)+src\/(mod|reader|state|writer)(?:\.ts)?$/,
+    )?.[1];
+
+  if (package_match !== null && package_match[1] === undefined) {
+    return all_primitive_functions;
+  }
+
+  switch (package_match?.[1] ?? source_module) {
+    case "mod":
+      return all_primitive_functions;
+    case "reader":
+      return reader_primitive_functions;
+    case "state":
+      return state_primitive_functions;
+    case "writer":
+      return writer_primitive_functions;
+  }
+  return undefined;
+}
+
+function is_primitive_function_name(
+  name: string,
+): name is PrimitiveFunctionName {
+  return all_primitive_functions.has(name as PrimitiveFunctionName);
+}
+
+function collect_non_import_value_bindings(
+  source_file: ts.SourceFile,
+  candidates: ReadonlySet<string>,
+): ReadonlyMap<string, number> {
+  const bindings = new Map<string, number>();
 
   function add_binding(name: ts.BindingName | ts.Identifier | undefined) {
     if (name === undefined) {
@@ -2590,7 +2821,7 @@ function remove_shadowed_terminal_bindings(
 
     if (ts.isIdentifier(name)) {
       if (candidates.has(name.text)) {
-        shadowed.add(name.text);
+        bindings.set(name.text, (bindings.get(name.text) ?? 0) + 1);
       }
       return;
     }
@@ -2603,7 +2834,6 @@ function remove_shadowed_terminal_bindings(
   }
 
   function visit(node: ts.Node) {
-    // These are the bindings whose provenance the maps above describe.
     if (ts.isImportDeclaration(node)) {
       return;
     }
@@ -2626,11 +2856,7 @@ function remove_shadowed_terminal_bindings(
   }
 
   ts.forEachChild(source_file, visit);
-
-  for (const name of shadowed) {
-    terminal_functions.delete(name);
-    terminal_namespaces.delete(name);
-  }
+  return bindings;
 }
 
 function terminal_exports_from_specifier(
@@ -2644,9 +2870,10 @@ function terminal_exports_from_specifier(
   const package_match = specifier.match(
     /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(effects|mod|reader|state|writer))?\/?$/,
   );
-  const source_module = specifier.match(
-    /(?:^|\/)src\/(effects|mod|reader|state|writer)(?:\.ts)?$/,
-  )?.[1];
+  const source_module = canonical_source_specifiers.get(specifier) ??
+    specifier.match(
+      /^(?:\.\.?\/)+src\/(effects|mod|reader|state|writer)(?:\.ts)?$/,
+    )?.[1];
 
   if (package_match !== null && package_match[1] === undefined) {
     return all_terminal_functions;
@@ -2687,7 +2914,12 @@ function is_library_specifier(
   ) return true;
   // The source tree is intentionally supported for local examples, benchmarks,
   // and package tests without needing a TypeScript program/type checker.
-  return /(?:^|\/)src\/(?:typeclasses|effects|mod)(?:\.ts)?$/.test(specifier);
+  const source_module = canonical_source_specifiers.get(specifier) ??
+    specifier.match(
+      /^(?:\.\.?\/)+src\/(typeclasses|effects|mod)(?:\.ts)?$/,
+    )?.[1];
+  return source_module === "typeclasses" || source_module === "effects" ||
+    source_module === "mod";
 }
 
 function collect_program_scopes(
@@ -2695,14 +2927,40 @@ function collect_program_scopes(
   imports: ImportedBindings,
 ): ReadonlySet<string> {
   const scopes = new Set<string>(imports.program_names);
+  const alias_declarations = new Map<string, number>();
+
+  for (const statement of source_file.statements) {
+    if (
+      ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          is_program_scope_call(declaration.initializer, imports)
+        ) {
+          scopes.add(declaration.name.text);
+          alias_declarations.set(declaration.name.text, declaration.getEnd());
+        }
+      }
+    }
+  }
+
+  const aliases = new Set(
+    [...scopes].filter((name) => !imports.program_names.has(name)),
+  );
+  const bindings = collect_non_import_value_bindings(source_file, aliases);
+  const called_before_declaration = new Set<string>();
 
   function visit(node: ts.Node) {
-    if (ts.isVariableDeclaration(node)) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const declaration_end = alias_declarations.get(node.expression.text);
+
       if (
-        ts.isIdentifier(node.name) &&
-        is_program_scope_call(node.initializer, imports)
+        declaration_end !== undefined &&
+        node.expression.getStart(source_file) < declaration_end
       ) {
-        scopes.add(node.name.text);
+        called_before_declaration.add(node.expression.text);
       }
     }
 
@@ -2710,6 +2968,12 @@ function collect_program_scopes(
   }
 
   visit(source_file);
+
+  for (const name of aliases) {
+    if (bindings.get(name) !== 1 || called_before_declaration.has(name)) {
+      scopes.delete(name);
+    }
+  }
 
   return scopes;
 }
@@ -2769,6 +3033,789 @@ type TerminalFunctionTarget =
     readonly namespace: ts.Identifier;
     readonly imported: TerminalFunctionName;
   };
+
+function transform_terminal_program_run(
+  node: ts.CallExpression,
+  factory: ts.NodeFactory,
+  imports: ImportedBindings,
+  program_scopes: ReadonlySet<string>,
+  requests: TerminalImportRequest[],
+): FusedTerminalProgram | undefined {
+  if (
+    node.questionDotToken !== undefined || node.typeArguments !== undefined ||
+    node.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+
+  const outer = read_terminal_function_target(node.expression, imports);
+
+  if (outer?.imported !== "run") {
+    return undefined;
+  }
+
+  const handled = unwrap_parentheses(node.arguments[0]);
+
+  if (
+    !ts.isCallExpression(handled) || handled.questionDotToken !== undefined ||
+    handled.typeArguments !== undefined || handled.arguments.length !== 2
+  ) {
+    return undefined;
+  }
+
+  const handler = read_terminal_function_target(handled.expression, imports);
+
+  if (handler === undefined || handler.imported === "run") {
+    return undefined;
+  }
+  const terminal_kind = fused_terminal_kind(handler.imported);
+
+  const program = unwrap_parentheses(handled.arguments[0]);
+
+  if (
+    !ts.isCallExpression(program) || program.questionDotToken !== undefined ||
+    program.typeArguments !== undefined || program.arguments.length !== 1 ||
+    transform_kind(program, program_scopes, imports) !== "program"
+  ) {
+    return undefined;
+  }
+
+  const run = program.arguments[0];
+
+  if (
+    !ts.isFunctionExpression(run) || run.asteriskToken === undefined ||
+    run.name !== undefined || run.parameters.length !== 0 ||
+    run.typeParameters !== undefined || run.type !== undefined ||
+    run.modifiers?.some((modifier) =>
+      modifier.kind === ts.SyntaxKind.AsyncKeyword
+    ) || contains_fusion_lexical_hazard(run.body) ||
+    contains_fusion_lexical_hazard(handled.arguments[1]) ||
+    contains_await_or_yield(handled.arguments[1])
+  ) {
+    return undefined;
+  }
+
+  const body = read_fused_program_body(run.body);
+
+  if (body === undefined) {
+    return undefined;
+  }
+
+  const can_fuse = body.parts.every((part) => {
+    if (part.kind !== "yield") return true;
+    const primitive = read_fused_primitive(part.expression, imports);
+    return primitive !== undefined &&
+      primitive_terminal_kind(primitive.name) === terminal_kind;
+  }) && (terminal_kind === "writer" ||
+    fused_terminal_input_type(body, terminal_kind, imports) !== undefined);
+
+  if (!can_fuse) {
+    const terminal_name = terminal_runner_name(handler.imported);
+    const terminal = handler.kind === "namespace"
+      ? factory.createPropertyAccessExpression(handler.namespace, terminal_name)
+      : terminal_import_identifier(handler, terminal_name, requests, factory);
+
+    return {
+      expression: factory.updateCallExpression(
+        handled,
+        terminal,
+        undefined,
+        handled.arguments,
+      ),
+      needs_program_helpers: false,
+    };
+  }
+
+  return {
+    expression: emit_fused_terminal_program(
+      body,
+      handled.arguments[1],
+      terminal_kind,
+      factory,
+      imports,
+    ),
+    needs_program_helpers: false,
+  };
+}
+
+function fused_terminal_kind(
+  name: Exclude<TerminalFunctionName, "run">,
+): FusedTerminalKind {
+  switch (name) {
+    case "run_reader":
+      return "reader";
+    case "run_state":
+      return "state";
+    case "run_writer":
+      return "writer";
+  }
+}
+
+function read_fused_program_body(
+  body: ts.Block,
+): FusedProgramBody | undefined {
+  const parts: FusedProgramPart[] = [];
+  let yielded = false;
+
+  for (let index = 0; index < body.statements.length; index += 1) {
+    const statement = body.statements[index];
+    const fused_yield = read_fused_program_yield(statement);
+
+    if (fused_yield !== undefined) {
+      if (fused_yield.returns && index !== body.statements.length - 1) {
+        return undefined;
+      }
+
+      yielded = true;
+      parts.push(fused_yield);
+      continue;
+    }
+
+    if (ts.isReturnStatement(statement)) {
+      if (
+        index !== body.statements.length - 1 ||
+        (statement.expression !== undefined &&
+          contains_yield_or_return_or_break(statement.expression))
+      ) {
+        return undefined;
+      }
+
+      return yielded ? { parts, result: statement.expression } : undefined;
+    }
+
+    if (contains_yield_or_return_or_break(statement)) {
+      return undefined;
+    }
+
+    parts.push({ kind: "statement", statement });
+  }
+
+  return yielded ? { parts, result: undefined } : undefined;
+}
+
+function read_fused_program_yield(
+  statement: ts.Statement,
+): FusedProgramYield | undefined {
+  if (ts.isVariableStatement(statement)) {
+    const declarations = statement.declarationList.declarations;
+
+    if (declarations.length !== 1) {
+      return undefined;
+    }
+
+    const [declaration] = declarations;
+
+    if (
+      !is_yield_star(declaration.initializer) ||
+      contains_await_or_yield(declaration.initializer.expression)
+    ) {
+      return undefined;
+    }
+
+    return {
+      kind: "yield",
+      expression: declaration.initializer.expression,
+      declaration: { statement, declaration },
+      returns: false,
+    };
+  }
+
+  if (
+    ts.isExpressionStatement(statement) &&
+    is_yield_star(statement.expression) &&
+    !contains_await_or_yield(statement.expression.expression)
+  ) {
+    return {
+      kind: "yield",
+      expression: statement.expression.expression,
+      returns: false,
+    };
+  }
+
+  if (
+    ts.isReturnStatement(statement) && is_yield_star(statement.expression) &&
+    !contains_await_or_yield(statement.expression.expression)
+  ) {
+    return {
+      kind: "yield",
+      expression: statement.expression.expression,
+      returns: true,
+    };
+  }
+
+  return undefined;
+}
+
+type FusedPrimitive = {
+  readonly name: PrimitiveFunctionName;
+  readonly arguments: readonly ts.Expression[];
+  readonly type_arguments: readonly ts.TypeNode[] | undefined;
+};
+
+function read_fused_primitive(
+  expression: ts.Expression,
+  imports: ImportedBindings,
+): FusedPrimitive | undefined {
+  const unwrapped = unwrap_fused_primitive_expression(expression);
+
+  if (
+    !ts.isCallExpression(unwrapped) ||
+    unwrapped.questionDotToken !== undefined ||
+    unwrapped.arguments.some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+
+  let name: PrimitiveFunctionName | undefined;
+  if (ts.isIdentifier(unwrapped.expression)) {
+    name = imports.primitive_functions.get(unwrapped.expression.text);
+  } else if (
+    ts.isPropertyAccessExpression(unwrapped.expression) &&
+    unwrapped.expression.questionDotToken === undefined &&
+    ts.isIdentifier(unwrapped.expression.expression)
+  ) {
+    const exported = imports.primitive_namespaces.get(
+      unwrapped.expression.expression.text,
+    );
+    if (
+      exported?.has(unwrapped.expression.name.text as PrimitiveFunctionName)
+    ) {
+      name = unwrapped.expression.name.text as PrimitiveFunctionName;
+    }
+  }
+
+  if (
+    name === undefined ||
+    !has_primitive_arity(name, unwrapped.arguments.length) ||
+    !has_supported_primitive_type_arguments(name, unwrapped.typeArguments) ||
+    (unwrapped.typeArguments === undefined &&
+      !has_self_typed_primitive_arguments(name, unwrapped.arguments))
+  ) {
+    return undefined;
+  }
+  return {
+    name,
+    arguments: unwrapped.arguments,
+    type_arguments: unwrapped.typeArguments,
+  };
+}
+
+function has_supported_primitive_type_arguments(
+  name: PrimitiveFunctionName,
+  type_arguments: readonly ts.TypeNode[] | undefined,
+): boolean {
+  if (type_arguments === undefined) {
+    return name !== "ask" && name !== "get" && name !== "put";
+  }
+
+  switch (name) {
+    case "ask":
+    case "get":
+    case "put":
+    case "modify":
+      return type_arguments.length === 1;
+    case "asks":
+    case "gets":
+      return type_arguments.length === 2;
+    case "writer":
+    case "tell":
+      return false;
+  }
+}
+
+function has_self_typed_primitive_arguments(
+  name: PrimitiveFunctionName,
+  arguments_: readonly ts.Expression[],
+): boolean {
+  switch (name) {
+    case "asks":
+    case "gets":
+    case "modify":
+      return has_self_typed_callable(arguments_[0]);
+    default:
+      return true;
+  }
+}
+
+function has_self_typed_callable(expression: ts.Expression): boolean {
+  let valid = true;
+  let found = false;
+
+  function visit(node: ts.Node) {
+    if (!valid) {
+      return;
+    }
+
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      found = true;
+      valid = node.typeParameters === undefined && node.parameters.length > 0 &&
+        node.parameters.every((parameter) =>
+          parameter.type !== undefined &&
+          parameter.dotDotDotToken === undefined &&
+          !(ts.isIdentifier(parameter.name) && parameter.name.text === "this")
+        );
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(expression);
+  return valid && found;
+}
+
+function unwrap_fused_primitive_expression(
+  expression: ts.Expression,
+): ts.Expression {
+  let unwrapped = expression;
+  while (ts.isParenthesizedExpression(unwrapped)) {
+    unwrapped = unwrapped.expression;
+  }
+  return unwrapped;
+}
+
+function has_primitive_arity(
+  name: PrimitiveFunctionName,
+  arity: number,
+): boolean {
+  switch (name) {
+    case "ask":
+    case "get":
+      return arity === 0;
+    case "asks":
+    case "gets":
+    case "put":
+    case "modify":
+    case "tell":
+      return arity === 1;
+    case "writer":
+      return arity === 2;
+  }
+}
+
+function primitive_terminal_kind(
+  name: PrimitiveFunctionName,
+): FusedTerminalKind {
+  switch (name) {
+    case "ask":
+    case "asks":
+      return "reader";
+    case "get":
+    case "gets":
+    case "put":
+    case "modify":
+      return "state";
+    case "writer":
+    case "tell":
+      return "writer";
+  }
+}
+
+function fused_primitive_argument_type(
+  primitive: FusedPrimitive,
+  index: number,
+  factory: ts.NodeFactory,
+): ts.TypeNode | undefined {
+  const type_arguments = primitive.type_arguments;
+
+  if (type_arguments === undefined || index !== 0) {
+    return undefined;
+  }
+
+  switch (primitive.name) {
+    case "asks":
+    case "gets":
+      return create_fused_function_type(
+        type_arguments[0],
+        type_arguments[1],
+        factory,
+      );
+    case "modify":
+      return create_fused_function_type(
+        type_arguments[0],
+        type_arguments[0],
+        factory,
+      );
+    case "put":
+      return type_arguments[0];
+    default:
+      return undefined;
+  }
+}
+
+function fused_primitive_value_type(
+  primitive: FusedPrimitive,
+): ts.TypeNode | undefined {
+  if (
+    primitive.type_arguments === undefined ||
+    (primitive.name !== "ask" && primitive.name !== "get")
+  ) {
+    return undefined;
+  }
+
+  return primitive.type_arguments[0];
+}
+
+function create_fused_function_type(
+  input: ts.TypeNode,
+  output: ts.TypeNode,
+  factory: ts.NodeFactory,
+): ts.FunctionTypeNode {
+  return factory.createFunctionTypeNode(
+    undefined,
+    [
+      factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        "value",
+        undefined,
+        input,
+      ),
+    ],
+    output,
+  );
+}
+
+function fused_terminal_input_type(
+  body: FusedProgramBody,
+  kind: FusedTerminalKind,
+  imports: ImportedBindings,
+): ts.TypeNode | undefined {
+  for (const part of body.parts) {
+    if (part.kind !== "yield") {
+      continue;
+    }
+
+    const primitive = read_fused_primitive(part.expression, imports);
+
+    if (
+      primitive === undefined ||
+      primitive_terminal_kind(primitive.name) !== kind
+    ) {
+      continue;
+    }
+
+    if (primitive.type_arguments !== undefined) {
+      return primitive.type_arguments[0];
+    }
+
+    if (
+      primitive.name === "asks" || primitive.name === "gets" ||
+      primitive.name === "modify"
+    ) {
+      const callable = unwrap_fused_primitive_expression(
+        primitive.arguments[0],
+      );
+
+      if (
+        (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable)) &&
+        callable.parameters[0]?.type !== undefined
+      ) {
+        return callable.parameters[0].type;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function emit_fused_terminal_program(
+  body: FusedProgramBody,
+  input: ts.Expression,
+  kind: FusedTerminalKind,
+  factory: ts.NodeFactory,
+  imports: ImportedBindings,
+): ts.Expression {
+  const input_thunk = factory.createUniqueName(kind + "_input");
+  const current_input = factory.createUniqueName(
+    kind === "reader" ? "environment" : kind === "state" ? "state" : "output",
+  );
+  const statements: ts.Statement[] = [];
+  const input_type = fused_terminal_input_type(body, kind, imports);
+  let initialized = false;
+  let returned = false;
+
+  for (const part of body.parts) {
+    if (part.kind === "statement") {
+      statements.push(part.statement);
+      continue;
+    }
+
+    const primitive = read_fused_primitive(part.expression, imports);
+    const first_yield = !initialized;
+
+    if (
+      primitive === undefined ||
+      primitive_terminal_kind(primitive.name) !== kind
+    ) {
+      throw new Error("Invalid fused terminal primitive");
+    }
+
+    if (
+      primitive !== undefined &&
+      primitive_terminal_kind(primitive.name) === kind
+    ) {
+      const arguments_ = primitive.arguments.map((argument, index) => {
+        const temporary = factory.createUniqueName(
+          `${primitive.name}_argument_${index}`,
+        );
+        statements.push(create_fused_variable_statement(
+          temporary,
+          factory.createBinaryExpression(
+            factory.createVoidZero(),
+            factory.createToken(ts.SyntaxKind.CommaToken),
+            argument,
+          ),
+          ts.NodeFlags.Const,
+          factory,
+          fused_primitive_argument_type(primitive, index, factory),
+        ));
+        return temporary;
+      });
+
+      if (first_yield) {
+        statements.push(create_fused_variable_statement(
+          current_input,
+          factory.createCallExpression(input_thunk, undefined, []),
+          kind === "reader" ? ts.NodeFlags.Const : ts.NodeFlags.Let,
+          factory,
+          input_type,
+        ));
+        initialized = true;
+      }
+
+      let value: ts.Expression;
+      switch (primitive.name) {
+        case "ask":
+        case "get":
+          value = current_input;
+          break;
+        case "asks":
+        case "gets":
+          value = factory.createCallExpression(arguments_[0], undefined, [
+            current_input,
+          ]);
+          break;
+        case "put":
+          statements.push(
+            factory.createExpressionStatement(factory.createAssignment(
+              current_input,
+              arguments_[0],
+            )),
+          );
+          value = factory.createVoidZero();
+          break;
+        case "modify":
+          statements.push(
+            factory.createExpressionStatement(factory.createAssignment(
+              current_input,
+              factory.createCallExpression(arguments_[0], undefined, [
+                current_input,
+              ]),
+            )),
+          );
+          value = factory.createVoidZero();
+          break;
+        case "writer":
+          statements.push(
+            factory.createExpressionStatement(factory.createAssignment(
+              current_input,
+              factory.createCallExpression(
+                factory.createPropertyAccessExpression(current_input, "concat"),
+                undefined,
+                [arguments_[1]],
+              ),
+            )),
+          );
+          value = arguments_[0];
+          break;
+        case "tell":
+          statements.push(
+            factory.createExpressionStatement(factory.createAssignment(
+              current_input,
+              factory.createCallExpression(
+                factory.createPropertyAccessExpression(current_input, "concat"),
+                undefined,
+                [arguments_[0]],
+              ),
+            )),
+          );
+          value = factory.createVoidZero();
+          break;
+      }
+
+      const value_type = fused_primitive_value_type(primitive);
+
+      if (value_type !== undefined) {
+        const typed_value = factory.createUniqueName(
+          primitive.name + "_value",
+        );
+        statements.push(create_fused_variable_statement(
+          typed_value,
+          value,
+          ts.NodeFlags.Const,
+          factory,
+          value_type,
+        ));
+        value = typed_value;
+      }
+
+      if (part.returns) {
+        statements.push(
+          factory.createReturnStatement(
+            kind === "reader"
+              ? value
+              : create_readonly_tuple([value, current_input], factory),
+          ),
+        );
+        returned = true;
+      } else if (part.declaration !== undefined) {
+        statements.push(update_fused_binding(part.declaration, value, factory));
+      } else if (primitive.name === "asks" || primitive.name === "gets") {
+        statements.push(factory.createExpressionStatement(value));
+      }
+      continue;
+    }
+  }
+
+  if (!returned) {
+    const result = body.result ?? factory.createVoidZero();
+    const output = kind === "reader"
+      ? result
+      : create_readonly_tuple([result, current_input], factory);
+    statements.push(factory.createReturnStatement(output));
+  }
+
+  const runner = factory.createArrowFunction(
+    undefined,
+    undefined,
+    [
+      factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        input_thunk,
+        undefined,
+        undefined,
+        undefined,
+      ),
+    ],
+    undefined,
+    undefined,
+    factory.createBlock(statements, true),
+  );
+  const thunk = factory.createArrowFunction(
+    undefined,
+    undefined,
+    [],
+    undefined,
+    undefined,
+    input,
+  );
+
+  return factory.createCallExpression(
+    factory.createParenthesizedExpression(runner),
+    undefined,
+    [thunk],
+  );
+}
+
+function create_fused_variable_statement(
+  name: ts.BindingName,
+  initializer: ts.Expression,
+  flags: ts.NodeFlags,
+  factory: ts.NodeFactory,
+  type?: ts.TypeNode,
+): ts.VariableStatement {
+  return factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList([
+      factory.createVariableDeclaration(
+        name,
+        undefined,
+        type,
+        initializer,
+      ),
+    ], flags),
+  );
+}
+
+function update_fused_binding(
+  binding: NonNullable<FusedProgramYield["declaration"]>,
+  initializer: ts.Expression,
+  factory: ts.NodeFactory,
+): ts.VariableStatement {
+  return factory.updateVariableStatement(
+    binding.statement,
+    binding.statement.modifiers,
+    factory.updateVariableDeclarationList(
+      binding.statement.declarationList,
+      [
+        factory.updateVariableDeclaration(
+          binding.declaration,
+          binding.declaration.name,
+          binding.declaration.exclamationToken,
+          binding.declaration.type,
+          initializer,
+        ),
+      ],
+    ),
+  );
+}
+
+function create_readonly_tuple(
+  elements: readonly ts.Expression[],
+  factory: ts.NodeFactory,
+): ts.Expression {
+  return factory.createAsExpression(
+    factory.createArrayLiteralExpression(elements),
+    factory.createTypeReferenceNode("const", undefined),
+  );
+}
+
+function contains_fusion_lexical_hazard(node: ts.Node): boolean {
+  let found = false;
+
+  function visit(child: ts.Node) {
+    if (found) {
+      return;
+    }
+
+    if (
+      child.kind === ts.SyntaxKind.ThisKeyword ||
+      child.kind === ts.SyntaxKind.SuperKeyword || ts.isMetaProperty(child) ||
+      (ts.isIdentifier(child) &&
+        (child.text === "arguments" || child.text === "eval"))
+    ) {
+      found = true;
+      return;
+    }
+
+    ts.forEachChild(child, visit);
+  }
+
+  visit(node);
+  return found;
+}
+
+function contains_await_or_yield(node: ts.Node): boolean {
+  let found = false;
+
+  function visit(child: ts.Node) {
+    if (found || ts.isFunctionLike(child)) {
+      return;
+    }
+
+    if (ts.isAwaitExpression(child) || ts.isYieldExpression(child)) {
+      found = true;
+      return;
+    }
+
+    ts.forEachChild(child, visit);
+  }
+
+  visit(node);
+  return found;
+}
 
 function transform_terminal_lift_run(
   node: ts.CallExpression,
@@ -3546,4 +4593,8 @@ function add_diagnostic(
 function format_diagnostic(diagnostic: TransformDiagnostic): string {
   return diagnostic.file_name + ":" + diagnostic.line.toString() + ":" +
     diagnostic.column.toString() + ": " + diagnostic.message;
+}
+
+if (import.meta.main) {
+  await run_cli(Deno.args);
 }

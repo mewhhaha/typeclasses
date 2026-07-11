@@ -1,6 +1,8 @@
 import {
   type As,
+  type Data,
   data,
+  is_data,
   kind,
   type type_data,
   type type_item,
@@ -85,13 +87,37 @@ export function run_reader<requirements, environment, item>(
   ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
 }
 
-/** Runs an effect containing only Reader lifts. */
+/** Runs one Reader value or an effect containing only Reader lifts. */
+export function run_reader_terminal<environment, item>(
+  reader: ReaderValue<environment, item>,
+  environment: environment,
+): item;
 export function run_reader_terminal<environment, item>(
   effect: Effect<Lift<AsReader<environment>, unknown>, item>,
   environment: environment,
+): item;
+export function run_reader_terminal<environment, item>(
+  value:
+    | ReaderValue<environment, item>
+    | Effect<Lift<AsReader<environment>, unknown>, item>,
+  environment: environment,
+): item;
+export function run_reader_terminal<environment, item>(
+  effect:
+    | ReaderValue<environment, item>
+    | Effect<Lift<AsReader<environment>, unknown>, item>,
+  environment: environment,
 ): item {
+  if (is_data(effect)) {
+    if ((effect as Data<AsReader<unknown>, unknown>)[kind] !== reader_kind) {
+      throw new TypeError("Unhandled effect operation: lift");
+    }
+
+    return (effect as ReaderValue<environment, item>).value()(environment);
+  }
+
   return handle_lift_terminal(
-    effect,
+    effect as Effect<Lift<AsReader<environment>, unknown>, item>,
     reader_kind,
     environment,
     reader_lift_handler as LiftHandler<

@@ -53,6 +53,6 @@
     "example": "deno run examples/main.ts",
     "learn": "deno run learn_you_a_typeclasses_for_greater_good/main.ts",
     "test": "deno test",
-    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts"
+    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts"
   }
 }

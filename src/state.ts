@@ -2,6 +2,7 @@ import {
   type As,
   type Data,
   data,
+  is_data,
   kind,
   type type_data,
   type type_item,
@@ -10,6 +11,7 @@ import {
 import {
   type Effect,
   handle_lift,
+  is_effect,
   is_lift_of,
   type Lift,
   type TaggedOperation,
@@ -81,17 +83,50 @@ export function run_state<requirements, state, item>(
   });
 }
 
-/** Runs an effect containing only State lifts. */
+/** Runs one State value or an effect containing only State lifts. */
+export function run_state_terminal<state, item>(
+  stateful: StateValue<state, item>,
+  state: state,
+): readonly [item, state];
 export function run_state_terminal<state, item>(
   effect: Effect<Lift<AsState<state>, unknown>, item>,
   state: state,
+): readonly [item, state];
+export function run_state_terminal<state, item>(
+  value:
+    | StateValue<state, item>
+    | Effect<Lift<AsState<state>, unknown>, item>,
+  state: state,
+): readonly [item, state];
+export function run_state_terminal<state, item>(
+  effect:
+    | StateValue<state, item>
+    | Effect<Lift<AsState<state>, unknown>, item>,
+  state: state,
 ): readonly [item, state] {
+  if (is_data(effect)) {
+    if ((effect as Data<AsState<unknown>, unknown>)[kind] !== state_kind) {
+      throw new TypeError("Unhandled effect operation: lift");
+    }
+
+    const [value, next] = (effect as StateValue<state, item>).value()(state);
+    return [value, next];
+  }
+
   let current = effect as Effect<Lift<AsState<state>, unknown>, unknown>;
   let current_state = state;
 
   while (true) {
+    if (!is_effect(current)) {
+      throw new TypeError("Invalid effect value");
+    }
+
     if (current[0] === "pure") {
       return [current[1] as item, current_state];
+    }
+
+    if (current[0] !== "impure") {
+      throw new TypeError("Invalid effect value");
     }
 
     const operation = current[1];

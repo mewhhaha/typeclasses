@@ -109,6 +109,7 @@ import {
   put,
   run_state,
   run_state_terminal,
+  State,
 } from "./state.ts";
 import {
   type AsWriter,
@@ -1019,6 +1020,53 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
 });
 
 Deno.test("Terminal lift runners match composable lift handlers", () => {
+  assert_equals(
+    run_reader_terminal(asks((value: number) => value * 3), 10),
+    30,
+  );
+  assert_equals(run_reader_terminal(asks((value: number) => value * 3), 4), 12);
+
+  assert_equals(run_state_terminal(gets((value: number) => value * 2), 5), [
+    10,
+    5,
+  ]);
+  assert_equals(run_state_terminal(modify((value: number) => value + 2), 40), [
+    undefined,
+    42,
+  ]);
+  const iterable_state = State(() => {
+    const result = [1, 2];
+    Object.defineProperty(result, Symbol.iterator, {
+      value: function* () {
+        yield 10;
+        yield 20;
+      },
+    });
+    return result as unknown as readonly [number, number];
+  });
+  assert_equals(run_state_terminal(iterable_state, 0), [10, 20]);
+
+  const direct_writer = run_writer_terminal(
+    writer_value("direct", ArrayT(["entry"])),
+    ArrayT<string>([]),
+  );
+  assert_equals(direct_writer[0], "direct");
+  assert_equals(to_array(direct_writer[1]), ["entry"]);
+
+  const direct_writer_events: string[] = [];
+  const direct_writer_empty = ArrayT<string>([]);
+  Object.defineProperty(direct_writer_empty, "concat", {
+    value(right: unknown) {
+      direct_writer_events.push("concat");
+      return right;
+    },
+  });
+  run_writer_terminal(
+    writer_value(42, ArrayT(["entry"])),
+    direct_writer_empty,
+  );
+  assert_equals(direct_writer_events, ["concat"]);
+
   const reader_program = Program(function* () {
     const environment = yield* ask<number>();
     const doubled = yield* asks((value: number) => value * 2);
@@ -1119,6 +1167,53 @@ Deno.test("Terminal lift runners match composable lift handlers", () => {
       (error as TypeError).message,
       "Unhandled effect operation: terminal.custom",
     );
+  }
+
+  const wrong_data_runners = [
+    () => run_reader_terminal(get<number>() as never, 0),
+    () => run_state_terminal(ask<number>() as never, 0),
+    () => run_writer_terminal(ask<number>() as never, ArrayT<string>([])),
+  ];
+
+  for (const run_terminal of wrong_data_runners) {
+    let error: unknown;
+
+    try {
+      run_terminal();
+    } catch (caught) {
+      error = caught;
+    }
+
+    assert_true(
+      error instanceof TypeError,
+      "terminal runner rejects other data",
+    );
+    assert_equals(
+      (error as TypeError).message,
+      "Unhandled effect operation: lift",
+    );
+  }
+
+  const malformed_runners = [
+    () => run_reader_terminal(undefined as never, 0),
+    () => run_state_terminal(undefined as never, 0),
+    () => run_writer_terminal(undefined as never, ArrayT<string>([])),
+  ];
+
+  for (const run_terminal of malformed_runners) {
+    let error: unknown;
+
+    try {
+      run_terminal();
+    } catch (caught) {
+      error = caught;
+    }
+
+    assert_true(
+      error instanceof TypeError,
+      "terminal runner rejects malformed",
+    );
+    assert_equals((error as TypeError).message, "Invalid effect value");
   }
 });
 

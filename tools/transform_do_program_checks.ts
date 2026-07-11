@@ -371,6 +371,798 @@ const value = run(run_reader(program, config));
 });
 
 Deno.test({
+  name: "transformer fuses immediate straight-line terminal Programs",
+  permissions: { env: true },
+  async fn() {
+    const result = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, asks, run_reader } from "../src/reader.ts";
+import { get, modify, run_state } from "../src/state.ts";
+import { run_writer, tell, writer } from "../src/writer.ts";
+
+const reader = run(run_reader(Program(function* () {
+  const config = yield* ask<Config>();
+  const label = yield* asks<Config, string>((value) => value.label);
+  return label.length + config.increment;
+}), config));
+
+const state = run(run_state(Program(function* () {
+  const before = yield* get<number>();
+  yield* modify((value: number) => value + 2);
+  const after = yield* get<number>();
+  return { before, after };
+}), initial));
+
+const output = run(run_writer(Program(function* () {
+  yield* tell(start);
+  const value = yield* writer(input, middle);
+  yield* tell(end);
+  return value + 2;
+}), empty));
+`);
+
+    assert_equals(result.transformed, 3);
+    assert_equals(result.diagnostics, []);
+    assert_true(
+      !result.code.includes("Effect.bind_from") &&
+        !result.code.includes("Effect.map_from"),
+      "expected the Effect spine to be absent\n\n" + result.code,
+    );
+    assert_true(
+      !result.code.includes("run_reader_terminal") &&
+        !result.code.includes("run_state_terminal") &&
+        !result.code.includes("run_writer_terminal") &&
+        !result.code.includes("Effect.prepare_yield"),
+      "expected canonical primitives to avoid terminal dispatch\n\n" +
+        result.code,
+    );
+    assert_includes(result.code, "reader_input_1 =>");
+    assert_includes(result.code, "const ask_value_1: Config = environment_1");
+    assert_includes(result.code, "const config = ask_value_1");
+    assert_includes(result.code, "state_1 = modify_argument_0_1(state_1)");
+    assert_includes(result.code, "output_1 = output_1.concat");
+    assert_includes(
+      result.code,
+      "return [{ before, after }, state_1] as const",
+    );
+
+    const returned = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* ask<number>();
+}), environment));
+`);
+
+    assert_equals(returned.transformed, 1);
+    assert_equals(returned.diagnostics, []);
+    assert_true(
+      !returned.code.includes("Effect.from"),
+      "expected return yield* to fuse\n\n" + returned.code,
+    );
+
+    const scoped = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const P = Program.scope<Uses<Reader, number>>();
+const value = run(run_reader(P(function* () {
+  return yield* ask<number>();
+}), environment));
+`);
+
+    assert_equals(scoped.transformed, 1);
+    assert_equals(scoped.diagnostics, []);
+    assert_true(
+      !scoped.code.includes("Effect.from"),
+      "expected a tracked Program scope to fuse\n\n" + scoped.code,
+    );
+
+    const branch = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  if (enabled) {
+    yield* ask<number>();
+  }
+  return 1;
+}), environment));
+`);
+
+    assert_equals(branch.transformed, 2);
+    assert_equals(branch.diagnostics, []);
+    assert_includes(branch.code, "Effect.map_from");
+
+    const awaited = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+async function evaluate() {
+  return run(run_reader(Program(function* () {
+    return yield* ask<number>();
+  }), await environment()));
+}
+`);
+
+    assert_equals(awaited.transformed, 2);
+    assert_equals(awaited.diagnostics, []);
+    assert_includes(awaited.code, "await environment()");
+    assert_includes(awaited.code, "Effect.from");
+  },
+});
+
+Deno.test({
+  name: "terminal Program fusion respects lexical bindings and hazards",
+  permissions: { env: true },
+  async fn() {
+    const root = new URL("../src/", import.meta.url).href;
+    const shadowed_source = `
+import { Effect, Program, run } from ${JSON.stringify(root + "effects.ts")};
+import { ask, run_reader } from ${JSON.stringify(root + "reader.ts")};
+
+function evaluate(Program) {
+  return run(run_reader(Program(function* () {
+    return yield* ask();
+  }), 7));
+}
+
+export default evaluate(() => Effect.pure(99));
+`;
+    const shadowed = await transform(shadowed_source);
+
+    assert_equals(shadowed.transformed, 1);
+    assert_equals(shadowed.diagnostics.length, 1);
+    assert_includes(shadowed.code, "Program(function*");
+    assert_equals(
+      await evaluate_module(shadowed.code, "shadowed-program-transformed"),
+      await evaluate_module(shadowed_source, "shadowed-program-original"),
+    );
+
+    const alias_source = `
+import { Effect, Program, run } from ${JSON.stringify(root + "effects.ts")};
+import { ask, run_reader } from ${JSON.stringify(root + "reader.ts")};
+
+const ReaderProgram = Program.scope();
+function evaluate(ReaderProgram) {
+  return run(run_reader(ReaderProgram(function* () {
+    return yield* ask();
+  }), 7));
+}
+
+export default evaluate(() => Effect.pure(99));
+`;
+    const shadowed_alias = await transform(alias_source);
+
+    assert_equals(shadowed_alias.transformed, 1);
+    assert_equals(shadowed_alias.diagnostics, []);
+    assert_includes(shadowed_alias.code, "ReaderProgram(function*");
+    assert_equals(
+      await evaluate_module(shadowed_alias.code, "shadowed-scope-transformed"),
+      await evaluate_module(alias_source, "shadowed-scope-original"),
+    );
+
+    const tdz_alias = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(ReaderProgram(function* () {
+  return yield* ask();
+}), 7));
+const ReaderProgram = Program.scope();
+`);
+
+    assert_equals(tdz_alias.transformed, 1);
+    assert_equals(tdz_alias.diagnostics, []);
+    assert_includes(tdz_alias.code, "ReaderProgram(function*");
+
+    const direct_eval = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+function evaluate(one, two, three) {
+  return run(run_reader(Program(function* () {
+    const count = eval("arguments.length");
+    yield* ask();
+    return count;
+  }), 7));
+}
+`);
+
+    assert_equals(direct_eval.transformed, 1);
+    assert_equals(direct_eval.diagnostics.length, 1);
+    assert_includes(direct_eval.code, "Program(function*");
+  },
+});
+
+Deno.test({
+  name: "terminal primitive fusion stays import-anchored and capability-safe",
+  permissions: { env: true, read: true, run: true, write: true },
+  async fn() {
+    const aliased = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { asks as read, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* read<number, number>((item) => item + 1);
+}), 41));
+`);
+
+    assert_equals(aliased.transformed, 1);
+    assert_equals(aliased.diagnostics, []);
+    assert_true(
+      !aliased.code.includes("Effect.prepare_yield") &&
+        !aliased.code.includes("run_reader_terminal"),
+      "expected an exact named primitive import to lower directly\n\n" +
+        aliased.code,
+    );
+
+    const namespaced = await transform(`
+import { Program, run } from "../src/effects.ts";
+import * as state from "../src/state.ts";
+const value = run(state.run_state(Program(function* () {
+  const selected = yield* state.gets<number, number>((item) => item + 1);
+  yield* state.put<number>(selected);
+  return yield* state.get<number>();
+}), 41));
+`);
+
+    assert_equals(namespaced.transformed, 1);
+    assert_equals(namespaced.diagnostics, []);
+    assert_true(
+      !namespaced.code.includes("Effect.prepare_yield") &&
+        !namespaced.code.includes("run_state_terminal"),
+      "expected an exact primitive namespace to lower directly\n\n" +
+        namespaced.code,
+    );
+
+    const local_alias = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const read = ask;
+const value = run(run_reader(Program(function* () {
+  return yield* read<number>();
+}), 41));
+`);
+
+    assert_equals(local_alias.transformed, 1);
+    assert_equals(local_alias.diagnostics, []);
+    assert_includes(local_alias.code, "Program(function*");
+    assert_includes(local_alias.code, "run_reader_terminal");
+
+    const shadowed = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+function evaluate(ask) {
+  return run(run_reader(Program(function* () {
+    return yield* ask();
+  }), 41));
+}
+`);
+
+    assert_equals(shadowed.transformed, 1);
+    assert_equals(shadowed.diagnostics, []);
+    assert_includes(shadowed.code, "Program(function*");
+    assert_includes(shadowed.code, "run_reader_terminal");
+
+    const wrong_capability = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { run_reader } from "../src/reader.ts";
+import { get } from "../src/state.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* get<number>();
+}), 41));
+`);
+
+    assert_equals(wrong_capability.transformed, 1);
+    assert_equals(wrong_capability.diagnostics, []);
+    assert_includes(wrong_capability.code, "Program(function*");
+    assert_includes(wrong_capability.code, "run_reader_terminal");
+
+    const optional = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* ask?.<number>();
+}), 41));
+`);
+
+    assert_equals(optional.transformed, 1);
+    assert_equals(optional.diagnostics, []);
+    assert_includes(optional.code, "Program(function*");
+    assert_includes(optional.code, "run_reader_terminal");
+
+    const explicit_types = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* ask<number, string>();
+}), 41));
+`);
+
+    assert_equals(explicit_types.transformed, 1);
+    assert_equals(explicit_types.diagnostics, []);
+    assert_includes(explicit_types.code, "Program(function*");
+    assert_includes(explicit_types.code, "run_reader_terminal");
+
+    const contextual_callback = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { asks, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* asks((item) => item + 1);
+}), 41));
+`);
+
+    assert_equals(contextual_callback.transformed, 1);
+    assert_equals(contextual_callback.diagnostics, []);
+    assert_includes(contextual_callback.code, "Program(function*");
+    assert_includes(contextual_callback.code, "run_reader_terminal");
+
+    const mixed_inference = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, asks, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  const environment = yield* ask();
+  return yield* asks<number, number>((item) => item + Number(environment));
+}), 41));
+`);
+
+    assert_equals(mixed_inference.transformed, 1);
+    assert_equals(mixed_inference.diagnostics, []);
+    assert_includes(mixed_inference.code, "Program(function*");
+
+    const zero_parameter_callback = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { modify, run_state } from "../src/state.ts";
+const value = run(run_state(Program(function* () {
+  yield* modify(() => 1);
+  return 0;
+}), 0));
+`);
+
+    assert_equals(zero_parameter_callback.transformed, 1);
+    assert_equals(zero_parameter_callback.diagnostics, []);
+    assert_includes(zero_parameter_callback.code, "Program(function*");
+    assert_includes(zero_parameter_callback.code, "run_state_terminal");
+
+    const inferred_put = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { get, put, run_state } from "../src/state.ts";
+const one = 1 as const;
+const value = run(run_state(Program(function* () {
+  yield* put(one);
+  return yield* get<number>();
+}), 0));
+`);
+
+    assert_equals(inferred_put.transformed, 1);
+    assert_equals(inferred_put.diagnostics, []);
+    assert_includes(inferred_put.code, "Program(function*");
+
+    const inferred_callback = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { get, modify, run_state } from "../src/state.ts";
+const increment = () => 1;
+const value = run(run_state(Program(function* () {
+  yield* modify(increment);
+  return yield* get<number>();
+}), 0));
+`);
+
+    assert_equals(inferred_callback.transformed, 1);
+    assert_equals(inferred_callback.diagnostics, []);
+    assert_includes(inferred_callback.code, "Program(function*");
+
+    const unrelated_module = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader } from "../other/src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* ask();
+}), 41));
+`);
+
+    assert_equals(unrelated_module.transformed, 1);
+    assert_equals(unrelated_module.diagnostics, []);
+    assert_includes(unrelated_module.code, "Effect.from(ask())");
+    assert_true(
+      !unrelated_module.code.includes("reader_input_1 =>"),
+      "expected unrelated ask implementation to remain observable\n\n" +
+        unrelated_module.code,
+    );
+
+    const unrelated_program = await transform(`
+import { Program } from "../other/src/effects.ts";
+import { run } from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* ask();
+}), 41));
+`);
+
+    assert_equals(unrelated_program.transformed, 1);
+    assert_equals(unrelated_program.diagnostics.length, 1);
+    assert_includes(unrelated_program.code, "Program(function*");
+    assert_true(
+      !unrelated_program.code.includes("reader_input_1 =>"),
+      "expected unrelated Program constructor to remain observable\n\n" +
+        unrelated_program.code,
+    );
+
+    const effect_collision = await transform(`
+import * as effects from "../src/effects.ts";
+import { ask, run_reader } from "../src/reader.ts";
+const Effect = 123;
+const read = ask;
+const value = effects.run(run_reader(effects.Program(function* () {
+  return yield* read<number>();
+}), 41));
+`);
+
+    assert_equals(effect_collision.transformed, 1);
+    assert_equals(effect_collision.diagnostics, []);
+    assert_includes(effect_collision.code, "const Effect = 123");
+    assert_includes(effect_collision.code, "Program(function*");
+    assert_true(
+      !effect_collision.code.includes("Effect.prepare_yield"),
+      "expected preserved fallback not to synthesize an Effect reference\n\n" +
+        effect_collision.code,
+    );
+
+    const root = new URL("../src/", import.meta.url).href;
+    const typed = await transform(`
+import { Program, run } from ${JSON.stringify(root + "effects.ts")};
+import { ask, asks, run_reader } from ${JSON.stringify(root + "reader.ts")};
+import { get, modify, run_state } from ${JSON.stringify(root + "state.ts")};
+type Config = { readonly label: string };
+const reader = run(run_reader(Program(function* () {
+  const config = yield* ask<Config>();
+  return yield* asks<Config, string>(value => value.label + config.label);
+}), { label: "x" }));
+const state = run(run_state(Program(function* () {
+  const before = yield* get<number>();
+  yield* modify<number>(value => value + 1);
+  return before;
+}), 1));
+`);
+
+    assert_equals(typed.transformed, 2);
+    assert_equals(typed.diagnostics, []);
+    await assert_module_typechecks(typed.code);
+
+    const invalid_typed = await transform(`
+import { Program, run } from ${JSON.stringify(root + "effects.ts")};
+import { ask, run_reader } from ${JSON.stringify(root + "reader.ts")};
+const value = run(run_reader(Program(function* () {
+  return yield* ask<string>();
+}), 41));
+`);
+
+    assert_equals(invalid_typed.transformed, 1);
+    assert_equals(invalid_typed.diagnostics, []);
+    assert_includes(invalid_typed.code, "reader_input_1 =>");
+    await assert_module_has_type_error(invalid_typed.code);
+
+    const asserted_yield = await transform(`
+import { Program, run } from "../src/effects.ts";
+import { ask, run_reader, type ReaderValue } from "../src/reader.ts";
+const value = run(run_reader(Program(function* () {
+  return yield* (ask<number>() as unknown as ReaderValue<string, string>);
+}), "ok"));
+`);
+
+    assert_equals(asserted_yield.transformed, 1);
+    assert_equals(asserted_yield.diagnostics, []);
+    assert_includes(asserted_yield.code, "Program(function*");
+    assert_includes(asserted_yield.code, "run_reader_terminal");
+  },
+});
+
+Deno.test({
+  name: "fused terminal Programs preserve evaluation and handler order",
+  permissions: { env: true },
+  async fn() {
+    const root = new URL("../src/", import.meta.url).href;
+    const source = `
+import { Effect, Program, run } from ${JSON.stringify(root + "effects.ts")};
+import { ask, asks, run_reader } from ${JSON.stringify(root + "reader.ts")};
+import { State, get, gets, modify, put, run_state } from ${
+      JSON.stringify(root + "state.ts")
+    };
+import { run_writer, tell, writer } from ${JSON.stringify(root + "writer.ts")};
+import { ArrayT, from_array, to_array } from ${
+      JSON.stringify(root + "array.ts")
+    };
+
+const events = [];
+const config = { label: "step", increment: 2 };
+function read_primitive_increment(environment) {
+  events.push("reader.primitive:call");
+  return environment.increment;
+}
+function read_discarded_increment(environment) {
+  events.push("reader.primitive:discarded:" + environment.increment);
+  return environment.increment;
+}
+const primitive_reader = run(run_reader(Program(function* () {
+  const increment = yield* asks((events.push("reader.primitive:argument"),
+    read_primitive_increment));
+  yield* asks(read_discarded_increment);
+  events.push("reader.primitive:resume");
+  return increment;
+}), (events.push("reader.primitive:input"), config)));
+
+const pure_first_reader = run(run_reader(Program(function* () {
+  const one = yield* Effect.pure(1);
+  events.push("reader.pure:resume");
+  const environment = yield* ask();
+  return one + environment.increment;
+}), (events.push("reader.pure:input"), config)));
+
+const completed_reader_iterable = {
+  [Symbol.iterator]() {
+    events.push("reader.completed:iterator");
+    return {
+      next() {
+        events.push("reader.completed:next");
+        return {
+          get done() {
+            events.push("reader.completed:done");
+            return true;
+          },
+          get value() {
+            events.push("reader.completed:value");
+            return 40;
+          },
+        };
+      },
+    };
+  },
+};
+const completed_reader = run(run_reader(Program(function* () {
+  const value = yield* completed_reader_iterable;
+  events.push("reader.completed:resume");
+  const environment = yield* ask();
+  return value + environment.increment;
+}), (events.push("reader.completed:input"), config)));
+
+const overridden_reader = ask();
+Object.defineProperty(overridden_reader, Symbol.iterator, {
+  value: function* () {
+    events.push("reader.override:iterator");
+    return 99;
+  },
+});
+const overridden_reader_value = run(run_reader(Program(function* () {
+  return yield* overridden_reader;
+}), (events.push("reader.override:input"), config)));
+
+function* delegated_reader_program() {
+  events.push("reader.delegate:start");
+  const environment = yield* ask();
+  events.push("reader.delegate:resume");
+  return environment.increment;
+}
+const delegated_reader = run(run_reader(Program(function* () {
+  return yield* delegated_reader_program();
+}), (events.push("reader.delegate:input"), config)));
+
+const custom_reader_iterable = {
+  [Symbol.iterator]() {
+    const iterator = {
+      step: 0,
+      get next() {
+        events.push("reader.iterator:next:get");
+        return function (value) {
+          events.push("reader.iterator:next:call:" + arguments.length);
+          if (this.step++ === 0) {
+            return { done: false, value: ask() };
+          }
+          return { done: true, value: value.increment };
+        };
+      },
+    };
+    return iterator;
+  },
+};
+const custom_delegated_reader = run(run_reader(Program(function* () {
+  return yield* custom_reader_iterable;
+}), (events.push("reader.iterator:input"), config)));
+
+const reader = run(run_reader(Program(function* () {
+  events.push("reader.prefix");
+  const environment = yield* (events.push("reader.first"), ask());
+  events.push("reader.resume");
+  const label = yield* asks((value) => value.label);
+  const nested = yield* Effect.lift(asks((value) => value.increment));
+  return label.length + environment.increment + nested;
+}), (events.push("reader.input"), config)));
+
+const shadowed_input = run(run_reader(Program(function* () {
+  const config = yield* ask();
+  return config.increment;
+}), config));
+
+const state = run(run_state(Program(function* () {
+  events.push("state.prefix");
+  const before = yield* (events.push("state.first"), get());
+  events.push("state.resume");
+  yield* modify((value) => value + 2);
+  const after = yield* get();
+  return { before, after };
+}), (events.push("state.input"), 40)));
+
+function modify_primitive_state(value) {
+  events.push("state.primitive:call");
+  return value + 2;
+}
+function read_discarded_state(value) {
+  events.push("state.primitive:discarded:" + value);
+  return value;
+}
+const primitive_state = run(run_state(Program(function* () {
+  yield* modify((events.push("state.primitive:argument"),
+    modify_primitive_state));
+  yield* put((events.push("state.primitive:put"), 45));
+  yield* gets(read_discarded_state);
+  events.push("state.primitive:resume");
+  return yield* get();
+}), (events.push("state.primitive:input"), 40)));
+
+function* delegated_state_program() {
+  events.push("state.delegate:start");
+  const before = yield* get();
+  yield* modify((value) => value + 2);
+  events.push("state.delegate:resume");
+  return before;
+}
+const delegated_state = run(run_state(Program(function* () {
+  return yield* delegated_state_program();
+}), (events.push("state.delegate:input"), 40)));
+
+const observed_state = State(() => {
+  const pair = [];
+  Object.defineProperties(pair, {
+    0: { get() { events.push("state.value"); return 7; } },
+    1: { get() { events.push("state.next"); return 9; } },
+  });
+  pair.length = 2;
+  pair[Symbol.iterator] = function* () {
+    events.push("state.iterator:value");
+    yield 10;
+    events.push("state.iterator:next");
+    yield 20;
+  };
+  return pair;
+});
+const observed = run(run_state(Program(function* () {
+  const value = yield* observed_state;
+  events.push("state.getter.resume");
+  return value;
+}), 0));
+
+const empty = ArrayT([]);
+Object.defineProperty(empty, "concat", {
+  value(right) {
+    events.push("writer.concat:" + to_array(right).join("+"));
+    return from_array([...to_array(this), ...to_array(right)]);
+  },
+});
+const output = run(run_writer(Program(function* () {
+  events.push("writer.prefix");
+  yield* (events.push("writer.first"), tell(ArrayT(["start"])));
+  events.push("writer.resume:first");
+  const value = yield* writer(40, ArrayT(["value"]));
+  events.push("writer.resume:value");
+  yield* tell(ArrayT(["end"]));
+  events.push("writer.resume:end");
+  return value + 2;
+}), (events.push("writer.input"), empty)));
+
+const ordered_empty = ArrayT([]);
+Object.defineProperty(ordered_empty, "concat", {
+  get() {
+    events.push("writer.primitive:concat:get");
+    return function (right) {
+      events.push("writer.primitive:concat:call");
+      return from_array([...to_array(this), ...to_array(right)]);
+    };
+  },
+});
+const primitive_output = run(run_writer(Program(function* () {
+  const value = yield* writer(
+    (events.push("writer.primitive:value"), 42),
+    (events.push("writer.primitive:output"), ArrayT(["primitive"])),
+  );
+  events.push("writer.primitive:resume");
+  return value;
+}), (events.push("writer.primitive:input"), ordered_empty)));
+
+const anonymous_writer = run(run_writer(Program(function* () {
+  const value = yield* writer(function () {}, ArrayT([]));
+  return value.name;
+}), ArrayT([])));
+
+function* delegated_writer_program() {
+  events.push("writer.delegate:start");
+  yield* tell(ArrayT(["delegated"]));
+  events.push("writer.delegate:resume");
+  return 42;
+}
+const delegated_output = run(run_writer(Program(function* () {
+  return yield* delegated_writer_program();
+}), (events.push("writer.delegate:input"), empty)));
+
+try {
+  run(run_reader(Program(function* () {
+    yield* (events.push("throw.first"), (() => { throw new Error("first"); })());
+    events.push("throw.resume.bad");
+  }), (events.push("throw.input.bad"), config)));
+} catch (error) {
+  events.push("caught:" + error.message);
+}
+
+try {
+  run(run_reader(Program(function* () {
+    yield* (events.push("undefined.first"), undefined);
+    events.push("undefined.resume.bad");
+  }), (events.push("undefined.input.bad"), config)));
+} catch {
+  events.push("undefined.caught");
+}
+
+try {
+  run(run_reader(Program(function* () {
+    yield* (events.push("input.first"), ask());
+    events.push("input.resume.bad");
+  }), (events.push("input.throw"), (() => { throw new Error("input"); })())));
+} catch (error) {
+  events.push("caught:" + error.message);
+}
+
+let wrong;
+try {
+  run(run_reader(Program(function* () {
+    yield* get();
+    events.push("wrong.resume.bad");
+  }), config));
+} catch (error) {
+  wrong = error.message;
+}
+
+export default {
+  primitive_reader,
+  pure_first_reader,
+  completed_reader,
+  overridden_reader_value,
+  delegated_reader,
+  custom_delegated_reader,
+  reader,
+  shadowed_input,
+  state,
+  primitive_state,
+  delegated_state,
+  observed,
+  output: [output[0], to_array(output[1])],
+  primitive_output: [primitive_output[0], to_array(primitive_output[1])],
+  anonymous_writer: anonymous_writer[0],
+  delegated_output: [delegated_output[0], to_array(delegated_output[1])],
+  wrong,
+  events,
+};
+`;
+    const transformed = await transform(source);
+
+    assert_equals(transformed.transformed, 20);
+    assert_equals(transformed.diagnostics, []);
+    assert_true(
+      !transformed.code.includes("Effect.bind_from"),
+      "expected runtime probe to use fused lowering\n\n" + transformed.code,
+    );
+
+    const original_value = await evaluate_module(source, "original");
+    const transformed_value = await evaluate_module(
+      transformed.code,
+      "transformed",
+    );
+    assert_equals(transformed_value, original_value);
+  },
+});
+
+Deno.test({
   name: "transformer lowers return yield star",
   permissions: { env: true },
   async fn() {
@@ -953,6 +1745,28 @@ Deno.test({
       new TextDecoder().decode(output.stderr).includes("try/catch requires"),
       "expected CLI diagnostic on stderr",
     );
+
+    const terminal_command = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env",
+        "--allow-read",
+        new URL("./transform_do_program.ts", import.meta.url).pathname,
+        "--check",
+        new URL("./fixtures/terminal_program.ts", import.meta.url).pathname,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const terminal_output = await terminal_command.output();
+
+    assert_equals(terminal_output.code, 0);
+    assert_true(
+      new TextDecoder().decode(terminal_output.stdout).includes(
+        "reader_input_1();",
+      ),
+      "expected CLI terminal fusion output",
+    );
   },
 });
 
@@ -1057,6 +1871,60 @@ async function transform(source: string) {
   const transformer = await import("./transform_do_program.ts");
 
   return transformer.transform_do_program_source(source);
+}
+
+async function evaluate_module(
+  source: string,
+  label: string,
+): Promise<unknown> {
+  const executable = source.replace(/\s+as const\b/g, "");
+  const module = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable + "\n//# sourceURL=" + label + ".ts")
+  );
+
+  return module.default;
+}
+
+async function assert_module_typechecks(source: string): Promise<void> {
+  const path = await Deno.makeTempFile({ suffix: ".ts" });
+
+  try {
+    await Deno.writeTextFile(path, source);
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["check", path],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    assert_true(
+      output.code === 0,
+      "expected transformed module to type-check\n\n" +
+        new TextDecoder().decode(output.stderr) + "\n\n" + source,
+    );
+  } finally {
+    await Deno.remove(path);
+  }
+}
+
+async function assert_module_has_type_error(source: string): Promise<void> {
+  const path = await Deno.makeTempFile({ suffix: ".ts" });
+
+  try {
+    await Deno.writeTextFile(path, source);
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["check", path],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    assert_true(
+      output.code !== 0,
+      "expected transformed module to retain its type error\n\n" + source,
+    );
+  } finally {
+    await Deno.remove(path);
+  }
 }
 
 async function assert_do_equivalent(source: string) {

@@ -151,6 +151,18 @@ Deno.bench("Reader transformed Program terminal construct+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("Reader fused Program construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_reader(
+      run_reader_program_fused(() => input_at(configs, index)),
+    );
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("Reader native happy path reuse+run", () => {
   const program = make_reader_native();
   let checksum = 0;
@@ -301,6 +313,18 @@ Deno.bench("State transformed Program terminal construct+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("State fused Program construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_state(
+      run_state_program_fused(() => input_at(numbers, index)),
+    );
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("State native happy path reuse+run", () => {
   const program = make_state_native();
   let checksum = 0;
@@ -385,6 +409,18 @@ Deno.bench("Writer native happy path construct+run", () => {
   _sink = checksum;
 });
 
+Deno.bench("Writer native ArrayT monoid construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_writer(
+      run_writer_native_monoid(input_at(numbers, index)),
+    );
+  }
+
+  _sink = checksum;
+});
+
 Deno.bench("Writer Do construct+run", () => {
   let checksum = 0;
 
@@ -451,6 +487,21 @@ Deno.bench("Writer transformed Program terminal construct+run", () => {
       run_writer_terminal(
         make_writer_program_transformed(input_at(numbers, index)),
         array_from_array<string>([]),
+      ),
+    );
+  }
+
+  _sink = checksum;
+});
+
+Deno.bench("Writer fused Program construct+run", () => {
+  let checksum = 0;
+
+  for (let index = 0; index < iterations; index += 1) {
+    checksum += consume_writer(
+      run_writer_program_fused(
+        () => input_at(numbers, index),
+        () => array_from_array<string>([]),
       ),
     );
   }
@@ -713,6 +764,18 @@ function make_reader_program_transformed() {
   });
 }
 
+// These helpers mirror the transformer's emitted statement and property-read
+// order; the transformer checks exercise the corresponding generated source.
+function run_reader_program_fused(input: () => Config): number {
+  const environment = input();
+  const ask_value: Config = environment;
+  const config = ask_value;
+  const asks_argument = (config: Config) => config.label;
+  const label = asks_argument(environment);
+
+  return label.length + config.increment;
+}
+
 function make_state_native() {
   return (
     state: number,
@@ -775,6 +838,23 @@ function make_state_program_transformed() {
   });
 }
 
+function run_state_program_fused(
+  input: () => number,
+): readonly [
+  { readonly before: number; readonly after: number },
+  number,
+] {
+  let state = input();
+  const first_value: number = state;
+  const before = first_value;
+  const modify_argument = (value: number) => value + 2;
+  state = modify_argument(state);
+  const final_value: number = state;
+  const after = final_value;
+
+  return [{ before, after }, state];
+}
+
 function make_writer_native(value: number) {
   return (): readonly [number, readonly string[]] => {
     const logs = ["start"];
@@ -783,6 +863,18 @@ function make_writer_native(value: number) {
 
     return [value + 2, logs];
   };
+}
+
+function run_writer_native_monoid(
+  value: number,
+): readonly [number, ReturnType<typeof array_from_array<string>>] {
+  const start = array_from_array(["start"]);
+  let output = array_from_array<string>([]);
+  output = output.concat(start);
+  output = output.concat(array_from_array(["value"]));
+  output = output.concat(array_from_array(["end"]));
+
+  return [value + 2, output];
 }
 
 function make_writer_do(input: number) {
@@ -829,6 +921,23 @@ function make_writer_program_transformed(value: number) {
       },
     );
   });
+}
+
+function run_writer_program_fused(
+  input: () => number,
+  writer_input: () => ReturnType<typeof array_from_array<string>>,
+): readonly [number, ReturnType<typeof array_from_array<string>>] {
+  const tell_argument = array_from_array(["start"]);
+  let output = writer_input();
+  output = output.concat(tell_argument);
+  const writer_value = input();
+  const writer_output = array_from_array(["value"]);
+  output = output.concat(writer_output);
+  const value = writer_value;
+  const final_output = array_from_array(["end"]);
+  output = output.concat(final_output);
+
+  return [value + 2, output];
 }
 
 function make_task_native(value: number) {
