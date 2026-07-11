@@ -20,9 +20,30 @@ export type TransformResult = {
 export type TransformConfig = {
   /** Additional module specifiers which export this package's public API. */
   readonly library_specifiers?: readonly string[];
+  /** Additional module specifiers which export all terminal lift runners. */
+  readonly terminal_library_specifiers?: readonly string[];
 };
 
 type TransformKind = "do" | "program";
+
+type TerminalFunctionName =
+  | "run"
+  | "run_reader"
+  | "run_state"
+  | "run_writer";
+
+type ImportedTerminalFunction = {
+  readonly imported: TerminalFunctionName;
+};
+
+type TerminalImportRequest = {
+  readonly source_local_name: string;
+  readonly imported_name:
+    | "run_reader_terminal"
+    | "run_state_terminal"
+    | "run_writer_terminal";
+  readonly local_name: ts.Identifier;
+};
 
 type TransformState = {
   readonly kind: TransformKind;
@@ -95,6 +116,9 @@ export function transform_do_program_source(
     program_scopes.size > 0 || imports.namespaces.size > 0;
   const might_transform_effect = imports.effect_names.size > 0 ||
     imports.namespaces.size > 0;
+  const might_transform_terminal = imports.terminal_functions.size > 0 ||
+    imports.terminal_namespaces.size > 0;
+  const terminal_imports: TerminalImportRequest[] = [];
   let transformed = 0;
   let needs_program_helpers = false;
 
@@ -166,6 +190,20 @@ export function transform_do_program_source(
 
           const visited = ts.visitEachChild(node, visit, context);
 
+          if (might_transform_terminal && ts.isCallExpression(visited)) {
+            const terminal = transform_terminal_lift_run(
+              visited,
+              factory,
+              imports,
+              terminal_imports,
+            );
+
+            if (terminal !== undefined) {
+              transformed += 1;
+              return terminal;
+            }
+          }
+
           if (might_transform_effect && ts.isCallExpression(visited)) {
             const interpreted = transform_interpreter_call(
               visited,
@@ -175,6 +213,20 @@ export function transform_do_program_source(
 
             if (interpreted !== undefined) {
               transformed += 1;
+              const terminal = ts.isCallExpression(interpreted)
+                ? transform_terminal_lift_run(
+                  interpreted,
+                  factory,
+                  imports,
+                  terminal_imports,
+                )
+                : undefined;
+
+              if (terminal !== undefined) {
+                transformed += 1;
+                return terminal;
+              }
+
               return interpreted;
             }
 
@@ -186,6 +238,20 @@ export function transform_do_program_source(
 
             if (handled !== undefined) {
               transformed += 1;
+              const terminal = ts.isCallExpression(handled)
+                ? transform_terminal_lift_run(
+                  handled,
+                  factory,
+                  imports,
+                  terminal_imports,
+                )
+                : undefined;
+
+              if (terminal !== undefined) {
+                transformed += 1;
+                return terminal;
+              }
+
               return handled;
             }
           }
@@ -205,13 +271,14 @@ export function transform_do_program_source(
 
       const visited = ts.visitEachChild(source_file, visit, context);
 
-      return needs_program_helpers
+      return needs_program_helpers || terminal_imports.length > 0
         ? update_imports(
           visited,
           factory,
           needs_program_helpers,
           diagnostics,
           imports,
+          terminal_imports,
         )
         : visited;
     };
@@ -257,6 +324,15 @@ function might_contain_transform_target(source: string): boolean {
   }
 
   if (source.includes("Do") || source.includes("Program")) {
+    return true;
+  }
+
+  if (
+    source.includes("run_") &&
+    (source.includes("run_reader") || source.includes("run_state") ||
+      source.includes("run_writer")) &&
+    /\brun\b/.test(source)
+  ) {
     return true;
   }
 
@@ -2362,13 +2438,38 @@ type ImportedBindings = {
   readonly program_names: ReadonlySet<string>;
   readonly effect_names: ReadonlySet<string>;
   readonly namespaces: ReadonlySet<string>;
+  readonly terminal_functions: ReadonlyMap<string, ImportedTerminalFunction>;
+  readonly terminal_namespaces: ReadonlyMap<
+    string,
+    ReadonlySet<TerminalFunctionName>
+  >;
   readonly program_module?: string;
 };
 
 function has_imported_transform_target(imports: ImportedBindings): boolean {
   return imports.do_names.size > 0 || imports.program_names.size > 0 ||
-    imports.effect_names.size > 0 || imports.namespaces.size > 0;
+    imports.effect_names.size > 0 || imports.namespaces.size > 0 ||
+    imports.terminal_functions.size > 0 || imports.terminal_namespaces.size > 0;
 }
+
+const all_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
+  "run",
+  "run_reader",
+  "run_state",
+  "run_writer",
+]);
+const effect_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
+  "run",
+]);
+const reader_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
+  "run_reader",
+]);
+const state_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
+  "run_state",
+]);
+const writer_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
+  "run_writer",
+]);
 
 function collect_imports(
   source_file: ts.SourceFile,
@@ -2378,6 +2479,11 @@ function collect_imports(
   const program_names = new Set<string>();
   const effect_names = new Set<string>();
   const namespaces = new Set<string>();
+  const terminal_functions = new Map<string, ImportedTerminalFunction>();
+  const terminal_namespaces = new Map<
+    string,
+    ReadonlySet<TerminalFunctionName>
+  >();
   let program_module: string | undefined;
 
   for (const statement of source_file.statements) {
@@ -2388,9 +2494,6 @@ function collect_imports(
       continue;
     }
     const specifier = statement.moduleSpecifier.text;
-    if (!is_library_specifier(specifier, config)) {
-      continue;
-    }
     const clause = statement.importClause;
     if (
       clause === undefined || clause.isTypeOnly ||
@@ -2398,6 +2501,38 @@ function collect_imports(
     ) {
       continue;
     }
+
+    const terminal_exports = terminal_exports_from_specifier(
+      specifier,
+      config,
+    );
+
+    if (terminal_exports !== undefined) {
+      if (ts.isNamespaceImport(clause.namedBindings)) {
+        terminal_namespaces.set(
+          clause.namedBindings.name.text,
+          terminal_exports,
+        );
+      } else {
+        for (const element of clause.namedBindings.elements) {
+          if (element.isTypeOnly) continue;
+          const imported = (element.propertyName ?? element.name).text;
+
+          if (is_terminal_function_name(imported)) {
+            if (terminal_exports.has(imported)) {
+              terminal_functions.set(element.name.text, {
+                imported,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (!is_library_specifier(specifier, config)) {
+      continue;
+    }
+
     if (ts.isNamespaceImport(clause.namedBindings)) {
       namespaces.add(clause.namedBindings.name.text);
       program_module ??= specifier;
@@ -2415,7 +2550,129 @@ function collect_imports(
     }
   }
 
-  return { do_names, program_names, effect_names, namespaces, program_module };
+  remove_shadowed_terminal_bindings(
+    source_file,
+    terminal_functions,
+    terminal_namespaces,
+  );
+
+  return {
+    do_names,
+    program_names,
+    effect_names,
+    namespaces,
+    terminal_functions,
+    terminal_namespaces,
+    program_module,
+  };
+}
+
+function remove_shadowed_terminal_bindings(
+  source_file: ts.SourceFile,
+  terminal_functions: Map<string, ImportedTerminalFunction>,
+  terminal_namespaces: Map<string, ReadonlySet<TerminalFunctionName>>,
+) {
+  const candidates = new Set([
+    ...terminal_functions.keys(),
+    ...terminal_namespaces.keys(),
+  ]);
+
+  if (candidates.size === 0) {
+    return;
+  }
+
+  const shadowed = new Set<string>();
+
+  function add_binding(name: ts.BindingName | ts.Identifier | undefined) {
+    if (name === undefined) {
+      return;
+    }
+
+    if (ts.isIdentifier(name)) {
+      if (candidates.has(name.text)) {
+        shadowed.add(name.text);
+      }
+      return;
+    }
+
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) {
+        add_binding(element.name);
+      }
+    }
+  }
+
+  function visit(node: ts.Node) {
+    // These are the bindings whose provenance the maps above describe.
+    if (ts.isImportDeclaration(node)) {
+      return;
+    }
+
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+      add_binding(node.name);
+    } else if (ts.isModuleDeclaration(node)) {
+      if (ts.isIdentifier(node.name)) {
+        add_binding(node.name);
+      }
+    } else if (
+      ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
+      ts.isClassDeclaration(node) || ts.isClassExpression(node) ||
+      ts.isEnumDeclaration(node) || ts.isImportEqualsDeclaration(node)
+    ) {
+      add_binding(node.name);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  ts.forEachChild(source_file, visit);
+
+  for (const name of shadowed) {
+    terminal_functions.delete(name);
+    terminal_namespaces.delete(name);
+  }
+}
+
+function terminal_exports_from_specifier(
+  specifier: string,
+  config: TransformConfig,
+): ReadonlySet<TerminalFunctionName> | undefined {
+  if (config.terminal_library_specifiers?.includes(specifier)) {
+    return all_terminal_functions;
+  }
+
+  const package_match = specifier.match(
+    /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(effects|mod|reader|state|writer))?\/?$/,
+  );
+  const source_module = specifier.match(
+    /(?:^|\/)src\/(effects|mod|reader|state|writer)(?:\.ts)?$/,
+  )?.[1];
+
+  if (package_match !== null && package_match[1] === undefined) {
+    return all_terminal_functions;
+  }
+
+  switch (package_match?.[1] ?? source_module) {
+    case "mod":
+      return all_terminal_functions;
+    case "effects":
+      return effect_terminal_functions;
+    case "reader":
+      return reader_terminal_functions;
+    case "state":
+      return state_terminal_functions;
+    case "writer":
+      return writer_terminal_functions;
+  }
+
+  return undefined;
+}
+
+function is_terminal_function_name(
+  name: string,
+): name is TerminalFunctionName {
+  return name === "run" || name === "run_reader" || name === "run_state" ||
+    name === "run_writer";
 }
 
 function is_library_specifier(
@@ -2425,7 +2682,8 @@ function is_library_specifier(
   if (config.library_specifiers?.includes(specifier)) return true;
   if (
     specifier === "@mewhhaha/typeclasses" ||
-    specifier.startsWith("@mewhhaha/typeclasses/")
+    specifier.startsWith("@mewhhaha/typeclasses/") ||
+    /^jsr:@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/.*)?$/.test(specifier)
   ) return true;
   // The source tree is intentionally supported for local examples, benchmarks,
   // and package tests without needing a TypeScript program/type checker.
@@ -2498,6 +2756,168 @@ function transform_kind(
   }
 
   return undefined;
+}
+
+type TerminalFunctionTarget =
+  | {
+    readonly kind: "named";
+    readonly local_name: string;
+    readonly imported: TerminalFunctionName;
+  }
+  | {
+    readonly kind: "namespace";
+    readonly namespace: ts.Identifier;
+    readonly imported: TerminalFunctionName;
+  };
+
+function transform_terminal_lift_run(
+  node: ts.CallExpression,
+  factory: ts.NodeFactory,
+  imports: ImportedBindings,
+  requests: TerminalImportRequest[],
+): ts.CallExpression | undefined {
+  if (
+    node.questionDotToken !== undefined || node.typeArguments !== undefined ||
+    node.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+
+  const outer = read_terminal_function_target(node.expression, imports);
+
+  if (outer?.imported !== "run") {
+    return undefined;
+  }
+
+  const handled = unwrap_parentheses(node.arguments[0]);
+
+  if (
+    !ts.isCallExpression(handled) || handled.questionDotToken !== undefined ||
+    handled.arguments.length !== 2
+  ) {
+    return undefined;
+  }
+
+  const handler = read_terminal_function_target(handled.expression, imports);
+
+  if (handler === undefined || handler.imported === "run") {
+    return undefined;
+  }
+
+  const terminal_name = terminal_runner_name(handler.imported);
+  const type_arguments = terminal_type_arguments(
+    handler.imported,
+    handled.typeArguments,
+  );
+
+  if (handled.typeArguments !== undefined && type_arguments === undefined) {
+    return undefined;
+  }
+
+  const callee = handler.kind === "namespace"
+    ? factory.createPropertyAccessExpression(handler.namespace, terminal_name)
+    : terminal_import_identifier(handler, terminal_name, requests, factory);
+
+  return factory.updateCallExpression(
+    handled,
+    callee,
+    type_arguments,
+    handled.arguments,
+  );
+}
+
+function terminal_type_arguments(
+  handler: Exclude<TerminalFunctionName, "run">,
+  type_arguments: readonly ts.TypeNode[] | undefined,
+): readonly ts.TypeNode[] | undefined {
+  if (type_arguments === undefined) {
+    return undefined;
+  }
+
+  switch (handler) {
+    case "run_reader":
+    case "run_state":
+      return type_arguments.length === 3
+        ? [type_arguments[1], type_arguments[2]]
+        : undefined;
+    case "run_writer":
+      return type_arguments.length === 4
+        ? [type_arguments[0], type_arguments[1], type_arguments[3]]
+        : undefined;
+  }
+}
+
+function read_terminal_function_target(
+  expression: ts.Expression,
+  imports: ImportedBindings,
+): TerminalFunctionTarget | undefined {
+  if (ts.isIdentifier(expression)) {
+    const binding = imports.terminal_functions.get(expression.text);
+
+    return binding === undefined ? undefined : {
+      kind: "named",
+      local_name: expression.text,
+      imported: binding.imported,
+    };
+  }
+
+  if (
+    !ts.isPropertyAccessExpression(expression) ||
+    expression.questionDotToken !== undefined ||
+    !ts.isIdentifier(expression.expression) ||
+    !is_terminal_function_name(expression.name.text)
+  ) {
+    return undefined;
+  }
+
+  const namespace = expression.expression;
+  const exported = imports.terminal_namespaces.get(namespace.text);
+
+  if (exported === undefined || !exported.has(expression.name.text)) {
+    return undefined;
+  }
+
+  return {
+    kind: "namespace",
+    namespace,
+    imported: expression.name.text,
+  };
+}
+
+function terminal_runner_name(
+  name: Exclude<TerminalFunctionName, "run">,
+): TerminalImportRequest["imported_name"] {
+  switch (name) {
+    case "run_reader":
+      return "run_reader_terminal";
+    case "run_state":
+      return "run_state_terminal";
+    case "run_writer":
+      return "run_writer_terminal";
+  }
+}
+
+function terminal_import_identifier(
+  target: Extract<TerminalFunctionTarget, { readonly kind: "named" }>,
+  imported_name: TerminalImportRequest["imported_name"],
+  requests: TerminalImportRequest[],
+  factory: ts.NodeFactory,
+): ts.Identifier {
+  const existing = requests.find((request) => {
+    return request.source_local_name === target.local_name;
+  });
+
+  if (existing !== undefined) {
+    return existing.local_name;
+  }
+
+  const local_name = factory.createUniqueName(imported_name);
+  requests.push({
+    source_local_name: target.local_name,
+    imported_name,
+    local_name,
+  });
+  return local_name;
 }
 
 function is_imported_target(
@@ -2616,7 +3036,10 @@ function transform_interpreter_call(
     case "run": {
       const [runner] = node.arguments;
 
-      if (runner === undefined || node.arguments.length !== 1) {
+      if (
+        runner === undefined || node.arguments.length !== 1 ||
+        node.typeArguments !== undefined
+      ) {
         return undefined;
       }
 
@@ -2821,24 +3244,37 @@ function update_imports(
   needs_program_helpers: boolean,
   diagnostics: TransformDiagnostic[],
   imports: ImportedBindings,
+  terminal_imports: readonly TerminalImportRequest[],
 ): ts.SourceFile {
   let added_program_helpers = !needs_program_helpers;
+  const added_terminal_imports = new Set<TerminalImportRequest>();
 
   const statements = source_file.statements.map((statement) => {
     if (!ts.isImportDeclaration(statement)) {
       return statement;
     }
 
+    let updated = statement;
+
     if (needs_program_helpers && imports_value(statement, "Program")) {
       added_program_helpers = true;
-      return add_import_specifiers(statement, factory, ["Effect"]);
+      updated = add_import_specifiers(updated, factory, ["Effect"]);
     }
 
     if (needs_program_helpers && imports_value(statement, "Effect")) {
       added_program_helpers = true;
     }
 
-    return statement;
+    for (const request of terminal_imports) {
+      if (!imports_value(statement, request.source_local_name)) {
+        continue;
+      }
+
+      updated = add_import_binding(updated, factory, request);
+      added_terminal_imports.add(request);
+    }
+
+    return updated;
   });
 
   if (
@@ -2872,6 +3308,19 @@ function update_imports(
       column: 1,
       message:
         "Transformed Program but could not find a Program import to add Effect.",
+    });
+  }
+
+  for (const request of terminal_imports) {
+    if (added_terminal_imports.has(request)) {
+      continue;
+    }
+
+    diagnostics.push({
+      file_name: source_file.fileName,
+      line: 1,
+      column: 1,
+      message: "Transformed terminal runner but could not update its import.",
     });
   }
 
@@ -2947,6 +3396,43 @@ function add_import_specifiers(
       clause.isTypeOnly,
       clause.name,
       factory.updateNamedImports(bindings, [...bindings.elements, ...added]),
+    ),
+    declaration.moduleSpecifier,
+    declaration.attributes,
+  );
+}
+
+function add_import_binding(
+  declaration: ts.ImportDeclaration,
+  factory: ts.NodeFactory,
+  request: TerminalImportRequest,
+): ts.ImportDeclaration {
+  const clause = declaration.importClause;
+
+  if (clause === undefined) {
+    return declaration;
+  }
+
+  const bindings = clause.namedBindings;
+
+  if (bindings === undefined || !ts.isNamedImports(bindings)) {
+    return declaration;
+  }
+
+  const added = factory.createImportSpecifier(
+    false,
+    factory.createIdentifier(request.imported_name),
+    request.local_name,
+  );
+
+  return factory.updateImportDeclaration(
+    declaration,
+    declaration.modifiers,
+    factory.updateImportClause(
+      clause,
+      clause.isTypeOnly,
+      clause.name,
+      factory.updateNamedImports(bindings, [...bindings.elements, added]),
     ),
     declaration.moduleSpecifier,
     declaration.attributes,

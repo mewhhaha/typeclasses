@@ -7,7 +7,14 @@ import {
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
-import { type Effect, handle_lift, type WithoutLift } from "./effects.ts";
+import {
+  type Effect,
+  handle_lift,
+  is_lift_of,
+  type Lift,
+  type TaggedOperation,
+  type WithoutLift,
+} from "./effects.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -72,6 +79,36 @@ export function run_state<requirements, state, item>(
       return value.value()(current_state);
     },
   });
+}
+
+/** Runs an effect containing only State lifts. */
+export function run_state_terminal<state, item>(
+  effect: Effect<Lift<AsState<state>, unknown>, item>,
+  state: state,
+): readonly [item, state] {
+  let current = effect as Effect<Lift<AsState<state>, unknown>, unknown>;
+  let current_state = state;
+
+  while (true) {
+    if (current[0] === "pure") {
+      return [current[1] as item, current_state];
+    }
+
+    const operation = current[1];
+
+    if (!is_lift_of(operation, state_kind)) {
+      throw new TypeError(
+        "Unhandled effect operation: " + (operation as TaggedOperation)[0],
+      );
+    }
+
+    const [value, next] = operation[1].value()(current_state);
+    current = current[2](value) as Effect<
+      Lift<AsState<state>, unknown>,
+      unknown
+    >;
+    current_state = next;
+  }
 }
 
 export function eval_state<state, item>(

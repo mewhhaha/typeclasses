@@ -136,6 +136,12 @@ function might_contain_target(code: string): boolean {
   // include the import declaration itself in this cheap pre-parse filter.
   if (code.includes("\\u")) return true;
   if (code.includes("Do") || code.includes("Program")) return true;
+  if (
+    code.includes("run_") &&
+    (code.includes("run_reader") || code.includes("run_state") ||
+      code.includes("run_writer")) &&
+    /\brun\b/.test(code)
+  ) return true;
   return code.includes("Effect") &&
     (code.includes("interpret") || code.includes("handle_with"));
 }

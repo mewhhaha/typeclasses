@@ -6,7 +6,14 @@ import {
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
-import { type Effect, handle_lift, type WithoutLift } from "./effects.ts";
+import {
+  type Effect,
+  handle_lift,
+  handle_lift_terminal,
+  type Lift,
+  type LiftHandler,
+  type WithoutLift,
+} from "./effects.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -65,15 +72,50 @@ export function run_reader<requirements, environment, item>(
   effect: Effect<requirements, item>,
   environment: environment,
 ): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
-  return handle_lift(effect, reader_kind, environment, {
-    done(value) {
-      return value as item;
-    },
-    handle(value, state) {
-      return [value.value()(state), state] as const;
-    },
-  });
+  return handle_lift(
+    effect,
+    reader_kind,
+    environment,
+    reader_lift_handler as LiftHandler<
+      AsReader<environment>,
+      environment,
+      item,
+      item
+    >,
+  ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
 }
+
+/** Runs an effect containing only Reader lifts. */
+export function run_reader_terminal<environment, item>(
+  effect: Effect<Lift<AsReader<environment>, unknown>, item>,
+  environment: environment,
+): item {
+  return handle_lift_terminal(
+    effect,
+    reader_kind,
+    environment,
+    reader_lift_handler as LiftHandler<
+      AsReader<environment>,
+      environment,
+      item,
+      item
+    >,
+  ) as item;
+}
+
+const reader_lift_handler: LiftHandler<
+  AsReader<unknown>,
+  unknown,
+  unknown,
+  unknown
+> = {
+  done(value) {
+    return value;
+  },
+  handle(value, state) {
+    return [value.value()(state), state] as const;
+  },
+};
 
 Show.instance(Reader)({
   show() {

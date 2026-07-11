@@ -161,6 +161,8 @@ Deno.test({
   async fn() {
     const result = await transform(`
 import { Effect, run } from "../src/effects.ts";
+import { run_reader } from "../src/reader.ts";
+import { run_state } from "../src/state.ts";
 
 const value = Effect.interpret(effect)
   .handle((effect) => run_reader(effect, config))
@@ -168,17 +170,203 @@ const value = Effect.interpret(effect)
   .run(run);
 `);
 
-    assert_equals(result.transformed, 1);
+    assert_equals(result.transformed, 2);
     assert_equals(result.diagnostics, []);
-    assert_includes(
-      result.code,
-      "const value = run(run_state(run_reader(effect, config), 0));",
+    assert_true(
+      result.code.includes("run_state_terminal") &&
+        result.code.includes("run_reader(effect, config), 0"),
+      "expected the terminal State handler to return directly\n\n" +
+        result.code,
     );
     assert_true(
       !result.code.includes("Effect.interpret"),
       "expected immediate interpreter handle chain to be removed\n\n" +
         result.code,
     );
+  },
+});
+
+Deno.test({
+  name: "transformer lowers terminal Reader, State, and Writer handlers",
+  permissions: { env: true },
+  async fn() {
+    const named = await transform(`
+import { run as finish } from "../src/effects.ts";
+import { run_reader as handle_reader } from "../src/reader.ts";
+import { run_state as handle_state } from "../src/state.ts";
+import { run_writer as handle_writer } from "../src/writer.ts";
+
+const reader = finish(handle_reader(reader_effect, config));
+const state = finish(handle_state(state_effect, 0));
+const writer = finish(handle_writer(writer_effect, empty));
+`);
+
+    assert_equals(named.transformed, 3);
+    assert_equals(named.diagnostics, []);
+    assert_true(
+      !named.code.includes("finish(handle_"),
+      "expected terminal wrappers to be removed\n\n" + named.code,
+    );
+    assert_includes(named.code, "run_reader_terminal as");
+    assert_includes(named.code, "run_state_terminal as");
+    assert_includes(named.code, "run_writer_terminal as");
+
+    const explicit = await transform(`
+import { run as finish } from "../src/effects.ts";
+import { run_reader as handle_reader } from "../src/reader.ts";
+import { run_state as handle_state } from "../src/state.ts";
+import { run_writer as handle_writer } from "../src/writer.ts";
+
+const reader = finish(handle_reader<Requirements, Config, string>(reader_effect, config));
+const state = finish(handle_state<Requirements, number, string>(state_effect, 0));
+const writer = finish(handle_writer<Output, string, Requirements, number>(writer_effect, empty));
+`);
+
+    assert_equals(explicit.transformed, 3);
+    assert_equals(explicit.diagnostics, []);
+    assert_true(
+      /run_reader_terminal_\d+<Config, string>/.test(explicit.code),
+      "expected Reader type arguments to omit requirements\n\n" +
+        explicit.code,
+    );
+    assert_true(
+      /run_state_terminal_\d+<number, string>/.test(explicit.code),
+      "expected State type arguments to omit requirements\n\n" + explicit.code,
+    );
+    assert_true(
+      /run_writer_terminal_\d+<Output, string, number>/.test(explicit.code),
+      "expected Writer type arguments to omit requirements\n\n" +
+        explicit.code,
+    );
+
+    const explicit_outer = await transform(`
+import { run as finish } from "../src/effects.ts";
+import { run_reader as handle_reader } from "../src/reader.ts";
+
+const value = finish<number | string>(handle_reader(effect, config));
+`);
+
+    assert_equals(explicit_outer.transformed, 0);
+    assert_equals(explicit_outer.diagnostics, []);
+    assert_includes(
+      explicit_outer.code,
+      "finish<number | string>(handle_reader(effect, config))",
+    );
+
+    const explicit_interpreter = await transform(`
+import { Effect, run as finish } from "../src/effects.ts";
+import { run_reader as handle_reader } from "../src/reader.ts";
+
+const value = Effect.interpret(handle_reader(effect, config))
+  .run<number | string>(finish);
+`);
+
+    assert_equals(explicit_interpreter.transformed, 0);
+    assert_equals(explicit_interpreter.diagnostics, []);
+    assert_includes(
+      explicit_interpreter.code,
+      ".run<number | string>(finish)",
+    );
+
+    const namespaced = await transform(`
+import * as effects from "../src/effects.ts";
+import * as reader from "../src/reader.ts";
+
+const value = effects.run(reader.run_reader(program, config));
+`);
+
+    assert_equals(namespaced.transformed, 1);
+    assert_equals(namespaced.diagnostics, []);
+    assert_includes(
+      namespaced.code,
+      "reader.run_reader_terminal(program, config)",
+    );
+
+    const optional = await transform(`
+import * as effects from "../src/effects.ts";
+import * as reader from "../src/reader.ts";
+
+const outer = effects?.run(reader.run_reader(program, config));
+const inner = effects.run(reader?.run_reader(program, config));
+`);
+
+    assert_equals(optional.transformed, 0);
+    assert_equals(optional.diagnostics, []);
+
+    const jsr = await transform(`
+import { run, run_reader } from "jsr:@mewhhaha/typeclasses@^1.0.0";
+const value = run(run_reader(program, config));
+`);
+
+    assert_equals(jsr.transformed, 1);
+    assert_equals(jsr.diagnostics, []);
+    assert_includes(jsr.code, "run_reader_terminal as");
+
+    const local = await transform(`
+const run = (value: unknown) => value;
+const run_reader = (value: unknown, _config: unknown) => value;
+const value = run(run_reader(program, config));
+`);
+
+    assert_equals(local.transformed, 0);
+    assert_equals(local.diagnostics, []);
+
+    const shadowed = await transform(`
+import { run as finish } from "../src/effects.ts";
+import { run_reader as handle_reader } from "../src/reader.ts";
+
+function evaluate(
+  finish: (value: unknown) => unknown,
+  handle_reader: (value: unknown, config: unknown) => unknown,
+) {
+  return finish(handle_reader(program, config));
+}
+`);
+
+    assert_equals(shadowed.transformed, 0);
+    assert_equals(shadowed.diagnostics, []);
+    assert_includes(
+      shadowed.code,
+      "return finish(handle_reader(program, config));",
+    );
+
+    const shadowed_namespace = await transform(`
+import * as effects from "../src/effects.ts";
+import * as reader from "../src/reader.ts";
+
+function evaluate(effects: Runner, reader: ReaderRunner) {
+  return effects.run(reader.run_reader(program, config));
+}
+`);
+
+    assert_equals(shadowed_namespace.transformed, 0);
+    assert_equals(shadowed_namespace.diagnostics, []);
+    assert_includes(
+      shadowed_namespace.code,
+      "return effects.run(reader.run_reader(program, config));",
+    );
+
+    const transformer = await import("./transform_do_program.ts");
+    const facade_source = `
+import { run, run_reader } from "./local-reexport.ts";
+const value = run(run_reader(program, config));
+`;
+    const facade = transformer.transform_do_program_source(
+      facade_source,
+      "input.ts",
+      { library_specifiers: ["./local-reexport.ts"] },
+    );
+    const terminal_facade = transformer.transform_do_program_source(
+      facade_source,
+      "input.ts",
+      { terminal_library_specifiers: ["./local-reexport.ts"] },
+    );
+
+    assert_equals(facade.transformed, 0);
+    assert_equals(facade.diagnostics, []);
+    assert_equals(terminal_facade.transformed, 1);
+    assert_equals(terminal_facade.diagnostics, []);
+    assert_includes(terminal_facade.code, "run_reader_terminal as");
   },
 });
 

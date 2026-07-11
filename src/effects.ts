@@ -563,6 +563,44 @@ export function run<item>(effect: Effect<never, item>): item {
   throw new TypeError("Unhandled effect operation: " + operation[0]);
 }
 
+/** Runs an effect whose only operation is a lift for `dictionary`. */
+export function handle_lift_terminal<
+  dictionary extends Dictionary,
+  state,
+  item,
+  out,
+>(
+  effect: Effect<Lift<dictionary, unknown>, item>,
+  runtime_kind: dictionary[typeof kind],
+  state: state,
+  handler: LiftHandler<dictionary, state, item, out>,
+): out {
+  let current = effect as Effect<Lift<dictionary, unknown>, unknown>;
+  let current_state = state;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return handler.done(current[1] as item, current_state);
+      case "impure": {
+        if (is_lift_of(current[1], runtime_kind)) {
+          const operation = current[1] as Lift<dictionary, unknown>;
+          const [value, next] = handler.handle(operation[1], current_state);
+          current = current[2](value) as Effect<
+            Lift<dictionary, unknown>,
+            unknown
+          >;
+          current_state = next;
+          continue;
+        }
+
+        const operation = current[1] as TaggedOperation;
+        throw new TypeError("Unhandled effect operation: " + operation[0]);
+      }
+    }
+  }
+}
+
 export function handle_lift<
   requirements,
   dictionary extends Dictionary,

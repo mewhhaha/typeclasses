@@ -11,7 +11,9 @@ import {
 import {
   type Effect,
   handle_lift,
+  is_lift_of,
   type Lift,
+  type TaggedOperation,
   type WithoutLift,
 } from "./effects.ts";
 import { configured_dictionary } from "./internal.ts";
@@ -118,6 +120,43 @@ export function run_writer<
       return [item, concat_output(output, next_output)] as const;
     },
   });
+}
+
+/** Runs an effect containing only Writer lifts. */
+export function run_writer_terminal<
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  effect: Effect<Lift<AsWriter<output, log>, unknown>, item>,
+  empty: Data<output, log>,
+): readonly [item, Data<output, log>] {
+  let current = effect as Effect<
+    Lift<AsWriter<output, log>, unknown>,
+    unknown
+  >;
+  let current_output = empty;
+
+  while (true) {
+    if (current[0] === "pure") {
+      return [current[1] as item, current_output];
+    }
+
+    const operation = current[1];
+
+    if (!is_lift_of(operation, writer_kind)) {
+      throw new TypeError(
+        "Unhandled effect operation: " + (operation as TaggedOperation)[0],
+      );
+    }
+
+    const [value, next_output] = operation[1].value();
+    current_output = current_output.concat(next_output);
+    current = current[2](value) as Effect<
+      Lift<AsWriter<output, log>, unknown>,
+      unknown
+    >;
+  }
 }
 
 type WriterOutput<requirements> = requirements extends Lift<

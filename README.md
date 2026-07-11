@@ -600,8 +600,9 @@ lowers supported `Do` blocks to direct typeclass method chains, supported
 `Program` blocks to `Effect.bind`/`Effect.map`/ `Effect.pure`,
 `return yield* value` to the monadic right identity, and static
 `Effect.handle_with(program, [handlers...])` calls to nested runner calls. The
-transform also removes generated wrapper IIFEs where it can preserve evaluation
-order.
+transform also lowers terminal `run(run_reader(...))`, `run(run_state(...))`,
+and `run(run_writer(...))` calls to direct runners, and removes generated
+wrapper IIFEs where it can preserve evaluation order.
 
 Supported generator control flow includes `if`, non-fallthrough `switch`,
 classic `for`, `while`, `do/while`, and `for...of`, including unlabeled
@@ -619,7 +620,9 @@ unbounded iteration.
 Detection is anchored to package imports, including aliases and namespace
 imports. Local functions that merely happen to be named `Do` or `Program` are
 not rewritten. Relative source imports in this repository are recognized, and
-other re-export specifiers can be supplied through `library_specifiers`.
+other re-export specifiers can be supplied through `library_specifiers`. Facades
+that export `run`, the composable lift handlers, and all corresponding terminal
+runners can opt into terminal lowering through `terminal_library_specifiers`.
 
 Unsupported shapes are left unchanged and reported through `diagnostics`. The
 repository task exposes the same tool on the command line; `--check` makes any
@@ -1289,6 +1292,13 @@ Each handler removes one capability from the effect type and returns a smaller
 effect. The final `.run(run_task)` call is the terminal runner that executes the
 remaining `Task` effect. That gives a transformer-like composition story without
 defining `ReaderT`, `StateT`, `WriterT`, and every concrete stack combination.
+
+When a synchronous Reader, State, or Writer lift is the only remaining
+capability, `run_reader_terminal`, `run_state_terminal`, and
+`run_writer_terminal` return the final value without allocating a residual
+`Effect`. The source transformer selects these runners automatically for exact
+terminal shapes such as `run(run_state(program, initial))`; composable
+`run_reader`/`run_state`/`run_writer` calls keep their existing behavior.
 
 ### IO and Task
 

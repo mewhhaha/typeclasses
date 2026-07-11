@@ -88,6 +88,28 @@ const value = Effect.interpret(effect).run(run);
   assert_equals(warnings, []);
 });
 
+Deno.test("transform plugin recognizes terminal lift runners", () => {
+  const source = `
+import { run } from "../src/effects.ts";
+import { run_reader } from "../src/reader.ts";
+const value = run(run_reader(effect, config));
+`;
+  const transformed = typeclasses_rollup_plugin().transform.call(
+    { warn() {} },
+    source,
+    "fixture.ts",
+  );
+
+  assert_true(transformed !== null, "expected terminal source to be handled");
+  if (transformed === null) {
+    throw new Error("expected terminal source to be handled");
+  }
+  assert_true(
+    transformed.code.includes("run_reader_terminal"),
+    "expected terminal Reader runner\n\n" + transformed.code,
+  );
+});
+
 Deno.test({
   name: "esbuild bundles examples/monads.ts through the typeclasses plugin",
   permissions: { env: true, read: true, run: true },

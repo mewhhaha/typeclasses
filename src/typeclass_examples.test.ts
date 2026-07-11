@@ -54,7 +54,14 @@ import {
   type Nothing as MaybeNothingRaw,
 } from "./maybe.ts";
 import { predicate } from "./predicate.ts";
-import { ask, asks, type AsReader, local, run_reader } from "./reader.ts";
+import {
+  ask,
+  asks,
+  type AsReader,
+  local,
+  run_reader,
+  run_reader_terminal,
+} from "./reader.ts";
 import {
   from_entries as record_from_entries,
   to_record as record_to_record,
@@ -101,10 +108,12 @@ import {
   modify,
   put,
   run_state,
+  run_state_terminal,
 } from "./state.ts";
 import {
   type AsWriter,
   run_writer,
+  run_writer_terminal,
   tell as writer_tell,
   writer as writer_value,
 } from "./writer.ts";
@@ -1007,6 +1016,110 @@ Deno.test("Effects compose reader state writer and task with handlers", async ()
     is_effect(Effect.suspend(["test"], () => Effect.pure("done"))),
     "suspended values are effects",
   );
+});
+
+Deno.test("Terminal lift runners match composable lift handlers", () => {
+  const reader_program = Program(function* () {
+    const environment = yield* ask<number>();
+    const doubled = yield* asks((value: number) => value * 2);
+
+    return environment + doubled;
+  });
+  assert_equals(run_reader_terminal(reader_program, 10), 30);
+  assert_equals(run_reader_terminal(reader_program, 4), 12);
+  assert_equals(
+    Effect.interpret(run_reader(reader_program, 10)).run(run),
+    run_reader_terminal(reader_program, 10),
+  );
+
+  const state_program = Program(function* () {
+    const before = yield* get<number>();
+    yield* modify((value: number) => value + 2);
+    const after = yield* get<number>();
+
+    return before + after;
+  });
+  assert_equals(run_state_terminal(state_program, 40), [82, 42]);
+  assert_equals(run_state_terminal(state_program, 1), [4, 3]);
+  assert_equals(
+    Effect.interpret(run_state(state_program, 40)).run(run),
+    run_state_terminal(state_program, 40),
+  );
+
+  const writer_program = Program(function* () {
+    yield* writer_tell(ArrayT(["start"]));
+    const value = yield* writer_value(40, ArrayT(["value"]));
+    yield* writer_tell(ArrayT(["end"]));
+
+    return value + 2;
+  });
+  const terminal_writer = run_writer_terminal(
+    writer_program,
+    ArrayT<string>([]),
+  );
+  const composable_writer = Effect.interpret(
+    run_writer(writer_program, ArrayT<string>([])),
+  ).run(run);
+  assert_equals(terminal_writer[0], 42);
+  assert_equals(to_array(terminal_writer[1]), ["start", "value", "end"]);
+  assert_equals(composable_writer[0], terminal_writer[0]);
+  assert_equals(to_array(composable_writer[1]), to_array(terminal_writer[1]));
+
+  function observe_writer_order(terminal: boolean): readonly string[] {
+    const events: string[] = [];
+    const empty = ArrayT<string>([]);
+    Object.defineProperty(empty, "concat", {
+      value(right: unknown) {
+        events.push("concat");
+        return right;
+      },
+    });
+    const program = Effect.bind_from(
+      writer_tell(ArrayT(["entry"])),
+      () => {
+        events.push("resume");
+        return Effect.pure(42);
+      },
+    );
+
+    if (terminal) {
+      run_writer_terminal(program, empty);
+    } else {
+      run(run_writer(program, empty));
+    }
+
+    return events;
+  }
+
+  assert_equals(observe_writer_order(false), ["concat", "resume"]);
+  assert_equals(observe_writer_order(true), ["concat", "resume"]);
+
+  type Custom = EffectOperation<number> & readonly ["terminal.custom"];
+  const custom = Effect.send(["terminal.custom"] as Custom);
+  const terminal_runners = [
+    () => run_reader_terminal(custom as never, 0),
+    () => run_state_terminal(custom as never, 0),
+    () => run_writer_terminal(custom as never, ArrayT<string>([])),
+  ];
+
+  for (const run_terminal of terminal_runners) {
+    let error: unknown;
+
+    try {
+      run_terminal();
+    } catch (caught) {
+      error = caught;
+    }
+
+    assert_true(
+      error instanceof TypeError,
+      "terminal runner rejects other operations",
+    );
+    assert_equals(
+      (error as TypeError).message,
+      "Unhandled effect operation: terminal.custom",
+    );
+  }
 });
 
 Deno.test("Effects allow new capabilities without changing the core", () => {
