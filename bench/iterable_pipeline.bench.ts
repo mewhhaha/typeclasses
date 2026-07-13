@@ -42,19 +42,7 @@ Deno.bench("iterable pipeline IterableT maps lazy, folded", () => {
 });
 
 Deno.bench("iterable pipeline manual fused loop", () => {
-  let total = 0;
-
-  for (const item of source_items) {
-    let current = item;
-
-    for (const step of steps) {
-      current = step(current);
-    }
-
-    total += current;
-  }
-
-  _sink = total;
+  _sink = manual_fused_sum();
 });
 
 Deno.bench("iterable pipeline Array.map materializes all, first 100", () => {
@@ -152,4 +140,78 @@ function sum_first_iterable(items: Iterable<number>, count: number): number {
   }
 
   return total;
+}
+
+function manual_fused_sum(): number {
+  let total = 0;
+
+  for (const item of source_items) {
+    let current = item;
+
+    for (const step of steps) {
+      current = step(current);
+    }
+
+    total += current;
+  }
+
+  return total;
+}
+
+const expected_pipeline = array_materialized_pipeline();
+const native_pipeline = [...native_lazy_pipeline()];
+const wrapped_pipeline = iterable_to_array(iterable_lazy_pipeline());
+
+assert_same_pipeline("native generator", native_pipeline, expected_pipeline);
+assert_same_pipeline("IterableT", wrapped_pipeline, expected_pipeline);
+assert_same_number(
+  "IterableT fold",
+  iterable_lazy_pipeline().fold(0, (total, item) => total + item),
+  sum_array(expected_pipeline),
+);
+assert_same_number(
+  "manual fused loop",
+  manual_fused_sum(),
+  sum_array(expected_pipeline),
+);
+assert_same_number(
+  "native prefix",
+  sum_first_iterable(native_lazy_pipeline(), prefix_count),
+  sum_first_array(expected_pipeline, prefix_count),
+);
+assert_same_number(
+  "IterableT prefix",
+  sum_first_iterable(iterable_lazy_pipeline().value()(), prefix_count),
+  sum_first_array(expected_pipeline, prefix_count),
+);
+
+function assert_same_pipeline(
+  name: string,
+  actual: readonly number[],
+  expected: readonly number[],
+): void {
+  if (actual.length !== expected.length) {
+    throw new Error(
+      `${name} produced ${actual.length} values; expected ${expected.length}`,
+    );
+  }
+
+  for (let index = 0; index < expected.length; index += 1) {
+    if (!Object.is(actual[index], expected[index])) {
+      throw new Error(
+        `${name} differs at index ${index}: ` +
+          `actual ${actual[index]}, expected ${expected[index]}`,
+      );
+    }
+  }
+}
+
+function assert_same_number(
+  name: string,
+  actual: number,
+  expected: number,
+): void {
+  if (!Object.is(actual, expected)) {
+    throw new Error(`${name} produced ${actual}; expected ${expected}`);
+  }
 }

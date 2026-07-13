@@ -23,29 +23,39 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const array_identity: unique symbol;
+
+/** The immutable array representation wrapped by the ArrayT dictionary. */
 export type ArrayT<item> = readonly item[];
 
+/** Dictionary type for immutable arrays and their list-like instances. */
 export interface AsArray
   extends
-    As<AsArray>,
+    As<AsArray, typeof array_identity>,
     Show<AsArray>,
     Monoid<AsArray>,
     Alternative<AsArray>,
     Monad<AsArray>,
     Traversable<AsArray>,
     Ord<AsArray> {
+  /** Higher-kinded slot for the array element type. */
   readonly [type_item]: unknown;
+  /** Immutable array representation at the selected element type. */
   readonly [type_data]: ArrayT<this[typeof type_item]>;
 }
 
 type ArrayValue<item> = Data<AsArray, item>;
 
+/** Callable immutable-array dictionary with fluent typeclass methods. */
 export const ArrayT: AsArray = data<AsArray>();
 
+/** Wrap a defensive copy of an immutable array. */
 export function from_array<item>(items: readonly item[]): ArrayValue<item> {
   return ArrayT([...items]);
 }
 
+/** Copy a wrapped immutable array into a mutable JavaScript array. */
 export function to_array<item>(array: ArrayValue<item>): item[] {
   return [...array.value()];
 }
@@ -239,12 +249,12 @@ function array_prepend<item>(head: item) {
   return (tail: ArrayValue<item>) => ArrayT([head, ...tail.value()]);
 }
 
-function lift_array_two<out>(
-  fn: (...values: unknown[]) => out,
+function lift_array_two<result>(
+  fn: (...values: unknown[]) => result,
   first: readonly unknown[],
   second: readonly unknown[],
-): ArrayValue<out> {
-  const out = new Array<out>(first.length * second.length);
+): ArrayValue<result> {
+  const out = new Array<result>(first.length * second.length);
   let out_index = 0;
 
   for (let left_index = 0; left_index < first.length; left_index += 1) {
@@ -259,13 +269,13 @@ function lift_array_two<out>(
   return ArrayT(out);
 }
 
-function lift_array_three<out>(
-  fn: (...values: unknown[]) => out,
+function lift_array_three<result>(
+  fn: (...values: unknown[]) => result,
   first: readonly unknown[],
   second: readonly unknown[],
   third: readonly unknown[],
-): ArrayValue<out> {
-  const out = new Array<out>(first.length * second.length * third.length);
+): ArrayValue<result> {
+  const out = new Array<result>(first.length * second.length * third.length);
   let out_index = 0;
 
   for (let left_index = 0; left_index < first.length; left_index += 1) {
@@ -288,11 +298,11 @@ function lift_array_three<out>(
   return ArrayT(out);
 }
 
-function lift_array_many<out>(
-  fn: (...values: unknown[]) => out,
+function lift_array_many<result>(
+  fn: (...values: unknown[]) => result,
   first: readonly unknown[],
   rest: readonly ArrayValue<unknown>[],
-): ArrayValue<out> {
+): ArrayValue<result> {
   let rows = first.map((value) => [value] as unknown[]);
 
   for (const current of rest) {

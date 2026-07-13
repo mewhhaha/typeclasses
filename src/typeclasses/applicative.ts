@@ -9,10 +9,13 @@ import {
 import { append_item } from "../internal.ts";
 import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
 
+/** Runtime token for the Applicative typeclass. */
 export const applicative_typeclass = Symbol("Applicative");
+/** Optional instance hook for optimized multi-value lifting. */
 export const applicative_lift_method = Symbol("Applicative.lift");
 
-type ApplicativeImplementation<dictionary extends Dictionary> = {
+/** @ignore */
+export type ApplicativeImplementation<dictionary extends Dictionary> = {
   pure: <item>(
     this: dictionary,
     value: item,
@@ -21,11 +24,11 @@ type ApplicativeImplementation<dictionary extends Dictionary> = {
     this: Data<dictionary, (value: NoInfer<from>) => to>,
     value: Data<dictionary, from>,
   ) => Data<dictionary, to>;
-  [applicative_lift_method]?: <out>(
+  [applicative_lift_method]?: <result>(
     this: Data<dictionary, unknown>,
-    fn: (...values: unknown[]) => out,
+    fn: (...values: unknown[]) => result,
     rest: readonly Data<dictionary, unknown>[],
-  ) => Data<dictionary, out>;
+  ) => Data<dictionary, result>;
 };
 
 /** The minimal complete definition of an Applicative instance. */
@@ -37,6 +40,7 @@ export type MinimalApplicative<dictionary extends Applicative<dictionary>> = {
   ) => Data<dictionary, to>;
 };
 
+/** Functor dictionary capability for lifting and applying contextual values. */
 export interface Applicative<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -46,7 +50,8 @@ export interface Applicative<dictionary extends Dictionary>
     >,
     FunctorDictionary<dictionary> {}
 
-type ApplicativeTypeclass =
+/** @ignore */
+export type ApplicativeTypeclass =
   & Typeclass<typeof applicative_typeclass, {
     pure<dictionary extends Applicative<dictionary>, item>(
       witness: Data<dictionary, unknown>,
@@ -68,6 +73,7 @@ type ApplicativeTypeclass =
     ): (minimal: MinimalApplicative<dictionary>) => void;
   };
 
+/** Operations for constructing, applying, and lifting Applicative values. */
 export const Applicative: ApplicativeTypeclass = typeclass(
   applicative_typeclass,
   {
@@ -127,104 +133,51 @@ export const Applicative: ApplicativeTypeclass = typeclass(
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
-  out,
+  remaining extends unknown[],
+  result,
 >(
-  fn: (first: first) => out,
+  fn: (first: first, ...remaining: remaining) => result,
   first: Data<dictionary, first>,
-): Data<dictionary, out>;
+  ...rest: {
+    [index in keyof remaining]: Data<NoInfer<dictionary>, remaining[index]>;
+  }
+): Data<dictionary, result>;
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
   first,
-  second,
-  out,
+  remaining extends unknown[],
+  result,
 >(
-  fn: (first: first, second: second) => out,
+  fn: (first: first, ...remaining: remaining) => result,
   first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-): Data<dictionary, out>;
-function applicative_lift<
-  dictionary extends Applicative<dictionary>,
-  first,
-  second,
-  third,
-  out,
->(
-  fn: (first: first, second: second, third: third) => out,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-): Data<dictionary, out>;
-function applicative_lift<
-  dictionary extends Applicative<dictionary>,
-  first,
-  second,
-  third,
-  fourth,
-  out,
->(
-  fn: (first: first, second: second, third: third, fourth: fourth) => out,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-  fourth: Data<dictionary, fourth>,
-): Data<dictionary, out>;
-function applicative_lift<
-  dictionary extends Applicative<dictionary>,
-  first,
-  second,
-  third,
-  fourth,
-  fifth,
-  out,
->(
-  fn: (
-    first: first,
-    second: second,
-    third: third,
-    fourth: fourth,
-    fifth: fifth,
-  ) => out,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-  fourth: Data<dictionary, fourth>,
-  fifth: Data<dictionary, fifth>,
-): Data<dictionary, out>;
-function applicative_lift<
-  dictionary extends Applicative<dictionary>,
-  out,
->(
-  fn: (...values: unknown[]) => out,
-  first: Data<dictionary, unknown>,
-  ...rest: Data<dictionary, unknown>[]
-): Data<dictionary, out>;
-function applicative_lift<
-  dictionary extends Applicative<dictionary>,
-  out,
->(
-  fn: (...values: unknown[]) => out,
-  first: Data<dictionary, unknown>,
-  ...rest: Data<dictionary, unknown>[]
-): Data<dictionary, out> {
+  ...rest: {
+    [index in keyof remaining]: Data<NoInfer<dictionary>, remaining[index]>;
+  }
+): Data<dictionary, result> {
+  const apply = fn as (...values: unknown[]) => result;
+  const remaining_values = rest as unknown as Data<dictionary, unknown>[];
   const instance = Applicative.instance_for(first);
   const lift = instance[applicative_lift_method];
 
   if (lift !== undefined) {
-    return call_typeclass_method(lift, first, fn, rest);
+    return call_typeclass_method(lift, first, apply, remaining_values);
   }
 
-  const values = [first, ...rest];
+  const values = [
+    first as Data<dictionary, unknown>,
+    ...remaining_values,
+  ];
 
   if (values.length === 1) {
     return values[0].map((value) => {
-      return fn(value);
+      return apply(value);
     });
   }
 
   if (values.length === 2) {
     const combined = values[0].map((left) => {
       return (right: unknown) => {
-        return fn(left, right);
+        return apply(left, right);
       };
     });
 
@@ -235,7 +188,7 @@ function applicative_lift<
     const combined = values[0].map((left) => {
       return (middle: unknown) => {
         return (right: unknown) => {
-          return fn(left, middle, right);
+          return apply(left, middle, right);
         };
       };
     });
@@ -255,6 +208,6 @@ function applicative_lift<
   }
 
   return Functor.map(combined, (items) => {
-    return fn(...items);
+    return apply(...items);
   });
 }

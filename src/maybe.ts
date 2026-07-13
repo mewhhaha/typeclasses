@@ -27,37 +27,52 @@ import {
 import { type EitherValue, Left, Right } from "./either.ts";
 import { inspect } from "./inspect.ts";
 
+/** @ignore */
+export declare const maybe_identity: unique symbol;
+
+/** An optional value represented by a Just or Nothing tagged tuple. */
 export type Maybe<item> =
   | Just<item>
   | Nothing;
 
+/** The present branch of Maybe. */
 export type Just<item> = readonly ["Just", item];
+/** The absent branch of Maybe. */
 export type Nothing = readonly ["Nothing"];
 
+/** Dictionary type for optional values and their typeclass instances. */
 export interface AsMaybe
   extends
-    As<AsMaybe>,
+    As<AsMaybe, typeof maybe_identity>,
     Show<AsMaybe>,
     Alternative<AsMaybe>,
     Monad<AsMaybe>,
     Monoid<AsMaybe>,
     Traversable<AsMaybe>,
     Ord<AsMaybe> {
+  /** Higher-kinded slot for the optional item type. */
   readonly [type_item]: unknown;
+  /** Maybe representation at the selected item type. */
   readonly [type_data]: Maybe<this[typeof type_item]>;
 }
 
+/** A Maybe tuple wrapped with the Maybe dictionary's fluent methods. */
 export type MaybeValue<item> = Data<AsMaybe, item>;
+/** Callable Maybe dictionary with constructors for both branches. */
 export type MaybeConstructor = UnionDictionary<AsMaybe>;
 
+/** Callable Maybe dictionary and the source of its typeclass instances. */
 export const Maybe: MaybeConstructor = data<AsMaybe>(
   union(["Just", $slot], ["Nothing"]),
 );
+/** Construct a present Maybe value. */
 export const Just: MaybeConstructor["Just"] = Maybe.Just;
+/** Construct or match the absent Maybe value. */
 export const Nothing: MaybeConstructor["Nothing"] = Maybe.Nothing;
 
 const nothing_singleton = Nothing<never>();
 
+/** Convert null or undefined to Nothing and every other value to Just. */
 export function from_nullable<item>(
   value: item | null | undefined,
 ): MaybeValue<item> {
@@ -100,11 +115,11 @@ export function from_maybe<item>(
 }
 
 /** Haskell `maybe :: b -> (a -> b) -> Maybe a -> b`. */
-export function maybe<item, out>(
-  fallback: out,
-  fn: (value: item) => out,
+export function maybe<item, result>(
+  fallback: result,
+  fn: (value: item) => result,
   value: MaybeValue<item>,
-): out {
+): result {
   const [tag, payload] = value.value();
 
   switch (tag) {
@@ -345,11 +360,11 @@ Traversable.instance(Maybe)({
   },
 });
 
-function lift_just<out>(
-  fn: (...values: unknown[]) => out,
+function lift_just<result>(
+  fn: (...values: unknown[]) => result,
   first: unknown,
   rest: readonly MaybeValue<unknown>[],
-): MaybeValue<out> {
+): MaybeValue<result> {
   switch (rest.length) {
     case 0:
       return Just(fn(first));

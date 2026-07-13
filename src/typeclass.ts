@@ -14,42 +14,78 @@ import {
 } from "./data_value.ts";
 import type { TaggedMatchCases, WrappedData } from "./data_value.ts";
 
+/** Runtime marker shared by a dictionary and each of its instances. */
 export const kind = Symbol("Data.kind");
-const data_type = Symbol("Data.type");
+/** @ignore */
+export const data_type = Symbol("Data.type");
 
+/** Phantom property that selects the item carried by a data type. */
 export declare const type_item: unique symbol;
+/** Phantom property that resolves a data type after its item is selected. */
 export declare const type_data: unique symbol;
+/** Phantom property that distinguishes otherwise identical dictionaries. */
+export declare const type_identity: unique symbol;
 
+/** A higher-kinded data description with an item slot and resolved shape. */
 export interface DataType {
+  /** The item supplied when applying this data type. */
   readonly [type_item]: unknown;
+  /** The raw value shape produced by this data type. */
   readonly [type_data]: unknown;
 }
 
+/** Resolve a data description for a particular item type. */
 export type AppliedData<type extends DataType, item> =
   (type & { readonly [type_item]: item })[typeof type_data];
 
+/** Resolve the raw value shape accepted by a dictionary. */
 export type ContextData<dictionary extends Dictionary, item> = AppliedData<
   DictionaryDataType<dictionary>,
   item
 >;
 
-export type DictionaryDataType<dictionary extends Dictionary> =
+/** @ignore */
+export type RawDictionaryDataType<dictionary extends Dictionary> =
   NonNullable<dictionary[typeof data_type]> extends DataType
     ? NonNullable<dictionary[typeof data_type]>
     : DataType;
 
+/** Extract the higher-kinded data description carried by a dictionary. */
+export type DictionaryDataType<dictionary extends Dictionary> =
+  IdentifiedDataType<
+    RawDictionaryDataType<dictionary>,
+    dictionary[typeof type_identity]
+  >;
+
+/** A wrapped value with the operations supplied by its dictionary. */
 export type Data<dictionary extends Dictionary, item> = WrappedData<
   dictionary,
   ContextData<dictionary, item>,
   item
 >;
 
-export type Dictionary<type extends DataType = DataType> = {
+/** @ignore */
+export type IdentifiedDataType<type extends DataType, identity> =
+  & type
+  & { readonly [type_identity]: identity };
+
+/** The common type-level metadata carried by every data dictionary. */
+export type Dictionary<
+  type extends DataType = DataType,
+  identity = unknown,
+> = {
+  /** Runtime identity used to associate instances with this dictionary. */
   [kind]: unknown;
+  /** The higher-kinded raw value description for this dictionary. */
   readonly [data_type]?: type;
+  /** A phantom identity that keeps separate dictionaries distinct. */
+  readonly [type_identity]: identity;
 };
 
-export interface As<type extends DataType> extends Dictionary<type> {
+/** A callable dictionary that wraps raw values of a data description. */
+export interface As<type extends DataType, identity>
+  extends Dictionary<type, identity> {
+  /** Wrap a raw value and attach this dictionary's operations. */
   <item>(value: AppliedData<type, item>): WrappedData<
     this,
     AppliedData<type, item>,
@@ -57,10 +93,12 @@ export interface As<type extends DataType> extends Dictionary<type> {
   >;
 }
 
+/** Wrap a value whose raw shape is described by a data dictionary. */
 export function as_data<dictionary extends Dictionary, item>(
   dictionary: dictionary,
   value: ContextData<dictionary, item>,
 ): Data<dictionary, item>;
+/** Wrap an arbitrary value with the members of an object dictionary. */
 export function as_data<dictionary extends object, value, item = unknown>(
   dictionary: dictionary,
   value: value,
@@ -72,9 +110,11 @@ export function as_data<dictionary extends object, value, item = unknown>(
   return raw_as_data(dictionary, value);
 }
 
+/** Create a reusable wrapper for values described by a data dictionary. */
 export function as_data_cached<dictionary extends Dictionary>(
   dictionary: dictionary,
 ): <item>(value: ContextData<dictionary, item>) => Data<dictionary, item>;
+/** Create a reusable wrapper that attaches an object dictionary. */
 export function as_data_cached<dictionary extends object>(
   dictionary: dictionary,
 ): <value, item = unknown>(
@@ -88,48 +128,60 @@ export function as_data_cached<dictionary extends object>(
   return raw_as_data_cached(dictionary);
 }
 
+/** A function that wraps raw values for one dictionary. */
 export type DataWrapper<dictionary extends Dictionary> = <item>(
   value: ContextData<dictionary, item>,
 ) => Data<dictionary, item>;
 
+/** The receiver available to custom data constructors. */
 export type DataConstructorContext<dictionary extends Dictionary> = {
+  /** Wrap a raw value without invoking the custom constructor again. */
   readonly data: DataWrapper<dictionary>;
 };
 
+/** A custom constructor used to build values for a dictionary. */
 export type DataConstructor<dictionary extends Dictionary> = <item>(
   this: DataConstructorContext<dictionary>,
   value: ContextData<dictionary, item>,
 ) => Data<dictionary, item>;
 
+/** Placeholder used to declare one payload position in a union variant. */
 export const $slot = Symbol("Data.slot");
 
 const union_definition = Symbol("Data.union");
 
+/** The type of the union payload placeholder. */
 export type Slot = typeof $slot;
 
-type UnionVariantShape = readonly [PropertyKey, ...readonly Slot[]];
+/** @ignore */
+export type UnionVariantShape = readonly [PropertyKey, ...readonly Slot[]];
 
-type UnionVariantsShape = readonly UnionVariantShape[];
+/** @ignore */
+export type UnionVariantsShape = readonly UnionVariantShape[];
 
 const union_shape = Symbol("Data.union_shape");
 
-type UnionShapeFromVariants<variants extends UnionVariantsShape> = {
+/** @ignore */
+export type UnionShapeFromVariants<variants extends UnionVariantsShape> = {
   readonly [variant in variants[number] as variant[0]]: variant;
 };
 
-type UnionDefinition<shape extends object> = {
+/** @ignore */
+export type UnionDefinition<shape extends object> = {
   readonly [union_definition]: UnionVariantsShape;
   readonly [union_shape]?: (shape: shape) => shape;
 };
 
-type TaggedPayloadSlots<payload extends readonly unknown[]> = payload extends
-  readonly [unknown, ...infer rest] ? readonly [
-    Slot,
-    ...TaggedPayloadSlots<rest>,
-  ]
-  : readonly [];
+/** @ignore */
+export type TaggedPayloadSlots<payload extends readonly unknown[]> =
+  payload extends readonly [unknown, ...infer rest] ? readonly [
+      Slot,
+      ...TaggedPayloadSlots<rest>,
+    ]
+    : readonly [];
 
-type TaggedUnionVariant<
+/** @ignore */
+export type TaggedUnionVariant<
   dictionary extends Dictionary,
   tag extends TaggedTag<dictionary> = TaggedTag<dictionary>,
 > = tag extends TaggedTag<dictionary> ? readonly [
@@ -140,17 +192,20 @@ type TaggedUnionVariant<
   ]
   : never;
 
-type TaggedUnionShape<dictionary extends Dictionary> = {
+/** @ignore */
+export type TaggedUnionShape<dictionary extends Dictionary> = {
   readonly [tag in TaggedTag<dictionary>]: TaggedUnionVariant<
     dictionary,
     tag
   >;
 };
 
+/** A dictionary augmented with constructors and guards for every union tag. */
 export type UnionDictionary<dictionary extends Dictionary> =
   & dictionary
   & TaggedDictionary<dictionary, TaggedTag<dictionary>>;
 
+/** Declare the tags and payload slots of a tagged union dictionary. */
 export function union<const variants extends UnionVariantsShape>(
   ...variants: variants
 ): UnionDefinition<UnionShapeFromVariants<variants>> {
@@ -159,10 +214,13 @@ export function union<const variants extends UnionVariantsShape>(
   };
 }
 
+/** Create an empty callable dictionary. */
 export function data<dictionary extends Dictionary>(): dictionary;
+/** Create a tagged-union dictionary from a union declaration. */
 export function data<dictionary extends Dictionary>(
   construct: UnionDefinition<TaggedUnionShape<dictionary>>,
 ): UnionDictionary<dictionary>;
+/** Create a dictionary backed by a custom value constructor. */
 export function data<dictionary extends Dictionary>(
   construct: DataConstructor<dictionary>,
 ): dictionary;
@@ -252,11 +310,13 @@ type TaggedTwoPayload = {
   second: unknown;
 };
 
-type TaggedConstructorName<tag extends PropertyKey> = tag extends string
+/** @ignore */
+export type TaggedConstructorName<tag extends PropertyKey> = tag extends string
   ? Capitalize<tag>
   : tag;
 
-type TaggedTag<dictionary extends Dictionary> = ContextData<
+/** @ignore */
+export type TaggedTag<dictionary extends Dictionary> = ContextData<
   dictionary,
   unknown
 > extends readonly [
@@ -265,39 +325,25 @@ type TaggedTag<dictionary extends Dictionary> = ContextData<
 ] ? tag
   : never;
 
-type TaggedPayload<value, tag extends PropertyKey> = value extends readonly [
-  infer current extends PropertyKey,
-  ...infer payload,
-] ? current extends tag ? payload
+/** @ignore */
+export type TaggedPayload<value, tag extends PropertyKey> = value extends
+  readonly [
+    infer current extends PropertyKey,
+    ...infer payload,
+  ] ? current extends tag ? payload
   : never
   : never;
 
-type TaggedSingletonTag<dictionary extends Dictionary> = {
-  [tag in TaggedTag<dictionary>]: TaggedPayload<
-    ContextData<dictionary, never>,
-    tag
-  > extends [] ? tag
-    : never;
-}[TaggedTag<dictionary>];
-
-type TaggedVariantConfig<
-  dictionary extends Dictionary,
-  tag extends TaggedTag<dictionary>,
-> = tag extends TaggedSingletonTag<dictionary> ? "variant" | "singleton"
-  : "variant";
-
 type TaggedVariants<dictionary extends Dictionary> = {
-  readonly [tag in TaggedTag<dictionary>]: TaggedVariantConfig<
-    dictionary,
-    tag
-  >;
+  readonly [tag in TaggedTag<dictionary>]: number;
 };
 
 type TaggedDataOptions<dictionary extends Dictionary> = {
   readonly variants?: TaggedVariants<dictionary>;
 };
 
-type TaggedMember<
+/** @ignore */
+export type TaggedMember<
   dictionary extends Dictionary,
   tag extends PropertyKey,
   item,
@@ -308,7 +354,8 @@ type TaggedMember<
   : never
   : never;
 
-type TaggedGuard<
+/** @ignore */
+export type TaggedGuard<
   dictionary extends Dictionary,
   tag extends PropertyKey,
 > = {
@@ -318,7 +365,8 @@ type TaggedGuard<
   (value: unknown): value is TaggedMember<dictionary, tag, unknown>;
 };
 
-type TaggedVariant<
+/** @ignore */
+export type TaggedVariant<
   dictionary extends Dictionary,
   tag extends PropertyKey,
 > =
@@ -331,7 +379,8 @@ type TaggedVariant<
     readonly is: TaggedGuard<dictionary, tag>;
   };
 
-type TaggedDictionary<
+/** @ignore */
+export type TaggedDictionary<
   dictionary extends Dictionary,
   tags extends PropertyKey,
 > = {
@@ -440,16 +489,11 @@ function tagged_data_from_union<dictionary extends Dictionary>(
 function tagged_variants_from_union<dictionary extends Dictionary>(
   shape: UnionVariantsShape,
 ): TaggedVariants<dictionary> {
-  const variants = {} as Record<PropertyKey, "variant" | "singleton">;
+  const variants = {} as Record<PropertyKey, number>;
 
   for (const variant of shape) {
     const tag = variant[0];
-
-    if (variant.length === 1) {
-      variants[tag] = "singleton";
-    } else {
-      variants[tag] = "variant";
-    }
+    variants[tag] = variant.length;
   }
 
   return variants as TaggedVariants<dictionary>;
@@ -461,6 +505,7 @@ function tagged_variant<
 >(
   dictionary: dictionary,
   tag: tag,
+  expected_length: number,
 ): TaggedVariant<dictionary, tag> {
   const factory = tagged_variant_factory(dictionary, tag);
   const tagged_dictionary = dictionary as TaggedDataDictionary<dictionary>;
@@ -505,7 +550,7 @@ function tagged_variant<
   } as TaggedVariant<dictionary, tag>;
 
   Object.defineProperty(construct, "is", {
-    value: tagged_guard(tag),
+    value: tagged_guard(tag, expected_length),
   });
 
   return construct;
@@ -521,7 +566,7 @@ function tagged_singleton_tags<dictionary extends Dictionary>(
   }
 
   for (const tag of Reflect.ownKeys(variants)) {
-    if (Reflect.get(variants, tag) === "singleton") {
+    if (Reflect.get(variants, tag) === 1) {
       singletons.add(tag);
     }
   }
@@ -539,7 +584,7 @@ function install_tagged_variants<dictionary extends Dictionary>(
 
   for (const tag of Reflect.ownKeys(variants)) {
     Object.defineProperty(dictionary, tagged_constructor_name(tag), {
-      value: tagged_variant(dictionary, tag),
+      value: tagged_variant(dictionary, tag, Reflect.get(variants, tag)),
     });
   }
 }
@@ -554,13 +599,16 @@ function tagged_constructor_name(tag: PropertyKey): PropertyKey {
   return first.toUpperCase() + rest.join("");
 }
 
-function tagged_guard(tag: PropertyKey): (value: unknown) => boolean {
+function tagged_guard(
+  tag: PropertyKey,
+  expected_length: number,
+): (value: unknown) => boolean {
   return function is_tagged(value: unknown): boolean {
     if (!Array.isArray(value)) {
       return false;
     }
 
-    return value[0] === tag;
+    return value.length === expected_length && value[0] === tag;
   };
 }
 
@@ -785,26 +833,33 @@ function* tagged_data_iterator<dictionary, value, item>(
   return item as item;
 }
 
+/** A data dictionary extended with one installed typeclass instance. */
 export type TypeclassDictionary<
   dictionary extends Dictionary,
   token extends PropertyKey,
   methods extends object,
 > =
   & {
+    /** The runtime identity inherited from the data dictionary. */
     [kind]: dictionary[typeof kind];
-    readonly [data_type]?: DictionaryDataType<dictionary>;
+    /** The higher-kinded raw value description inherited by the instance. */
+    readonly [data_type]?: RawDictionaryDataType<dictionary>;
+    /** The phantom identity inherited from the data dictionary. */
+    readonly [type_identity]: dictionary[typeof type_identity];
   }
   & { [key in token]: methods }
   & methods;
 
-export function call_typeclass_method<self, args extends unknown[], out>(
-  method: (this: self, ...args: args) => out,
+/** Invoke a typeclass method with an explicit dictionary receiver. */
+export function call_typeclass_method<self, args extends unknown[], result>(
+  method: (this: self, ...args: args) => result,
   self: self,
   ...args: args
-): out {
+): result {
   return method.call(self, ...args);
 }
 
+/** Attach a typeclass implementation to a data dictionary. */
 export function install_instance<implementation extends object>(
   dictionary: object,
   token: PropertyKey,
@@ -821,18 +876,24 @@ type TypeclassInstance<
   dictionary extends { [key in token]: object },
 > = dictionary[token];
 
+/** A typeclass token with operations for installing and retrieving instances. */
 export type TypeclassDefinition<token extends PropertyKey = PropertyKey> =
   & TypeclassDefinitionPrototype<token>
   & {
+    /** The property key under which an instance is installed. */
     readonly token: token;
   };
 
+/** A typeclass definition combined with its reusable derived methods. */
 export type Typeclass<
   token extends PropertyKey,
   methods extends object,
 > = TypeclassDefinition<token> & methods;
 
-type TypeclassDefinitionPrototype<token extends PropertyKey = PropertyKey> = {
+/** @ignore */
+export type TypeclassDefinitionPrototype<
+  token extends PropertyKey = PropertyKey,
+> = {
   instance<
     dictionary extends Dictionary & { [key in token]: object },
   >(
@@ -850,10 +911,15 @@ type TypeclassDefinitionPrototype<token extends PropertyKey = PropertyKey> = {
   ): TypeclassInstance<token, receiver>;
 };
 
-type TypeclassMethods<token extends PropertyKey, methods extends object> =
+/** @ignore */
+export type TypeclassMethods<
+  token extends PropertyKey,
+  methods extends object,
+> =
   & methods
   & ThisType<TypeclassDefinition<token> & methods>;
 
+/** Create a typeclass definition with optional derived methods. */
 export function typeclass<token extends PropertyKey, methods extends object>(
   token: token,
   methods: TypeclassMethods<token, methods>,
@@ -875,6 +941,7 @@ type TypeclassDefinitionReceiver<token extends PropertyKey = PropertyKey> = {
   readonly token: token;
 };
 
+/** Shared implementation used by every typeclass definition. */
 export const TypeclassDefinition: TypeclassDefinitionPrototype = {
   instance: install_typeclass_instance,
 

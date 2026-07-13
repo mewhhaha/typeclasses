@@ -1,9 +1,11 @@
 import ts from "typescript";
+import { basename, dirname, resolve } from "node:path";
 
 const is_generated_identifier = (ts as unknown as {
   isGeneratedIdentifier?: (node: ts.Node) => boolean;
 }).isGeneratedIdentifier ?? (() => false);
 
+/** A source location and explanation for a construct that was not lowered. */
 export type TransformDiagnostic = {
   readonly file_name: string;
   readonly line: number;
@@ -11,12 +13,26 @@ export type TransformDiagnostic = {
   readonly message: string;
 };
 
+/** The rewritten TypeScript, its source map, and transformation diagnostics. */
 export type TransformResult = {
   readonly code: string;
   readonly diagnostics: readonly TransformDiagnostic[];
+  readonly map: TransformSourceMap | null;
   readonly transformed: number;
 };
 
+/** A version 3 source map from rewritten TypeScript back to its input. */
+export type TransformSourceMap = {
+  readonly version: 3;
+  readonly file: string;
+  readonly sourceRoot: string;
+  readonly sources: readonly string[];
+  readonly sourcesContent?: readonly (string | null)[];
+  readonly names: readonly string[];
+  readonly mappings: string;
+};
+
+/** Module specifiers the transformer should recognize as library entrypoints. */
 export type TransformConfig = {
   /** Additional module specifiers which export this package's public API. */
   readonly library_specifiers?: readonly string[];
@@ -118,6 +134,7 @@ type FusedTerminalProgram = {
 
 class UnsupportedGenerator extends Error {}
 
+/** Lower supported Do and Program generators in one TypeScript source file. */
 export function transform_do_program_source(
   source: string,
   file_name = "input.ts",
@@ -349,18 +366,18 @@ export function transform_do_program_source(
       return {
         code: source,
         diagnostics,
+        map: null,
         transformed,
       };
     }
 
     const output = result.transformed[0];
-    const printer = ts.createPrinter({
-      newLine: ts.NewLineKind.LineFeed,
-    });
+    const printed = print_transformed_source(output, source, file_name);
 
     return {
-      code: printer.printFile(output),
+      code: printed.code,
       diagnostics,
+      map: printed.map,
       transformed,
     };
   } finally {
@@ -372,8 +389,89 @@ function unchanged_transform_result(source: string): TransformResult {
   return {
     code: source,
     diagnostics: [],
+    map: null,
     transformed: 0,
   };
+}
+
+type SourceMapGenerator = {
+  toJSON(): TransformSourceMap;
+};
+
+type SourceMapWriter = {
+  getText(): string;
+};
+
+type PrinterWithSourceMaps = ts.Printer & {
+  writeFile(
+    source_file: ts.SourceFile,
+    writer: SourceMapWriter,
+    generator: SourceMapGenerator,
+  ): void;
+};
+
+type TypeScriptWithSourceMaps = typeof ts & {
+  createSourceMapGenerator(
+    host: {
+      getCurrentDirectory(): string;
+      getCanonicalFileName(file_name: string): string;
+    },
+    file_name: string,
+    source_root: string,
+    sources_directory: string,
+    options: {
+      readonly extendedDiagnostics: boolean;
+      readonly inlineSources: boolean;
+    },
+  ): SourceMapGenerator;
+  createTextWriter(new_line: string): SourceMapWriter;
+};
+
+function print_transformed_source(
+  source_file: ts.SourceFile,
+  source: string,
+  file_name: string,
+): { readonly code: string; readonly map: TransformSourceMap } {
+  const source_map_api = ts as TypeScriptWithSourceMaps;
+  const absolute_file_name = resolve(file_name);
+  const source_directory = dirname(absolute_file_name);
+  const writer = source_map_api.createTextWriter("\n");
+  const generator = source_map_api.createSourceMapGenerator(
+    {
+      getCurrentDirectory: () => source_directory,
+      getCanonicalFileName: (current_file_name) => current_file_name,
+    },
+    basename(file_name),
+    "",
+    source_directory,
+    {
+      extendedDiagnostics: false,
+      inlineSources: true,
+    },
+  );
+  const printer = ts.createPrinter({
+    newLine: ts.NewLineKind.LineFeed,
+    sourceMap: true,
+    inlineSources: true,
+  } as ts.PrinterOptions) as PrinterWithSourceMaps;
+
+  printer.writeFile(source_file, writer, generator);
+
+  const map = generator.toJSON();
+
+  if (map.sourcesContent === undefined) {
+    const source_index = map.sources.indexOf(basename(file_name));
+    const sources_content = map.sources.map((_source, index) => {
+      return index === source_index ? source : null;
+    });
+
+    return {
+      code: writer.getText(),
+      map: { ...map, sourcesContent: sources_content },
+    };
+  }
+
+  return { code: writer.getText(), map };
 }
 
 function might_contain_transform_target(source: string): boolean {
@@ -1554,11 +1652,11 @@ function read_for_loop_next(
   return unsupported_for_loop(incrementor, state, "incrementor");
 }
 
-function unsupported_for_loop<out>(
+function unsupported_for_loop<result>(
   node: ts.Node,
   state: TransformState,
   part: string,
-): out {
+): result {
   add_diagnostic(
     state,
     node,

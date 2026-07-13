@@ -6,8 +6,10 @@ import {
   kind,
 } from "./typeclass.ts";
 
-declare const operation_output: unique symbol;
+/** @ignore */
+export declare const operation_output: unique symbol;
 
+/** Associates an operation with the item it produces when interpreted. */
 export type Operation<item> = {
   readonly [operation_output]?: item;
 };
@@ -15,34 +17,62 @@ export type Operation<item> = {
 type OperationOutput<operation> = operation extends Operation<infer item> ? item
   : never;
 
+/** A tuple-tagged operation that can carry one payload. */
 export type TaggedOperation<tag extends string = string> =
   | readonly [tag]
   | readonly [tag, unknown];
 
+/** An operation that lifts a dictionary value into an effect program. */
 export type Lift<dictionary extends Dictionary, item> =
   & Operation<item>
   & readonly ["lift", Data<dictionary, item>];
 
+/** Declares that an effect program uses values from `dictionary`. */
 export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
   dictionary,
   item
 >;
 
-type Pure<item> = {
+/** Describes whether an effect completed successfully or failed. */
+export type EffectExit =
+  | { readonly status: "succeeded" }
+  | { readonly status: "failed"; readonly error: unknown };
+
+/** Cleanup run after an effect exits. */
+export type EffectFinalizer = (
+  exit: EffectExit,
+) => void | PromiseLike<void>;
+
+/** An operation that guarantees cleanup around a nested effect. */
+export type Ensuring =
+  & Operation<unknown>
+  & readonly [
+    "effect.ensuring",
+    {
+      readonly effect: Effect<unknown, unknown>;
+      readonly finalize: EffectFinalizer;
+    },
+  ];
+
+/** @ignore */
+export type Pure<item> = {
   readonly 0: "pure";
   readonly 1: item;
 };
 
-type Impure<requirements, item> = {
+/** @ignore */
+export type Impure<requirements, item> = {
   readonly 0: "impure";
   readonly 1: requirements;
   readonly 2: (value: unknown) => Effect<requirements, item>;
 };
 
-type EffectBase<requirements, item> = {
+/** @ignore */
+export type EffectBase<requirements, item> = {
   [Symbol.iterator](): Generator<Effect<requirements, item>, item, unknown>;
 };
 
+/** A pure value or suspended operation with its remaining continuation. */
 export type Effect<requirements, item> =
   & EffectBase<requirements, item>
   & (
@@ -50,6 +80,7 @@ export type Effect<requirements, item> =
     | Impure<requirements, item>
   );
 
+/** Transforms an effect program while handling one or more requirements. */
 export type EffectHandler<
   requirements,
   item,
@@ -59,21 +90,27 @@ export type EffectHandler<
   effect: Effect<requirements, item>,
 ) => Effect<next_requirements, next_item>;
 
-export type EffectRunner<requirements, item, out> = (
+/** Runs a fully handled effect program into a result. */
+export type EffectRunner<requirements, item, result> = (
   effect: Effect<requirements, item>,
-) => out;
+) => result;
 
+/** A fluent interface for handling and running an effect program. */
 export type EffectInterpreter<requirements, item> = {
+  /** Applies a handler and returns an interpreter for the remaining effect. */
   handle<next_requirements, next_item>(
     handler: EffectHandler<requirements, item, next_requirements, next_item>,
   ): EffectInterpreter<next_requirements, next_item>;
 
-  run<out>(runner: EffectRunner<requirements, item, out>): out;
+  /** Finishes the effect with a terminal runner. */
+  run<result>(runner: EffectRunner<requirements, item, result>): result;
 
+  /** Returns the effect represented by this interpreter. */
   value(): Effect<requirements, item>;
 };
 
-type EffectRequirements<value> = value extends Effect<
+/** @ignore */
+export type EffectRequirements<value> = value extends Effect<
   infer requirements,
   infer _item
 > ? requirements
@@ -81,22 +118,28 @@ type EffectRequirements<value> = value extends Effect<
     ? Lift<dictionary, item>
   : never;
 
-type ScopedYield<requirements, yielded> =
+/** @ignore */
+export type ScopedYield<requirements, yielded> =
   Exclude<EffectRequirements<yielded>, requirements> extends never ? yielded
     : never;
 
+/** Constructs generator programs restricted to the declared requirements. */
 export type ProgramScope<requirements> = {
+  /** Builds an effect from a generator that yields effects or dictionary values. */
   <yielded, item>(
     run: () => Generator<ScopedYield<requirements, yielded>, item, unknown>,
   ): Effect<EffectRequirements<yielded>, item>;
 };
 
+/** Builds generator-based effect programs. */
 export type ProgramConstructor =
   & ProgramScope<unknown>
   & {
+    /** Restricts a generator program to the declared requirements. */
     scope<requirements>(): ProgramScope<requirements>;
   };
 
+/** Removes lifts for one dictionary from an effect requirement union. */
 export type WithoutLift<
   requirements,
   dictionary extends Dictionary,
@@ -105,13 +148,16 @@ export type WithoutLift<
   : requirements
   : requirements;
 
+/** Interprets lifted dictionary values while carrying explicit state. */
 export type LiftHandler<
   dictionary extends Dictionary,
   state,
   item,
-  out,
+  result,
 > = {
-  done(value: item, state: state): out;
+  /** Produces the final result from the effect item and handler state. */
+  done(value: item, state: state): result;
+  /** Handles one lifted value and returns its result with the next state. */
   handle(
     value: Data<dictionary, unknown>,
     state: state,
@@ -122,6 +168,14 @@ type ProgramPath = {
   readonly previous: ProgramPath | undefined;
   readonly value: unknown;
 };
+
+type EffectFrame = {
+  readonly previous: EffectFrame | undefined;
+  readonly resume: (value: unknown) => Effect<unknown, unknown>;
+};
+
+const effect_resume = Symbol("Effect.resume");
+const effect_frames = Symbol("Effect.frames");
 
 const EffectPrototype: EffectBase<unknown, unknown> = {
   [Symbol.iterator]: effect_iterator,
@@ -135,10 +189,10 @@ const EffectInterpreterPrototype = {
     return interpret(handler(this.effect));
   },
 
-  run<out>(
+  run<result>(
     this: EffectInterpreterTarget<unknown, unknown>,
-    runner: EffectRunner<unknown, unknown, out>,
-  ): out {
+    runner: EffectRunner<unknown, unknown, result>,
+  ): result {
     return runner(this.effect);
   },
 
@@ -162,16 +216,20 @@ type ImpureEffectTarget = {
   0: "impure";
   1: unknown;
   2: (value: unknown) => Effect<unknown, unknown>;
+  [effect_resume]: (value: unknown) => Effect<unknown, unknown>;
+  [effect_frames]: EffectFrame | undefined;
 };
 
 type MutableEffectInterpreterTarget = {
   effect: Effect<unknown, unknown>;
 };
 
+/** Builds effects with generator syntax. */
 export const Program = Object.assign(program, {
   scope,
 }) as ProgramConstructor;
 
+/** Constructors and combinators for effect programs. */
 export const Effect = {
   pure,
   from,
@@ -182,6 +240,7 @@ export const Effect = {
   map_from,
   bind,
   bind_from,
+  ensuring,
   handle_with,
   interpret,
 };
@@ -201,10 +260,13 @@ function ImpureEffect(
   this: ImpureEffectTarget,
   operation: unknown,
   resume: (value: unknown) => Effect<unknown, unknown>,
+  frames: EffectFrame | undefined = undefined,
 ) {
   this[0] = "impure";
   this[1] = operation;
-  this[2] = resume;
+  this[2] = (value) => resume_effect(resume, frames, value);
+  this[effect_resume] = resume;
+  this[effect_frames] = frames;
 }
 
 ImpureEffect.prototype = EffectPrototype;
@@ -213,6 +275,7 @@ const NewImpureEffect = ImpureEffect as unknown as {
   new <requirements, item>(
     operation: requirements,
     resume: (value: unknown) => Effect<requirements, item>,
+    frames?: EffectFrame,
   ): Effect<requirements, item>;
 };
 
@@ -231,13 +294,16 @@ const NewEffectInterpreter = EffectInterpreterValue as unknown as {
   ): EffectInterpreter<requirements, item>;
 };
 
+/** Creates an effect that has already produced `value`. */
 export function pure<item>(value: item): Effect<never, item> {
   return new NewPureEffect(value);
 }
 
+/** Returns an existing effect unchanged. */
 export function from<requirements, item>(
   value: Effect<requirements, item>,
 ): Effect<requirements, item>;
+/** Lifts a dictionary value into an effect. */
 export function from<dictionary extends Dictionary, item>(
   value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item>;
@@ -245,6 +311,7 @@ export function from(value: unknown): Effect<unknown, unknown> {
   return as_effect(value);
 }
 
+/** Suspends a dictionary value as a lift operation. */
 export function lift<dictionary extends Dictionary, item>(
   value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item> {
@@ -254,6 +321,7 @@ export function lift<dictionary extends Dictionary, item>(
   ) as Effect<Lift<dictionary, item>, item>;
 }
 
+/** Suspends a typed operation and returns its eventual output. */
 export function send<operation extends TaggedOperation & Operation<unknown>>(
   operation: operation,
 ): Effect<operation, OperationOutput<operation>> {
@@ -263,6 +331,7 @@ export function send<operation extends TaggedOperation & Operation<unknown>>(
   >;
 }
 
+/** Suspends an operation with an explicit continuation. */
 export function suspend<requirements, item>(
   operation: requirements,
   resume: (value: unknown) => Effect<requirements, item>,
@@ -270,6 +339,7 @@ export function suspend<requirements, item>(
   return new NewImpureEffect(operation, resume);
 }
 
+/** Transforms the successful item produced by an effect. */
 export function map<requirements, from, to>(
   effect: Effect<requirements, from>,
   fn: (value: from) => to,
@@ -278,15 +348,18 @@ export function map<requirements, from, to>(
     return pure(fn(effect[1]));
   }
 
-  return new NewImpureEffect(effect[1], (value) => {
-    return map(effect[2](value), fn);
-  }) as Effect<requirements, to>;
+  return append_effect_frame(
+    effect,
+    (value) => pure(fn(value as from)),
+  ) as Effect<requirements, to>;
 }
 
+/** Maps an existing effect. */
 export function map_from<requirements, from, to>(
   value: Effect<requirements, from>,
   fn: (value: from) => to,
 ): Effect<requirements, to>;
+/** Lifts and maps a dictionary value. */
 export function map_from<dictionary extends Dictionary, from, to>(
   value: Data<dictionary, from>,
   fn: (value: from) => to,
@@ -305,6 +378,7 @@ export function map_from<from, to>(
   return map(as_effect(value), fn as (value: unknown) => to);
 }
 
+/** Sequences an effect-dependent computation. */
 export function bind<left, from, right, to>(
   effect: Effect<left, from>,
   fn: (value: from) => Effect<right, to>,
@@ -313,15 +387,18 @@ export function bind<left, from, right, to>(
     return fn(effect[1]) as Effect<left | right, to>;
   }
 
-  return new NewImpureEffect(effect[1], (value) => {
-    return bind(effect[2](value), fn);
-  }) as Effect<left | right, to>;
+  return append_effect_frame(
+    effect,
+    (value) => fn(value as from) as Effect<unknown, unknown>,
+  ) as Effect<left | right, to>;
 }
 
+/** Binds an existing effect into a dependent computation. */
 export function bind_from<left, from, right, to>(
   value: Effect<left, from>,
   fn: (value: from) => Effect<right, to>,
 ): Effect<left | right, to>;
+/** Lifts and binds a dictionary value into a dependent computation. */
 export function bind_from<dictionary extends Dictionary, from, right, to>(
   value: Data<dictionary, from>,
   fn: (value: from) => Effect<right, to>,
@@ -343,29 +420,55 @@ export function bind_from<from, right, to>(
   ) as Effect<unknown | right, to>;
 }
 
+/**
+ * Runs `finalize` after this effect succeeds or fails in a terminal runner that
+ * supports `Ensuring`. Apply it after the program's other capability handlers.
+ */
+export function ensuring<requirements, item>(
+  effect: Effect<requirements, item>,
+  finalize: EffectFinalizer,
+): Effect<requirements | Ensuring, item> {
+  const operation: Ensuring = [
+    "effect.ensuring",
+    {
+      effect: effect as Effect<unknown, unknown>,
+      finalize,
+    },
+  ];
+
+  return new NewImpureEffect(operation, resume_pure) as Effect<
+    requirements | Ensuring,
+    item
+  >;
+}
+
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<requirements, item>(
   effect: Effect<requirements, item>,
   handlers: readonly [],
 ): Effect<requirements, item>;
-export function handle_with<requirements, item, out>(
+/** Applies an ordered handler pipeline to an effect. */
+export function handle_with<requirements, item, result>(
   effect: Effect<requirements, item>,
   handlers: readonly [
-    EffectRunner<requirements, item, out>,
+    EffectRunner<requirements, item, result>,
   ],
-): out;
+): result;
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<
   requirements,
   item,
   first_requirements,
   first_item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   handlers: readonly [
     EffectHandler<requirements, item, first_requirements, first_item>,
-    EffectRunner<first_requirements, first_item, out>,
+    EffectRunner<first_requirements, first_item, result>,
   ],
-): out;
+): result;
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<
   requirements,
   item,
@@ -373,7 +476,7 @@ export function handle_with<
   first_item,
   second_requirements,
   second_item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   handlers: readonly [
@@ -384,9 +487,10 @@ export function handle_with<
       second_requirements,
       second_item
     >,
-    EffectRunner<second_requirements, second_item, out>,
+    EffectRunner<second_requirements, second_item, result>,
   ],
-): out;
+): result;
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<
   requirements,
   item,
@@ -396,7 +500,7 @@ export function handle_with<
   second_item,
   third_requirements,
   third_item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   handlers: readonly [
@@ -413,9 +517,10 @@ export function handle_with<
       third_requirements,
       third_item
     >,
-    EffectRunner<third_requirements, third_item, out>,
+    EffectRunner<third_requirements, third_item, result>,
   ],
-): out;
+): result;
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<
   requirements,
   item,
@@ -427,7 +532,7 @@ export function handle_with<
   third_item,
   fourth_requirements,
   fourth_item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   handlers: readonly [
@@ -450,9 +555,10 @@ export function handle_with<
       fourth_requirements,
       fourth_item
     >,
-    EffectRunner<fourth_requirements, fourth_item, out>,
+    EffectRunner<fourth_requirements, fourth_item, result>,
   ],
-): out;
+): result;
+/** Applies an ordered handler pipeline to an effect. */
 export function handle_with<
   requirements,
   item,
@@ -466,7 +572,7 @@ export function handle_with<
   fourth_item,
   fifth_requirements,
   fifth_item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   handlers: readonly [
@@ -495,9 +601,9 @@ export function handle_with<
       fifth_requirements,
       fifth_item
     >,
-    EffectRunner<fifth_requirements, fifth_item, out>,
+    EffectRunner<fifth_requirements, fifth_item, result>,
   ],
-): out;
+): result;
 export function handle_with(
   effect: Effect<unknown, unknown>,
   handlers: readonly ((effect: never) => unknown)[],
@@ -548,12 +654,14 @@ export function handle_with(
   return handled;
 }
 
+/** Wraps an effect in a fluent interpreter. */
 export function interpret<requirements, item>(
   effect: Effect<requirements, item>,
 ): EffectInterpreter<requirements, item> {
   return new NewEffectInterpreter(effect);
 }
 
+/** Extracts the item from an effect with no remaining requirements. */
 export function run<item>(effect: Effect<never, item>): item {
   if (effect[0] === "pure") {
     return effect[1];
@@ -568,13 +676,13 @@ export function handle_lift_terminal<
   dictionary extends Dictionary,
   state,
   item,
-  out,
+  result,
 >(
   effect: Effect<Lift<dictionary, unknown>, item>,
   runtime_kind: dictionary[typeof kind],
   state: state,
-  handler: LiftHandler<dictionary, state, item, out>,
-): out {
+  handler: LiftHandler<dictionary, state, item, result>,
+): result {
   let current = effect as Effect<Lift<dictionary, unknown>, unknown>;
   let current_state = state;
 
@@ -607,18 +715,19 @@ export function handle_lift_terminal<
   }
 }
 
+/** Handles one dictionary's lifts while preserving other requirements. */
 export function handle_lift<
   requirements,
   dictionary extends Dictionary,
   state,
   item,
-  out,
+  result,
 >(
   effect: Effect<requirements, item>,
   runtime_kind: dictionary[typeof kind],
   state: state,
-  handler: LiftHandler<dictionary, state, item, out>,
-): Effect<WithoutLift<requirements, dictionary>, out> {
+  handler: LiftHandler<dictionary, state, item, result>,
+): Effect<WithoutLift<requirements, dictionary>, result> {
   let current = effect as Effect<requirements, unknown>;
   let current_state = state;
 
@@ -646,7 +755,7 @@ export function handle_lift<
               suspended_state,
               handler,
             ),
-        ) as Effect<WithoutLift<requirements, dictionary>, out>;
+        ) as Effect<WithoutLift<requirements, dictionary>, result>;
       }
     }
   }
@@ -727,6 +836,7 @@ function scope<requirements>(): ProgramScope<requirements> {
   };
 }
 
+/** Tests whether an unknown operation lifts the given dictionary kind. */
 export function is_lift_of<dictionary extends Dictionary>(
   operation: unknown,
   runtime_kind: dictionary[typeof kind],
@@ -748,6 +858,7 @@ export function is_lift_of<dictionary extends Dictionary>(
   return (value as Dictionary)[kind] === runtime_kind;
 }
 
+/** Tests whether an unknown operation has the given tuple tag. */
 export function has_tag<tag extends string>(
   operation: unknown,
   tag: tag,
@@ -761,6 +872,101 @@ export function has_tag<tag extends string>(
   }
 
   return (operation as TaggedOperation)[0] === tag;
+}
+
+function append_effect_frame<requirements, item>(
+  effect: Impure<requirements, item>,
+  resume: (value: unknown) => Effect<unknown, unknown>,
+): Effect<requirements, unknown> {
+  const target = effect as ImpureEffectTarget;
+  const frames: EffectFrame = {
+    previous: target[effect_frames],
+    resume,
+  };
+
+  return new NewImpureEffect(
+    effect[1],
+    target[effect_resume] as (
+      value: unknown,
+    ) => Effect<requirements, unknown>,
+    frames,
+  );
+}
+
+function resume_effect(
+  resume: (value: unknown) => Effect<unknown, unknown>,
+  frames: EffectFrame | undefined,
+  value: unknown,
+): Effect<unknown, unknown> {
+  let current = resume(value);
+
+  if (frames === undefined) {
+    return current;
+  }
+
+  const ordered = effect_frames_in_order(frames);
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    if (current[0] === "impure") {
+      return append_effect_frames(current, ordered, index);
+    }
+
+    current = ordered[index](current[1]);
+  }
+
+  return current;
+}
+
+function append_effect_frames(
+  effect: Impure<unknown, unknown>,
+  ordered: readonly ((value: unknown) => Effect<unknown, unknown>)[],
+  start: number,
+): Effect<unknown, unknown> {
+  const target = effect as ImpureEffectTarget;
+  let frames = target[effect_frames];
+
+  for (let index = start; index < ordered.length; index += 1) {
+    frames = {
+      previous: frames,
+      resume: ordered[index],
+    };
+  }
+
+  return new NewImpureEffect(
+    effect[1],
+    target[effect_resume],
+    frames,
+  );
+}
+
+function effect_frames_in_order(
+  frames: EffectFrame,
+): ((value: unknown) => Effect<unknown, unknown>)[] {
+  let length = 0;
+
+  for (
+    let frame: EffectFrame | undefined = frames;
+    frame !== undefined;
+    frame = frame.previous
+  ) {
+    length += 1;
+  }
+
+  const ordered = new Array<
+    (value: unknown) => Effect<unknown, unknown>
+  >(length);
+  let index = length - 1;
+
+  for (
+    let frame: EffectFrame | undefined = frames;
+    frame !== undefined;
+    frame = frame.previous
+  ) {
+    ordered[index] = frame.resume;
+    index -= 1;
+  }
+
+  return ordered;
 }
 
 function as_effect<requirements, item>(
@@ -780,6 +986,7 @@ function as_effect<requirements, item>(
   return value as Effect<requirements, item>;
 }
 
+/** Tests whether an unknown value is an Effect created by this module. */
 export function is_effect(value: unknown): value is Effect<unknown, unknown> {
   if (typeof value !== "object") {
     return false;

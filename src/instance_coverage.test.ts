@@ -5,91 +5,82 @@ import { Just, Maybe, Nothing } from "./maybe.ts";
 import { RecordT } from "./record.ts";
 import { Task } from "./task.ts";
 import { Tuple } from "./tuple.ts";
-import { InvalidMessages, Valid, Validation } from "./validation.ts";
-import { Bifunctor, MonadError, Ord } from "./typeclasses.ts";
+import {
+  Invalid,
+  InvalidMessages,
+  map_error,
+  Valid,
+  Validation,
+} from "./validation.ts";
+import { MonadError, Ord } from "./typeclasses.ts";
 
-Deno.test("Validation Bifunctor maps both branches", () => {
-  const invalid = Bifunctor.bimap(
+Deno.test("Validation maps errors with an explicit target semigroup", () => {
+  const strings = {
+    concat: (left: string, right: string) => left + ": " + right,
+  };
+  const invalid = map_error(
     InvalidMessages<number>("missing", "invalid"),
     (errors) => errors.join(": "),
-    (value: number) => value + 1,
+    strings,
   );
-  const valid = Bifunctor.bimap(
-    Valid(41),
-    (error: unknown) => String(error),
-    (value) => value + 1,
-  );
+  const Errors = Validation.with_semigroup(strings);
+  const combined = Errors.Invalid<(value: number) => number>("first")
+    .ap(Errors.Invalid<number>("second"));
 
   assert_equals(invalid.value()[1], "missing: invalid");
-  assert_equals(valid.value()[1], 42);
+  assert_equals(combined.value()[1], "first: second");
+});
 
-  const twice = Bifunctor.map_left(
-    Bifunctor.map_left(
-      InvalidMessages<number>("bad"),
-      (errors) => errors.join(""),
-    ),
-    (error) => error.length,
-  );
-  const composed = Bifunctor.map_left(
-    InvalidMessages<number>("bad"),
-    (errors) => errors.join("").length,
-  );
+Deno.test("Validation rejects errors created with different semigroups", () => {
+  const SumErrors = Validation.with_semigroup({
+    concat: (left: number, right: number) => left + right,
+  });
+  const MaxErrors = Validation.with_semigroup({
+    concat: (left: number, right: number) => Math.max(left, right),
+  });
+  let thrown: unknown;
 
-  assert_equals(twice.value()[1], composed.value()[1]);
+  try {
+    SumErrors.Invalid<(value: number) => number>(1)
+      .ap(MaxErrors.Invalid<number>(2));
+  } catch (error) {
+    thrown = error;
+  }
 
-  const twice_full = Bifunctor.bimap(
-    Bifunctor.bimap(
-      InvalidMessages<number>("bad"),
-      (errors) => errors.join(""),
-      (value: number) => value + 1,
-    ),
-    (error) => error.length,
-    (value) => value * 2,
+  assert_equals(thrown instanceof TypeError, true);
+  assert_equals(
+    thrown instanceof TypeError &&
+      /left #\d+, right #\d+/.test(thrown.message),
+    true,
   );
-  const composed_full = Bifunctor.bimap(
-    InvalidMessages<number>("bad"),
-    (errors) => errors.join("").length,
-    (value: number) => (value + 1) * 2,
-  );
-  assert_equals(twice_full.eq(composed_full), true);
+});
 
-  const valid_twice = Bifunctor.bimap(
-    Bifunctor.bimap(
-      Valid(20),
-      (error: unknown) => String(error),
-      (value) => value + 1,
-    ),
-    (error) => error.length,
-    (value) => value * 2,
-  );
-  const valid_composed = Bifunctor.bimap(
-    Valid(20),
-    (error: unknown) => String(error).length,
-    (value) => (value + 1) * 2,
-  );
-  assert_equals(valid_twice.eq(valid_composed), true);
+Deno.test("Validation guards reject malformed tagged tuples", () => {
+  const semigroup = { concat: (left: string) => left };
 
-  const identity = Bifunctor.bimap(
-    Valid(42),
-    (error: unknown) => error,
-    (value) => value,
-  );
-  assert_equals(identity.value(), Valid(42).value());
+  assert_equals(Valid.is(["valid", 42]), true);
+  assert_equals(Valid.is(["valid"]), false);
+  assert_equals(Valid.is(["valid", 42, "extra"]), false);
+  assert_equals(Invalid.is(["invalid", "missing", semigroup]), true);
+  assert_equals(Invalid.is(["invalid", "missing"]), false);
+  assert_equals(Invalid.is(["invalid", "missing", {}]), false);
 });
 
 Deno.test("Validation Ord orders Invalid before Valid and compares payloads", () => {
-  const strings = Validation.with_error<string>();
+  const strings = Validation.with_semigroup<string>({
+    concat: (left, right) => left + right,
+  });
 
   assert_equals(
     Ord.compare(
-      strings.Invalid<number>("a", { concat: (left) => left }),
-      strings.Invalid<number>("b", { concat: (left) => left }),
+      strings.Invalid<number>("a"),
+      strings.Invalid<number>("b"),
     ),
     "lt",
   );
   assert_equals(
     Ord.compare(
-      strings.Invalid<number>("error", { concat: (left) => left }),
+      strings.Invalid<number>("error"),
       strings.Valid(0),
     ),
     "lt",

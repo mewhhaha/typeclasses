@@ -41,7 +41,9 @@ Deno.test("fixed context parameters survive typeclass operations", () => {
   const fixed_right = StringEither.Right(41).map((value) => value + 1);
   const StringTuple = Tuple.with_left<string>();
   const fixed_pair = StringTuple(["count", 42]);
-  const Errors = ValidationT.with_error<readonly string[]>();
+  const Errors = ValidationT.with_semigroup<readonly string[]>({
+    concat: (first, second) => [...first, ...second],
+  });
   const fixed_valid = Errors.pure(42);
   const fixed_constructor_valid = Errors.Valid(42);
   const bimapped_either = Left<string, number>("missing").bimap(

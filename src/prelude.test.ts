@@ -54,9 +54,9 @@ import {
   product,
   pure,
   sequence,
+  sequence_right,
   show,
   sum,
-  then,
   throw_error,
   to_array,
   traverse,
@@ -206,8 +206,13 @@ Deno.test("prelude sequences linear and multi-shot contexts", () => {
     3,
     4,
   ]);
-  assert_equals(then(Just(1), Just(2)).value(), ["Just", 2] as const);
-  assert_equals(then(ArrayT([1, 2]), ArrayT([3, 4])).value(), [3, 4, 3, 4]);
+  assert_equals(sequence_right(Just(1), Just(2)).value(), ["Just", 2] as const);
+  assert_equals(sequence_right(ArrayT([1, 2]), ArrayT([3, 4])).value(), [
+    3,
+    4,
+    3,
+    4,
+  ]);
 });
 
 Deno.test("prelude folds and traverses linear and multi-shot contexts", () => {

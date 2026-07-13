@@ -8,6 +8,10 @@ import {
 import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Show } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const typed_array_identity: unique symbol;
+
+/** Any JavaScript typed array whose elements are numbers. */
 export type NumericTypedArray =
   | Int8Array
   | Uint8Array
@@ -19,37 +23,49 @@ export type NumericTypedArray =
   | Float32Array
   | Float64Array;
 
+/** Any JavaScript typed array whose elements are big integers. */
 export type BigIntTypedArray = BigInt64Array | BigUint64Array;
 
-type AnyTypedArray = NumericTypedArray | BigIntTypedArray;
-type TypedArrayItem<array> = array extends BigIntTypedArray ? bigint : number;
+/** @ignore */
+export type AnyTypedArray = NumericTypedArray | BigIntTypedArray;
+/** @ignore */
+export type TypedArrayItem<array> = array extends BigIntTypedArray ? bigint
+  : number;
 
+/** The typed-array representation wrapped by the `TypedArrayT` dictionary. */
 export type TypedArrayT<item = number | bigint> = AnyTypedArray;
 
+/** Dictionary type shared by numeric and big-integer typed arrays. */
 export interface AsTypedArray
   extends
-    As<AsTypedArray>,
+    As<AsTypedArray, typeof typed_array_identity>,
     Show<AsTypedArray>,
     Eq<AsTypedArray>,
     Foldable<AsTypedArray> {
+  /** Higher-kinded slot for the typed-array element type. */
   readonly [type_item]: unknown;
+  /** Typed-array representation at the selected element type. */
   readonly [type_data]: TypedArrayT<this[typeof type_item]>;
 }
 
-type TypedArrayValue<item> = Data<AsTypedArray, item>;
+/** @ignore */
+export type TypedArrayValue<item> = Data<AsTypedArray, item>;
 
+/** Callable typed-array dictionary that preserves and clones the input kind. */
 export const TypedArrayT: AsTypedArray = data<AsTypedArray>(
   function (array) {
     return this.data(clone_typed_array(array));
   },
 );
 
+/** Wrap a defensive copy of a JavaScript typed array. */
 export function from_typed_array<array extends AnyTypedArray>(
   array: array,
 ): TypedArrayValue<TypedArrayItem<array>> {
   return TypedArrayT(array);
 }
 
+/** Copy a wrapped value into a typed array of the same concrete kind. */
 export function to_typed_array<item>(
   array: TypedArrayValue<item>,
 ): TypedArrayT<item> {
@@ -86,10 +102,10 @@ Eq.instance(TypedArrayT)({
 });
 
 Foldable.instance(TypedArrayT)({
-  fold<item, out>(
+  fold<item, output>(
     this: Data<AsTypedArray, item>,
-    initial: out,
-    fn: (state: out, item: item) => out,
+    initial: output,
+    fn: (state: output, item: item) => output,
   ) {
     let state = initial;
 

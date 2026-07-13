@@ -14,8 +14,14 @@ import type {
   FileSummary,
 } from "./types.ts";
 
+declare const report_identity: unique symbol;
+
 export interface AsReport
-  extends As<AsReport>, Show<AsReport>, Semigroup<AsReport>, Monoid<AsReport> {
+  extends
+    As<AsReport, typeof report_identity>,
+    Show<AsReport>,
+    Semigroup<AsReport>,
+    Monoid<AsReport> {
   readonly [type_item]: unknown;
   readonly [type_data]: AnalyzerReport;
 }

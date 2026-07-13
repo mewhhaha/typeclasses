@@ -7,8 +7,10 @@ import {
   type TypeclassDictionary,
 } from "../typeclass.ts";
 
+/** Runtime token for the Functor typeclass. */
 export const functor_typeclass = Symbol("Functor");
 
+/** Dictionary capability for mapping contextual values. */
 export interface Functor<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -22,13 +24,15 @@ export interface Functor<dictionary extends Dictionary>
       }
     > {}
 
-type FunctorTypeclass = Typeclass<typeof functor_typeclass, {
+/** @ignore */
+export type FunctorTypeclass = Typeclass<typeof functor_typeclass, {
   map<dictionary extends Functor<dictionary>, from, to>(
     value: Data<dictionary, from>,
     fn: (value: from) => to,
   ): Data<dictionary, to>;
 }>;
 
+/** Operations for mapping values through Functor dictionaries. */
 export const Functor: FunctorTypeclass = typeclass(functor_typeclass, {
   map<
     dictionary extends Functor<dictionary>,

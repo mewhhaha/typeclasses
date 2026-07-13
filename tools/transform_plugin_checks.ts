@@ -30,6 +30,10 @@ const value = Do(Maybe, function* () { return 42; });
     !transformed.code.includes("function*"),
     "expected generator to lower\n\n" + transformed.code,
   );
+  assert_true(transformed.map !== null, "expected Rollup source map");
+  if (transformed.map !== null) {
+    assert_equals(transformed.map.sourcesContent?.[0], source);
+  }
   assert_equals(warnings, []);
 
   const rolldown_plugin = typeclasses_rolldown_plugin();
@@ -49,6 +53,13 @@ const value = Do(Maybe, function* () { return 42; });
     !rolldown_transformed.code.includes("function*"),
     "expected Rolldown generator to lower\n\n" + rolldown_transformed.code,
   );
+  assert_true(
+    rolldown_transformed.map !== null,
+    "expected Rolldown source map",
+  );
+  if (rolldown_transformed.map !== null) {
+    assert_equals(rolldown_transformed.map.sourcesContent?.[0], source);
+  }
   assert_equals(warnings, []);
 
   let on_load:
@@ -111,7 +122,7 @@ const value = run(run_reader(effect, config));
 });
 
 Deno.test({
-  name: "esbuild bundles examples/monads.ts through the typeclasses plugin",
+  name: "esbuild bundles examples/monads.ts with transitive library source",
   permissions: { env: true, read: true, run: true },
   async fn() {
     const result = await build({
@@ -120,30 +131,28 @@ Deno.test({
       format: "esm",
       platform: "neutral",
       write: false,
-      // The library currently uses TypeScript's `out` type-parameter spelling,
-      // which esbuild's parser rejects in transitive source modules. Keeping
-      // those imports external still exercises the actual entry bundle and
-      // plugin lowering path without changing library source for this smoke.
-      external: ["../src/*"],
       plugins: [typeclasses_esbuild_plugin()],
     });
     const output = result.outputFiles[0]?.text;
     assert_true(output !== undefined, "expected esbuild output");
     if (output === undefined) throw new Error("expected esbuild output");
     assert_true(
-      !output.includes("function*"),
-      "expected transformed entry output to contain no generators\n\n" + output,
+      !/\bDo\s*\(\s*function\s*\*/.test(output),
+      "expected entry Do blocks to be transformed\n\n" + output,
+    );
+    assert_true(
+      !/from\s+["'][.][.][/]src[/]/.test(output),
+      "expected transitive library modules to be bundled\n\n" + output,
     );
   },
 });
 
 Deno.test({
-  name: "Rolldown bundles examples/monads.ts through the typeclasses plugin",
+  name: "Rolldown bundles examples/monads.ts with transitive library source",
   permissions: { env: true, ffi: true, read: true, run: true },
   async fn() {
     const bundle = await rolldown({
       input: new URL("../examples/monads.ts", import.meta.url).pathname,
-      external: (id) => id.startsWith("../src/"),
       plugins: [typeclasses_rolldown_plugin()],
     });
     try {
@@ -153,9 +162,60 @@ Deno.test({
       }).join("\n");
       assert_true(output.length > 0, "expected Rolldown output");
       assert_true(
-        !output.includes("function*"),
-        "expected transformed entry output to contain no generators\n\n" +
-          output,
+        !/\bDo\s*\(\s*function\s*\*/.test(output),
+        "expected entry Do blocks to be transformed\n\n" + output,
+      );
+      assert_true(
+        !/from\s+["'][.][.][/]src[/]/.test(output),
+        "expected transitive library modules to be bundled\n\n" + output,
+      );
+    } finally {
+      await bundle.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "esbuild bundles the package root without external source modules",
+  permissions: { env: true, read: true, run: true },
+  async fn() {
+    const result = await build({
+      entryPoints: [new URL("../src/mod.ts", import.meta.url).pathname],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      write: false,
+      plugins: [typeclasses_esbuild_plugin()],
+    });
+    const output = result.outputFiles[0]?.text;
+    assert_true(output !== undefined, "expected esbuild package output");
+    if (output === undefined) {
+      throw new Error("expected esbuild package output");
+    }
+    assert_true(
+      !/from\s+["'][.]\//.test(output),
+      "expected package source modules to be bundled\n\n" + output,
+    );
+  },
+});
+
+Deno.test({
+  name: "Rolldown bundles the package root without external source modules",
+  permissions: { env: true, ffi: true, read: true, run: true },
+  async fn() {
+    const bundle = await rolldown({
+      input: new URL("../src/mod.ts", import.meta.url).pathname,
+      plugins: [typeclasses_rolldown_plugin()],
+    });
+    try {
+      const result = await bundle.generate({ format: "esm" });
+      const output = result.output.map((item) => {
+        return "code" in item ? item.code : "";
+      }).join("\n");
+      assert_true(output.length > 0, "expected Rolldown package output");
+      assert_true(
+        !/from\s+["'][.]\//.test(output),
+        "expected package source modules to be bundled\n\n" + output,
       );
     } finally {
       await bundle.close();

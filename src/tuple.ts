@@ -25,40 +25,58 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const tuple_identity: unique symbol;
+/** @ignore */
+export declare const tuple_monoid_identity: unique symbol;
+
+/** An immutable pair whose right component is the higher-kinded value. */
 export type Tuple<left, right> = readonly [left, right];
 
-interface TupleBifunctorContext extends BifunctorContext {
+/** @ignore */
+export interface TupleBifunctorContext extends BifunctorContext {
   readonly [type_data]: AsTuple<this[typeof type_item]>;
 }
 
+/** Dictionary type for tuples with a fixed left component. */
 export interface AsTuple<left = unknown>
   extends
-    As<AsTuple<left>>,
+    As<AsTuple<left>, typeof tuple_identity>,
     Show<AsTuple<left>>,
     Ord<AsTuple<left>>,
     Bifunctor<AsTuple<left>, left, TupleBifunctorContext>,
     Traversable<AsTuple<left>>,
     Comonad<AsTuple<left>> {
+  /** Higher-kinded slot for the right component type. */
   readonly [type_item]: unknown;
+  /** Pair representation with the configured left component. */
   readonly [type_data]: Tuple<left, this[typeof type_item]>;
 }
 
+/** A wrapped tuple with explicit left and right component types. */
 export type TupleValue<left, right> = Data<AsTuple<left>, right>;
 
+/** Tuple dictionary configured to accumulate wrapped left values with a monoid. */
 export interface AsTupleMonoid<
   output extends Dictionary,
   left,
-> extends As<AsTupleMonoid<output, left>>, Monad<AsTupleMonoid<output, left>> {
+> extends
+  As<AsTupleMonoid<output, left>, typeof tuple_monoid_identity>,
+  Monad<AsTupleMonoid<output, left>> {
+  /** Higher-kinded slot for the right component type. */
   readonly [type_item]: unknown;
+  /** Pair representation containing a wrapped monoidal left value. */
   readonly [type_data]: Tuple<
     Data<output, left>,
     this[typeof type_item]
   >;
+  /** Wrap a pair for the configured left-value dictionary. */
   <right>(
     value: Tuple<Data<output, left>, right>,
   ): TupleMonoidValue<output, left, right>;
 }
 
+/** A tuple value whose wrapped left component accumulates monoidally. */
 export type TupleMonoidValue<
   output extends Dictionary,
   left,
@@ -69,17 +87,23 @@ export type TupleMonoidValue<
   right
 >;
 
+/** A tuple dictionary configured with a monoid for its left component. */
 export type TupleMonoidDictionary<
   output extends Dictionary,
   left,
 > = AsTupleMonoid<output, left>;
 
+/** A tuple dictionary specialized to one left-component type. */
 export type TupleDictionary<left> = AsTuple<left>;
 
-type TupleConstructor =
+/** @ignore */
+export type TupleConstructor =
   & {
+    /** Wrap an immutable pair. */
     <left, right>(value: Tuple<left, right>): TupleValue<left, right>;
+    /** Specialize tuple operations to one left-component type. */
     with_left<left>(): TupleDictionary<left>;
+    /** Configure tuple applicative and monad operations to accumulate left values. */
     with_monoid<output extends MonoidDictionary<output>, left>(
       empty: Data<output, left>,
     ): TupleMonoidDictionary<output, left>;
@@ -94,6 +118,7 @@ type TupleConstructor =
     readonly [key in keyof AsTuple<unknown>]: AsTuple<unknown>[key];
   };
 
+/** Callable tuple dictionary with fixed-left and monoidal-left configurations. */
 export const Tuple = data<AsTuple<unknown>>() as unknown as TupleConstructor;
 
 Object.defineProperty(Tuple, "with_left", {
@@ -159,6 +184,7 @@ function tuple_with_monoid<
   }
 }
 
+/** Wrap two components as an immutable tuple value. */
 export function tuple<left, right>(
   left: left,
   right: right,
@@ -166,14 +192,17 @@ export function tuple<left, right>(
   return Tuple([left, right] as const) as TupleValue<left, right>;
 }
 
+/** Read the left component of a wrapped tuple. */
 export function fst<left, right>(value: TupleValue<left, right>): left {
   return value.value()[0];
 }
 
+/** Read the right component of a wrapped tuple. */
 export function snd<left, right>(value: TupleValue<left, right>): right {
   return value.value()[1];
 }
 
+/** Swap the components of a wrapped tuple. */
 export function swap<left, right>(
   value: TupleValue<left, right>,
 ): TupleValue<right, left> {

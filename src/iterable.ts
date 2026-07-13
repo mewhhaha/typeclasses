@@ -21,31 +21,42 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const iterable_identity: unique symbol;
+
+/** A factory that supplies the iterable wrapped by the dictionary. */
 export type IterableT<item> = () => Iterable<item>;
 
+/** Dictionary type for lazy synchronous iterable factories. */
 export interface AsIterable
   extends
-    As<AsIterable>,
+    As<AsIterable, typeof iterable_identity>,
     Show<AsIterable>,
     Eq<AsIterable>,
     Monoid<AsIterable>,
     Alternative<AsIterable>,
     Monad<AsIterable>,
     Traversable<AsIterable> {
+  /** Higher-kinded slot for the yielded value type. */
   readonly [type_item]: unknown;
+  /** Iterable factory at the selected value type. */
   readonly [type_data]: IterableT<this[typeof type_item]>;
 }
 
-type IterableValue<item> = Data<AsIterable, item>;
+/** @ignore */
+export type IterableValue<item> = Data<AsIterable, item>;
 
+/** Callable iterable dictionary with lazy list-like typeclass instances. */
 export const IterableT: AsIterable = data<AsIterable>();
 
+/** Wrap a factory whose iterable is requested for each traversal. */
 export function from_factory<item>(
   factory: () => Iterable<item>,
 ): IterableValue<item> {
   return IterableT(factory);
 }
 
+/** Snapshot an iterable so the wrapped value can be traversed repeatedly. */
 export function from_iterable<item>(
   iterable: Iterable<item>,
 ): IterableValue<item> {
@@ -53,6 +64,7 @@ export function from_iterable<item>(
   return IterableT(() => items);
 }
 
+/** Materialize a wrapped iterable into a mutable array. */
 export function to_array<item>(iterable: IterableValue<item>): item[] {
   return [...iterable.value()()];
 }
@@ -236,11 +248,11 @@ function iterable_prepend<item>(head: item) {
   };
 }
 
-function lift_iterable_two<out>(
-  fn: (...values: unknown[]) => out,
+function lift_iterable_two<output>(
+  fn: (...values: unknown[]) => output,
   first: IterableT<unknown>,
   second: IterableT<unknown>,
-): IterableValue<out> {
+): IterableValue<output> {
   return IterableT(function* () {
     for (const left of first()) {
       for (const right of second()) {
@@ -250,12 +262,12 @@ function lift_iterable_two<out>(
   });
 }
 
-function lift_iterable_three<out>(
-  fn: (...values: unknown[]) => out,
+function lift_iterable_three<output>(
+  fn: (...values: unknown[]) => output,
   first: IterableT<unknown>,
   second: IterableT<unknown>,
   third: IterableT<unknown>,
-): IterableValue<out> {
+): IterableValue<output> {
   return IterableT(function* () {
     for (const left of first()) {
       for (const middle of second()) {
@@ -267,11 +279,11 @@ function lift_iterable_three<out>(
   });
 }
 
-function lift_iterable_many<out>(
-  fn: (...values: unknown[]) => out,
+function lift_iterable_many<output>(
+  fn: (...values: unknown[]) => output,
   first: IterableT<unknown>,
   rest: readonly IterableValue<unknown>[],
-): IterableValue<out> {
+): IterableValue<output> {
   const sources = [
     first,
     ...rest.map((current) => current.value()),
@@ -282,12 +294,12 @@ function lift_iterable_many<out>(
   });
 }
 
-function* iterate_iterable_product<out>(
-  fn: (...values: unknown[]) => out,
+function* iterate_iterable_product<output>(
+  fn: (...values: unknown[]) => output,
   sources: readonly IterableT<unknown>[],
   index: number,
   values: readonly unknown[],
-): Generator<out> {
+): Generator<output> {
   if (index >= sources.length) {
     yield fn(...values);
     return;

@@ -17,11 +17,14 @@ import type {
   CategoryInput,
 } from "./category.ts";
 
+/** Runtime token for the Arrow typeclass. */
 export const arrow_typeclass = Symbol("Arrow");
 
+/** Rebuilding context for Arrow dictionaries. */
 export interface ArrowContext extends CategoryContext {}
 
-type SameArrowContext<dictionary extends Dictionary> = {
+/** @ignore */
+export type SameArrowContext<dictionary extends Dictionary> = {
   readonly [type_item]: unknown;
   readonly [type_data]: dictionary;
 };
@@ -55,6 +58,7 @@ type ArrowImplementation<dictionary extends ArrowDefinition> = {
   >;
 };
 
+/** Category dictionary capability for lifting functions and pairing arrows. */
 export interface Arrow<
   dictionary extends Dictionary,
   input = unknown,
@@ -84,7 +88,8 @@ export interface Arrow<
   >,
   CategoryDictionary<dictionary, input, context> {}
 
-type ArrowTypeclass = Typeclass<typeof arrow_typeclass, {
+/** @ignore */
+export type ArrowTypeclass = Typeclass<typeof arrow_typeclass, {
   arr<dictionary extends ArrowDefinition, from, to>(
     dictionary: dictionary,
     fn: (value: from) => to,
@@ -109,6 +114,7 @@ type ArrowTypeclass = Typeclass<typeof arrow_typeclass, {
   >;
 }>;
 
+/** Operations for constructing and pairing Arrow values. */
 export const Arrow: ArrowTypeclass = typeclass(arrow_typeclass, {
   arr<dictionary extends ArrowDefinition, from, to>(
     dictionary: dictionary,

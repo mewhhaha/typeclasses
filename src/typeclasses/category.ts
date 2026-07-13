@@ -11,28 +11,37 @@ import {
   type TypeclassDictionary,
 } from "../typeclass.ts";
 
+/** Runtime token for the Category typeclass. */
 export const category_typeclass = Symbol("Category");
+/** Phantom key for a category arrow's input parameter. */
 export declare const category_input: unique symbol;
+/** Phantom key for rebuilding category arrows with new inputs. */
 export declare const category_context: unique symbol;
 
+/** Higher-kinded context used to rebuild a category dictionary. */
 export interface CategoryContext extends DataType {
+  /** Dictionary produced for the substituted input parameter. */
   readonly [type_data]: Dictionary;
 }
 
-type SameCategoryContext<dictionary extends Dictionary> = {
+/** @ignore */
+export type SameCategoryContext<dictionary extends Dictionary> = {
   readonly [type_item]: unknown;
   readonly [type_data]: dictionary;
 };
 
+/** Structural definition shared by category dictionaries. */
 export type CategoryDefinition = Dictionary & {
   readonly [category_input]: unknown;
   readonly [category_context]: CategoryContext;
   readonly [category_typeclass]: object;
 };
 
+/** Extract the input parameter associated with a category dictionary. */
 export type CategoryInput<dictionary extends CategoryDefinition> =
   dictionary[typeof category_input];
 
+/** Extract the rebuilding context associated with a category dictionary. */
 export type CategoryContextOf<dictionary extends CategoryDefinition> =
   dictionary[typeof category_context];
 
@@ -58,6 +67,7 @@ type InCategoryContext<
 > ? unknown
   : never;
 
+/** Dictionary capability for identity arrows and composition. */
 export interface Category<
   dictionary extends Dictionary,
   input = unknown,
@@ -76,11 +86,14 @@ export interface Category<
       ) => Data<AppliedData<context, next_input>, to>;
     }
   > {
+  /** Input parameter carried by this arrow dictionary. */
   readonly [category_input]: input;
+  /** Context used when composing arrows with different inputs. */
   readonly [category_context]: context;
 }
 
-type CategoryTypeclass = Typeclass<typeof category_typeclass, {
+/** @ignore */
+export type CategoryTypeclass = Typeclass<typeof category_typeclass, {
   id<dictionary extends CategoryDefinition, item>(
     dictionary: dictionary,
   ): Data<AppliedData<CategoryContextOf<dictionary>, item>, item>;
@@ -96,6 +109,7 @@ type CategoryTypeclass = Typeclass<typeof category_typeclass, {
   ): Data<before_dictionary, to>;
 }>;
 
+/** Operations for category identities and arrow composition. */
 export const Category: CategoryTypeclass = typeclass(category_typeclass, {
   id<dictionary extends CategoryDefinition, item>(
     dictionary: dictionary,

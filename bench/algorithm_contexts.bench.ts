@@ -4,7 +4,11 @@ import {
   from_factory as iterable_from_factory,
   to_array as iterable_to_array,
 } from "../src/iterable.ts";
-import { type AsList, from_array as list_from_array } from "../src/list.ts";
+import {
+  type AsList,
+  from_array as list_from_array,
+  to_array as list_to_array,
+} from "../src/list.ts";
 import { from_entries as map_from_entries } from "../src/map.ts";
 import { type AsMaybe, Just } from "../src/maybe.ts";
 import { from_entries as record_from_entries } from "../src/record.ts";
@@ -590,4 +594,122 @@ function either_active_for(
   weight: number,
 ): Data<AsEither, boolean> {
   return Right(weight % 2 === 0 && id % 2 === 1);
+}
+
+const expected_scores = events.map(score_event);
+
+assert_benchmark_value(
+  "ArrayT functor",
+  score_events(array_events).value(),
+  expected_scores,
+);
+assert_benchmark_value(
+  "List functor",
+  list_to_array(score_events(list_events)),
+  expected_scores,
+);
+assert_benchmark_value(
+  "IterableT functor",
+  iterable_to_array(score_events(iterable_events)),
+  expected_scores,
+);
+assert_benchmark_value(
+  "MapT functor",
+  [...score_events(map_events).value().values()],
+  expected_scores,
+);
+assert_benchmark_value(
+  "RecordT functor",
+  Object.values(score_events(record_events).value()),
+  expected_scores,
+);
+assert_benchmark_value(
+  "SetT functor",
+  [...score_events(set_events).value()],
+  [...new Set(expected_scores)],
+);
+assert_benchmark_value(
+  "Maybe functor",
+  score_events(maybe_event).value(),
+  ["Just", expected_scores[0]],
+);
+assert_benchmark_value(
+  "Either functor",
+  score_events(either_event).value(),
+  ["Right", expected_scores[0]],
+);
+assert_benchmark_value(
+  "Validation functor",
+  score_events(validation_event).value(),
+  ["valid", expected_scores[0]],
+);
+
+const expected_product = native_feature_product(ids, weights, active_flags);
+
+assert_benchmark_value(
+  "ArrayT applicative",
+  build_features(array_ids, array_weights, array_active_flags).value(),
+  expected_product,
+);
+assert_benchmark_value(
+  "List applicative",
+  list_to_array(build_features(list_ids, list_weights, list_active_flags)),
+  expected_product,
+);
+assert_benchmark_value(
+  "IterableT applicative",
+  iterable_to_array(
+    build_features(iterable_ids, iterable_weights, iterable_active_flags),
+  ),
+  expected_product,
+);
+assert_benchmark_value(
+  "Validation error accumulation",
+  build_features(
+    validation_invalid_id,
+    validation_invalid_weight,
+    validation_active,
+  ).value()[1],
+  ["missing id", "missing weight"],
+);
+
+const expected_dependent = native_dependent_features(ids);
+
+assert_benchmark_value(
+  "ArrayT monad",
+  dependent_features(array_ids, array_weights_for, array_active_for).value(),
+  expected_dependent,
+);
+assert_benchmark_value(
+  "List monad",
+  list_to_array(
+    dependent_features(list_ids, list_weights_for, list_active_for),
+  ),
+  expected_dependent,
+);
+assert_benchmark_value(
+  "IterableT monad",
+  iterable_to_array(
+    dependent_features(
+      iterable_ids,
+      iterable_weights_for,
+      iterable_active_for,
+    ),
+  ),
+  expected_dependent,
+);
+
+function assert_benchmark_value(
+  name: string,
+  actual: unknown,
+  expected: unknown,
+): void {
+  const actual_json = JSON.stringify(actual);
+  const expected_json = JSON.stringify(expected);
+
+  if (actual_json !== expected_json) {
+    throw new Error(
+      `${name} produced ${actual_json}; expected ${expected_json}`,
+    );
+  }
 }

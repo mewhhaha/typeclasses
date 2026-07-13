@@ -54,9 +54,11 @@ export type Parser<item> = {
   parse(state: ParseState): ParseReply<item>;
 };
 
+declare const parser_identity: unique symbol;
+
 export interface AsParser
   extends
-    As<AsParser>,
+    As<AsParser, typeof parser_identity>,
     Show<AsParser>,
     Functor<AsParser>,
     Applicative<AsParser>,

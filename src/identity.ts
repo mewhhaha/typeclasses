@@ -20,24 +20,34 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const identity_identity: unique symbol;
+
+/** A value carried without adding any runtime context. */
 export type Identity<item> = item;
 
+/** Dictionary type for the identity context and its typeclass instances. */
 export interface AsIdentity
   extends
-    As<AsIdentity>,
+    As<AsIdentity, typeof identity_identity>,
     Show<AsIdentity>,
     Monad<AsIdentity>,
     Traversable<AsIdentity>,
     Comonad<AsIdentity>,
     Ord<AsIdentity> {
+  /** Higher-kinded slot for the identity value type. */
   readonly [type_item]: unknown;
+  /** Identity representation at the selected value type. */
   readonly [type_data]: Identity<this[typeof type_item]>;
 }
 
+/** An identity value wrapped with fluent typeclass methods. */
 export type IdentityValue<item> = Data<AsIdentity, item>;
 
+/** Callable Identity dictionary and the source of its instances. */
 export const Identity: AsIdentity = data<AsIdentity>();
 
+/** Wrap a value in the Identity context. */
 export function identity<item>(value: item): IdentityValue<item> {
   return Identity(value);
 }

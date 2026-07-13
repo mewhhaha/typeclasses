@@ -8,31 +8,42 @@ import {
 import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const url_search_params_identity: unique symbol;
+
+/** A name-value pair stored in URL search parameters. */
 export type URLSearchParamsEntry = readonly [string, string];
+/** The raw parameter collection wrapped by the `URLSearchParamsT` dictionary. */
 export type URLSearchParamsT = URLSearchParams;
 
+/** Dictionary type for ordered, potentially repeated URL parameters. */
 export interface AsURLSearchParams
   extends
-    As<AsURLSearchParams>,
+    As<AsURLSearchParams, typeof url_search_params_identity>,
     Show<AsURLSearchParams>,
     Eq<AsURLSearchParams>,
     Monoid<AsURLSearchParams>,
     Foldable<AsURLSearchParams> {
+  /** Higher-kinded slot exposed as an entry when folding. */
   readonly [type_item]: unknown;
+  /** Raw `URLSearchParams` representation for this dictionary. */
   readonly [type_data]: URLSearchParamsT;
 }
 
-type URLSearchParamsValue = Data<
+/** @ignore */
+export type URLSearchParamsValue = Data<
   AsURLSearchParams,
   URLSearchParamsEntry
 >;
 
+/** Callable parameter dictionary that clones collections when wrapping them. */
 export const URLSearchParamsT: AsURLSearchParams = data<AsURLSearchParams>(
   function (params) {
     return this.data(new URLSearchParams(params));
   },
 );
 
+/** Build wrapped parameters by appending entries in iteration order. */
 export function from_entries(
   entries: Iterable<URLSearchParamsEntry>,
 ): URLSearchParamsValue {
@@ -45,6 +56,7 @@ export function from_entries(
   return URLSearchParamsT(params) as URLSearchParamsValue;
 }
 
+/** Copy wrapped parameters into an ordered array of entries. */
 export function to_entries(
   params: URLSearchParamsValue,
 ): URLSearchParamsEntry[] {
@@ -98,10 +110,10 @@ Monoid.instance(URLSearchParamsT)({
 });
 
 Foldable.instance(URLSearchParamsT)({
-  fold<item, out>(
+  fold<item, output>(
     this: Data<AsURLSearchParams, item>,
-    initial: out,
-    fn: (state: out, item: item) => out,
+    initial: output,
+    fn: (state: output, item: item) => output,
   ) {
     let state = initial;
 

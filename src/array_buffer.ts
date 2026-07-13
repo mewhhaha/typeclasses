@@ -8,31 +8,42 @@ import {
 import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const array_buffer_identity: unique symbol;
+
+/** The raw binary buffer wrapped by the `ArrayBufferT` dictionary. */
 export type ArrayBufferT = ArrayBuffer;
 
+/** Dictionary type for byte-oriented `ArrayBuffer` values. */
 export interface AsArrayBuffer
   extends
-    As<AsArrayBuffer>,
+    As<AsArrayBuffer, typeof array_buffer_identity>,
     Show<AsArrayBuffer>,
     Eq<AsArrayBuffer>,
     Monoid<AsArrayBuffer>,
     Foldable<AsArrayBuffer> {
+  /** Higher-kinded slot exposed as a byte when folding. */
   readonly [type_item]: unknown;
+  /** Raw `ArrayBuffer` representation for this dictionary. */
   readonly [type_data]: ArrayBufferT;
 }
 
-type ArrayBufferValue = Data<AsArrayBuffer, number>;
+/** @ignore */
+export type ArrayBufferValue = Data<AsArrayBuffer, number>;
 
+/** Callable buffer dictionary that clones buffers when wrapping them. */
 export const ArrayBufferT: AsArrayBuffer = data<AsArrayBuffer>(
   function (buffer) {
     return this.data(buffer.slice(0));
   },
 );
 
+/** Copy byte-like input into a wrapped `ArrayBuffer`. */
 export function from_bytes(bytes: ArrayLike<number>): ArrayBufferValue {
   return ArrayBufferT(Uint8Array.from(bytes).buffer);
 }
 
+/** Copy a wrapped buffer into a new `Uint8Array`. */
 export function to_bytes(buffer: ArrayBufferValue): Uint8Array {
   return new Uint8Array(buffer.value().slice(0));
 }
@@ -72,10 +83,10 @@ Monoid.instance(ArrayBufferT)({
 });
 
 Foldable.instance(ArrayBufferT)({
-  fold<item, out>(
+  fold<item, output>(
     this: Data<AsArrayBuffer, item>,
-    initial: out,
-    fn: (state: out, item: item) => out,
+    initial: output,
+    fn: (state: output, item: item) => output,
   ) {
     let state = initial;
 

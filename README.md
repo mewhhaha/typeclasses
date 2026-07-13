@@ -1,8 +1,9 @@
 # Typeclasses
 
 Typeclasses is a TypeScript library for Haskell-style typeclasses with runtime
-dictionaries and fluent wrapped values. It is developed with Deno, runs across
-JavaScript runtimes, and is published as `@mewhhaha/typeclasses`.
+dictionaries and fluent wrapped values. Its portable core runs on Deno, Node,
+and Bun; runtime-specific worker and build APIs are called out below. The
+package is published as `@mewhhaha/typeclasses`.
 
 It provides reusable typeclass definitions, data types, effect programs,
 examples, case studies, benchmarks, and a source transformer:
@@ -28,50 +29,157 @@ Core instance coverage is intentionally visible:
 | ---------------------------- | ---------------------------------------------------------------------------------- |
 | `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                |
 | `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                    |
-| `Validation`                 | accumulating `Applicative`, `Traversable`, `Bifunctor`, `Ord`                      |
+| `Validation`                 | accumulating `Applicative`, `Traversable`, `Ord`                                   |
 | `Task`                       | parallel `Applicative`, sequential `Monad`, `MonadError`                           |
 | `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                   |
 | `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid` |
 | `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                      |
 
-## Run
+## Quick Start
+
+Install from JSR with the command for your runtime:
 
 ```sh
-deno task test
-deno task check
-deno task example
-deno task learn
-deno task case-study
+deno add jsr:@mewhhaha/typeclasses
+npx jsr add @mewhhaha/typeclasses
+bunx jsr add @mewhhaha/typeclasses
+```
+
+Node projects must use ESM. After installation, the same package import works in
+all three runtimes. This example validates independent fields and accumulates
+both errors instead of stopping at the first one:
+
+```ts
+import { Applicative, Validation } from "@mewhhaha/typeclasses";
+
+const Errors = Validation.with_semigroup<readonly string[]>({
+  concat: (left, right) => [...left, ...right],
+});
+
+function required(field: string, value: string) {
+  const trimmed = value.trim();
+
+  return trimmed === ""
+    ? Errors.Invalid([field + " is required"])
+    : Errors.Valid(trimmed);
+}
+
+const request = Applicative.lift(
+  (name, email) => ({ name, email }),
+  required("name", ""),
+  required("email", ""),
+);
+
+request.value();
+// ["invalid", ["name is required", "email is required"], semigroup]
+```
+
+Pick the smallest abstraction that expresses the behavior:
+
+| Need                                           | Start with                      |
+| ---------------------------------------------- | ------------------------------- |
+| Optional value                                 | `Maybe`                         |
+| One success or one failure                     | `Either`                        |
+| Accumulating independent validation errors     | `Validation`                    |
+| Deferred asynchronous work                     | `Task`                          |
+| Dependent steps in one context                 | `Do`                            |
+| Reader, State, Writer, Task, or custom effects | `Program` and `Effect`          |
+| Synchronous isolate-local transactions         | `Stm`                           |
+| CPU work in runtimes with Web Worker globals   | `worker_map` or a reusable pool |
+
+Continue with one of these paths:
+
+- [Focused examples](#examples) move from basic values to validation, async
+  workflows, worker pools, STM coordination, and effect programs.
+- [The executable tutorial](./learn_you_a_typeclasses_for_greater_good/README.md)
+  builds the ideas across 15 lessons.
+- [Fluent API](#fluent-api) and [Function Prelude](#function-prelude) cover the
+  two public calling styles.
+- [Haskell Comparisons](#haskell-comparisons) maps familiar abstractions to this
+  library's TypeScript representation.
+
+### Package Entry Points
+
+The root entrypoint remains the convenient full library. Stable granular
+entrypoints let applications and build tools import only the domain they need:
+
+- `@mewhhaha/typeclasses` and `/prelude` for the full fluent and function-first
+  APIs.
+- `/typeclass` and `/typeclasses` for dictionary machinery and definitions.
+- `/maybe`, `/either`, `/validation`, `/identity`, `/fn`, `/tuple`, `/array`,
+  `/predicate`, `/list`, and `/tagged` for data values.
+- `/task`, `/effects`, `/reader`, `/state`, `/writer`, `/stm`, and `/parallel`
+  for effectful programs.
+- `/loop` for stack-safe tail loops.
+- `/transform` and `/transform/plugin` for the source transformer and bundler
+  adapters.
+
+Deno can also use explicit `jsr:` specifiers, for example
+`jsr:@mewhhaha/typeclasses/validation`.
+
+### Runtime Support
+
+| Surface                          | Deno                         | Node               | Bun                                    | Browsers / workerd                                |
+| -------------------------------- | ---------------------------- | ------------------ | -------------------------------------- | ------------------------------------------------- |
+| Data types, typeclasses, prelude | CI                           | CI                 | CI                                     | Runtime-neutral core; not CI-smoked               |
+| `Task`                           | CI                           | CI                 | CI                                     | Uses standard promises and `AbortSignal`          |
+| Web Worker pool                  | CI                           | No global `Worker` | Requires compatible Web Worker globals | Browser workers only; workerd has no pool support |
+| Transformer CLI                  | Deno                         | —                  | —                                      | Build-time only                                   |
+| Bundler adapters                 | CI with esbuild and Rolldown | Bundler host       | Bundler host                           | Build-time only                                   |
+
+Importing the root package does not start workers. Calling `/parallel` worker
+operations requires `Worker`, `navigator`, `AbortController`, and explicit
+resource-management support in the host. Node's `worker_threads` API is not a
+drop-in implementation, so Node applications should keep CPU work behind their
+own adapter or use `Task` for asynchronous work on the main isolate.
+
+### Migration Notes
+
+- Existing root and `/prelude` imports continue to work except for the prelude's
+  `then`, which is now `sequence_right`. Exporting `then` makes the JavaScript
+  module namespace thenable, so dynamic imports try to call it instead of
+  resolving to the module. The granular domain entrypoints are additive and are
+  preferred when an application needs only one part of the library.
+- Generic type parameters formerly named `out` are now named `output` so Bun and
+  esbuild can parse the published TypeScript. Type parameter names are not part
+  of call-site syntax, so this requires no application change.
+- Custom dictionary interfaces must give `As` an explicit nominal identity.
+  Declare a module-local `unique symbol` and pass its type as the second
+  argument, as in `As<AsExample, typeof example_identity>`. This prevents two
+  dictionaries with identical raw shapes from being mixed accidentally.
+- `Validation` no longer implements `Bifunctor`: changing the error type cannot
+  lawfully preserve its error semigroup. Replace error-side `bimap` calls with
+  `map_error(validation, fn, target_semigroup)`, then use `.map(...)` for the
+  success side. Use `Validation.with_semigroup(semigroup)` when several custom
+  errors must accumulate.
+- Deprecated camel-case aliases remain for compatibility. New code should use
+  snake-case names such as `with_left`, `with_monoid`, and `map_error`.
+
+## Development
+
+Run the complete release gate, including Deno tests, transformer bundles,
+package entrypoints, Node and Bun smokes, examples, the tutorial, and case
+studies:
+
+```sh
+deno task verify
+```
+
+`verify` requires Deno, Node, and Bun. Run `deno task prepublish` to add the JSR
+dry run. The CI workflow runs both. Benchmarks stay separate because they are a
+measurement harness rather than a correctness gate:
+
+```sh
 deno task bench
 ```
 
 The comparison benchmarks use pinned npm packages through `deno.json` imports,
 so the first run may download `fp-ts`, `effect`, `purify-ts`, and `true-myth`.
 
-Use the package from JSR with explicit imports:
-
-```ts
-import { Do, Just, Nothing, Show } from "jsr:@mewhhaha/typeclasses";
-```
-
-The published package exposes four entrypoints:
-
-- `jsr:@mewhhaha/typeclasses` for the library.
-- `jsr:@mewhhaha/typeclasses/prelude` for Haskell-style standalone functions.
-- `jsr:@mewhhaha/typeclasses/transform` for the source transformer.
-- `jsr:@mewhhaha/typeclasses/transform/plugin` for esbuild, Vite, Rollup, and
-  Rolldown adapters.
-
-Before publishing, run the dry-run task:
-
-```sh
-deno task publish:dry-run
-```
-
-The publish tasks intentionally do not use `--allow-slow-types`. That is why
-repository source files sometimes spell out exported constructor types and
-return types that an application would normally let TypeScript infer. Public
-library exports need stable declaration output; app-local definitions do not.
+Publish checks intentionally do not use `--allow-slow-types`. Repository source
+therefore sometimes spells out exported constructor and return types that an
+application would normally infer. Public exports need stable declaration output;
+app-local definitions do not.
 
 The package is MIT licensed.
 
@@ -113,14 +221,17 @@ import {
   type type_data,
   type type_item,
   union,
-} from "./typeclass.ts";
-import { Monad, Show } from "./typeclasses.ts";
+} from "@mewhhaha/typeclasses/typeclass";
+import { Monad, Show } from "@mewhhaha/typeclasses/typeclasses";
 
 type Maybe<item> =
   | readonly ["Just", item]
   | readonly ["Nothing"];
 
-interface AsMaybe extends As<AsMaybe>, Show<AsMaybe>, Monad<AsMaybe> {
+declare const maybe_identity: unique symbol;
+
+interface AsMaybe
+  extends As<AsMaybe, typeof maybe_identity>, Show<AsMaybe>, Monad<AsMaybe> {
   readonly [type_item]: unknown;
   readonly [type_data]: Maybe<this[typeof type_item]>;
 }
@@ -291,7 +402,8 @@ import {
   type Dictionary,
   typeclass,
   type TypeclassDictionary,
-} from "./typeclass.ts";
+} from "@mewhhaha/typeclasses/typeclass";
+import { type AsList, List, to_array } from "@mewhhaha/typeclasses/list";
 
 const size_typeclass = Symbol("Size");
 
@@ -313,7 +425,7 @@ const Size = typeclass(size_typeclass, {
   },
 });
 
-declare module "./list.ts" {
+declare module "@mewhhaha/typeclasses/list" {
   interface AsList extends Size<AsList> {}
 }
 
@@ -350,12 +462,11 @@ erase it to `unknown`:
 ```ts
 const parsed: Data<AsEither<string>, number> = Right<string, number>(42);
 const counted: Data<AsTuple<string>, number> = tuple("count", 42);
-const checked: Data<AsValidation<readonly string[]>, number> = Invalid<
-  readonly string[],
-  number
->(["missing"], {
+const StringErrors = Validation.with_semigroup<readonly string[]>({
   concat: (left, right) => [...left, ...right],
 });
+const checked: Data<AsValidation<readonly string[]>, number> = StringErrors
+  .Invalid<number>(["missing"]);
 
 const StringResult = Either.with_left<string>();
 const returned: Data<AsEither<string>, number> = Do(
@@ -377,7 +488,9 @@ named.run({ name: "Ada" });
 
 `Tuple.with_left<left>()` and `Validation.with_error<error>()` provide the same
 typed dictionary view when a context-free operation needs the fixed parameter;
-`Fn.with_input<input>()` provides one for function dictionaries. `Bifunctor`,
+`Fn.with_input<input>()` provides one for function dictionaries. Prefer
+`Validation.with_semigroup(semigroup)` when code also constructs failures, since
+the returned dictionary carries the accumulation rule. `Bifunctor`,
 `Profunctor`, `Category`, and `Arrow` carry a small associated context mapping
 so operations that change a fixed parameter return the corresponding new
 dictionary type.
@@ -421,15 +534,17 @@ mempty(ArrayT); // []
 
 The prelude keeps familiar Haskell vocabulary where JavaScript syntax allows it:
 
-| Area                          | Functions                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `then`, `bind` |
-| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`            |
-| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                         |
-| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                    |
+| Area                          | Functions                                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `sequence_right`, `bind` |
+| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`                      |
+| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                                   |
+| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                              |
 
 `voided` is the spelling of Haskell's `void` because `void` is a JavaScript
 operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
+`sequence_right` replaces Haskell's `then`, which makes a module thenable when
+exported from JavaScript.
 
 The earlier camel-case spellings remain deprecated aliases for compatibility,
 but new code should use the snake-case names shown above. The same applies to
@@ -666,8 +781,10 @@ const rolldown = typeclasses_rolldown_plugin({ check: true });
 The adapters skip non-TypeScript files and sources without likely transform
 targets, and forward file/line/column diagnostics to the host warning or error
 channel. The Rolldown adapter also exposes a native hook filter so skipped files
-do not cross into JavaScript. Printer output currently has no source map, so the
-Rollup-shaped hooks return `map: null`.
+do not cross into JavaScript. Transformed output carries a version 3 source map
+with the original TypeScript in `sourcesContent`. Rollup and Rolldown receive
+the map directly; the esbuild adapter appends it inline to the transformed
+source.
 
 ## Tail Loops
 
@@ -684,49 +801,6 @@ const factorial = loop({ n: 6, acc: 1 }, ({ n, acc }) => {
   return rec({ n: n - 1, acc: acc * n });
 });
 ```
-
-## Benchmarks
-
-The benchmark folder is part of the library maintenance harness. The broad task
-runs every benchmark file:
-
-```sh
-deno task bench
-```
-
-Focused benchmarks can be run directly:
-
-```sh
-deno bench --allow-env --allow-read --allow-write=/tmp bench/algorithm_contexts.bench.ts
-deno bench bench/iterable_pipeline.bench.ts
-deno bench --allow-env --allow-read --allow-write=/tmp bench/do_vs_program.bench.ts
-deno task bench:case-studies
-```
-
-`bench/algorithm_contexts.bench.ts` runs the same small algorithms through
-different contexts:
-
-- a `Functor` scoring pass
-- an `Applicative` product builder
-- a `Monad` dependent product builder
-
-It compares native arrays and generators with `ArrayT`, `List`, `IterableT`,
-`Maybe`, `Either`, `Validation`, and the functor-only `MapT`, `RecordT`, and
-`SetT`. `IterableT` is intentionally replayable (`() => Iterable<item>`) so its
-list-like applicative and monad instances remain lawful. A raw JavaScript
-`Iterator` is one-shot, so the benchmark uses native generator baselines for
-that shape and forces them to arrays before recording the result.
-
-`bench/iterable_pipeline.bench.ts` focuses on one lazy pipeline and compares
-`IterableT` against materializing every `Array.map` step, native generator maps,
-and a manual fused loop baseline.
-
-`bench/do_vs_program.bench.ts` compares runtime generator interpretation with
-the source transformer. The transformer lowers `Do(function* () { ... })` into
-direct fluent `bind`/`map` chains and lowers `Program(function* () { ... })`
-into optimized `Effect.bind_from`/`Effect.map_from` chains. It also removes
-immediate `Effect.interpret(effect).handle(...).run(...)` wrappers when the
-handlers are statically visible.
 
 ## Haskell Comparisons
 
@@ -894,11 +968,10 @@ MonadError.catch_error(
 );
 ```
 
-`Either` is the natural implementation for both typeclasses. `Validation` also
-implements `Bifunctor`; mapping an `Invalid` installs a first-biased semigroup
-for the new error type because an arbitrary mapping cannot transport the old
-semigroup backward. `Task` implements `MonadError` by rejecting and recovering
-deferred promises.
+`Either` is the natural implementation for both typeclasses. `Validation` keeps
+error mapping explicit through `map_error`, which requires the destination
+semigroup instead of inventing one during `bimap`. `Task` implements
+`MonadError` by rejecting and recovering deferred promises.
 
 ### Tuple
 
@@ -1336,7 +1409,16 @@ await program.run();
 `Task` is deferred async work. It is intentionally a thunk,
 `() => Promise<item>`, so construction does not start the operation. Its
 `MonadError` instance turns `throw_error` into a deferred rejection and
-`catch_error` into deferred promise recovery.
+`catch_error` into deferred promise recovery. `from_promise(promise)` can adopt
+an existing promise, but that promise is already running; use `from_fn` when the
+operation itself must wait for `.run()`.
+
+Task items cannot themselves be `PromiseLike`. Keep `.map(...)` and applicative
+callbacks synchronous, and use `.bind(...)` or `from_fn(...)` for dependent
+asynchronous work. Both `from_fn` and `from_promise` accept an `AbortSignal`.
+`from_fn` also passes that signal to the producer so cooperative work can stop;
+aborting `from_promise` stops waiting but cannot undo work already started by
+the original promise.
 
 ### Async and Concurrency
 
@@ -1387,7 +1469,10 @@ const summaries = await worker_map<LogShard, LogShardSummary>(
 reuse a bounded pool across multiple batches; batches submitted to one pool run
 in order, while the jobs inside each batch are distributed across its workers.
 Worker inputs and outputs must be structured-clone-safe values rather than
-wrapped dictionaries, functions, or `TVar`s.
+wrapped dictionaries, functions, or `TVar`s. Pool and batch options accept an
+`AbortSignal`. A reusable pool closes after a worker failure or an aborted
+active batch, so recovery creates a new pool instead of reusing workers with
+unknown state.
 
 ### STM
 
@@ -1484,9 +1569,9 @@ const checked_profile = Applicative.lift(
 checked_profile.value()[0]; // "invalid"
 ```
 
-`Validation` implements `Applicative`, `Functor`, `Foldable`, `Traversable`,
-`Bifunctor`, and `Ord`, but not `Monad`: a lawful monad would make later
-validations depend on earlier values and lose independent error accumulation.
+`Validation` implements `Applicative`, `Functor`, `Foldable`, `Traversable`, and
+`Ord`, but not `Monad`: a lawful monad would make later validations depend on
+earlier values and lose independent error accumulation.
 
 Like `Writer`, `Validation` separates the accumulation rule from the default
 error shape. `InvalidMessages("message")` is a convenience for
@@ -1494,6 +1579,26 @@ error shape. `InvalidMessages("message")` is a convenience for
 error payload with an explicit semigroup. `Valid` and `Invalid` are typed
 constructor exports over the `Validation` dictionary, so custom error payloads
 can be represented without caller-side casts.
+
+For repeated custom errors, configure the dictionary once and use its one-
+argument constructors:
+
+```ts
+const Problems = Validation.with_semigroup<readonly string[]>({
+  concat: (left, right) => [...left, ...right],
+});
+
+const missing_name = Problems.Invalid(["name is required"]);
+const renamed = map_error(
+  missing_name,
+  (messages) => new Set(messages),
+  { concat: (left, right) => new Set([...left, ...right]) },
+);
+```
+
+Error mapping requires the target semigroup explicitly. This is why `Validation`
+does not offer `Bifunctor`: an arbitrary function can change the error type, but
+it cannot derive a lawful accumulation rule for that new type.
 
 ## JavaScript Shapes
 
@@ -1507,7 +1612,7 @@ surprising runtime behavior.
 | `ReadonlyMap<string, item>`      | `MapT`                           | `Functor`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`                                                         |
 | `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused typeclasses as `MapT`, plus lexicographic `Ord`                                                  |
 | `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates    |
-| `PromiseLike<item>`              | `Task` via `from_promise`        | Use `Task` so work is deferred; raw promises are already running                                                    |
+| `PromiseLike<item>`              | `Task` via `from_promise`        | Adopts work that is already running; use `from_fn` to defer starting it                                             |
 | `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`, `MonadError`                                                 |
 | `Iterable<item>` / generator     | `IterableT`                      | replayable lazy `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`  |
 | `AsyncIterable<item>`            | `AsyncIterableT`                 | replayable async `Functor`, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Alternative`; collect with `to_array`   |
@@ -1614,7 +1719,7 @@ import {
   set,
   typed_array,
   url_search_params,
-} from "./src/mod.ts";
+} from "@mewhhaha/typeclasses";
 ```
 
 Each data type has an open dictionary interface such as `AsMaybe` or `AsList`.
@@ -1628,27 +1733,34 @@ aliases onto the dictionary.
 Focused repository examples live in `examples/` and progress from individual
 operations to application-shaped workflows:
 
-- `examples/basics.ts` covers `Maybe`, `Either`, generic typeclass functions,
-  applicative combination, and tagged-value switches.
-- `examples/validated_request.ts` parses native `FormData` into a typed request
-  while accumulating all independent field errors.
-- `examples/composable_functions.ts` combines reusable predicates and adapts
-  typed function pipelines to an order domain.
-- `examples/built_in_shapes.ts` covers JavaScript-shaped wrappers such as
-  arrays, maps, sets, iterables, streams, form data, and binary buffers.
-- `examples/monads.ts` shows `Do` with `Reader`, `State`, `Task`, `Stm`, and
-  fail-fast decoding with `Either`.
-- `examples/task_workflow.ts` starts independent request branches together, fans
-  out account-dependent calls as soon as their input arrives, and recovers an
-  optional-service failure.
-- `examples/worker_pool.ts` reuses a bounded Web Worker pool across ordered
-  batches of structured-clone-safe log analysis jobs.
-- `examples/stm_coordination.ts` uses synchronous local transactions to admit
-  requests into primary and overflow queues with rollback on full queues.
-- `examples/effects.ts` composes `Reader`, `State`, `Writer`, and `Task` with
-  `Program`.
-- `examples/custom_typeclass.ts` shows extending a data type with a local
-  typeclass.
+- [`examples/basics.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/basics.ts)
+  covers `Maybe`, `Either`, generic typeclass functions, applicative
+  combination, and tagged-value switches.
+- [`examples/validated_request.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/validated_request.ts)
+  parses native `FormData` into a typed request while accumulating all
+  independent field errors.
+- [`examples/composable_functions.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/composable_functions.ts)
+  combines reusable predicates and adapts typed function pipelines to an order
+  domain.
+- [`examples/built_in_shapes.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/built_in_shapes.ts)
+  covers JavaScript-shaped wrappers such as arrays, maps, sets, iterables,
+  streams, form data, and binary buffers.
+- [`examples/monads.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/monads.ts)
+  shows `Do` with `Reader`, `State`, `Task`, `Stm`, and fail-fast decoding with
+  `Either`.
+- [`examples/task_workflow.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/task_workflow.ts)
+  starts independent request branches together, fans out account-dependent calls
+  as soon as their input arrives, and recovers an optional-service failure.
+- [`examples/worker_pool.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/worker_pool.ts)
+  reuses a bounded Web Worker pool across ordered batches of
+  structured-clone-safe log analysis jobs.
+- [`examples/stm_coordination.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/stm_coordination.ts)
+  uses synchronous local transactions to admit requests into primary and
+  overflow queues with rollback on full queues.
+- [`examples/effects.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/effects.ts)
+  composes `Reader`, `State`, `Writer`, and `Task` with `Program`.
+- [`examples/custom_typeclass.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/custom_typeclass.ts)
+  shows extending a data type with a local typeclass.
 
 `examples/main.ts` is only a runner for those focused files.
 
@@ -1658,39 +1770,68 @@ Run it from the repository with `deno task learn`.
 
 Larger repository-only application-shaped demos live in `case_studies/`:
 
-- `case_studies/http_router/` builds a small typed HTTP router on `URLPattern`.
-  `router.ts` contains the `UrlPatternList` data type and route composition,
-  while `handlers.ts` and `mod.ts` define the concrete HTTP app. Routes carry
-  method checks, typed path params, typed query params, and compose as a
-  first-match `Alternative` route list. Handlers are `Program`s with `Reader`
-  for route input and `Writer<AsyncIterableT<string>>` for streamed response
-  bodies, so the same router can return HTML pages or JSON responses.
-- `case_studies/cloudflare_crud_worker/` models a Cloudflare Worker CRUD API for
-  `/todos`. The request program uses `Reader` for request context, `Task` for
-  JSON body reads and async storage, a custom `Database` effect for list/create/
-  read/update/delete operations, a custom `Clock` effect for timestamps, and a
-  custom `Trace` effect for request and domain events. A trace-scope interpreter
-  can also observe selected effects before their concrete runner, so database
-  operations automatically produce `crud.database.*.start` and
-  `crud.database.*.finish` trace lines without adding trace calls to the route
-  handlers. The same program can run against an in-memory dry-run database with
-  trace lines collected through `Writer`, or against a D1-style runtime with
-  trace events sent through a console/task sink.
-- `case_studies/io_application/` models a small CLI with `echo`, `cat`, and
-  `write` commands. It uses a custom `FileSystem` effect for
-  `ReadFile`/`WriteFile`, `Reader` for argv, `Writer` for stdout lines, and
-  `Task` only at the interpreter boundary. The same program runs against an IO
-  interpreter or a dry-run interpreter that records planned writes without
-  mutating the backing store.
-- `case_studies/agent_harness/` models an agent loop as another IO program. A
-  custom `LanguageModel` effect produces tool requests or a final answer; the
-  harness executes filesystem tools, appends tool results to the transcript,
-  writes stdout with `Writer`, and repeats until the model returns `final`.
-- `case_studies/parallel_analyzer/` compares sequential analysis, one-shot
-  workers, and a reused worker pool. Its `Parallel` effect keeps worker
-  execution behind an interpreter while preserving input order in reports.
+- [`case_studies/http_router/`](https://github.com/mewhhaha/typeclasses/tree/main/case_studies/http_router)
+  builds a small typed HTTP router on `URLPattern`. `router.ts` contains the
+  `UrlPatternList` data type and route composition, while `handlers.ts` and
+  `mod.ts` define the concrete HTTP app. Routes carry method checks, typed path
+  params, typed query params, and compose as a first-match `Alternative` route
+  list. Handlers are `Program`s with `Reader` for route input and
+  `Writer<AsyncIterableT<string>>` for streamed response bodies, so the same
+  router can return HTML pages or JSON responses.
+- [`case_studies/cloudflare_crud_worker/`](https://github.com/mewhhaha/typeclasses/tree/main/case_studies/cloudflare_crud_worker)
+  models a Cloudflare Worker CRUD API for `/todos`. The request program uses
+  `Reader` for request context, `Task` for JSON body reads and async storage, a
+  custom `Database` effect for list, create, read, update, and delete
+  operations, custom `Clock` effect for timestamps, and a custom `Trace` effect
+  for request and domain events. A trace-scope interpreter can also observe
+  selected effects before their concrete runner, so database operations
+  automatically produce `crud.database.*.start` and `crud.database.*.finish`
+  trace lines without adding trace calls to the route handlers. The same program
+  can run against an in-memory dry-run database with trace lines collected
+  through `Writer`, or against a D1-style runtime with trace events sent through
+  a console/task sink.
+- [`case_studies/io_application/`](https://github.com/mewhhaha/typeclasses/tree/main/case_studies/io_application)
+  models a small CLI with `echo`, `cat`, and `write` commands. It uses a custom
+  `FileSystem` effect for `ReadFile`/`WriteFile`, `Reader` for argv, `Writer`
+  for stdout lines, and `Task` only at the interpreter boundary. The same
+  program runs against an IO interpreter or a dry-run interpreter that records
+  planned writes without mutating the backing store.
+- [`case_studies/agent_harness/`](https://github.com/mewhhaha/typeclasses/tree/main/case_studies/agent_harness)
+  models an agent loop as another IO program. A custom `LanguageModel` effect
+  produces tool requests or a final answer; the harness executes filesystem
+  tools, appends tool results to the transcript, writes stdout with `Writer`,
+  and repeats until the model returns `final`.
+- [`case_studies/parallel_analyzer/`](https://github.com/mewhhaha/typeclasses/tree/main/case_studies/parallel_analyzer)
+  compares sequential analysis, one-shot workers, and a reused worker pool. Its
+  `Parallel` effect keeps worker execution behind an interpreter while
+  preserving input order in reports.
 
 ## Benchmarks
+
+The benchmark folder is a measurement harness, not part of the correctness gate.
+Run every benchmark or select a focused comparison:
+
+```sh
+deno task bench
+deno bench --allow-env --allow-read --allow-write=/tmp bench/algorithm_contexts.bench.ts
+deno bench bench/iterable_pipeline.bench.ts
+deno bench --allow-env --allow-read --allow-write=/tmp bench/do_vs_program.bench.ts
+deno task bench:case-studies
+```
+
+`bench/algorithm_contexts.bench.ts` runs the same Functor scoring, Applicative
+product, and Monad-dependent product algorithms through native arrays and
+generators, `ArrayT`, `List`, `IterableT`, `Maybe`, `Either`, `Validation`, and
+the functor-only `MapT`, `RecordT`, and `SetT`. `IterableT` is intentionally
+replayable (`() => Iterable<item>`) so its list-like Applicative and Monad
+remain lawful. Raw JavaScript iterators are one-shot, so the native generator
+baselines are forced to arrays before their result is recorded.
+
+`bench/iterable_pipeline.bench.ts` compares one lazy `IterableT` pipeline with
+materialized `Array.map` steps, native generator maps, and a manual fused loop.
+`bench/do_vs_program.bench.ts` compares runtime generator interpretation with
+the source transformer, including direct `Do` chains, optimized Effect spines,
+and statically visible terminal handlers.
 
 `bench/value_construction.bench.ts` compares the current prototype-chain wrapper
 against constructor-cache variants and cheaper construction shapes. Each

@@ -1,6 +1,7 @@
 import type { Data } from "./typeclass.ts";
 import { Applicative, Foldable, Functor, Monad } from "./typeclasses.ts";
 
+/** Prefix every displayed value inside a functor. */
 export function label_values<dictionary extends Functor<dictionary>>(
   value: Data<dictionary, number>,
 ): Data<dictionary, string> {
@@ -9,6 +10,7 @@ export function label_values<dictionary extends Functor<dictionary>>(
   });
 }
 
+/** Add two independent numbers inside the same applicative context. */
 export function add_values<dictionary extends Applicative<dictionary>>(
   left: Data<dictionary, number>,
   right: Data<dictionary, number>,
@@ -20,6 +22,7 @@ export function add_values<dictionary extends Applicative<dictionary>>(
   return Applicative.ap(add_right, right);
 }
 
+/** Keep a positive contextual number or replace it through the rejection callback. */
 export function keep_positive<dictionary extends Monad<dictionary>>(
   value: Data<dictionary, number>,
   reject: (value: number) => Data<dictionary, number>,
@@ -33,6 +36,7 @@ export function keep_positive<dictionary extends Monad<dictionary>>(
   });
 }
 
+/** Sum every numeric value in a foldable context. */
 export function sum_values<dictionary extends Foldable<dictionary>>(
   value: Data<dictionary, number>,
 ): number {

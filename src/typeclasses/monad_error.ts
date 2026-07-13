@@ -8,67 +8,95 @@ import {
 } from "../typeclass.ts";
 import type { Monad as MonadDictionary } from "./monad.ts";
 
+/** Runtime token for the MonadError typeclass. */
 export const monad_error_typeclass = Symbol("MonadError");
+/** Phantom key for a MonadError dictionary's associated error type. */
+export declare const monad_error_error: unique symbol;
 
-export interface MonadError<dictionary extends Dictionary>
+/** @ignore */
+export type MonadErrorImplementation<dictionary extends Dictionary, error> = {
+  throw_error: <item>(
+    this: dictionary,
+    error: error,
+  ) => Data<dictionary, item>;
+  catch_error: <item>(
+    this: Data<dictionary, item>,
+    handler: (error: error) => Data<dictionary, item>,
+  ) => Data<dictionary, item>;
+};
+
+/** Monad dictionary capability for throwing and recovering typed errors. */
+export interface MonadError<dictionary extends Dictionary, error = unknown>
   extends
     TypeclassDictionary<
       dictionary,
       typeof monad_error_typeclass,
-      {
-        throw_error: <item>(
-          this: dictionary,
-          error: unknown,
-        ) => Data<dictionary, item>;
-        catch_error: <item>(
-          this: Data<dictionary, item>,
-          handler: (error: unknown) => Data<dictionary, item>,
-        ) => Data<dictionary, item>;
-      }
+      MonadErrorImplementation<dictionary, error>
     >,
-    MonadDictionary<dictionary> {}
+    MonadDictionary<dictionary> {
+  /** Error type associated with this dictionary. */
+  readonly [monad_error_error]: error;
+}
 
-type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
-  throw_error<dictionary extends MonadError<dictionary>, item>(
+/** Structural constraint accepted by generic MonadError operations. */
+export type MonadErrorDictionary = Dictionary & {
+  readonly [monad_error_error]: unknown;
+  readonly [monad_error_typeclass]: object;
+};
+
+/** Extract the error type associated with a MonadError dictionary. */
+export type MonadErrorType<dictionary extends MonadErrorDictionary> =
+  dictionary[typeof monad_error_error];
+
+/** @ignore */
+export type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
+  throw_error<dictionary extends MonadErrorDictionary, item>(
     witness: Data<dictionary, unknown>,
-    error: unknown,
+    error: MonadErrorType<dictionary>,
   ): Data<dictionary, item>;
-  throw_error<dictionary extends MonadError<dictionary>, item>(
-    dictionary: MonadError<dictionary>,
-    error: unknown,
+  throw_error<dictionary extends MonadErrorDictionary, item>(
+    dictionary: dictionary,
+    error: MonadErrorType<dictionary>,
   ): Data<dictionary, item>;
-  catch_error<dictionary extends MonadError<dictionary>, item>(
+  catch_error<dictionary extends MonadErrorDictionary, item>(
     value: Data<dictionary, item>,
-    handler: (error: unknown) => Data<dictionary, item>,
+    handler: (
+      error: MonadErrorType<dictionary>,
+    ) => Data<dictionary, item>,
   ): Data<dictionary, item>;
 }>;
 
+/** Operations for throwing and recovering typed monadic errors. */
 export const MonadError: MonadErrorTypeclass = typeclass(
   monad_error_typeclass,
   {
-    throw_error<
-      dictionary extends MonadError<dictionary>,
-      item,
-    >(
+    throw_error<dictionary extends MonadErrorDictionary, item>(
       witness: dictionary | Data<dictionary, unknown>,
-      error: unknown,
+      error: MonadErrorType<dictionary>,
     ): Data<dictionary, item> {
+      const implementation = this.instance_for(
+        witness,
+      ) as MonadErrorImplementation<dictionary, MonadErrorType<dictionary>>;
+
       return call_typeclass_method(
-        this.instance_for(witness).throw_error<item>,
+        implementation.throw_error<item>,
         witness as dictionary,
         error,
       );
     },
 
-    catch_error<
-      dictionary extends MonadError<dictionary>,
-      item,
-    >(
+    catch_error<dictionary extends MonadErrorDictionary, item>(
       value: Data<dictionary, item>,
-      handler: (error: unknown) => Data<dictionary, item>,
+      handler: (
+        error: MonadErrorType<dictionary>,
+      ) => Data<dictionary, item>,
     ): Data<dictionary, item> {
+      const implementation = this.instance_for(
+        value,
+      ) as MonadErrorImplementation<dictionary, MonadErrorType<dictionary>>;
+
       return call_typeclass_method(
-        this.instance_for(value).catch_error<item>,
+        implementation.catch_error<item>,
         value,
         handler,
       );
