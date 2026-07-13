@@ -1,5 +1,6 @@
 import { type AsArray, from_array } from "../../src/array.ts";
 import { Program, type Uses } from "../../src/effects.ts";
+import { Left } from "../../src/either.ts";
 import { ask, type AsReader } from "../../src/reader.ts";
 import { type AsState, get, modify, put } from "../../src/state.ts";
 import { type AsWriter, tell } from "../../src/writer.ts";
@@ -44,23 +45,20 @@ export const agent_harness = AgentApp(function* () {
         yield* stdout("assistant tool: read_file " + path);
 
         const result = yield* read_file(path);
-        const [result_tag, result_payload] = result.value();
+        const result_value = result.value();
 
-        switch (result_tag) {
-          case "Right":
-            yield* append_messages([
-              ["assistant", "read_file " + path],
-              ["tool", "read_file " + path + "\n" + result_payload],
-            ]);
-            break;
-          case "Left":
-            yield* append_messages([
-              ["assistant", "read_file " + path],
-              ["tool", format_file_system_error(result_payload)],
-            ]);
-            break;
+        if (Left.is(result_value)) {
+          yield* append_messages([
+            ["assistant", "read_file " + path],
+            ["tool", format_file_system_error(result_value[1])],
+          ]);
+          continue;
         }
 
+        yield* append_messages([
+          ["assistant", "read_file " + path],
+          ["tool", "read_file " + path + "\n" + result_value[1]],
+        ]);
         continue;
       }
 
@@ -69,23 +67,20 @@ export const agent_harness = AgentApp(function* () {
         yield* stdout("assistant tool: write_file " + path);
 
         const result = yield* write_file(path, payload.text);
-        const [result_tag, result_payload] = result.value();
+        const result_value = result.value();
 
-        switch (result_tag) {
-          case "Right":
-            yield* append_messages([
-              ["assistant", "write_file " + path],
-              ["tool", "wrote " + path],
-            ]);
-            break;
-          case "Left":
-            yield* append_messages([
-              ["assistant", "write_file " + path],
-              ["tool", format_file_system_error(result_payload)],
-            ]);
-            break;
+        if (Left.is(result_value)) {
+          yield* append_messages([
+            ["assistant", "write_file " + path],
+            ["tool", format_file_system_error(result_value[1])],
+          ]);
+          continue;
         }
 
+        yield* append_messages([
+          ["assistant", "write_file " + path],
+          ["tool", "wrote " + path],
+        ]);
         continue;
       }
 

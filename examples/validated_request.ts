@@ -1,4 +1,4 @@
-import { InvalidMessages, Valid } from "../src/validation.ts";
+import { Invalid, InvalidMessages, Valid } from "../src/validation.ts";
 import { Applicative } from "../src/typeclasses.ts";
 
 export type RegistrationRequest = {
@@ -37,14 +37,13 @@ export function decode_registration_request(
     validate_password(form.get("password")),
     validate_age(form.get("age")),
   );
-  const [tag, result] = request.value();
+  const result = request.value();
 
-  switch (tag) {
-    case "invalid":
-      return { status: "rejected", messages: result };
-    case "valid":
-      return { status: "accepted", request: result };
+  if (Invalid.is(result)) {
+    return { status: "rejected", messages: result[1] };
   }
+
+  return { status: "accepted", request: result[1] };
 }
 
 export function run_validated_request_examples() {

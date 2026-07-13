@@ -75,8 +75,6 @@ import {
   Either,
   type Either as EitherRaw,
   from_number as either_from_number,
-  is_left as either_is_left,
-  is_right as either_is_right,
   Left as EitherLeft,
   type Left as EitherLeftRaw,
   Right as EitherRight,
@@ -310,7 +308,7 @@ Deno.test("Tuple exposes pair helpers and maps over the second slot", () => {
 
     return String(label) + ":" + item.toString();
   });
-  const [traversed_tag, traversed_value] = traversed.value();
+  const traversed_value = traversed.value();
 
   assert_equals(value.value(), ["count", 41] as const);
   assert_equals(fst(value), "count");
@@ -328,13 +326,11 @@ Deno.test("Tuple exposes pair helpers and maps over the second slot", () => {
     42,
   );
 
-  switch (traversed_tag) {
-    case "Nothing":
-      throw new Error("expected traversed tuple");
-    case "Just":
-      assert_equals(traversed_value.value(), tuple("count", 42).value());
-      break;
+  if (!Just.is(traversed_value)) {
+    throw new Error("expected traversed tuple");
   }
+
+  assert_equals(traversed_value[1].value(), tuple("count", 42).value());
 });
 
 Deno.test("Tuple tagged values can be matched by tag", () => {
@@ -390,32 +386,20 @@ Deno.test("Tuple tagged guards narrow Maybe and Either payloads", () => {
   const option = Just(42).value();
   const result = EitherLeft<string, number>("missing").value();
 
-  assert_true(Just.is(option), "option is just");
   assert_true(!Nothing.is(option), "option is not nothing");
-  assert_true(either_is_left(result), "result is left");
-  assert_true(!either_is_right(result), "result is not right");
+  assert_true(!EitherRight.is(result), "result is not right");
 
-  const [maybe_tag, maybe_payload] = option;
-
-  switch (maybe_tag) {
-    case "Just":
-      assert_equals(maybe_payload + 1, 43);
-      break;
-    case "Nothing":
-      assert_equals(maybe_tag, "Nothing");
-      break;
+  if (!Just.is(option)) {
+    throw new Error("expected Just");
   }
 
-  const [either_tag, either_payload] = result;
+  assert_equals(option[1] + 1, 43);
 
-  switch (either_tag) {
-    case "Right":
-      assert_equals(either_payload + 1, 10);
-      break;
-    case "Left":
-      assert_equals(either_payload, "missing");
-      break;
+  if (!EitherLeft.is(result)) {
+    throw new Error("expected Left");
   }
+
+  assert_equals(result[1], "missing");
 });
 
 Deno.test("Constructor guards disambiguate tagged union branches", () => {
@@ -1748,28 +1732,22 @@ function expect_either_right<item, error>(
   result: Either<error, item>,
   message: string,
 ): item {
-  const [tag, payload] = result;
-
-  switch (tag) {
-    case "Right":
-      return payload;
-    case "Left":
-      throw new Error(message);
+  if (!EitherRight.is(result)) {
+    throw new Error(message);
   }
+
+  return result[1];
 }
 
 function expect_validation_invalid<error, item>(
   validation: Validation<error, item>,
   message: string,
 ): error {
-  const [tag, payload] = validation;
-
-  switch (tag) {
-    case "invalid":
-      return payload;
-    case "valid":
-      throw new Error(message);
+  if (!ValidationInvalid.is(validation)) {
+    throw new Error(message);
   }
+
+  return validation[1];
 }
 
 function assert_typeclass_receiver_error(

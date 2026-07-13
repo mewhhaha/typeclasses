@@ -345,17 +345,14 @@ export function d1_database(database: D1Database): DatabaseRuntime {
 
     async update(id, patch, now) {
       const existing = await this.read(id);
-      const [tag, payload] = existing.value();
+      const existing_value = existing.value();
 
-      switch (tag) {
-        case "Left":
-          return existing;
-        case "Right":
-          break;
+      if (Left.is(existing_value)) {
+        return existing;
       }
 
       const updated = {
-        ...payload,
+        ...existing_value[1],
         ...patch,
         updated_at: now,
       };
@@ -376,13 +373,10 @@ export function d1_database(database: D1Database): DatabaseRuntime {
 
     async delete(id) {
       const existing = await this.read(id);
-      const [tag, payload] = existing.value();
+      const existing_value = existing.value();
 
-      switch (tag) {
-        case "Left":
-          return existing;
-        case "Right":
-          break;
+      if (Left.is(existing_value)) {
+        return existing;
       }
 
       try {
@@ -391,7 +385,7 @@ export function d1_database(database: D1Database): DatabaseRuntime {
           .bind(id)
           .run();
 
-        return database_ok(payload);
+        return database_ok(existing_value[1]);
       } catch (error) {
         return database_err(storage_failed(error));
       }
@@ -451,18 +445,16 @@ function database_scope(
 
 function database_result_trace_attributes(value: unknown): TraceAttributes {
   const result = value as DatabaseResult<unknown>;
-  const [tag, payload] = result.value();
+  const result_value = result.value();
 
-  switch (tag) {
-    case "Right":
-      return { result: "ok" };
-    case "Left": {
-      const [error] = payload;
-
-      return {
-        result: "error",
-        error,
-      };
-    }
+  if (Right.is(result_value)) {
+    return { result: "ok" };
   }
+
+  const [error] = result_value[1];
+
+  return {
+    result: "error",
+    error,
+  };
 }

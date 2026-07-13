@@ -1,4 +1,5 @@
 import { from_array } from "../../src/array.ts";
+import { Right } from "../../src/either.ts";
 import {
   type As,
   type Data,
@@ -75,14 +76,11 @@ export function report_from_diagnostic(
 }
 
 export function report_from_result(result: AnalyzeResult): AnalyzerReport {
-  const [tag, payload] = result;
-
-  switch (tag) {
-    case "Right":
-      return report_from_summary(payload);
-    case "Left":
-      return report_from_diagnostic(payload);
+  if (Right.is(result)) {
+    return report_from_summary(result[1]);
   }
+
+  return report_from_diagnostic(result[1]);
 }
 
 export function concat_reports(

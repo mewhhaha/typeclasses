@@ -50,7 +50,7 @@ all three runtimes. This example validates independent fields and accumulates
 both errors instead of stopping at the first one:
 
 ```ts
-import { Applicative, Validation } from "@mewhhaha/typeclasses";
+import { Applicative, Invalid, Validation } from "@mewhhaha/typeclasses";
 
 const Errors = Validation.with_semigroup<readonly string[]>({
   concat: (left, right) => [...left, ...right],
@@ -70,8 +70,11 @@ const request = Applicative.lift(
   required("email", ""),
 );
 
-request.value();
-// ["invalid", ["name is required", "email is required"], semigroup]
+const result = request.value();
+
+if (Invalid.is(result)) {
+  result[1]; // ["name is required", "email is required"]
+}
 ```
 
 Pick the smallest abstraction that expresses the behavior:
@@ -242,27 +245,25 @@ const Nothing = Maybe.Nothing;
 
 Show.instance(Maybe)({
   show() {
-    const [tag, value] = this.value();
+    const maybe = this.value();
 
-    switch (tag) {
-      case "Nothing":
-        return "Nothing";
-      case "Just":
-        return "Just(" + value + ")";
+    if (Nothing.is(maybe)) {
+      return "Nothing";
     }
+
+    return "Just(" + maybe[1] + ")";
   },
 });
 
 Monad.instance(Maybe)({
   bind(fn) {
-    const [tag, value] = this.value();
+    const maybe = this.value();
 
-    switch (tag) {
-      case "Nothing":
-        return Nothing();
-      case "Just":
-        return fn(value);
+    if (Just.is(maybe)) {
+      return fn(maybe[1]);
     }
+
+    return Nothing();
   },
 });
 
@@ -270,7 +271,7 @@ const raw = Just(42).value();
 
 if (Just.is(raw)) {
   raw[1]; // number
-} else {
+} else if (Nothing.is(raw)) {
   raw[0]; // "Nothing"
 }
 ```
@@ -597,17 +598,39 @@ wrappers such as `Task` and `Fn` do not expose a callable `match` type. `match`
 is reserved by the wrapped-data protocol, so custom typeclass instances should
 not reuse that direct method name.
 
-Constructor guards narrow the false branch too:
+Every generated constructor also exposes a branch-specific guard. Prefer these
+guards when one branch needs special handling and the narrowed tuple remains
+useful. Use `match` or an exhaustive `switch` when every branch contributes to
+one result.
 
 ```ts
 const result = from_number(Number.parseInt("42", 10)).value();
 
 if (Left.is(result)) {
   result[1]; // string
-} else {
+} else if (Right.is(result)) {
   result[1]; // number
 }
+
+const optional = Just(42).value();
+
+if (Nothing.is(optional)) {
+  optional[0]; // "Nothing"
+} else if (Just.is(optional)) {
+  optional[1]; // number
+}
+
+const checked = InvalidMessages<number>("missing").value();
+
+if (Invalid.is(checked)) {
+  checked[1]; // readonly string[]
+} else if (Valid.is(checked)) {
+  checked[1]; // number
+}
 ```
+
+Each guard narrows its false branch as well, so a two-variant value can often
+use a final plain `else` after the first check.
 
 `Do` is generator-based do notation. It runs a generator over one monad
 dictionary and uses `yield*` to bind each wrapped value. Pass the dictionary
@@ -1566,7 +1589,11 @@ const checked_profile = Applicative.lift(
   InvalidMessages<number>("age is required"),
 );
 
-checked_profile.value()[0]; // "invalid"
+const checked = checked_profile.value();
+
+if (Invalid.is(checked)) {
+  checked[1]; // ["age is required"]
+}
 ```
 
 `Validation` implements `Applicative`, `Functor`, `Foldable`, `Traversable`, and

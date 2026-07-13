@@ -21,7 +21,8 @@ deno run learn_you_a_typeclasses_for_greater_good/main.ts
 
 1. `01_values_and_contexts.ts`: values wrapped in `Maybe`, `Either`, and `Show`.
 2. `02_typeclasses.ts`: generic helpers over `Show`, `Eq`, and `Functor`.
-3. `03_patterns_and_guards.ts`: tuple tags, `match`, guards, and narrowing.
+3. `03_patterns_and_guards.ts`: exhaustive tuple patterns, `match`, and
+   constructor guards such as `Just.is`.
 4. `04_lists_and_laziness.ts`: `ArrayT`, `List`, and lazy `IterableT`.
 5. `05_folds_and_monoids.ts`: `Foldable`, `Semigroup`, and `Monoid`.
 6. `06_functors.ts`: mapping without leaving the original context.

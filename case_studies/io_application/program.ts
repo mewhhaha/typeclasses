@@ -1,5 +1,6 @@
 import { type AsArray, from_array } from "../../src/array.ts";
 import { Program, type Uses } from "../../src/effects.ts";
+import { Right } from "../../src/either.ts";
 import { ask, type AsReader } from "../../src/reader.ts";
 import { type AsWriter, tell } from "../../src/writer.ts";
 import {
@@ -28,40 +29,28 @@ export const cli_program = App(function* () {
 
     case "cat": {
       const result = yield* read_file(payload.path);
-      const [result_tag, result_payload] = result.value();
-      let exit_code: number;
+      const result_value = result.value();
 
-      switch (result_tag) {
-        case "Right":
-          yield* stdout(result_payload);
-          exit_code = 0;
-          break;
-        case "Left":
-          yield* stdout(format_file_system_error(result_payload));
-          exit_code = 1;
-          break;
+      if (Right.is(result_value)) {
+        yield* stdout(result_value[1]);
+        return 0;
       }
 
-      return exit_code;
+      yield* stdout(format_file_system_error(result_value[1]));
+      return 1;
     }
 
     case "write": {
       const result = yield* write_file(payload.path, payload.text);
-      const [result_tag, result_payload] = result.value();
-      let exit_code: number;
+      const result_value = result.value();
 
-      switch (result_tag) {
-        case "Right":
-          yield* stdout("wrote " + payload.path);
-          exit_code = 0;
-          break;
-        case "Left":
-          yield* stdout(format_file_system_error(result_payload));
-          exit_code = 1;
-          break;
+      if (Right.is(result_value)) {
+        yield* stdout("wrote " + payload.path);
+        return 0;
       }
 
-      return exit_code;
+      yield* stdout(format_file_system_error(result_value[1]));
+      return 1;
     }
 
     case "help": {

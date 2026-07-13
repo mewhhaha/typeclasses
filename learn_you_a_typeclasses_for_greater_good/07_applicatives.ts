@@ -1,7 +1,7 @@
 import { assert_equals } from "../src/assert.ts";
 import { Just, Nothing } from "../src/maybe.ts";
 import { Applicative } from "../src/typeclasses.ts";
-import { InvalidMessages, Valid } from "../src/validation.ts";
+import { Invalid, InvalidMessages, Valid } from "../src/validation.ts";
 
 type User = {
   readonly name: string;
@@ -29,13 +29,21 @@ export function lesson_07_applicatives() {
     InvalidMessages<string>("name is required"),
     InvalidMessages<number>("age is required"),
   );
-  const [error_tag, messages] = errors.value();
+  const user_result = user.value();
+  const error_result = errors.value();
+
+  if (Invalid.is(user_result)) {
+    throw new Error("expected valid user");
+  }
+
+  if (Valid.is(error_result)) {
+    throw new Error("expected accumulated validation errors");
+  }
 
   assert_equals(sum.value(), Just(42).value());
   assert_equals(missing.value(), Nothing().value());
-  assert_equals(user.value()[0], "valid");
-  assert_equals(error_tag, "invalid");
-  assert_equals(messages, ["name is required", "age is required"]);
+  assert_equals(user_result[1], { name: "Ada", age: 42 });
+  assert_equals(error_result[1], ["name is required", "age is required"]);
 }
 
 function make_user(name: string, age: number): User {

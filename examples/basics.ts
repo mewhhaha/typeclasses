@@ -96,25 +96,19 @@ export async function run_basic_examples() {
 }
 
 function describe_maybe(value: Maybe<number>) {
-  const [tag, payload] = value;
-
-  switch (tag) {
-    case "Just":
-      return "just:" + payload.toString();
-    case "Nothing":
-      return "Nothing";
+  if (Nothing.is(value)) {
+    return "Nothing";
   }
+
+  return "just:" + value[1].toString();
 }
 
 function describe_either(value: Either<unknown, number>) {
-  const [tag, payload] = value;
-
-  switch (tag) {
-    case "Right":
-      return "right:" + payload.toString();
-    case "Left":
-      return "left:" + String(payload);
+  if (Left.is(value)) {
+    return "left:" + String(value[1]);
   }
+
+  return "right:" + value[1].toString();
 }
 
 function non_empty_string(value: string, name: string) {

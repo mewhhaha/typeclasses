@@ -835,14 +835,12 @@ function consume_typeclasses(
   result: ReturnType<typeof typeclasses_parse_request>,
 ): number {
   const value = result.value();
-  const [tag, payload] = value;
 
-  switch (tag) {
-    case "Left":
-      return -String(payload).length;
-    case "Right":
-      return payload.score;
+  if (TypeclassesLeft.is(value)) {
+    return -String(value[1]).length;
   }
+
+  return value[1].score;
 }
 
 function consume_fp(result: FpEither.Either<string, ParsedRoute>): number {

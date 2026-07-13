@@ -388,38 +388,31 @@ function consume_raw(value: RawMaybe<number>): number {
 }
 
 function consume_typeclasses(value: Data<AsMaybe, number>): number {
-  const [tag, payload] = value.value();
+  const maybe = value.value();
 
-  switch (tag) {
-    case "Just":
-      return payload;
-    case "Nothing":
-      return 0;
+  if (Just.is(maybe)) {
+    return maybe[1];
   }
+
+  return 0;
 }
 
 function consume_either(value: EitherValue<never, number>): number {
-  const [tag, payload] = value.value();
+  const either = value.value();
 
-  switch (tag) {
-    case "Right":
-      return payload;
-    case "Left":
-      return 0;
+  if (Right.is(either)) {
+    return either[1];
   }
+
+  return 0;
 }
 
 function consume_mixed(value: MixedBindable): number {
-  const [tag, payload] = value.value();
+  const either_or_maybe = value.value();
 
-  switch (tag) {
-    case "Just":
-    case "Right":
-      return payload as number;
-    case "Nothing":
-    case "Left":
-      return 0;
-    default:
-      return 0;
+  if (Just.is(either_or_maybe) || Right.is(either_or_maybe)) {
+    return either_or_maybe[1] as number;
   }
+
+  return 0;
 }

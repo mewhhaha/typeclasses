@@ -101,15 +101,13 @@ function list_response(context: RequestContext) {
 function create_response(context: RequestContext) {
   return CrudApp(function* () {
     const input = yield* read_create_body(context.request);
-    const [input_tag, input_payload] = input.value();
+    const input_value = input.value();
 
-    switch (input_tag) {
-      case "Left":
-        return problem_response(input_payload);
-      case "Right":
-        break;
+    if (Left.is(input_value)) {
+      return problem_response(input_value[1]);
     }
 
+    const input_payload = input_value[1];
     const timestamp = yield* now();
 
     yield* trace_event("todo.create", {
@@ -143,15 +141,13 @@ function read_response(context: RequestContext, id: string) {
 function update_response(context: RequestContext, id: string) {
   return CrudApp(function* () {
     const input = yield* read_patch_body(context.request);
-    const [input_tag, input_payload] = input.value();
+    const input_value = input.value();
 
-    switch (input_tag) {
-      case "Left":
-        return problem_response(input_payload);
-      case "Right":
-        break;
+    if (Left.is(input_value)) {
+      return problem_response(input_value[1]);
     }
 
+    const input_payload = input_value[1];
     const timestamp = yield* now();
 
     yield* trace_event("todo.update", {
@@ -186,16 +182,13 @@ function read_create_body(
   return Effect.lift(
     from_fn(async () => {
       const parsed = await read_json(request);
-      const [tag, payload] = parsed.value();
+      const parsed_value = parsed.value();
 
-      switch (tag) {
-        case "Left":
-          return parsed as EitherValue<HttpProblem, TodoCreate>;
-        case "Right":
-          break;
+      if (Left.is(parsed_value)) {
+        return parsed as EitherValue<HttpProblem, TodoCreate>;
       }
 
-      const decoded = decode_create(payload);
+      const decoded = decode_create(parsed_value[1]);
 
       if (is_problem(decoded)) {
         return Left<HttpProblem, TodoCreate>(decoded);
@@ -212,16 +205,13 @@ function read_patch_body(
   return Effect.lift(
     from_fn(async () => {
       const parsed = await read_json(request);
-      const [tag, payload] = parsed.value();
+      const parsed_value = parsed.value();
 
-      switch (tag) {
-        case "Left":
-          return parsed as EitherValue<HttpProblem, TodoPatch>;
-        case "Right":
-          break;
+      if (Left.is(parsed_value)) {
+        return parsed as EitherValue<HttpProblem, TodoPatch>;
       }
 
-      const decoded = decode_patch(payload);
+      const decoded = decode_patch(parsed_value[1]);
 
       if (is_problem(decoded)) {
         return Left<HttpProblem, TodoPatch>(decoded);
@@ -249,14 +239,13 @@ function database_response<item>(
   result: DatabaseResult<item>,
   respond: (item: item) => Response,
 ): Response {
-  const [tag, payload] = result.value();
+  const result_value = result.value();
 
-  switch (tag) {
-    case "Left":
-      return problem_response(database_problem(payload));
-    case "Right":
-      return respond(payload);
+  if (Left.is(result_value)) {
+    return problem_response(database_problem(result_value[1]));
   }
+
+  return respond(result_value[1]);
 }
 
 function is_problem<item>(

@@ -1,5 +1,5 @@
 import { assert_equals } from "../src/assert.ts";
-import { type Either, is_left, is_right, Left, Right } from "../src/either.ts";
+import { type Either, Left, Right } from "../src/either.ts";
 import { Just, type Maybe, Nothing } from "../src/maybe.ts";
 import { match } from "../src/tagged.ts";
 
@@ -9,14 +9,11 @@ export function lesson_03_patterns_and_guards() {
   const parsed = parse_user_id("42");
   const parsed_value = parsed.value();
 
-  if (is_right(parsed_value)) {
-    assert_equals(parsed_value[1], 42);
-  }
-
-  if (is_left(parsed_value)) {
+  if (Left.is(parsed_value)) {
     throw new Error("expected a parsed user id");
   }
 
+  assert_equals(parsed_value[1], 42);
   assert_equals(describe_maybe(reciprocal.value()), "value 0.25");
   assert_equals(describe_maybe(rejected.value()), "missing");
   assert_equals(describe_either(parsed_value), "user 42");
@@ -41,15 +38,11 @@ function parse_user_id(text: string) {
 }
 
 function describe_maybe(value: Maybe<number>): string {
-  if (Just.is(value)) {
-    return "value " + value[1].toString();
-  }
-
   if (Nothing.is(value)) {
     return "missing";
   }
 
-  throw new Error("unreachable Maybe variant");
+  return "value " + value[1].toString();
 }
 
 function describe_either(value: Either<string, number>): string {

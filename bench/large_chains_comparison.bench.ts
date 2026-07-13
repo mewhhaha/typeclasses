@@ -64,14 +64,13 @@ const fp_either_map_add_one = FpEither.map(add_one);
 const fp_either_chain_next = FpEither.chain(fp_either_next);
 
 function consume_typeclasses_maybe(value: Data<AsMaybe, number>): number {
-  const [tag, payload] = value.value();
+  const maybe = value.value();
 
-  switch (tag) {
-    case "Just":
-      return payload;
-    case "Nothing":
-      return 0;
+  if (Just.is(maybe)) {
+    return maybe[1];
   }
+
+  return 0;
 }
 
 function consume_fp_option(value: FpOption.Option<number>): number {
@@ -101,14 +100,13 @@ function consume_true_maybe(value: TrueMaybe.Maybe<number>): number {
 }
 
 function consume_typeclasses_either(value: Data<AsEither, number>): number {
-  const [tag, payload] = value.value();
+  const either = value.value();
 
-  switch (tag) {
-    case "Right":
-      return payload;
-    case "Left":
-      return 0;
+  if (TypeclassesRight.is(either)) {
+    return either[1];
   }
+
+  return 0;
 }
 
 function consume_fp_either(value: FpEither.Either<string, number>): number {
