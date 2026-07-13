@@ -70,9 +70,11 @@ export type UrlPatternList<item> = {
   match(context: RouteContext): RouteResult<item>;
 };
 
+declare const url_pattern_list_identity: unique symbol;
+
 export interface AsUrlPatternList
   extends
-    As<AsUrlPatternList>,
+    As<AsUrlPatternList, typeof url_pattern_list_identity>,
     Show<AsUrlPatternList>,
     Functor<AsUrlPatternList>,
     Applicative<AsUrlPatternList>,

@@ -1,8 +1,8 @@
 import { type Data, type Dictionary, kind } from "./typeclass.ts";
 
 /** Cast a value whose context is unchanged. */
-export function same_context<out>(value: unknown): out {
-  return value as out;
+export function same_context<result>(value: unknown): result {
+  return value as result;
 }
 
 /** Return a new array with item appended without mutating values. */

@@ -7,23 +7,29 @@ const has_own = Object.prototype.hasOwnProperty;
 /** A tuple value whose first member selects a tagged variant. */
 export type TaggedValue = readonly [PropertyKey, ...readonly unknown[]];
 
-type TaggedTag<value extends TaggedValue> = value[0];
-type TaggedVariant<value extends TaggedValue, tag extends TaggedTag<value>> =
-  Extract<value, readonly [tag, ...readonly unknown[]]>;
-type TaggedPayload<value extends TaggedValue> = value extends readonly [
+/** @ignore */
+export type TaggedTag<value extends TaggedValue> = value[0];
+/** @ignore */
+export type TaggedVariant<
+  value extends TaggedValue,
+  tag extends TaggedTag<value>,
+> = Extract<value, readonly [tag, ...readonly unknown[]]>;
+/** @ignore */
+export type TaggedPayload<value extends TaggedValue> = value extends readonly [
   PropertyKey,
   ...infer payload,
 ] ? payload
   : never;
 
 /** Exhaustive handlers for every variant of a tagged tuple. */
-export type TaggedMatchCases<value extends TaggedValue, out> = {
+export type TaggedMatchCases<value extends TaggedValue, result> = {
   readonly [tag in TaggedTag<value>]: (
     ...payload: TaggedPayload<TaggedVariant<value, tag>>
-  ) => out;
+  ) => result;
 };
 
-type WrappedDataBase<dictionary, value, item> = {
+/** @ignore */
+export type WrappedDataBase<dictionary, value, item> = {
   readonly [data_value]: value;
   [Symbol.iterator]: () => Generator<
     WrappedData<dictionary, value, item>,
@@ -33,20 +39,26 @@ type WrappedDataBase<dictionary, value, item> = {
   run: DataRunner<value>;
   value: () => value;
   /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
-  match<out>(
+  match<result>(
     cases: [value] extends [TaggedValue]
-      ? TaggedMatchCases<Extract<value, TaggedValue>, out>
+      ? TaggedMatchCases<Extract<value, TaggedValue>, result>
       : never,
-  ): out;
+  ): result;
 };
 
-type DataRunner<value> = value extends (...args: infer args) => infer out
-  ? (...args: args) => out
+type DataRunner<value> = value extends (...args: infer args) => infer result
+  ? (...args: args) => result
   : never;
 
+/** @ignore */
+export type DictionaryMembers<dictionary> = {
+  [key in keyof dictionary]: dictionary[key];
+};
+
+/** A raw value wrapped with its dictionary's methods and eliminators. */
 export type WrappedData<dictionary, value, item = unknown> =
   & WrappedDataBase<dictionary, value, item>
-  & dictionary;
+  & DictionaryMembers<dictionary>;
 
 type WrappedDataTarget<value> = {
   [data_value]: value;
@@ -173,6 +185,7 @@ function create_data_constructor<dictionary extends object>(
   return construct_data;
 }
 
+/** Test whether a value was created by a data dictionary. */
 export function is_data(
   value: unknown,
 ): value is WrappedData<object, unknown, unknown> {
@@ -220,13 +233,13 @@ function data_prototype(dictionary: object): object {
 }
 
 /** Run a handler selected by the tag of a raw tagged tuple. */
-export function match_tagged<value extends TaggedValue, out>(
+export function match_tagged<value extends TaggedValue, result>(
   value: value,
-  cases: TaggedMatchCases<value, out>,
-): out {
+  cases: TaggedMatchCases<value, result>,
+): result {
   const [tag, ...payload] = value;
   const handler =
-    (cases as Record<PropertyKey, (...payload: unknown[]) => out>)[tag];
+    (cases as Record<PropertyKey, (...payload: unknown[]) => result>)[tag];
 
   if (handler === undefined) {
     throw new TypeError("No match handler for tag " + String(tag));

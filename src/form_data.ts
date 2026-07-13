@@ -8,34 +8,46 @@ import {
 import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const form_data_identity: unique symbol;
+
+/** A name-value pair stored in `FormData`. */
 export type FormDataEntry = readonly [string, FormDataEntryValue];
+/** The raw form payload wrapped by the `FormDataT` dictionary. */
 export type FormDataT = FormData;
 
+/** Dictionary type for ordered, potentially repeated form entries. */
 export interface AsFormData
   extends
-    As<AsFormData>,
+    As<AsFormData, typeof form_data_identity>,
     Show<AsFormData>,
     Eq<AsFormData>,
     Monoid<AsFormData>,
     Foldable<AsFormData> {
+  /** Higher-kinded slot exposed as a form entry when folding. */
   readonly [type_item]: unknown;
+  /** Raw `FormData` representation for this dictionary. */
   readonly [type_data]: FormDataT;
 }
 
-type FormDataValue = Data<AsFormData, FormDataEntry>;
+/** @ignore */
+export type FormDataValue = Data<AsFormData, FormDataEntry>;
 
+/** Callable form-data dictionary that clones forms when wrapping them. */
 export const FormDataT: AsFormData = data<AsFormData>(
   function (form_data) {
     return this.data(clone_form_data(form_data));
   },
 );
 
+/** Build wrapped form data by appending entries in iteration order. */
 export function from_entries(
   entries: Iterable<FormDataEntry>,
 ): FormDataValue {
   return FormDataT(form_data_from_entries(entries)) as FormDataValue;
 }
 
+/** Copy a wrapped form into an ordered array of entries. */
 export function to_entries(form_data: FormDataValue): FormDataEntry[] {
   return [...form_data.value().entries()];
 }
@@ -87,10 +99,10 @@ Monoid.instance(FormDataT)({
 });
 
 Foldable.instance(FormDataT)({
-  fold<item, out>(
+  fold<item, output>(
     this: Data<AsFormData, item>,
-    initial: out,
-    fn: (state: out, item: item) => out,
+    initial: output,
+    fn: (state: output, item: item) => output,
   ) {
     let state = initial;
 

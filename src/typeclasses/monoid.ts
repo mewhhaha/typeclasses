@@ -11,8 +11,10 @@ import {
   type Semigroup as SemigroupDictionary,
 } from "./semigroup.ts";
 
+/** Runtime token for the Monoid typeclass. */
 export const monoid_typeclass = Symbol("Monoid");
 
+/** Semigroup dictionary capability with an identity value. */
 export interface Monoid<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -27,7 +29,8 @@ export interface Monoid<dictionary extends Dictionary>
     >,
     SemigroupDictionary<dictionary> {}
 
-type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
+/** @ignore */
+export type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
   empty<dictionary extends Monoid<dictionary>, item>(
     witness: Data<dictionary, unknown>,
   ): Data<dictionary, item>;
@@ -40,6 +43,7 @@ type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
   ): Data<dictionary, item>;
 }>;
 
+/** Operations for identity values and monoidal concatenation. */
 export const Monoid: MonoidTypeclass = typeclass(monoid_typeclass, {
   empty<
     dictionary extends Monoid<dictionary>,

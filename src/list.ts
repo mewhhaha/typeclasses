@@ -26,39 +26,55 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const list_identity: unique symbol;
+
+/** An immutable recursive list represented by `Cons` and `Nil` tuples. */
 export type List<item> =
   | Nil
   | Cons<item>;
 
+/** The empty-list branch of {@link List}. */
 export type Nil = readonly ["Nil"];
+/** A non-empty list branch containing its head and remaining tail. */
 export type Cons<item> = readonly ["Cons", item, List<item>];
 
+/** Dictionary type for immutable recursive lists. */
 export interface AsList
   extends
-    As<AsList>,
+    As<AsList, typeof list_identity>,
     Show<AsList>,
     Monoid<AsList>,
     Alternative<AsList>,
     Monad<AsList>,
     Traversable<AsList>,
     Ord<AsList> {
+  /** Higher-kinded slot for the list element type. */
   readonly [type_item]: unknown;
+  /** Recursive-list representation at the selected element type. */
   readonly [type_data]: List<this[typeof type_item]>;
 }
 
-type ListValue<item> = Data<AsList, item>;
+/** @ignore */
+export type ListValue<item> = Data<AsList, item>;
+/** Callable tagged-union dictionary for `List` values. */
 export type ListConstructor = UnionDictionary<AsList>;
 
+/** Callable list dictionary with `Cons` and `Nil` branch constructors. */
 export const List: ListConstructor = data<AsList>(
   union(["Cons", $slot, $slot], ["Nil"]),
 );
+/** Construct or recognize the non-empty `Cons` branch. */
 export const Cons: ListConstructor["Cons"] = List.Cons;
+/** Construct or recognize the empty `Nil` branch. */
 export const Nil: ListConstructor["Nil"] = List.Nil;
 
+/** Convert an array into an immutable recursive list. */
 export function from_array<item>(items: item[]): ListValue<item> {
   return List(list_from_array(items));
 }
 
+/** Materialize a wrapped list into a mutable array. */
 export function to_array<item>(list: ListValue<item>): item[] {
   return list_to_array(list.value());
 }
@@ -327,12 +343,12 @@ function list_prepend<item>(head: item) {
   return (tail: ListValue<item>) => Cons(head, tail.value());
 }
 
-function lift_list_one<out>(
-  fn: (...values: unknown[]) => out,
+function lift_list_one<output>(
+  fn: (...values: unknown[]) => output,
   first: List<unknown>,
-): ListValue<out> {
+): ListValue<output> {
   let source = first;
-  let reversed = list_nil<out>();
+  let reversed = list_nil<output>();
 
   while (Cons.is(source)) {
     const [, head, tail] = source;
@@ -343,13 +359,13 @@ function lift_list_one<out>(
   return List(list_reverse(reversed));
 }
 
-function lift_list_two<out>(
-  fn: (...values: unknown[]) => out,
+function lift_list_two<output>(
+  fn: (...values: unknown[]) => output,
   first: List<unknown>,
   second: List<unknown>,
-): ListValue<out> {
+): ListValue<output> {
   let left = first;
-  let reversed = list_nil<out>();
+  let reversed = list_nil<output>();
 
   while (Cons.is(left)) {
     const [, left_head, left_tail] = left;
@@ -367,14 +383,14 @@ function lift_list_two<out>(
   return List(list_reverse(reversed));
 }
 
-function lift_list_three<out>(
-  fn: (...values: unknown[]) => out,
+function lift_list_three<output>(
+  fn: (...values: unknown[]) => output,
   first: List<unknown>,
   second: List<unknown>,
   third: List<unknown>,
-): ListValue<out> {
+): ListValue<output> {
   let left = first;
-  let reversed = list_nil<out>();
+  let reversed = list_nil<output>();
 
   while (Cons.is(left)) {
     const [, left_head, left_tail] = left;
@@ -399,11 +415,11 @@ function lift_list_three<out>(
   return List(list_reverse(reversed));
 }
 
-function lift_list_many<out>(
-  fn: (...values: unknown[]) => out,
+function lift_list_many<output>(
+  fn: (...values: unknown[]) => output,
   first: List<unknown>,
   rest: readonly ListValue<unknown>[],
-): ListValue<out> {
+): ListValue<output> {
   let rows = list_to_array(first).map((value) => [value] as unknown[]);
 
   for (const current of rest) {

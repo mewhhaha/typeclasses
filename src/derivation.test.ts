@@ -20,7 +20,9 @@ import {
 
 type Box<item> = readonly ["Box", item];
 
-interface AsBox extends As<AsBox>, MonadDictionary<AsBox> {
+declare const box_identity: unique symbol;
+
+interface AsBox extends As<AsBox, typeof box_identity>, MonadDictionary<AsBox> {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
@@ -97,7 +99,10 @@ Deno.test("Monad.derive installs lawful Functor and Applicative defaults", () =>
   );
 });
 
-interface AsApBox extends As<AsApBox>, ApplicativeDictionary<AsApBox> {
+declare const ap_box_identity: unique symbol;
+
+interface AsApBox
+  extends As<AsApBox, typeof ap_box_identity>, ApplicativeDictionary<AsApBox> {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
@@ -127,7 +132,10 @@ Deno.test("Applicative.derive installs its Functor default", () => {
   );
 });
 
-interface AsOrdBox extends As<AsOrdBox>, OrdDictionary<AsOrdBox> {
+declare const ord_box_identity: unique symbol;
+
+interface AsOrdBox
+  extends As<AsOrdBox, typeof ord_box_identity>, OrdDictionary<AsOrdBox> {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }

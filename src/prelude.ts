@@ -15,7 +15,8 @@ import {
   Monad,
   type Monad as MonadDictionary,
   MonadError,
-  type MonadError as MonadErrorDictionary,
+  type MonadErrorDictionary,
+  type MonadErrorType,
   Monoid,
   type Monoid as MonoidDictionary,
   Ord,
@@ -58,11 +59,11 @@ export function mempty<
 
 /** Construct a failed value using an explicit MonadError dictionary. */
 export function throw_error<
-  dictionary extends MonadErrorDictionary<dictionary>,
+  dictionary extends MonadErrorDictionary,
   item,
 >(
-  dictionary: MonadErrorDictionary<dictionary>,
-  error: unknown,
+  dictionary: dictionary,
+  error: MonadErrorType<dictionary>,
 ): Data<dictionary, item> {
   return MonadError.throw_error<dictionary, item>(
     dictionary as dictionary,
@@ -98,11 +99,11 @@ export function ap<
 export function lift_A<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
-  out,
+  result,
 >(
-  fn: (first: first) => out,
+  fn: (first: first) => result,
   first: Data<dictionary, first>,
-): Data<dictionary, out> {
+): Data<dictionary, result> {
   return Applicative.lift(fn, first);
 }
 
@@ -111,12 +112,12 @@ export function lift_A2<
   dictionary extends ApplicativeDictionary<dictionary>,
   first,
   second,
-  out,
+  result,
 >(
-  fn: (first: first, second: second) => out,
+  fn: (first: first, second: second) => result,
   first: Data<dictionary, first>,
   second: Data<dictionary, second>,
-): Data<dictionary, out> {
+): Data<dictionary, result> {
   return Applicative.lift(fn, first, second);
 }
 
@@ -126,13 +127,13 @@ export function lift_A3<
   first,
   second,
   third,
-  out,
+  result,
 >(
-  fn: (first: first, second: second, third: third) => out,
+  fn: (first: first, second: second, third: third) => result,
   first: Data<dictionary, first>,
   second: Data<dictionary, second>,
   third: Data<dictionary, third>,
-): Data<dictionary, out> {
+): Data<dictionary, result> {
   return Applicative.lift(fn, first, second, third);
 }
 
@@ -143,14 +144,14 @@ export function lift_A4<
   second,
   third,
   fourth,
-  out,
+  result,
 >(
-  fn: (first: first, second: second, third: third, fourth: fourth) => out,
+  fn: (first: first, second: second, third: third, fourth: fourth) => result,
   first: Data<dictionary, first>,
   second: Data<dictionary, second>,
   third: Data<dictionary, third>,
   fourth: Data<dictionary, fourth>,
-): Data<dictionary, out> {
+): Data<dictionary, result> {
   return Applicative.lift(fn, first, second, third, fourth);
 }
 
@@ -162,7 +163,7 @@ export function lift_A5<
   third,
   fourth,
   fifth,
-  out,
+  result,
 >(
   fn: (
     first: first,
@@ -170,13 +171,13 @@ export function lift_A5<
     third: third,
     fourth: fourth,
     fifth: fifth,
-  ) => out,
+  ) => result,
   first: Data<dictionary, first>,
   second: Data<dictionary, second>,
   third: Data<dictionary, third>,
   fourth: Data<dictionary, fourth>,
   fifth: Data<dictionary, fifth>,
-): Data<dictionary, out> {
+): Data<dictionary, result> {
   return Applicative.lift(fn, first, second, third, fourth, fifth);
 }
 
@@ -270,8 +271,8 @@ export function ap_second<
   return Applicative.lift((_: first, kept: second) => kept, left, right);
 }
 
-/** Haskell `>>`: sequence monadic computations and keep the right context. */
-export function then<
+/** Sequence monadic computations and keep the right context. */
+export function sequence_right<
   dictionary extends MonadDictionary<dictionary>,
   first,
   second,
@@ -286,12 +287,12 @@ export function then<
 export function foldl<
   dictionary extends FoldableDictionary<dictionary>,
   item,
-  out,
+  result,
 >(
-  fn: (state: out, item: item) => out,
-  initial: out,
+  fn: (state: result, item: item) => result,
+  initial: result,
   value: Data<dictionary, item>,
-): out {
+): result {
   return Foldable.fold(value, initial, fn);
 }
 
@@ -300,15 +301,15 @@ export function fold_map<
   dictionary extends FoldableDictionary<dictionary>,
   monoid extends MonoidDictionary<monoid>,
   item,
-  out,
+  result,
 >(
   monoid: MonoidDictionary<monoid>,
-  fn: (value: item) => Data<monoid, out>,
+  fn: (value: item) => Data<monoid, result>,
   value: Data<dictionary, item>,
-): Data<monoid, out> {
+): Data<monoid, result> {
   return Foldable.fold(
     value,
-    Monoid.empty<monoid, out>(monoid as monoid),
+    Monoid.empty<monoid, result>(monoid as monoid),
     (state, item) => Semigroup.concat(state, fn(item)),
   );
 }
@@ -479,6 +480,7 @@ export function compare<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.compare(left, right);
 }
 
+/** Test whether the left value is less than the right value. */
 export function lt<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,
@@ -486,6 +488,7 @@ export function lt<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.lt(left, right);
 }
 
+/** Test whether the left value is less than or equal to the right value. */
 export function lte<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,
@@ -493,6 +496,7 @@ export function lte<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.lte(left, right);
 }
 
+/** Test whether the left value is greater than the right value. */
 export function gt<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,
@@ -500,6 +504,7 @@ export function gt<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.gt(left, right);
 }
 
+/** Test whether the left value is greater than or equal to the right value. */
 export function gte<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,
@@ -507,6 +512,7 @@ export function gte<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.gte(left, right);
 }
 
+/** Return the lesser of two values according to their Ord instance. */
 export function min<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,
@@ -514,6 +520,7 @@ export function min<dictionary extends OrdDictionary<dictionary>, item>(
   return Ord.min(left, right);
 }
 
+/** Return the greater of two values according to their Ord instance. */
 export function max<dictionary extends OrdDictionary<dictionary>, item>(
   left: Data<dictionary, item>,
   right: Data<dictionary, item>,

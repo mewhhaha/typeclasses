@@ -37,6 +37,26 @@ const program = Do(function* () {
     );
   },
 });
+
+Deno.test("transformer emits a source map for rewritten TypeScript", async () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+
+const value = Do(Maybe, function* () {
+  return 42;
+});
+`;
+  const result = await transform(source);
+
+  assert_true(result.map !== null, "expected transformed output source map");
+  if (result.map === null) {
+    throw new Error("expected transformed output source map");
+  }
+
+  assert_equals(result.map.sourcesContent?.[0], source);
+  assert_true(result.map.mappings.length > 0, "expected source mappings");
+});
+
 Deno.test({
   name: "transformer lowers Program generators to Effect bind/map chains",
   permissions: { env: true },
@@ -1842,9 +1862,11 @@ Deno.test("transformer preserves source text when no rewrite is possible", async
   assert_equals(untouched.code, without_targets);
   assert_equals(untouched.transformed, 0);
   assert_equals(untouched.diagnostics, []);
+  assert_equals(untouched.map, null);
   assert_equals(type_only.code, type_only_target);
   assert_equals(type_only.transformed, 0);
   assert_equals(type_only.diagnostics, []);
+  assert_equals(type_only.map, null);
 });
 
 Deno.test("transformer ignores control flow inside nested functions", async () => {

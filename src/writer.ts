@@ -3,6 +3,7 @@ import {
   type Data,
   data,
   type Dictionary,
+  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
@@ -16,7 +17,6 @@ import {
   is_lift_of,
   type Lift,
   type TaggedOperation,
-  type WithoutLift,
 } from "./effects.ts";
 import { configured_dictionary } from "./internal.ts";
 import { inspect } from "./inspect.ts";
@@ -29,24 +29,33 @@ import {
   Show,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const writer_identity: unique symbol;
+
+/** A value paired with output accumulated through a Monoid dictionary. */
 export type Writer<
   output extends Dictionary,
   log,
   item,
 > = readonly [item, Data<output, log>];
 
+/** The callable Writer dictionary for one output and log type. */
 export interface AsWriter<
   output extends Dictionary,
   log,
 > extends
-  As<AsWriter<output, log>>,
+  As<AsWriter<output, log>, typeof writer_identity>,
   Show<AsWriter<output, log>>,
   Monad<AsWriter<output, log>> {
+  /** The item produced by a Writer value. */
   readonly [type_item]: unknown;
+  /** The item and accumulated output represented by a Writer value. */
   readonly [type_data]: Writer<output, log, this[typeof type_item]>;
+  /** Wraps an item and its accumulated output. */
   <item>(value: Writer<output, log, item>): WriterValue<output, log, item>;
 }
 
+/** A Writer pair wrapped with its typeclass dictionary. */
 export type WriterValue<
   output extends Dictionary,
   log,
@@ -57,7 +66,8 @@ export type WriterValue<
   item
 >;
 
-type WriterConstructor =
+/** @ignore */
+export type WriterConstructor =
   & Omit<AsWriter<Dictionary, unknown>, "pure">
   & {
     <item>(
@@ -66,11 +76,13 @@ type WriterConstructor =
     <output extends MonoidDictionary<output>, log, item>(
       value: Writer<output, log, item>,
     ): WriterValue<output, log, item>;
+    /** Configures Writer with the empty value for an output Monoid. */
     with<output extends MonoidDictionary<output>, log>(
       empty: Data<output, log>,
     ): AsWriter<output, log>;
   };
 
+/** The Writer dictionary and configurable constructor. */
 export const Writer = data<
   AsWriter<Dictionary, unknown>
 >() as unknown as WriterConstructor;
@@ -80,6 +92,7 @@ Object.defineProperty(Writer, "with", {
   value: configured_writer,
 });
 
+/** Creates a Writer value from an item and accumulated output. */
 export function writer<
   output extends MonoidDictionary<output>,
   log,
@@ -95,12 +108,25 @@ export function writer<
   >;
 }
 
+/** Appends output without producing a meaningful item. */
 export function tell<output extends MonoidDictionary<output>, log>(
   output: Data<output, log>,
 ): WriterValue<output, log, void> {
   return writer(undefined, output);
 }
 
+/** @ignore */
+export type WithoutWriter<
+  requirements,
+  output extends Dictionary,
+  log,
+> = requirements extends Lift<infer dictionary, infer _item>
+  ? DictionaryDataType<dictionary> extends
+    DictionaryDataType<AsWriter<output, log>> ? never
+  : requirements
+  : requirements;
+
+/** Handles Writer lifts from the supplied empty output value. */
 export function run_writer<
   output extends MonoidDictionary<output>,
   log,
@@ -110,7 +136,7 @@ export function run_writer<
   effect: Effect<requirements, item>,
   empty: Data<output, log>,
 ): Effect<
-  WithoutLift<requirements, AsWriter<output, log>>,
+  WithoutWriter<requirements, output, log>,
   readonly [item, Data<output, log>]
 > {
   return handle_lift(effect, writer_kind, empty, {
@@ -133,6 +159,7 @@ export function run_writer_terminal<
   writer: WriterValue<output, log, item>,
   empty: Data<output, log>,
 ): readonly [item, Data<output, log>];
+/** Runs an effect containing only Writer lifts. */
 export function run_writer_terminal<
   output extends MonoidDictionary<output>,
   log,
@@ -141,6 +168,7 @@ export function run_writer_terminal<
   effect: Effect<Lift<AsWriter<output, log>, unknown>, item>,
   empty: Data<output, log>,
 ): readonly [item, Data<output, log>];
+/** Runs a Writer value or an effect containing only Writer lifts. */
 export function run_writer_terminal<
   output extends MonoidDictionary<output>,
   log,
@@ -212,13 +240,15 @@ export function run_writer_terminal<
   }
 }
 
-type WriterOutput<requirements> = requirements extends Lift<
+/** @ignore */
+export type WriterOutput<requirements> = requirements extends Lift<
   AsWriter<infer output, infer _log>,
   infer _item
 > ? output
   : never;
 
-type WriterLog<requirements> = requirements extends Lift<
+/** @ignore */
+export type WriterLog<requirements> = requirements extends Lift<
   AsWriter<infer _output, infer log>,
   infer _item
 > ? log
@@ -277,7 +307,9 @@ Monad.instance(Writer)({
   },
 });
 
+/** Extracts the output dictionary required by Writer lifts. */
 export type WriterEffectOutput<requirements> = WriterOutput<requirements>;
+/** Extracts the log item required by Writer lifts. */
 export type WriterEffectLog<requirements> = WriterLog<requirements>;
 
 function writer_any<item>(

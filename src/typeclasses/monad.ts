@@ -12,8 +12,10 @@ import {
 import { Functor } from "./functor.ts";
 import { monad_error_typeclass } from "./monad_error.ts";
 
+/** Runtime token for the Monad typeclass. */
 export const monad_typeclass = Symbol("Monad");
 
+/** Applicative dictionary capability for context-dependent sequencing. */
 export interface Monad<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -37,7 +39,8 @@ export type MinimalMonad<dictionary extends Monad<dictionary>> = {
   ) => Data<dictionary, to>;
 };
 
-type MonadTypeclass =
+/** @ignore */
+export type MonadTypeclass =
   & Typeclass<typeof monad_typeclass, {
     bind<dictionary extends Monad<dictionary>, from, to>(
       value: Data<dictionary, from>,
@@ -50,16 +53,18 @@ type MonadTypeclass =
     ): (minimal: MinimalMonad<dictionary>) => void;
   };
 
-type DoGenerator<
+/** @ignore */
+export type DoGenerator<
   dictionary extends Monad<dictionary>,
-  out,
-> = Generator<Data<dictionary, unknown>, out, unknown>;
+  result,
+> = Generator<Data<dictionary, unknown>, result, unknown>;
 
 type DoPath = {
   readonly previous: DoPath | undefined;
   readonly value: unknown;
 };
 
+/** Operations for sequencing values through Monad dictionaries. */
 export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
   derive<dictionary extends Monad<dictionary>>(
     dictionary: dictionary,
@@ -107,22 +112,25 @@ export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
   },
 });
 
-export function Do<dictionary extends Monad<dictionary>, out>(
+/** Run generator-based monadic notation with an explicit dictionary. */
+export function Do<dictionary extends Monad<dictionary>, result>(
   dictionary: Monad<dictionary>,
-  run: () => DoGenerator<dictionary, out>,
-): Data<dictionary, out>;
-export function Do<dictionary extends Monad<dictionary>, out>(
-  run: () => DoGenerator<dictionary, out>,
-): Data<dictionary, out>;
-export function Do<dictionary extends Monad<dictionary>, out>(
-  dictionary_or_run: dictionary | (() => DoGenerator<dictionary, out>),
-  explicit_run?: () => DoGenerator<dictionary, out>,
-): Data<dictionary, out> {
+  run: () => DoGenerator<dictionary, result>,
+): Data<dictionary, result>;
+/** Run generator-based monadic notation inferred from the first yield. */
+export function Do<dictionary extends Monad<dictionary>, result>(
+  run: () => DoGenerator<dictionary, result>,
+): Data<dictionary, result>;
+/** Run generator-based monadic notation. */
+export function Do<dictionary extends Monad<dictionary>, result>(
+  dictionary_or_run: dictionary | (() => DoGenerator<dictionary, result>),
+  explicit_run?: () => DoGenerator<dictionary, result>,
+): Data<dictionary, result> {
   const dictionary = explicit_run === undefined
     ? undefined
     : dictionary_or_run as dictionary;
   const run = explicit_run === undefined
-    ? dictionary_or_run as () => DoGenerator<dictionary, out>
+    ? dictionary_or_run as () => DoGenerator<dictionary, result>
     : explicit_run;
   const first = run_with(undefined);
 
@@ -139,8 +147,8 @@ export function Do<dictionary extends Monad<dictionary>, out>(
   function run_with(
     path: DoPath | undefined,
   ): {
-    iterator: DoGenerator<dictionary, out>;
-    next: IteratorResult<Data<dictionary, unknown>, out>;
+    iterator: DoGenerator<dictionary, result>;
+    next: IteratorResult<Data<dictionary, unknown>, result>;
   } {
     const iterator = run();
     let next = iterator.next();
@@ -161,8 +169,8 @@ export function Do<dictionary extends Monad<dictionary>, out>(
   function step(
     path: DoPath | undefined,
     current: Data<dictionary, unknown>,
-    iterator: DoGenerator<dictionary, out>,
-  ): Data<dictionary, out> {
+    iterator: DoGenerator<dictionary, result>,
+  ): Data<dictionary, result> {
     let calls = 0;
 
     const bound = current.bind((value) => {
@@ -193,17 +201,17 @@ export function Do<dictionary extends Monad<dictionary>, out>(
   }
 
   function catch_generator_error(
-    failed: Data<dictionary, out>,
+    failed: Data<dictionary, result>,
     path: DoPath | undefined,
     witness: Data<dictionary, unknown>,
-    iterator: DoGenerator<dictionary, out>,
-  ): Data<dictionary, out> {
-    const catchable = failed as Data<dictionary, out> & {
+    iterator: DoGenerator<dictionary, result>,
+  ): Data<dictionary, result> {
+    const catchable = failed as Data<dictionary, result> & {
       [monad_error_typeclass]?: {
         catch_error: (
-          this: Data<dictionary, out>,
-          handler: (error: unknown) => Data<dictionary, out>,
-        ) => Data<dictionary, out>;
+          this: Data<dictionary, result>,
+          handler: (error: unknown) => Data<dictionary, result>,
+        ) => Data<dictionary, result>;
       };
     };
     const implementation = catchable[monad_error_typeclass];
@@ -213,7 +221,7 @@ export function Do<dictionary extends Monad<dictionary>, out>(
     }
 
     return implementation.catch_error.call(failed, (error) => {
-      let next: IteratorResult<Data<dictionary, unknown>, out>;
+      let next: IteratorResult<Data<dictionary, unknown>, result>;
 
       try {
         next = iterator.throw(error);

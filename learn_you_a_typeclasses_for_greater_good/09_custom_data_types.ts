@@ -12,8 +12,14 @@ type Tree<item> =
   | readonly ["leaf", item]
   | readonly ["branch", Tree<item>, Tree<item>];
 
+declare const tree_identity: unique symbol;
+
 interface AsTree
-  extends As<AsTree>, Show<AsTree>, Functor<AsTree>, Foldable<AsTree> {
+  extends
+    As<AsTree, typeof tree_identity>,
+    Show<AsTree>,
+    Functor<AsTree>,
+    Foldable<AsTree> {
   readonly [type_item]: unknown;
   readonly [type_data]: Tree<this[typeof type_item]>;
 }

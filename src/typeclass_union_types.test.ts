@@ -12,7 +12,9 @@ type Tiny<item> =
   | readonly ["One", item]
   | readonly ["None"];
 
-interface AsTiny extends As<AsTiny> {
+declare const tiny_identity: unique symbol;
+
+interface AsTiny extends As<AsTiny, typeof tiny_identity> {
   readonly [type_item]: unknown;
   readonly [type_data]: Tiny<this[typeof type_item]>;
 }

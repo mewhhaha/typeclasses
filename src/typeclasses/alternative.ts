@@ -8,8 +8,10 @@ import {
 } from "../typeclass.ts";
 import type { Applicative as ApplicativeDictionary } from "./applicative.ts";
 
+/** Runtime token for the Alternative typeclass. */
 export const alternative_typeclass = Symbol("Alternative");
 
+/** Applicative dictionary capability with empty and choice operations. */
 export interface Alternative<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -28,7 +30,8 @@ export interface Alternative<dictionary extends Dictionary>
     >,
     ApplicativeDictionary<dictionary> {}
 
-type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
+/** @ignore */
+export type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
   empty<dictionary extends Alternative<dictionary>, item>(
     witness: Data<dictionary, unknown>,
   ): Data<dictionary, item>;
@@ -41,6 +44,7 @@ type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
   ): Data<dictionary, item>;
 }>;
 
+/** Operations for empty values and left-biased contextual choice. */
 export const Alternative: AlternativeTypeclass = typeclass(
   alternative_typeclass,
   {

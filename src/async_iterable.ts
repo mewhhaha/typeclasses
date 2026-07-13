@@ -17,35 +17,47 @@ import {
   Show,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const async_iterable_identity: unique symbol;
+
+/** A factory that supplies the async iterable wrapped by the dictionary. */
 export type AsyncIterableT<item> = () => AsyncIterable<item>;
 
+/** Dictionary type for lazy asynchronous iterable factories. */
 export interface AsAsyncIterable
   extends
-    As<AsAsyncIterable>,
+    As<AsAsyncIterable, typeof async_iterable_identity>,
     Show<AsAsyncIterable>,
     Monoid<AsAsyncIterable>,
     Alternative<AsAsyncIterable>,
     Monad<AsAsyncIterable> {
+  /** Higher-kinded slot for the asynchronously yielded value type. */
   readonly [type_item]: unknown;
+  /** Async-iterable factory at the selected value type. */
   readonly [type_data]: AsyncIterableT<this[typeof type_item]>;
 }
 
-type AsyncIterableValue<item> = Data<AsAsyncIterable, item>;
+/** @ignore */
+export type AsyncIterableValue<item> = Data<AsAsyncIterable, item>;
 
+/** Callable async-iterable dictionary with lazy list-like instances. */
 export const AsyncIterableT: AsAsyncIterable = data<AsAsyncIterable>();
 
+/** Wrap a factory whose async iterable is requested for each traversal. */
 export function from_factory<item>(
   factory: () => AsyncIterable<item>,
 ): AsyncIterableValue<item> {
   return AsyncIterableT(factory);
 }
 
+/** Wrap an existing async iterable without eagerly consuming it. */
 export function from_async_iterable<item>(
   iterable: AsyncIterable<item>,
 ): AsyncIterableValue<item> {
   return AsyncIterableT(() => iterable);
 }
 
+/** Asynchronously materialize a wrapped iterable into a mutable array. */
 export async function to_array<item>(
   iterable: AsyncIterableValue<item>,
 ): Promise<item[]> {
@@ -168,11 +180,11 @@ Monad.instance(AsyncIterableT)({
   },
 });
 
-function lift_async_iterable_two<out>(
-  fn: (...values: unknown[]) => out,
+function lift_async_iterable_two<output>(
+  fn: (...values: unknown[]) => output,
   first: AsyncIterableT<unknown>,
   second: AsyncIterableT<unknown>,
-): AsyncIterableValue<out> {
+): AsyncIterableValue<output> {
   return AsyncIterableT(async function* () {
     for await (const left of first()) {
       for await (const right of second()) {
@@ -182,12 +194,12 @@ function lift_async_iterable_two<out>(
   });
 }
 
-function lift_async_iterable_three<out>(
-  fn: (...values: unknown[]) => out,
+function lift_async_iterable_three<output>(
+  fn: (...values: unknown[]) => output,
   first: AsyncIterableT<unknown>,
   second: AsyncIterableT<unknown>,
   third: AsyncIterableT<unknown>,
-): AsyncIterableValue<out> {
+): AsyncIterableValue<output> {
   return AsyncIterableT(async function* () {
     for await (const left of first()) {
       for await (const middle of second()) {
@@ -199,11 +211,11 @@ function lift_async_iterable_three<out>(
   });
 }
 
-function lift_async_iterable_many<out>(
-  fn: (...values: unknown[]) => out,
+function lift_async_iterable_many<output>(
+  fn: (...values: unknown[]) => output,
   first: AsyncIterableT<unknown>,
   rest: readonly AsyncIterableValue<unknown>[],
-): AsyncIterableValue<out> {
+): AsyncIterableValue<output> {
   const sources = [
     first,
     ...rest.map((current) => current.value()),
@@ -214,12 +226,12 @@ function lift_async_iterable_many<out>(
   });
 }
 
-async function* iterate_async_iterable_product<out>(
-  fn: (...values: unknown[]) => out,
+async function* iterate_async_iterable_product<output>(
+  fn: (...values: unknown[]) => output,
   sources: readonly AsyncIterableT<unknown>[],
   index: number,
   values: readonly unknown[],
-): AsyncGenerator<out> {
+): AsyncGenerator<output> {
   if (index >= sources.length) {
     yield fn(...values);
     return;

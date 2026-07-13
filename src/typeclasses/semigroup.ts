@@ -7,8 +7,10 @@ import {
   type TypeclassDictionary,
 } from "../typeclass.ts";
 
+/** Runtime token for the Semigroup typeclass. */
 export const semigroup_typeclass = Symbol("Semigroup");
 
+/** Dictionary capability for associative concatenation. */
 export interface Semigroup<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -22,13 +24,15 @@ export interface Semigroup<dictionary extends Dictionary>
       }
     > {}
 
-type SemigroupTypeclass = Typeclass<typeof semigroup_typeclass, {
+/** @ignore */
+export type SemigroupTypeclass = Typeclass<typeof semigroup_typeclass, {
   concat<dictionary extends Semigroup<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): Data<dictionary, item>;
 }>;
 
+/** Operations for concatenating values through Semigroup dictionaries. */
 export const Semigroup: SemigroupTypeclass = typeclass(semigroup_typeclass, {
   concat<
     dictionary extends Semigroup<dictionary>,

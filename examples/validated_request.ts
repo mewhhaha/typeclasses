@@ -1,5 +1,5 @@
 import { InvalidMessages, Valid } from "../src/validation.ts";
-import { Applicative, Bifunctor } from "../src/typeclasses.ts";
+import { Applicative } from "../src/typeclasses.ts";
 
 export type RegistrationRequest = {
   readonly username: string;
@@ -37,23 +37,13 @@ export function decode_registration_request(
     validate_password(form.get("password")),
     validate_age(form.get("age")),
   );
-  const decoded = Bifunctor.bimap(
-    request,
-    (messages): RejectedRegistration => ({
-      status: "rejected",
-      messages,
-    }),
-    (accepted): AcceptedRegistration => ({
-      status: "accepted",
-      request: accepted,
-    }),
-  );
-  const [tag, result] = decoded.value();
+  const [tag, result] = request.value();
 
   switch (tag) {
-    case "valid":
     case "invalid":
-      return result;
+      return { status: "rejected", messages: result };
+    case "valid":
+      return { status: "accepted", request: result };
   }
 }
 

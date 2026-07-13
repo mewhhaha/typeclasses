@@ -8,8 +8,10 @@ import {
 } from "../typeclass.ts";
 import type { Functor as FunctorDictionary } from "./functor.ts";
 
+/** Runtime token for the Comonad typeclass. */
 export const comonad_typeclass = Symbol("Comonad");
 
+/** Functor dictionary capability for extracting and extending contexts. */
 export interface Comonad<dictionary extends Dictionary>
   extends
     TypeclassDictionary<
@@ -25,7 +27,8 @@ export interface Comonad<dictionary extends Dictionary>
     >,
     FunctorDictionary<dictionary> {}
 
-type ComonadTypeclass = Typeclass<typeof comonad_typeclass, {
+/** @ignore */
+export type ComonadTypeclass = Typeclass<typeof comonad_typeclass, {
   extract<dictionary extends Comonad<dictionary>, item>(
     value: Data<dictionary, item>,
   ): item;
@@ -35,6 +38,7 @@ type ComonadTypeclass = Typeclass<typeof comonad_typeclass, {
   ): Data<dictionary, to>;
 }>;
 
+/** Operations for extracting and extending Comonad values. */
 export const Comonad: ComonadTypeclass = typeclass(comonad_typeclass, {
   extract<
     dictionary extends Comonad<dictionary>,

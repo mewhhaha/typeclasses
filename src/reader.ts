@@ -2,6 +2,7 @@ import {
   type As,
   type Data,
   data,
+  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
@@ -14,7 +15,6 @@ import {
   handle_lift_terminal,
   type Lift,
   type LiftHandler,
-  type WithoutLift,
 } from "./effects.ts";
 import {
   Applicative,
@@ -24,25 +24,35 @@ import {
   Show,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const reader_identity: unique symbol;
+
+/** A computation that reads a shared environment. */
 export type Reader<environment, item> = (environment: environment) => item;
 
+/** The callable Reader dictionary for one environment type. */
 export interface AsReader<environment>
   extends
-    As<AsReader<environment>>,
+    As<AsReader<environment>, typeof reader_identity>,
     Show<AsReader<environment>>,
     Monad<AsReader<environment>> {
+  /** The item produced by a Reader value. */
   readonly [type_item]: unknown;
+  /** The environment-dependent computation represented by a Reader value. */
   readonly [type_data]: Reader<environment, this[typeof type_item]>;
+  /** Wraps an environment-dependent computation. */
   <item>(value: Reader<environment, item>): ReaderValue<environment, item>;
 }
 
+/** A Reader computation wrapped with its typeclass dictionary. */
 export type ReaderValue<environment, item> = WrappedData<
   AsReader<environment>,
   Reader<environment, item>,
   item
 >;
 
-type ReaderConstructor =
+/** @ignore */
+export type ReaderConstructor =
   & AsReader<unknown>
   & {
     <environment, item>(
@@ -50,19 +60,23 @@ type ReaderConstructor =
     ): ReaderValue<environment, item>;
   };
 
+/** The Reader dictionary and constructor. */
 export const Reader = data<AsReader<unknown>>() as ReaderConstructor;
 const reader_kind = Reader[kind];
 
+/** Reads the current environment. */
 export function ask<environment>(): ReaderValue<environment, environment> {
   return Reader((environment: environment) => environment);
 }
 
+/** Selects a value from the current environment. */
 export function asks<environment, item>(
   fn: (environment: environment) => item,
 ): ReaderValue<environment, item> {
   return Reader(fn);
 }
 
+/** Runs a Reader after adapting an outer environment to its expected one. */
 export function local<outer, inner, item>(
   reader: ReaderValue<inner, item>,
   fn: (environment: outer) => inner,
@@ -70,10 +84,19 @@ export function local<outer, inner, item>(
   return Reader((environment: outer) => reader.value()(fn(environment)));
 }
 
+/** @ignore */
+export type WithoutReader<requirements, environment> = requirements extends
+  Lift<infer dictionary, infer _item>
+  ? DictionaryDataType<dictionary> extends
+    DictionaryDataType<AsReader<environment>> ? never
+  : requirements
+  : requirements;
+
+/** Handles Reader lifts with the supplied environment. */
 export function run_reader<requirements, environment, item>(
   effect: Effect<requirements, item>,
   environment: environment,
-): Effect<WithoutLift<requirements, AsReader<environment>>, item> {
+): Effect<WithoutReader<requirements, environment>, item> {
   return handle_lift(
     effect,
     reader_kind,
@@ -84,7 +107,7 @@ export function run_reader<requirements, environment, item>(
       item,
       item
     >,
-  ) as Effect<WithoutLift<requirements, AsReader<environment>>, item>;
+  ) as Effect<WithoutReader<requirements, environment>, item>;
 }
 
 /** Runs one Reader value or an effect containing only Reader lifts. */
@@ -92,10 +115,12 @@ export function run_reader_terminal<environment, item>(
   reader: ReaderValue<environment, item>,
   environment: environment,
 ): item;
+/** Runs an effect containing only Reader lifts. */
 export function run_reader_terminal<environment, item>(
   effect: Effect<Lift<AsReader<environment>, unknown>, item>,
   environment: environment,
 ): item;
+/** Runs a Reader value or an effect containing only Reader lifts. */
 export function run_reader_terminal<environment, item>(
   value:
     | ReaderValue<environment, item>

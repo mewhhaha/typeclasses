@@ -803,15 +803,26 @@ Deno.test("Applicative lift combines Task applicatives without sequencing effect
   ]);
 });
 
-Deno.test("Applicative lift supports promise-returning Task combiners", async () => {
+Deno.test("Applicative lift rejects promise-returning Task combiners", async () => {
   const computed = Applicative.lift(
     (left, right) => Promise.resolve(left + right),
     task_succeed(20),
     task_succeed(22),
   );
 
-  const result: number = await computed.run();
-  assert_equals(result, 42);
+  let error: unknown;
+
+  try {
+    await computed.run();
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert_true(error instanceof TypeError, "thenable Task items are rejected");
+  assert_true(
+    (error as Error).message.includes("cannot produce a PromiseLike item"),
+    "the rejection explains Task's item contract",
+  );
 });
 
 Deno.test("Applicative lift lets Validation accumulate independent errors", () => {

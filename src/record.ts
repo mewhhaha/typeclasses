@@ -19,34 +19,44 @@ import {
   Traversable,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const record_identity: unique symbol;
+
+/** A read-only string-keyed record wrapped by the RecordT dictionary. */
 export type RecordT<item> = Readonly<Record<string, item>>;
 
+/** Dictionary type for records and their value-wise typeclass instances. */
 export interface AsRecord
   extends
-    As<AsRecord>,
+    As<AsRecord, typeof record_identity>,
     Show<AsRecord>,
     Eq<AsRecord>,
     Monoid<AsRecord>,
     Traversable<AsRecord>,
     Ord<AsRecord> {
+  /** Higher-kinded slot for the record value type. */
   readonly [type_item]: unknown;
+  /** Read-only record representation at the selected value type. */
   readonly [type_data]: RecordT<this[typeof type_item]>;
 }
 
 type RecordValue<item> = Data<AsRecord, item>;
 
+/** Callable record dictionary that copies records when wrapping them. */
 export const RecordT: AsRecord = data<AsRecord>(
   function (record) {
     return this.data({ ...record });
   },
 );
 
+/** Build a wrapped record from string-keyed entries. */
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
 ): RecordValue<item> {
   return RecordT(Object.fromEntries(entries));
 }
 
+/** Copy a wrapped record into a mutable plain object. */
 export function to_record<item>(
   record: RecordValue<item>,
 ): Record<string, item> {
@@ -199,5 +209,13 @@ function compare_entry_keys(
   left: readonly [string, unknown],
   right: readonly [string, unknown],
 ): number {
-  return left[0].localeCompare(right[0]);
+  if (left[0] < right[0]) {
+    return -1;
+  }
+
+  if (left[0] > right[0]) {
+    return 1;
+  }
+
+  return 0;
 }

@@ -2,6 +2,7 @@ import {
   type As,
   type Data,
   data,
+  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
@@ -15,7 +16,6 @@ import {
   is_lift_of,
   type Lift,
   type TaggedOperation,
-  type WithoutLift,
 } from "./effects.ts";
 import {
   Applicative,
@@ -25,54 +25,81 @@ import {
   Show,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const state_identity: unique symbol;
+
+/** A computation that produces an item while threading state. */
 export type State<state, item> = (state: state) => readonly [item, state];
 
+/** The callable State dictionary for one state type. */
 export interface AsState<state>
-  extends As<AsState<state>>, Show<AsState<state>>, Monad<AsState<state>> {
+  extends
+    As<AsState<state>, typeof state_identity>,
+    Show<AsState<state>>,
+    Monad<AsState<state>> {
+  /** The item produced by a State value. */
   readonly [type_item]: unknown;
+  /** The stateful computation represented by a State value. */
   readonly [type_data]: State<state, this[typeof type_item]>;
+  /** Wraps a stateful computation. */
   <item>(value: State<state, item>): StateValue<state, item>;
 }
 
+/** A State computation wrapped with its typeclass dictionary. */
 export type StateValue<state, item> = WrappedData<
   AsState<state>,
   State<state, item>,
   item
 >;
 
-type StateConstructor =
+/** @ignore */
+export type StateConstructor =
   & AsState<unknown>
   & {
     <state, item>(value: State<state, item>): StateValue<state, item>;
   };
 
+/** The State dictionary and constructor. */
 export const State = data<AsState<unknown>>() as StateConstructor;
 const state_kind = State[kind];
 
+/** Reads the current state. */
 export function get<state>(): StateValue<state, state> {
   return State((state: state) => [state, state]);
 }
 
+/** Replaces the current state. */
 export function put<state>(state: state): StateValue<state, void> {
   return State((_previous: state) => [undefined, state]);
 }
 
+/** Updates the current state with a pure function. */
 export function modify<state>(
   fn: (state: state) => state,
 ): StateValue<state, void> {
   return State((state: state) => [undefined, fn(state)]);
 }
 
+/** Selects an item from the current state without changing it. */
 export function gets<state, item>(
   fn: (state: state) => item,
 ): StateValue<state, item> {
   return State((state: state) => [fn(state), state]);
 }
 
+/** @ignore */
+export type WithoutState<requirements, state> = requirements extends
+  Lift<infer dictionary, infer _item>
+  ? DictionaryDataType<dictionary> extends DictionaryDataType<AsState<state>>
+    ? never
+  : requirements
+  : requirements;
+
+/** Handles State lifts with an initial state. */
 export function run_state<requirements, state, item>(
   effect: Effect<requirements, item>,
   state: state,
-): Effect<WithoutLift<requirements, AsState<state>>, readonly [item, state]> {
+): Effect<WithoutState<requirements, state>, readonly [item, state]> {
   return handle_lift(effect, state_kind, state, {
     done(value, current_state) {
       return [value as item, current_state] as const;
@@ -88,10 +115,12 @@ export function run_state_terminal<state, item>(
   stateful: StateValue<state, item>,
   state: state,
 ): readonly [item, state];
+/** Runs an effect containing only State lifts. */
 export function run_state_terminal<state, item>(
   effect: Effect<Lift<AsState<state>, unknown>, item>,
   state: state,
 ): readonly [item, state];
+/** Runs a State value or an effect containing only State lifts. */
 export function run_state_terminal<state, item>(
   value:
     | StateValue<state, item>
@@ -146,6 +175,7 @@ export function run_state_terminal<state, item>(
   }
 }
 
+/** Returns a State value's item and discards its final state. */
 export function eval_state<state, item>(
   stateful: Data<AsState<state>, item>,
   state: state,
@@ -153,6 +183,7 @@ export function eval_state<state, item>(
   return stateful.value()(state)[0];
 }
 
+/** Returns a State value's final state and discards its item. */
 export function exec_state<state, item>(
   stateful: Data<AsState<state>, item>,
   state: state,

@@ -18,27 +18,37 @@ import {
   Show,
 } from "./typeclasses.ts";
 
+/** @ignore */
+export declare const fn_identity: unique symbol;
+
+/** A unary function from an input to an output item. */
 export type Fn<input, item> = (value: input) => item;
 
-interface FnContext extends ArrowContext, ProfunctorContext {
+/** @ignore */
+export interface FnContext extends ArrowContext, ProfunctorContext {
   readonly [type_data]: AsFn<this[typeof type_item]>;
 }
 
+/** The callable function dictionary for a fixed input type. */
 export interface AsFn<input = unknown>
   extends
-    As<AsFn<input>>,
+    As<AsFn<input>, typeof fn_identity>,
     Show<AsFn<input>>,
     Monad<AsFn<input>>,
     Profunctor<AsFn<input>, input, FnContext>,
     Arrow<AsFn<input>, input, FnContext>,
     Parse<AsFn<input>> {
+  /** The output supplied when applying this data type. */
   readonly [type_item]: unknown;
+  /** The raw function shape produced for the selected output. */
   readonly [type_data]: Fn<input, this[typeof type_item]>;
 }
 
+/** A wrapped function with its typeclass instances attached. */
 export type FnValue<input, item> = Data<AsFn<input>, item>;
 
-type FnConstructor =
+/** @ignore */
+export type FnConstructor =
   & {
     <input, item>(value: Fn<input, item>): FnValue<input, item>;
     with_input<input>(): AsFn<input>;
@@ -49,6 +59,7 @@ type FnConstructor =
     readonly [key in keyof AsFn<unknown>]: AsFn<unknown>[key];
   };
 
+/** The shared callable dictionary for wrapped functions. */
 export const Fn = data<AsFn<unknown>>() as FnConstructor;
 
 Object.defineProperty(Fn, "with_input", {
@@ -63,10 +74,12 @@ function fn_with_input<input>(): AsFn<input> {
   return Fn as unknown as AsFn<input>;
 }
 
+/** Wrap a unary function with the Fn dictionary. */
 export function fn<input, item>(value: Fn<input, item>): FnValue<input, item> {
   return Fn(value);
 }
 
+/** Lift a unary function into the function Arrow. */
 export function arr<input, item>(
   value: Fn<input, item>,
 ): FnValue<input, item> {
@@ -163,12 +176,10 @@ Arrow.instance(Fn)({
 });
 
 Parse.instance(Fn)({
-  parse<raw, item>(
-    this: WrappedData<AsFn<unknown>, raw, item>,
+  parse<item>(
+    this: WrappedData<AsFn<unknown>, (input: string) => item, item>,
     input: string,
   ) {
-    const run = this.value() as (value: string) => item;
-
-    return run(input);
+    return this.value()(input);
   },
 });

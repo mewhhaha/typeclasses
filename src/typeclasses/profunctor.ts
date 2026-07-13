@@ -11,15 +11,21 @@ import {
   type TypeclassDictionary,
 } from "../typeclass.ts";
 
+/** Runtime token for the Profunctor typeclass. */
 export const profunctor_typeclass = Symbol("Profunctor");
+/** Phantom key for a profunctor's fixed input parameter. */
 export declare const profunctor_input: unique symbol;
+/** Phantom key for rebuilding a profunctor after input mapping. */
 export declare const profunctor_context: unique symbol;
 
+/** Higher-kinded context used to rebuild a profunctor dictionary. */
 export interface ProfunctorContext extends DataType {
+  /** Dictionary produced for the substituted input parameter. */
   readonly [type_data]: Dictionary;
 }
 
-type SameProfunctorContext<dictionary extends Dictionary> = {
+/** @ignore */
+export type SameProfunctorContext<dictionary extends Dictionary> = {
   readonly [type_item]: unknown;
   readonly [type_data]: dictionary;
 };
@@ -47,6 +53,7 @@ type ProfunctorImplementation<dictionary extends ProfunctorDefinition> = {
   >;
 };
 
+/** Dictionary capability for contravariant input and covariant output mapping. */
 export interface Profunctor<
   dictionary extends Dictionary,
   input = unknown,
@@ -63,11 +70,14 @@ export interface Profunctor<
       ) => Data<AppliedData<context, next_input>, next_to>;
     }
   > {
+  /** Fixed input parameter carried by this dictionary. */
   readonly [profunctor_input]: input;
+  /** Context used when the input parameter changes. */
   readonly [profunctor_context]: context;
 }
 
-type ProfunctorTypeclass = Typeclass<typeof profunctor_typeclass, {
+/** @ignore */
+export type ProfunctorTypeclass = Typeclass<typeof profunctor_typeclass, {
   dimap<
     dictionary extends ProfunctorDefinition,
     to,
@@ -97,6 +107,7 @@ type ProfunctorTypeclass = Typeclass<typeof profunctor_typeclass, {
   >;
 }>;
 
+/** Operations for mapping Profunctor inputs and outputs. */
 export const Profunctor: ProfunctorTypeclass = typeclass(
   profunctor_typeclass,
   {

@@ -154,6 +154,7 @@ Deno.test("task workflow starts dependencies before unrelated work finishes", as
   );
 
   const dashboard_result = dashboard_task.run();
+  await Promise.resolve();
 
   assert_true(
     account_started && alerts_started,
