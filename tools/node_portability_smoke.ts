@@ -11,6 +11,18 @@ if (shown !== "Just({ count: 1 })") {
   throw new Error("unexpected Show output: " + shown);
 }
 
+const interpolated = `${Just({ count: 1 })}`;
+
+if (interpolated !== "Just({ count: 1 })") {
+  throw new Error("unexpected interpolated output: " + interpolated);
+}
+
+const encoded = JSON.stringify(Just(1));
+
+if (encoded !== '["Just",1]') {
+  throw new Error("unexpected JSON output: " + encoded);
+}
+
 if (!Just(42).eq(Just(42))) {
   throw new Error("Eq failed under this runtime");
 }
