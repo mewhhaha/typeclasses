@@ -229,8 +229,29 @@ export const Program = Object.assign(program, {
   scope,
 }) as ProgramConstructor;
 
-/** Constructors and combinators for effect programs. */
-export const Effect = {
+/** @ignore */
+export type EffectConstructors = {
+  readonly pure: typeof pure;
+  readonly from: typeof from;
+  readonly lift: typeof lift;
+  readonly send: typeof send;
+  readonly suspend: typeof suspend;
+  readonly map: typeof map;
+  readonly map_from: typeof map_from;
+  readonly bind: typeof bind;
+  readonly bind_from: typeof bind_from;
+  readonly ensuring: typeof ensuring;
+  readonly handle_with: typeof handle_with;
+  readonly interpret: typeof interpret;
+};
+
+/** Constructors and combinators for effect programs.
+ *
+ * The annotation is load-bearing: left to inference, JSR's npm-compatible
+ * declarations emit this as `{}` and every member disappears for npm consumers.
+ * See https://github.com/mewhhaha/typeclasses/issues/5.
+ */
+export const Effect: EffectConstructors = {
   pure,
   from,
   lift,
