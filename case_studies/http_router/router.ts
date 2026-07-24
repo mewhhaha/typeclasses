@@ -1,5 +1,10 @@
-import type { Effect, Uses, WithoutLift } from "../../src/effects.ts";
-import { type AsReader, run_reader } from "../../src/reader.ts";
+import type { Effect, Uses } from "../../src/effects.ts";
+import {
+  type AsReader,
+  type ReaderEnvironment,
+  run_reader,
+  type WithoutReader,
+} from "../../src/reader.ts";
 import {
   type As,
   type Data,
@@ -266,10 +271,7 @@ type RoutePage<environment, requirements, item> = Effect<
 >;
 
 type RoutedPage<environment, requirements, item> = Effect<
-  WithoutLift<
-    requirements | Uses<AsReader<environment>>,
-    AsReader<environment>
-  >,
+  WithoutReader<requirements | Uses<AsReader<environment>>>,
   item
 >;
 
@@ -366,7 +368,14 @@ export function route<
           query: query_values as QueryValues<query>,
         } as RouteInput<path, params, query>;
 
-        return matched(run_reader(page, input as environment));
+        return matched(
+          run_reader(
+            page,
+            input as ReaderEnvironment<
+              requirements | Uses<AsReader<environment>>
+            >,
+          ),
+        );
       },
     },
   ]);

@@ -1,8 +1,18 @@
+import { ArrayT } from "./array.ts";
 import { assert_equals } from "./assert.ts";
 import { Either } from "./either.ts";
-import type { Uses, WithoutLift } from "./effects.ts";
+import {
+  type Effect,
+  Program,
+  run,
+  type Uses,
+  type WithoutLift,
+} from "./effects.ts";
 import { fn } from "./fn.ts";
 import { Just, Maybe } from "./maybe.ts";
+import { ask, run_reader, run_reader_terminal } from "./reader.ts";
+import { get, put, run_state, run_state_terminal } from "./state.ts";
+import { run_writer, tell } from "./writer.ts";
 import {
   type As,
   type Data,
@@ -35,6 +45,35 @@ interface AsUnidentified extends As<AsUnidentified> {
 
 const First = data<AsFirst>();
 const Second = data<AsSecond>();
+
+type Config = { readonly url: string };
+type Database = { readonly pool: string };
+
+function two_environments() {
+  return Program(function* () {
+    const config = yield* ask<Config>();
+    const database = yield* ask<Database>();
+    return config.url + "/" + database.pool;
+  });
+}
+
+function two_states() {
+  return Program(function* () {
+    const total = yield* get<number>();
+    const label = yield* get<string>();
+    yield* put<string>(label + "!");
+    return total + ":" + label;
+  });
+}
+
+function reader_and_state() {
+  return Program(function* () {
+    const config = yield* ask<Config>();
+    const total = yield* get<number>();
+    yield* put<number>(total + 1);
+    return config.url + total;
+  });
+}
 
 Deno.test("wrapped values retain fluent methods without becoming callable", () => {
   const incremented = Just(41).map((value) => value + 1);
@@ -90,6 +129,30 @@ Deno.test("tagged guards reject malformed tuple arities", () => {
   assert_equals(Maybe.Nothing.is(["Nothing", undefined]), false);
 });
 
+Deno.test("run_reader answers every ask in the program from one environment", () => {
+  const environment = { url: "https://example.test", pool: "main" };
+
+  assert_equals(
+    run(run_reader(two_environments(), environment)),
+    "https://example.test/main",
+  );
+  assert_equals(
+    run_reader_terminal(two_environments(), environment),
+    "https://example.test/main",
+  );
+});
+
+Deno.test("handling one dictionary leaves the other's lifts pending", () => {
+  assert_equals(
+    run(run_state(run_reader(reader_and_state(), { url: "a" }), 1)),
+    ["a1", 2] as const,
+  );
+  assert_equals(
+    run(run_reader(run_state(reader_and_state(), 1), { url: "a" })),
+    ["a1", 2] as const,
+  );
+});
+
 Deno.test("the prelude module is safe to import dynamically", async () => {
   const prelude = await import("./prelude.ts");
 
@@ -133,6 +196,46 @@ function check_api_types(): void {
   expect_type<Uses<AsSecond>>(null as unknown as Remaining);
   // @ts-expect-error handling First must not remove the Second requirement
   expect_type<Uses<AsFirst>>(null as unknown as Remaining);
+
+  check_effect_handler_types();
+}
+
+// One handler consumes every lift of its dictionary, so the value it is given
+// has to satisfy all of them at once. Before this was enforced, `run_reader`
+// answered a `Db` ask with a `Config` and `run_state` wrote a string through a
+// number slot, while the types still reported the second requirement pending.
+function check_effect_handler_types(): void {
+  run_reader(two_environments(), { url: "a", pool: "b" });
+  // @ts-expect-error one environment has to answer both asks
+  run_reader(two_environments(), { url: "a" });
+  // @ts-expect-error the terminal runner reads the same environment
+  run_reader_terminal(two_environments(), { url: "a" });
+
+  // @ts-expect-error one cell cannot hold both a number and a string
+  run_state(two_states(), 1);
+  // @ts-expect-error the terminal runner threads the same cell
+  run_state_terminal(two_states(), 1);
+
+  const two_outputs = Program(function* () {
+    yield* tell(ArrayT<string>(["a"]));
+    yield* tell(ArrayT<number>([1]));
+    return "done";
+  });
+  // @ts-expect-error one accumulator cannot concatenate both Monoids
+  run_writer(two_outputs, ArrayT<string>([]));
+
+  const reader_handled = run_reader(reader_and_state(), { url: "a" });
+  const state_handled = run_state(reader_and_state(), 1);
+
+  // @ts-expect-error handling Reader must leave the State lift pending
+  expect_type<Effect<never, string>>(reader_handled);
+  // @ts-expect-error handling State must leave the Reader lift pending
+  expect_type<Effect<never, readonly [string, number]>>(state_handled);
+
+  // @ts-expect-error a terminal runner cannot discharge another dictionary
+  run_reader_terminal(reader_and_state(), { url: "a" });
+  // @ts-expect-error a terminal runner cannot discharge another dictionary
+  run_state_terminal(reader_and_state(), 1);
 }
 
 void check_api_types;

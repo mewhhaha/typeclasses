@@ -2,10 +2,10 @@ import {
   type As,
   type Data,
   data,
-  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
+  type type_identity,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
@@ -88,27 +88,64 @@ export function gets<state, item>(
 }
 
 /** @ignore */
-export type WithoutState<requirements, state> = requirements extends
+export type WithoutState<requirements> = requirements extends
   Lift<infer dictionary, infer _item>
-  ? DictionaryDataType<dictionary> extends DictionaryDataType<AsState<state>>
-    ? never
+  ? dictionary[typeof type_identity] extends typeof state_identity ? never
   : requirements
   : requirements;
 
+/**
+ * The state every State lift in `requirements` threads.
+ *
+ * All State lifts share one runtime dictionary, so a single `run_state` serves
+ * every `get` and `put` in the program from one cell. That cell has to satisfy
+ * all of them at once: each lift contributes a parameter position, so a program
+ * threading several state types yields their intersection. Unrelated types
+ * collapse to `never`, so the program is rejected rather than silently writing
+ * through the wrong slot.
+ */
+export type StateItem<requirements> = (
+  requirements extends Lift<infer dictionary, infer _item>
+    ? dictionary[typeof type_identity] extends typeof state_identity
+      ? dictionary extends
+        { readonly [type_data]: (state: infer state) => unknown }
+        ? (state: state) => void
+      : never
+    : never
+    : never
+) extends (state: infer state) => void ? state : unknown;
+
 /** Handles State lifts with an initial state. */
-export function run_state<requirements, state, item>(
+export function run_state<requirements, item>(
   effect: Effect<requirements, item>,
-  state: state,
-): Effect<WithoutState<requirements, state>, readonly [item, state]> {
+  state: StateItem<requirements>,
+): Effect<
+  WithoutState<requirements>,
+  readonly [item, StateItem<requirements>]
+> {
   return handle_lift(effect, state_kind, state, {
     done(value, current_state) {
       return [value as item, current_state] as const;
     },
-    handle(value, current_state) {
+    handle(
+      value: Data<AsState<StateItem<requirements>>, unknown>,
+      current_state,
+    ) {
       return value.value()(current_state);
     },
-  });
+  }) as Effect<
+    WithoutState<requirements>,
+    readonly [item, StateItem<requirements>]
+  >;
 }
+
+/**
+ * The state a terminal run needs, or `never` when the effect still carries
+ * requirements that `run_state_terminal` cannot discharge.
+ */
+export type TerminalStateItem<requirements> =
+  [WithoutState<requirements>] extends [never] ? StateItem<requirements>
+    : never;
 
 /** Runs one State value or an effect containing only State lifts. */
 export function run_state_terminal<state, item>(
@@ -116,21 +153,21 @@ export function run_state_terminal<state, item>(
   state: state,
 ): readonly [item, state];
 /** Runs an effect containing only State lifts. */
-export function run_state_terminal<state, item>(
-  effect: Effect<Lift<AsState<state>, unknown>, item>,
-  state: state,
-): readonly [item, state];
+export function run_state_terminal<requirements, item>(
+  effect: Effect<requirements, item>,
+  state: TerminalStateItem<requirements>,
+): readonly [item, StateItem<requirements>];
 /** Runs a State value or an effect containing only State lifts. */
-export function run_state_terminal<state, item>(
+export function run_state_terminal<requirements, state, item>(
   value:
     | StateValue<state, item>
-    | Effect<Lift<AsState<state>, unknown>, item>,
-  state: state,
+    | Effect<requirements, item>,
+  state: state & TerminalStateItem<requirements>,
 ): readonly [item, state];
-export function run_state_terminal<state, item>(
+export function run_state_terminal<requirements, state, item>(
   effect:
     | StateValue<state, item>
-    | Effect<Lift<AsState<state>, unknown>, item>,
+    | Effect<requirements, item>,
   state: state,
 ): readonly [item, state] {
   if (is_data(effect)) {

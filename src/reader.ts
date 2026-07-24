@@ -2,10 +2,10 @@ import {
   type As,
   type Data,
   data,
-  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
+  type type_identity,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
@@ -85,30 +85,58 @@ export function local<outer, inner, item>(
 }
 
 /** @ignore */
-export type WithoutReader<requirements, environment> = requirements extends
+export type WithoutReader<requirements> = requirements extends
   Lift<infer dictionary, infer _item>
-  ? DictionaryDataType<dictionary> extends
-    DictionaryDataType<AsReader<environment>> ? never
+  ? dictionary[typeof type_identity] extends typeof reader_identity ? never
   : requirements
   : requirements;
 
+/**
+ * The environment every Reader lift in `requirements` reads.
+ *
+ * All Reader lifts share one runtime dictionary, so a single `run_reader`
+ * answers every `ask` in the program from one environment. That environment
+ * has to satisfy all of them at once: each lift contributes a parameter
+ * position, so a program asking for several environments yields their
+ * intersection rather than a union.
+ */
+export type ReaderEnvironment<requirements> = (
+  requirements extends Lift<infer dictionary, infer _item>
+    ? dictionary[typeof type_identity] extends typeof reader_identity
+      ? dictionary extends
+        { readonly [type_data]: (environment: infer environment) => unknown }
+        ? (environment: environment) => void
+      : never
+    : never
+    : never
+) extends (environment: infer environment) => void ? environment : unknown;
+
 /** Handles Reader lifts with the supplied environment. */
-export function run_reader<requirements, environment, item>(
+export function run_reader<requirements, item>(
   effect: Effect<requirements, item>,
-  environment: environment,
-): Effect<WithoutReader<requirements, environment>, item> {
+  environment: ReaderEnvironment<requirements>,
+): Effect<WithoutReader<requirements>, item> {
   return handle_lift(
     effect,
     reader_kind,
     environment,
     reader_lift_handler as LiftHandler<
-      AsReader<environment>,
-      environment,
+      AsReader<unknown>,
+      ReaderEnvironment<requirements>,
       item,
       item
     >,
-  ) as Effect<WithoutReader<requirements, environment>, item>;
+  ) as Effect<WithoutReader<requirements>, item>;
 }
+
+/**
+ * The environment a terminal run needs, or `never` when the effect still
+ * carries requirements that `run_reader_terminal` cannot discharge.
+ */
+export type TerminalReaderEnvironment<requirements> =
+  [WithoutReader<requirements>] extends [never]
+    ? ReaderEnvironment<requirements>
+    : never;
 
 /** Runs one Reader value or an effect containing only Reader lifts. */
 export function run_reader_terminal<environment, item>(
@@ -116,21 +144,21 @@ export function run_reader_terminal<environment, item>(
   environment: environment,
 ): item;
 /** Runs an effect containing only Reader lifts. */
-export function run_reader_terminal<environment, item>(
-  effect: Effect<Lift<AsReader<environment>, unknown>, item>,
-  environment: environment,
+export function run_reader_terminal<requirements, item>(
+  effect: Effect<requirements, item>,
+  environment: TerminalReaderEnvironment<requirements>,
 ): item;
 /** Runs a Reader value or an effect containing only Reader lifts. */
-export function run_reader_terminal<environment, item>(
+export function run_reader_terminal<requirements, environment, item>(
   value:
     | ReaderValue<environment, item>
-    | Effect<Lift<AsReader<environment>, unknown>, item>,
-  environment: environment,
+    | Effect<requirements, item>,
+  environment: environment & TerminalReaderEnvironment<requirements>,
 ): item;
-export function run_reader_terminal<environment, item>(
+export function run_reader_terminal<requirements, environment, item>(
   effect:
     | ReaderValue<environment, item>
-    | Effect<Lift<AsReader<environment>, unknown>, item>,
+    | Effect<requirements, item>,
   environment: environment,
 ): item {
   if (is_data(effect)) {
@@ -142,12 +170,12 @@ export function run_reader_terminal<environment, item>(
   }
 
   return handle_lift_terminal(
-    effect as Effect<Lift<AsReader<environment>, unknown>, item>,
+    effect as Effect<Lift<AsReader<unknown>, unknown>, item>,
     reader_kind,
     environment,
     reader_lift_handler as LiftHandler<
-      AsReader<environment>,
-      environment,
+      AsReader<unknown>,
+      unknown,
       item,
       item
     >,
