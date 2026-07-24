@@ -87,6 +87,7 @@ Pick the smallest abstraction that expresses the behavior:
 | Deferred asynchronous work                     | `Task`                          |
 | Dependent steps in one context                 | `Do`                            |
 | Reader, State, Writer, Task, or custom effects | `Program` and `Effect`          |
+| Typed failure that short-circuits a program    | `fail` and `run_except`         |
 | Synchronous isolate-local transactions         | `Stm`                           |
 | CPU work in runtimes with Web Worker globals   | `worker_map` or a reusable pool |
 
@@ -111,8 +112,8 @@ entrypoints let applications and build tools import only the domain they need:
 - `/typeclass` and `/typeclasses` for dictionary machinery and definitions.
 - `/maybe`, `/either`, `/validation`, `/identity`, `/fn`, `/tuple`, `/array`,
   `/predicate`, `/list`, and `/tagged` for data values.
-- `/task`, `/effects`, `/reader`, `/state`, `/writer`, `/stm`, and `/parallel`
-  for effectful programs.
+- `/task`, `/effects`, `/except`, `/reader`, `/state`, `/writer`, `/stm`, and
+  `/parallel` for effectful programs.
 - `/loop` for stack-safe tail loops.
 - `/transform` and `/transform/plugin` for the source transformer and bundler
   adapters.
@@ -1409,6 +1410,76 @@ terminal shapes such as `run(run_state(program, initial))` and fuses immediate
 straight-line `Program` bodies step by step. Composable
 `run_reader`/`run_state`/`run_writer` calls keep their existing behavior, while
 unsupported terminal shapes fall back to the general `Effect` path.
+
+### Typed Failure
+
+Haskell reaches for `ExceptT` when a program can stop early with a typed error:
+
+```hs
+program :: ExceptT Missing IO Int
+program = do
+  value <- lookupPort
+  when (value < 0) (throwError (Missing "port"))
+  pure value
+```
+
+`Fails` is that capability without the transformer stack. It joins the
+requirement union like `Reader` or `State`, and `run_except` removes it,
+collapsing the program's item into an `Either`:
+
+```ts
+type Missing = readonly ["missing", string];
+type App = Uses<AsReader<Config>> | Uses<AsTask> | Fails<Missing>;
+
+const App = Program.scope<App>();
+
+const program = App(function* () {
+  const config = yield* ask<Config>();
+
+  if (config.port < 0) {
+    yield* fail<Missing>(["missing", "port"]);
+  }
+
+  return config.port;
+});
+
+const handled = run_except<App, Missing, number>(program);
+const result = await run_task(run_reader(handled, config));
+```
+
+Name the program's whole error union in `run_except`. It catches every failure
+it meets, so a `Fails` left out of the union stays in the requirements and the
+next handler rejects the program.
+
+`fail` never resumes, so the statements after it do not run and
+`yield* fail(...)` type-checks in any position. `Task` reports rejection as an
+untyped promise failure, so `attempt` awaits a promise with its rejection routed
+into the typed channel:
+
+```ts
+const fetched = App(function* () {
+  return yield* attempt(
+    () => fetch_port(),
+    (cause): Missing => ["missing", String(cause)],
+  );
+});
+```
+
+`from_either` lifts an existing `Either` into the same channel, and `recover`
+handles a failure by supplying a replacement program:
+
+```ts
+const recovered = recover(program, (error) => Effect.pure(error[1].length));
+```
+
+The replacement's own requirements join the result, so a replacement that can
+fail keeps a `Fails` for the next handler to remove.
+
+A failure raised inside `Effect.ensuring` is caught, the finalizer runs, and it
+observes `{ status: "failed" }` carrying the error. A `try`/`finally` in the
+program body is not equivalent: a failure abandons the generator rather than
+resuming it, so its `finally` block never runs. Use `Effect.ensuring` for
+cleanup that must survive a failure.
 
 ### IO and Task
 
