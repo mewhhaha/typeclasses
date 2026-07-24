@@ -342,6 +342,20 @@ the typed shortcut for `.value()(...)`. That keeps callable data types such as
 `Fn`, `Task`, `Reader`, `State`, and `IterableT` from leaking double calls into
 examples.
 
+Wrapped values stay ordinary JavaScript objects. String contexts render through
+the `Show` instance when the dictionary has one, and `JSON.stringify` emits the
+raw value so the tag survives a round trip:
+
+```ts
+String(Just(1)); // "Just(1)"
+`${Nothing()}`; // "Nothing"
+JSON.stringify(Just(1)); // '["Just",1]'
+Maybe(JSON.parse('["Just",1]')); // the wrapped value again
+```
+
+`toString` and `toJSON` are reserved by the wrapped-data protocol alongside
+`match`, so custom typeclass instances should not reuse those method names.
+
 The same-named function wraps an existing raw context when you already have one:
 
 ```ts

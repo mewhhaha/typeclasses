@@ -8,6 +8,8 @@ import {
   cache_data_constructor as raw_cache_data_constructor,
   data_constructor as raw_as_data_cached,
   data_dictionary as raw_data_dictionary,
+  define_data_interop as raw_define_data_interop,
+  detach_function_prototype as raw_detach_function_prototype,
   mark_data_prototype as raw_mark_data_prototype,
   match_tagged,
   wrap_data as raw_as_data,
@@ -251,6 +253,7 @@ export function data<dictionary extends Dictionary>(
     return construct_dictionary.call(context, value) as Data<dictionary, item>;
   } as unknown as dictionary;
 
+  raw_detach_function_prototype(target);
   target[kind] = runtime_kind;
   const wrap_data = as_data_cached(target);
   const context: DataConstructorContext<dictionary> = {
@@ -267,6 +270,9 @@ type TaggedData = readonly [PropertyKey, ...readonly unknown[]];
 const tagged_data_constructor_cache = Symbol("Data.tagged_constructors");
 const tagged_data_singleton_cache = Symbol("Data.tagged_singletons");
 const tagged_data_singleton_tags = Symbol("Data.tagged_singleton_tags");
+const tagged_payload = Symbol("Data.tagged_payload");
+const tagged_first_payload = Symbol("Data.tagged_first_payload");
+const tagged_second_payload = Symbol("Data.tagged_second_payload");
 
 type TaggedDataDictionary<dictionary extends object> = object & {
   [tagged_data_constructor_cache]?: Map<
@@ -298,16 +304,16 @@ type TaggedVariantFactory<dictionary extends object> = {
 };
 
 type TaggedOnePayload = {
-  payload: unknown;
+  [tagged_payload]: unknown;
 };
 
 type TaggedManyPayload = {
-  payload: readonly unknown[];
+  [tagged_payload]: readonly unknown[];
 };
 
 type TaggedTwoPayload = {
-  first: unknown;
-  second: unknown;
+  [tagged_first_payload]: unknown;
+  [tagged_second_payload]: unknown;
 };
 
 /** @ignore */
@@ -417,6 +423,7 @@ function tagged_data<dictionary extends Dictionary>(
     return construct_tagged(tagged) as Data<dictionary, item>;
   } as unknown as dictionary;
 
+  raw_detach_function_prototype(target);
   target[kind] = runtime_kind;
 
   const tagged_dictionary = target as TaggedDataDictionary<dictionary>;
@@ -657,31 +664,31 @@ function create_tagged_variant_factory<dictionary extends object>(
   const one_prototype = tagged_data_prototype(
     dictionary,
     function value(this: TaggedOnePayload): TaggedData {
-      return [tag, this.payload];
+      return [tag, this[tagged_payload]];
     },
   );
   const many_prototype = tagged_data_prototype(
     dictionary,
     function value(this: TaggedManyPayload): TaggedData {
-      return [tag, ...this.payload];
+      return [tag, ...this[tagged_payload]];
     },
   );
   const two_prototype = tagged_data_prototype(
     dictionary,
     function value(this: TaggedTwoPayload): TaggedData {
-      return [tag, this.first, this.second];
+      return [tag, this[tagged_first_payload], this[tagged_second_payload]];
     },
   );
 
   function TaggedOne(this: TaggedOnePayload, payload: unknown) {
-    this.payload = payload;
+    this[tagged_payload] = payload;
   }
 
   function TaggedMany(
     this: TaggedManyPayload,
     payload: readonly unknown[],
   ) {
-    this.payload = payload;
+    this[tagged_payload] = payload;
   }
 
   function TaggedTwo(
@@ -689,8 +696,8 @@ function create_tagged_variant_factory<dictionary extends object>(
     first: unknown,
     second: unknown,
   ) {
-    this.first = first;
-    this.second = second;
+    this[tagged_first_payload] = first;
+    this[tagged_second_payload] = second;
   }
 
   TaggedOne.prototype = one_prototype;
@@ -800,6 +807,7 @@ function tagged_data_prototype<
       value: tagged_data_iterator,
     },
   });
+  raw_define_data_interop(prototype);
   raw_mark_data_prototype(prototype);
 
   return prototype;

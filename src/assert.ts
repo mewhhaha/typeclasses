@@ -43,6 +43,14 @@ function deep_equal(left: unknown, right: unknown): boolean {
     return false;
   }
 
+  if (is_data(left) || is_data(right)) {
+    if (!is_data(left) || !is_data(right)) {
+      return false;
+    }
+
+    return deep_equal(left.value(), right.value());
+  }
+
   if (Array.isArray(left) || Array.isArray(right)) {
     if (!Array.isArray(left) || !Array.isArray(right)) {
       return false;
@@ -86,4 +94,5 @@ function deep_equal(left: unknown, right: unknown): boolean {
 function format(value: unknown): string {
   return inspect(value);
 }
+import { is_data } from "./data_value.ts";
 import { inspect } from "./inspect.ts";
