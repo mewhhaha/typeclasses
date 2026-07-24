@@ -12,6 +12,7 @@ export * from "./task.ts";
 export * from "./reader.ts";
 export * from "./state.ts";
 export * from "./writer.ts";
+export * from "./except.ts";
 export * from "./stm.ts";
 export * from "./validation.ts";
 export * from "./parallel.ts";
