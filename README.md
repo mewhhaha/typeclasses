@@ -1447,17 +1447,21 @@ const handled = run_except<App, Missing, number>(program);
 const result = await run_task(run_reader(handled, config));
 ```
 
+Name the program's whole error union in `run_except`. It catches every failure
+it meets, so a `Fails` left out of the union stays in the requirements and the
+next handler rejects the program.
+
 `fail` never resumes, so the statements after it do not run and
 `yield* fail(...)` type-checks in any position. `Task` reports rejection as an
-untyped promise failure, so `attempt` pairs with `attempted` to move a rejection
+untyped promise failure, so `attempt` awaits a promise with its rejection routed
 into the typed channel:
 
 ```ts
 const fetched = App(function* () {
-  const outcome = yield* Effect.lift(
-    attempt(() => fetch_port(), (cause): Missing => ["missing", String(cause)]),
+  return yield* attempt(
+    () => fetch_port(),
+    (cause): Missing => ["missing", String(cause)],
   );
-  return yield* attempted(outcome);
 });
 ```
 
@@ -1468,9 +1472,14 @@ handles a failure by supplying a replacement program:
 const recovered = recover(program, (error) => Effect.pure(error[1].length));
 ```
 
-A failure raised inside `Effect.ensuring` is still caught, and the finalizer
-still runs. Because `run_except` converts that failure into a value before
-`run_task` interprets the scope, the finalizer observes a successful exit.
+The replacement's own requirements join the result, so a replacement that can
+fail keeps a `Fails` for the next handler to remove.
+
+A failure raised inside `Effect.ensuring` is caught, the finalizer runs, and it
+observes `{ status: "failed" }` carrying the error. A `try`/`finally` in the
+program body is not equivalent: a failure abandons the generator rather than
+resuming it, so its `finally` block never runs. Use `Effect.ensuring` for
+cleanup that must survive a failure.
 
 ### IO and Task
 

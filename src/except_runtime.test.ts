@@ -9,7 +9,6 @@ import {
 import { Left, Right } from "./either.ts";
 import {
   attempt,
-  attempted,
   fail,
   type Fails,
   from_either,
@@ -78,13 +77,10 @@ Deno.test("from_either routes a left branch into the failure channel", async () 
 
 Deno.test("attempt converts a rejecting promise into a typed failure", async () => {
   const program = Program.scope<Uses<AsTask> | Fails<Missing>>()(function* () {
-    const outcome = yield* Effect.lift(
-      attempt(
-        () => Promise.reject(new Error("boom")),
-        (cause): Missing => ["missing", String(cause)],
-      ),
+    return yield* attempt(
+      () => Promise.reject(new Error("boom")),
+      (cause): Missing => ["missing", String(cause)],
     );
-    return yield* attempted(outcome);
   });
 
   const handled = run_except<
@@ -103,13 +99,10 @@ Deno.test("attempt converts a rejecting promise into a typed failure", async () 
 
 Deno.test("attempt keeps a resolving promise on the success path", async () => {
   const program = Program.scope<Uses<AsTask> | Fails<Missing>>()(function* () {
-    const outcome = yield* Effect.lift(
-      attempt(
-        () => Promise.resolve(41),
-        (cause): Missing => ["missing", String(cause)],
-      ),
+    const value = yield* attempt(
+      () => Promise.resolve(41),
+      (cause): Missing => ["missing", String(cause)],
     );
-    const value = yield* attempted(outcome);
     return value + 1;
   });
 
@@ -134,6 +127,33 @@ Deno.test("recover replaces a failure with another program", async () => {
   );
 
   assert_equals(await run_task(recovered), 3);
+});
+
+Deno.test("a replacement that fails keeps the failure for the next handler", async () => {
+  const program = Program.scope<Uses<AsTask> | Fails<Missing>>()(function* () {
+    yield* fail<Missing>(["missing", "key"]);
+    return 0;
+  });
+
+  const recovered = recover(
+    program,
+    (error: Missing) =>
+      Program.scope<Fails<Missing>>()(function* () {
+        yield* fail<Missing>(["missing", error[1] + "-retry"]);
+        return 0;
+      }),
+  );
+
+  const handled = run_except<
+    Uses<AsTask> | Fails<Missing>,
+    Missing,
+    number
+  >(recovered);
+
+  assert_equals(
+    (await run_task(handled)).value(),
+    Left<Missing, number>(["missing", "key-retry"]).value(),
+  );
 });
 
 Deno.test("recover leaves a successful program untouched", async () => {
@@ -204,10 +224,28 @@ Deno.test("a failure inside a protected scope still runs the finalizer", async (
     result.value(),
     Left<Missing, number>(["missing", "resource"]).value(),
   );
-  assert_equals(exits.length, 1);
-  // `run_except` turns the failure into a value before `run_task` interprets
-  // the scope, so the finalizer observes a successful exit.
-  assert_equals(exits[0].status, "succeeded");
+  assert_equals(exits, [{ status: "failed", error: ["missing", "resource"] }]);
+});
+
+Deno.test("a protected scope that succeeds still reports a successful exit", async () => {
+  const exits: EffectExit[] = [];
+
+  const scope = Program.scope<Uses<AsTask> | Fails<Missing>>()(function* () {
+    return yield* Effect.lift(succeed(7));
+  });
+
+  const program = Effect.ensuring(scope, (exit) => {
+    exits.push(exit);
+  });
+
+  const handled = run_except<
+    Uses<AsTask> | Ensuring | Fails<Missing>,
+    Missing,
+    number
+  >(program);
+
+  assert_equals((await run_task(handled)).value(), Right(7).value());
+  assert_equals(exits, [{ status: "succeeded" }]);
 });
 
 Deno.test("run_except handles deep chains without growing the JavaScript stack", async () => {
@@ -215,8 +253,10 @@ Deno.test("run_except handles deep chains without growing the JavaScript stack",
     succeed(0),
   );
 
-  for (let index = 0; index < 50_000; index += 1) {
-    effect = Effect.map(effect, (value) => value + 1);
+  // Each bind adds an operation the handler must suspend and re-enter, so the
+  // chain is far deeper than the JavaScript stack allows.
+  for (let index = 0; index < 20_000; index += 1) {
+    effect = Effect.bind(effect, (value) => Effect.lift(succeed(value + 1)));
   }
 
   const handled = run_except<
@@ -225,5 +265,5 @@ Deno.test("run_except handles deep chains without growing the JavaScript stack",
     number
   >(effect);
 
-  assert_equals((await run_task(handled)).value(), Right(50_000).value());
+  assert_equals((await run_task(handled)).value(), Right(20_000).value());
 });

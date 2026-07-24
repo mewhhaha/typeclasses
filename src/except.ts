@@ -1,14 +1,17 @@
 import {
+  bind,
+  bind_from,
   type Effect,
   type Ensuring,
   has_tag,
+  map,
   type Operation,
   pure,
-  send,
   suspend,
+  type Uses,
 } from "./effects.ts";
 import { type EitherValue, Left, Right } from "./either.ts";
-import { from_fn, type TaskOptions, type TaskValue } from "./task.ts";
+import { type AsTask, from_fn, type TaskOptions } from "./task.ts";
 
 /** An operation that short-circuits a program with a typed error.
  *
@@ -29,7 +32,7 @@ export type WithoutFails<requirements, error> = requirements extends
  * in any position:
  *
  * ```ts
- * import { Program, type Uses } from "@mewhhaha/typeclasses/effects";
+ * import { Program } from "@mewhhaha/typeclasses/effects";
  * import { fail, type Fails } from "@mewhhaha/typeclasses/except";
  *
  * type Missing = readonly ["missing", string];
@@ -44,65 +47,66 @@ export type WithoutFails<requirements, error> = requirements extends
  *     return value as number;
  *   });
  * ```
+ *
+ * A `try`/`finally` around a failure does not run its `finally` block: the
+ * handler abandons the generator instead of resuming it. Use `Effect.ensuring`
+ * for cleanup that must survive a failure.
  */
 export function fail<error>(error: error): Effect<Fails<error>, never> {
-  // `Operation` marks its output with an optional phantom property, so
-  // `OperationOutput<Operation<never>>` widens to `undefined`. A failing
-  // operation genuinely never resumes, so the declared `never` is the honest
-  // signature and the cast stays local to this function.
-  return send(["except.fail", error] as Fails<error>) as unknown as Effect<
-    Fails<error>,
-    never
-  >;
+  return suspend<Fails<error>, never>(["except.fail", error], refuse_resume);
 }
 
 /** Lifts an Either, failing the program on its left branch. */
 export function from_either<error, item>(
   value: EitherValue<error, item>,
 ): Effect<Fails<error>, item> {
-  const raw = value.value();
+  const [branch, payload] = value.value();
 
-  if (raw[0] === "Left") {
-    return fail(raw[1] as error);
+  switch (branch) {
+    case "Left":
+      return fail(payload);
+    case "Right":
+      return pure(payload);
   }
-
-  return pure(raw[1] as item);
 }
 
-/** Defers a promise, routing rejection into the failure channel.
+/** Defers a promise, routing its rejection into the failure channel.
  *
- * The `Task` dictionary reports rejection as an untyped promise failure.
- * `attempt` converts that into a typed `Fails` operation so the error stays
- * visible in the program's requirements.
+ * The `Task` dictionary reports rejection as an untyped promise failure, so a
+ * program that wants the error in its requirements awaits it through `attempt`:
+ *
+ * ```ts
+ * const fetched = App(function* () {
+ *   return yield* attempt(
+ *     () => fetch_port(),
+ *     (cause): Missing => ["missing", String(cause)],
+ *   );
+ * });
+ * ```
  */
 export function attempt<error, item>(
   run: (signal: AbortSignal | undefined) => Promise<item>,
   on_error: (cause: unknown) => error,
   options: TaskOptions = {},
-): TaskValue<Attempted<error, item>> {
-  return from_fn<Attempted<error, item>>(async (signal) => {
+): Effect<Uses<AsTask> | Fails<error>, item> {
+  const settled = from_fn<Settled<error, item>>(async (signal) => {
     try {
       return ["ok", await run(signal)] as const;
     } catch (cause) {
       return ["error", on_error(cause)] as const;
     }
   }, options);
-}
 
-/** The settled outcome of an `attempt`, before it re-enters the program. */
-export type Attempted<error, item> =
-  | readonly ["ok", item]
-  | readonly ["error", error];
+  return bind_from(settled, (outcome) => {
+    const [branch, payload] = outcome;
 
-/** Re-enters the failure channel from a settled `attempt` outcome. */
-export function attempted<error, item>(
-  outcome: Attempted<error, item>,
-): Effect<Fails<error>, item> {
-  if (outcome[0] === "error") {
-    return fail(outcome[1]);
-  }
-
-  return pure(outcome[1]);
+    switch (branch) {
+      case "error":
+        return fail(payload);
+      case "ok":
+        return pure(payload);
+    }
+  });
 }
 
 /** Handles failures, collapsing the program's item into an Either.
@@ -114,104 +118,130 @@ export function attempted<error, item>(
  * const handled = run_except<App, Missing, number>(program);
  * const result = await run_task(run_reader(handled, config));
  * ```
+ *
+ * Name the program's whole error union: `run_except` catches every failure it
+ * meets, and any `Fails` it does not name stays in the requirements.
  */
 export function run_except<requirements, error, item>(
   effect: Effect<requirements, item>,
 ): Effect<WithoutFails<requirements, error>, EitherValue<error, item>> {
-  type Handled = Effect<
+  return handle_fails<error, item>(effect) as Effect<
     WithoutFails<requirements, error>,
     EitherValue<error, item>
   >;
+}
 
+/** Handles failures by supplying a replacement program for the error.
+ *
+ * The replacement's own requirements join the result, so a replacement that can
+ * fail keeps a `Fails` for the next handler to remove.
+ */
+export function recover<requirements, error, item, replacement = never>(
+  effect: Effect<requirements, item>,
+  on_error: (error: error) => Effect<replacement, item>,
+): Effect<WithoutFails<requirements, error> | replacement, item> {
+  const recovered = bind(
+    handle_fails<error, item>(effect),
+    (outcome): Effect<replacement, item> => {
+      const [branch, payload] = outcome.value();
+
+      switch (branch) {
+        case "Left":
+          return on_error(payload);
+        case "Right":
+          return pure(payload);
+      }
+    },
+  );
+
+  return recovered as Effect<
+    WithoutFails<requirements, error> | replacement,
+    item
+  >;
+}
+
+/** The settled outcome of an `attempt`, before it re-enters the program. */
+type Settled<error, item> =
+  | readonly ["ok", item]
+  | readonly ["error", error];
+
+function handle_fails<error, item>(
+  effect: Effect<unknown, item>,
+): Effect<unknown, EitherValue<error, item>> {
   if (effect[0] === "pure") {
-    return pure(Right<error, item>(effect[1])) as unknown as Handled;
+    return pure(Right<error, item>(effect[1]));
   }
 
   const operation = effect[1];
   const resume = effect[2];
 
-  if (has_tag(operation, "except.fail")) {
-    // Drop the continuation: this is the short circuit, and the reason the
-    // capability cannot be expressed through `handle_lift`, whose handler must
-    // always produce a value for the program to resume with.
-    return pure(
-      Left<error, item>((operation as Fails<error>)[1]),
-    ) as unknown as Handled;
+  if (is_fails<error>(operation)) {
+    // Dropping the continuation is the short circuit, and the reason this
+    // capability cannot go through `handle_lift`, whose handler must always
+    // produce a value for the program to resume with.
+    return pure(Left<error, item>(operation[1]));
   }
 
-  if (has_tag(operation, "effect.ensuring")) {
-    // Failures raised inside a protected scope must still be caught, so the
-    // nested effect is handled too and its Either is unwrapped before the
-    // outer program resumes. The finalizer therefore observes a successful
-    // exit for a failing scope, because `run_except` turned that failure into
-    // a value before `run_task` interpreted the scope.
-    const scope = (operation as Ensuring)[1];
-    const nested: Ensuring = ["effect.ensuring", {
-      effect: run_except<unknown, error, unknown>(scope.effect),
-      finalize: scope.finalize,
-    }] as Ensuring;
-
-    return suspend<
-      WithoutFails<requirements, error>,
-      EitherValue<error, item>
-    >(
-      nested as unknown as WithoutFails<requirements, error>,
-      (value: unknown) => {
-        const raw = (value as EitherValue<error, unknown>).value();
-
-        if (raw[0] === "Left") {
-          return pure(Left<error, item>(raw[1] as error)) as unknown as Handled;
-        }
-
-        return run_except<requirements, error, item>(resume(raw[1]));
-      },
-    ) as unknown as Handled;
+  if (is_ensuring(operation)) {
+    return handle_protected_fails<error, item>(operation[1], resume);
   }
 
   return suspend(
     operation,
-    (value: unknown) =>
-      run_except<requirements, error, item>(
-        resume(value),
-      ),
-  ) as unknown as Handled;
+    (value) => handle_fails<error, item>(resume(value)),
+  );
 }
 
-/** Handles failures by supplying a replacement program for the error. */
-export function recover<requirements, error, item>(
-  effect: Effect<requirements, item>,
-  on_error: (error: error) => Effect<requirements, item>,
-): Effect<WithoutFails<requirements, error>, item> {
-  const handled = run_except<requirements, error, item>(effect);
+function handle_protected_fails<error, item>(
+  scope: Ensuring[1],
+  resume: (value: unknown) => Effect<unknown, item>,
+): Effect<unknown, EitherValue<error, item>> {
+  // A failure inside the scope must still be caught, so the nested effect is
+  // handled too. That turns the failure into a value before the terminal runner
+  // interprets the scope, and an `EffectExit` carries no value, so the error
+  // travels beside the effect for the finalizer to see it.
+  let failure: readonly [error] | undefined;
 
-  return bind_handled(handled, (result) => {
-    const raw = result.value();
+  const protect: Ensuring = ["effect.ensuring", {
+    effect: map(handle_fails<error, unknown>(scope.effect), (outcome) => {
+      const [branch, payload] = outcome.value();
 
-    if (raw[0] === "Left") {
-      return on_error(raw[1] as error) as unknown as Effect<
-        WithoutFails<requirements, error>,
-        item
-      >;
+      if (branch === "Left") {
+        failure = [payload];
+      }
+
+      return outcome;
+    }),
+    finalize: (exit) =>
+      scope.finalize(
+        failure === undefined ? exit : { status: "failed", error: failure[0] },
+      ),
+  }];
+
+  return suspend(protect, (value) => {
+    // The runner resumes with the nested effect's item, which the handler above
+    // made an Either.
+    const [branch, payload] = (value as EitherValue<error, unknown>).value();
+
+    switch (branch) {
+      case "Left":
+        return pure(Left<error, item>(payload));
+      case "Right":
+        return handle_fails<error, item>(resume(payload));
     }
-
-    return pure(raw[1] as item);
   });
 }
 
-function bind_handled<requirements, error, item>(
-  effect: Effect<requirements, EitherValue<error, item>>,
-  next: (
-    value: EitherValue<error, item>,
-  ) => Effect<requirements, item>,
-): Effect<requirements, item> {
-  if (effect[0] === "pure") {
-    return next(effect[1]);
-  }
+function is_fails<error>(operation: unknown): operation is Fails<error> {
+  return has_tag(operation, "except.fail");
+}
 
-  const resume = effect[2];
+function is_ensuring(operation: unknown): operation is Ensuring {
+  return has_tag(operation, "effect.ensuring");
+}
 
-  return suspend(
-    effect[1],
-    (value: unknown) => bind_handled(resume(value), next),
+function refuse_resume(): never {
+  throw new TypeError(
+    "A failed program was resumed; except.fail never produces a value",
   );
 }
