@@ -1,10 +1,10 @@
 import type { Effect, Uses } from "../../src/effects.ts";
 import {
   type AsReader,
-  type ReaderEnvironment,
   run_reader,
   type WithoutReader,
 } from "../../src/reader.ts";
+import type { HttpBody } from "./response.ts";
 import {
   type As,
   type Data,
@@ -265,13 +265,13 @@ export type RouteInput<
   readonly query: QueryValues<query>;
 };
 
-type RoutePage<environment, requirements, item> = Effect<
-  requirements | Uses<AsReader<environment>>,
+type RoutePage<environment, item> = Effect<
+  HttpBody | Uses<AsReader<environment>>,
   item
 >;
 
-type RoutedPage<environment, requirements, item> = Effect<
-  WithoutReader<requirements | Uses<AsReader<environment>>>,
+type RoutedPage<environment, item> = Effect<
+  WithoutReader<HttpBody | Uses<AsReader<environment>>>,
   item
 >;
 
@@ -314,16 +314,15 @@ export function route<
   const params extends PathParamSpec<path>,
   const query extends QuerySpec,
   environment,
-  requirements,
   item,
 >(
   method: HttpMethod,
   path: path,
   options: RouteOptions<path, params, query>,
   page: RouteInput<path, params, query> extends environment
-    ? RoutePage<environment, requirements, item>
+    ? RoutePage<environment, item>
     : never,
-): UrlPatternListValue<RoutedPage<environment, requirements, item>> {
+): UrlPatternListValue<RoutedPage<environment, item>> {
   const pattern = new URLPattern({ pathname: path });
   const params = (options.params ?? {}) as params;
   const query = (options.query ?? {}) as query;
@@ -368,14 +367,7 @@ export function route<
           query: query_values as QueryValues<query>,
         } as RouteInput<path, params, query>;
 
-        return matched(
-          run_reader(
-            page,
-            input as ReaderEnvironment<
-              requirements | Uses<AsReader<environment>>
-            >,
-          ),
-        );
+        return matched(run_reader(page, input as environment));
       },
     },
   ]);
