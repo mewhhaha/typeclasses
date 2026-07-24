@@ -1,39 +1,98 @@
 # Typeclasses
 
-Typeclasses is a TypeScript library for Haskell-style typeclasses with runtime
-dictionaries and fluent wrapped values. Its portable core runs on Deno, Node,
-and Bun; runtime-specific worker and build APIs are called out below. The
-package is published as `@mewhhaha/typeclasses`.
+Haskell-style typeclasses for TypeScript. Write an algorithm once and run it in
+every context you have — arrays, optional values, maps, sets, lazy iterables,
+async work, or a type you defined this morning.
 
-It provides reusable typeclass definitions, data types, effect programs,
-examples, case studies, benchmarks, and a source transformer:
+Runs on Deno, Node, Bun, and browsers. The library core has no dependencies —
+every import inside `src/` is relative, and a portability check enforces it.
+Published on JSR as `@mewhhaha/typeclasses`. (The optional build-time
+transformer under `/transform` is the one exception: it uses the TypeScript
+compiler, and never ships to your runtime.)
 
-- `Functor` for `map`
-- `Applicative` for `pure` and `ap`
-- `Monad` for `bind` and `Do`
-- `Foldable` for `fold`
-- `Traversable` for flipping structures through an applicative
-- `Ord` for ordered comparisons
-- `Semigroup` and `Monoid` for appendable/empty structures
-- `Alternative` for empty/fallback list-like contexts
-- `Bifunctor`, `Contravariant`, and `Profunctor` for multi-variance mapping
-- `Category` and `Arrow` for composable function-like contexts
-- `Comonad` for extracting and extending contextual values
-- `MonadError` for monads with recoverable failures
-- `Parse` for parser-like values that can consume string input
-- `Show` and `Eq` as small utility typeclasses
+## Why
 
-Core instance coverage is intentionally visible:
+TypeScript makes you pick a container and then rewrite your logic for every
+other container. Summing an array, summing a `Map`, and summing a number that
+might be missing are the same line of arithmetic wearing three signatures.
+Generics let you abstract over the _element_; nothing in the language lets you
+abstract over the _container_. So you write the fourth overload, or you give up
+and `Array.from(...)` everything into memory.
 
-| Data dictionary              | Principal instances                                                                |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                |
-| `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                    |
-| `Validation`                 | accumulating `Applicative`, `Traversable`, `Ord`                                   |
-| `Task`                       | parallel `Applicative`, sequential `Monad`, `MonadError`                           |
-| `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                   |
-| `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid` |
-| `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                      |
+This library gives you the missing half.
+
+```ts
+import {
+  array,
+  type Data,
+  Foldable,
+  Just,
+  map,
+  Nothing,
+  set,
+} from "@mewhhaha/typeclasses";
+
+function total<dictionary extends Foldable<dictionary>>(
+  values: Data<dictionary, number>,
+): number {
+  return Foldable.fold(values, 0, (running, value) => running + value);
+}
+
+total(array.from_array([1, 2, 3])); // 6
+total(map.from_entries([["a", 1], ["b", 2]])); // 3
+total(set.from_set(new Set([1, 2, 3]))); // 6
+total(Just(42)); // 42
+total(Nothing<number>()); // 0
+```
+
+One implementation, five containers, full inference, no casts and no overloads.
+
+The part that matters is what is _not_ in that list. `total` also works on a
+type you define yourself, because a typeclass is an open contract rather than a
+closed union. Most functional libraries hand you their `Option` and their
+`Either` and their combinators; when your domain type doesn't fit, you convert
+into theirs and back. Here you teach your own type to fold, and every `Foldable`
+function in the library — plus every one you wrote — starts working on it. The
+library never has to have anticipated your type.
+
+That extends to types nobody owns. `Map`, `Set`, `FormData`, `URLSearchParams`,
+`ArrayBuffer`, `ReadableStream`, and typed arrays all ship with instances, so
+the platform's data shapes participate in the same vocabulary as your own.
+
+### Three more reasons
+
+**Collect every error, not just the first one.** `Promise` and `Either` stop at
+the first failure, which is right for sequential steps and wrong for a form.
+`Validation` combines independent results and keeps all their errors, using the
+combining rule you supply.
+
+**Describe effects, then decide separately what they mean.** A `Program`
+declares the capabilities it needs — configuration, state, logging, async, or an
+effect you define — in its type. Handlers discharge them one at a time. The same
+program can run against a real database or an in-memory one with no change to
+the program itself, which makes the interesting half of your code testable
+without mocks. This replaces monad transformer stacks: capabilities compose as a
+union of requirements instead of nesting into `ReaderT` over `StateT` over
+`TaskEither`, and the type stays readable at five capabilities.
+
+**Pay for the ergonomics at build time.** Generator-based `Do` and `Program`
+blocks read like ordinary code, but interpreting a generator at runtime costs
+something. The bundled source transformer lowers them to direct method chains
+during your build — measured at 3–15× on this repository's benchmarks — so the
+readable spelling is also the fast one. Plugins for esbuild and Rolldown ship
+with the package.
+
+### What it is not
+
+This is a small, inspectable library, not a framework. There is no scheduler, no
+fiber runtime, no dependency-injection container, and no structured-concurrency
+supervisor. If you want those, [Effect](https://effect.website) is the mature
+choice and is a genuinely different product. Reach for this one when you want
+the typeclass abstraction itself — open to your types, with a readable
+implementation you can follow end to end.
+
+It is pre-1.0. The API still moves between minor versions; see
+[Migration Notes](#migration-notes).
 
 ## Quick Start
 
@@ -77,6 +136,49 @@ if (Invalid.is(result)) {
 }
 ```
 
+A program that needs configuration, logging, and async work declares all three
+in its type, then has them handled one at a time:
+
+```ts
+import { array, Effect, Program, type Uses } from "@mewhhaha/typeclasses";
+import { ask, type AsReader, run_reader } from "@mewhhaha/typeclasses/reader";
+import { type AsWriter, run_writer, tell } from "@mewhhaha/typeclasses/writer";
+import { type AsTask, from_fn, run_task } from "@mewhhaha/typeclasses/task";
+import type { AsArray } from "@mewhhaha/typeclasses/array";
+
+type Config = { readonly base: string };
+
+const App = Program.scope<
+  | Uses<AsReader<Config>>
+  | Uses<AsWriter<AsArray, string>>
+  | Uses<AsTask>
+>();
+
+const fetch_title = App(function* () {
+  const config = yield* ask<Config>();
+
+  yield* tell(array.ArrayT([`GET ${config.base}/title`]));
+
+  const body = yield* from_fn(async () => "Hello");
+
+  return body.toUpperCase();
+});
+
+const [value, logs] = await Effect.interpret(fetch_title)
+  .handle((effect) => run_reader(effect, { base: "https://example.com" }))
+  .handle((effect) => run_writer(effect, array.ArrayT<string>([])))
+  .run(run_task);
+
+value; // "HELLO"
+array.to_array(logs); // ["GET https://example.com/title"]
+```
+
+Swap the last `.run(run_task)` for a different runner, or the `from_fn` step for
+a custom effect, and the program body stays untouched. That is the whole
+argument for effects over transformer stacks.
+
+## Choosing a type
+
 Pick the smallest abstraction that expresses the behavior:
 
 | Need                                           | Start with                      |
@@ -87,8 +189,44 @@ Pick the smallest abstraction that expresses the behavior:
 | Deferred asynchronous work                     | `Task`                          |
 | Dependent steps in one context                 | `Do`                            |
 | Reader, State, Writer, Task, or custom effects | `Program` and `Effect`          |
+| Typed failure that short-circuits a program    | `fail` and `run_except`         |
 | Synchronous isolate-local transactions         | `Stm`                           |
 | CPU work in runtimes with Web Worker globals   | `worker_map` or a reusable pool |
+
+## Typeclasses and instances
+
+The library provides these typeclass definitions:
+
+- `Functor` for `map`
+- `Applicative` for `pure` and `ap`
+- `Monad` for `bind` and `Do`
+- `Foldable` for `fold`
+- `Traversable` for flipping structures through an applicative
+- `Ord` for ordered comparisons
+- `Semigroup` and `Monoid` for appendable/empty structures
+- `Alternative` for empty/fallback list-like contexts
+- `Bifunctor`, `Contravariant`, and `Profunctor` for multi-variance mapping
+- `Category` and `Arrow` for composable function-like contexts
+- `Comonad` for extracting and extending contextual values
+- `MonadError` for monads with recoverable failures
+- `Parse` for parser-like values that can consume string input
+- `Show` and `Eq` as small utility typeclasses
+
+Core instance coverage is intentionally visible:
+
+| Data dictionary              | Principal instances                                                                |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                |
+| `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                    |
+| `Validation`                 | accumulating `Applicative`, `Traversable`, `Ord`                                   |
+| `Task`                       | parallel `Applicative`, sequential `Monad`, `MonadError`                           |
+| `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                   |
+| `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid` |
+| `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                      |
+
+The JavaScript-shape wrappers — `RecordT`, `MapT`, `SetT`, `IterableT`,
+`AsyncIterableT`, `TypedArrayT`, `DateT`, and the rest — carry the instances
+listed under [JavaScript Shapes](#javascript-shapes).
 
 Continue with one of these paths:
 
@@ -111,14 +249,38 @@ entrypoints let applications and build tools import only the domain they need:
 - `/typeclass` and `/typeclasses` for dictionary machinery and definitions.
 - `/maybe`, `/either`, `/validation`, `/identity`, `/fn`, `/tuple`, `/array`,
   `/predicate`, `/list`, and `/tagged` for data values.
-- `/task`, `/effects`, `/reader`, `/state`, `/writer`, `/stm`, and `/parallel`
-  for effectful programs.
+- `/task`, `/effects`, `/except`, `/reader`, `/state`, `/writer`, `/stm`, and
+  `/parallel` for effectful programs.
 - `/loop` for stack-safe tail loops.
 - `/transform` and `/transform/plugin` for the source transformer and bundler
   adapters.
 
 Deno can also use explicit `jsr:` specifiers, for example
 `jsr:@mewhhaha/typeclasses/validation`.
+
+The wrappers for built-in JavaScript shapes are reached through a namespace at
+the root, because their helpers would otherwise collide — every one of them
+wants to export `from_array`, `to_array`, `from_entries`, and friends. Both of
+these work:
+
+```ts
+import { array } from "@mewhhaha/typeclasses";
+import { ArrayT, to_array } from "@mewhhaha/typeclasses/array";
+
+array.ArrayT([1, 2, 3]);
+ArrayT([1, 2, 3]);
+```
+
+`ArrayT` is therefore **not** a bare root export;
+`import { ArrayT } from
+"@mewhhaha/typeclasses"` fails. The same applies to
+`RecordT`, `MapT`, `SetT`, `IterableT`, `AsyncIterableT`, and the other shape
+wrappers listed under [Built-In Shapes](#built-in-shapes). Later examples that
+write a bare `ArrayT` assume the granular import above.
+
+The names that _are_ bare root exports for list-like work belong to `List`, the
+recursive list: root `from_array` and `to_array` build and drain a `List`, not
+an `ArrayT`.
 
 ### Runtime Support
 
@@ -341,6 +503,20 @@ If the wrapped raw value is a function, the wrapper also exposes `.run(...)` as
 the typed shortcut for `.value()(...)`. That keeps callable data types such as
 `Fn`, `Task`, `Reader`, `State`, and `IterableT` from leaking double calls into
 examples.
+
+Wrapped values stay ordinary JavaScript objects. String contexts render through
+the `Show` instance when the dictionary has one, and `JSON.stringify` emits the
+raw value so the tag survives a round trip:
+
+```ts
+String(Just(1)); // "Just(1)"
+`${Nothing()}`; // "Nothing"
+JSON.stringify(Just(1)); // '["Just",1]'
+Maybe(JSON.parse('["Just",1]')); // the wrapped value again
+```
+
+`toString` and `toJSON` are reserved by the wrapped-data protocol alongside
+`match`, so custom typeclass instances should not reuse those method names.
 
 The same-named function wraps an existing raw context when you already have one:
 
@@ -704,7 +880,7 @@ const program = App(function* () {
   const before = yield* get<number>();
   const scoped_label = yield* run_reader(label, { label: config.label });
 
-  yield* modify((value) => value + config.increment);
+  yield* modify((value: number) => value + config.increment);
   yield* tell(ArrayT([scoped_label + ":" + before.toString()]));
 
   return yield* get<number>();
@@ -1123,9 +1299,11 @@ do
 ```
 
 ```ts
+import { from_array } from "@mewhhaha/typeclasses/list";
+
 Do(function* () {
-  const left = yield* list_from_array([1, 2]);
-  const right = yield* list_from_array([10, 20]);
+  const left = yield* from_array([1, 2]);
+  const right = yield* from_array([10, 20]);
 
   return left + right;
 });
@@ -1162,17 +1340,23 @@ sequenceA [Just 1, Just 2, Just 3]
 ```
 
 ```ts
+import { from_number } from "@mewhhaha/typeclasses/either";
+
 Traversable.traverse(
-  ArrayT(["1", "2", "3"]),
-  Either,
-  (text) => either_from_number(Number.parseInt(text, 10)),
+  array.ArrayT(["1", "2", "3"]),
+  Either.with_left<string>(),
+  (text) => from_number(Number.parseInt(text, 10)),
 );
 
 Traversable.sequence(
-  ArrayT([Just(1), Just(2), Just(3)]),
+  array.ArrayT([Just(1), Just(2), Just(3)]),
   Maybe,
 );
 ```
+
+`Either` and `Validation` fix their error type through `with_left` /
+`with_error`, so `traverse` needs the configured dictionary rather than the bare
+one. `Maybe` has no fixed parameter and can be passed directly.
 
 `Traversable` flips a container of effects into an effect containing a
 container. This is the same shape as Haskell's `traverse` and `sequenceA`, but
@@ -1328,7 +1512,7 @@ program = do
 
 ```ts
 const program = Do(function* () {
-  yield* tell(ArrayT(["start"]));
+  yield* tell(array.ArrayT(["start"]));
 
   return 42;
 });
@@ -1336,7 +1520,7 @@ const program = Do(function* () {
 const [value, logs] = program.value();
 
 value; // 42
-to_array(logs); // ["start"]
+array.to_array(logs); // ["start"]
 ```
 
 `Writer` is parameterized by the monoidal output. Arrays are just one concrete
@@ -1409,6 +1593,76 @@ terminal shapes such as `run(run_state(program, initial))` and fuses immediate
 straight-line `Program` bodies step by step. Composable
 `run_reader`/`run_state`/`run_writer` calls keep their existing behavior, while
 unsupported terminal shapes fall back to the general `Effect` path.
+
+### Typed Failure
+
+Haskell reaches for `ExceptT` when a program can stop early with a typed error:
+
+```hs
+program :: ExceptT Missing IO Int
+program = do
+  value <- lookupPort
+  when (value < 0) (throwError (Missing "port"))
+  pure value
+```
+
+`Fails` is that capability without the transformer stack. It joins the
+requirement union like `Reader` or `State`, and `run_except` removes it,
+collapsing the program's item into an `Either`:
+
+```ts
+type Missing = readonly ["missing", string];
+type App = Uses<AsReader<Config>> | Uses<AsTask> | Fails<Missing>;
+
+const App = Program.scope<App>();
+
+const program = App(function* () {
+  const config = yield* ask<Config>();
+
+  if (config.port < 0) {
+    yield* fail<Missing>(["missing", "port"]);
+  }
+
+  return config.port;
+});
+
+const handled = run_except<App, Missing, number>(program);
+const result = await run_task(run_reader(handled, config));
+```
+
+Name the program's whole error union in `run_except`. It catches every failure
+it meets, so a `Fails` left out of the union stays in the requirements and the
+next handler rejects the program.
+
+`fail` never resumes, so the statements after it do not run and
+`yield* fail(...)` type-checks in any position. `Task` reports rejection as an
+untyped promise failure, so `attempt` awaits a promise with its rejection routed
+into the typed channel:
+
+```ts
+const fetched = App(function* () {
+  return yield* attempt(
+    () => fetch_port(),
+    (cause): Missing => ["missing", String(cause)],
+  );
+});
+```
+
+`from_either` lifts an existing `Either` into the same channel, and `recover`
+handles a failure by supplying a replacement program:
+
+```ts
+const recovered = recover(program, (error) => Effect.pure(error[1].length));
+```
+
+The replacement's own requirements join the result, so a replacement that can
+fail keeps a `Fails` for the next handler to remove.
+
+A failure raised inside `Effect.ensuring` is caught, the finalizer runs, and it
+observes `{ status: "failed" }` carrying the error. A `try`/`finally` in the
+program body is not equivalent: a failure abandons the generator rather than
+resuming it, so its `finally` block never runs. Use `Effect.ensuring` for
+cleanup that must survive a failure.
 
 ### IO and Task
 
@@ -1670,7 +1924,7 @@ it does not allocate an intermediate collection. Work happens when a consumer
 iterates, folds, or materializes the final value:
 
 ```ts
-const values = iterable_from_factory(function* () {
+const values = iterable.from_factory(function* () {
   yield* [1, 2, 3];
 });
 
@@ -1679,7 +1933,7 @@ const pipeline = values
   .map((value) => value * 10)
   .map((value) => "value:" + value.toString());
 
-iterable_to_array(pipeline); // ["value:20", "value:30", "value:40"]
+iterable.to_array(pipeline); // ["value:20", "value:30", "value:40"]
 ```
 
 `ReadableStream` has similar constraints plus cancellation and backpressure. The

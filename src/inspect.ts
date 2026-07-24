@@ -2,6 +2,8 @@ type RuntimeDeno = {
   inspect?: (value: unknown, options?: { colors?: boolean }) => string;
 };
 
+const custom_inspect = Symbol.for("Deno.customInspect");
+
 /** Render a value without requiring a particular JavaScript runtime. */
 export function inspect(value: unknown): string {
   const runtime = (globalThis as { Deno?: RuntimeDeno }).Deno;
@@ -53,6 +55,12 @@ function inspect_fallback(value: unknown, seen: Set<object>): string {
 function inspect_object(value: object, seen: Set<object>): string {
   if (seen.has(value)) {
     return "[Circular]";
+  }
+
+  const render = (value as { [custom_inspect]?: () => string })[custom_inspect];
+
+  if (typeof render === "function") {
+    return render.call(value);
   }
 
   if (value instanceof Date) {

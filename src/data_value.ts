@@ -1,8 +1,12 @@
+import { inspect } from "./inspect.ts";
+
 const data_constructor_key = Symbol("Data.constructor");
 const data_marker = Symbol("Data.marker");
 const data_prototype_key = Symbol("Data.prototype");
 const data_value = Symbol("Data.value");
 const has_own = Object.prototype.hasOwnProperty;
+const deno_custom_inspect = Symbol.for("Deno.customInspect");
+const node_custom_inspect = Symbol.for("nodejs.util.inspect.custom");
 
 /** A tuple value whose first member selects a tagged variant. */
 export type TaggedValue = readonly [PropertyKey, ...readonly unknown[]];
@@ -38,6 +42,10 @@ export type WrappedDataBase<dictionary, value, item> = {
   >;
   run: DataRunner<value>;
   value: () => value;
+  /** Render the value through its `Show` instance, or structurally. */
+  toString: () => string;
+  /** Serialize to the raw value, so `JSON.stringify` keeps the tag. */
+  toJSON: () => value;
   /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
   match<result>(
     cases: [value] extends [TaggedValue]
@@ -98,6 +106,35 @@ export function mark_data_prototype(prototype: object): void {
   });
 }
 
+/** Reparent a callable dictionary onto `Object.prototype`.
+ *
+ * Wrapped values inherit from their dictionary, so leaving `Function.prototype`
+ * in the chain hands every value the function internals: `toString` throws on a
+ * receiver that is not a function, and a missing `bind` instance silently
+ * resolves to `Function.prototype.bind`.
+ */
+export function detach_function_prototype(dictionary: object): void {
+  Object.setPrototypeOf(dictionary, Object.prototype);
+}
+
+/** Give a data prototype the members ordinary JavaScript interop expects. */
+export function define_data_interop(prototype: object): void {
+  Object.defineProperties(prototype, {
+    toString: {
+      value: data_to_string,
+    },
+    toJSON: {
+      value: data_to_json,
+    },
+    [deno_custom_inspect]: {
+      value: data_to_string,
+    },
+    [node_custom_inspect]: {
+      value: data_to_string,
+    },
+  });
+}
+
 export function wrap_data<dictionary extends object, value, item = unknown>(
   dictionary: dictionary,
   value: value,
@@ -137,6 +174,8 @@ export function data_dictionary<dictionary extends object>(): dictionary {
 
     return target as unknown as WrappedData<dictionary, value, item>;
   } as unknown as DataConstructor<dictionary> & DataDictionary<dictionary>;
+
+  detach_function_prototype(construct_data);
 
   const prototype = data_prototype(construct_data);
 
@@ -224,6 +263,7 @@ function data_prototype(dictionary: object): object {
       value: data_iterator,
     },
   });
+  define_data_interop(prototype);
 
   Object.defineProperty(data_dictionary, data_prototype_key, {
     value: prototype,
@@ -252,6 +292,25 @@ function data_value_of<value>(
   this: WrappedDataTarget<value>,
 ): value {
   return this[data_value];
+}
+
+type DataInteropTarget = {
+  value: () => unknown;
+  show?: () => string;
+};
+
+function data_to_string(this: DataInteropTarget): string {
+  const show = this.show;
+
+  if (typeof show === "function") {
+    return show.call(this);
+  }
+
+  return inspect(this.value());
+}
+
+function data_to_json(this: DataInteropTarget): unknown {
+  return this.value();
 }
 
 function data_run(

@@ -1,5 +1,5 @@
 import { ArrayT } from "./array.ts";
-import { assert_equals } from "./assert.ts";
+import { assert_equals, assert_true } from "./assert.ts";
 import { Either } from "./either.ts";
 import {
   type Effect,
@@ -9,7 +9,8 @@ import {
   type WithoutLift,
 } from "./effects.ts";
 import { fn } from "./fn.ts";
-import { Just, Maybe } from "./maybe.ts";
+import { Cons, Nil } from "./list.ts";
+import { Just, Maybe, Nothing } from "./maybe.ts";
 import { ask, run_reader, run_reader_terminal } from "./reader.ts";
 import { get, put, run_state, run_state_terminal } from "./state.ts";
 import { run_writer, tell } from "./writer.ts";
@@ -79,7 +80,57 @@ Deno.test("wrapped values retain fluent methods without becoming callable", () =
   const incremented = Just(41).map((value) => value + 1);
 
   assert_equals(typeof incremented, "object");
+  assert_equals(incremented instanceof Function, false);
+  assert_equals(First(["Box", 1]) instanceof Function, false);
   assert_equals(incremented.value(), ["Just", 42] as const);
+});
+
+Deno.test("a dictionary without an instance leaves the method undefined", () => {
+  const boxed = First(["Box", 1]) as unknown as {
+    readonly bind?: unknown;
+    readonly call?: unknown;
+  };
+
+  assert_equals(boxed.bind, undefined);
+  assert_equals(boxed.call, undefined);
+});
+
+Deno.test("string contexts render a wrapped value through its Show instance", () => {
+  assert_equals(String(Just(1)), "Just(1)");
+  assert_equals(`${Nothing()}`, "Nothing");
+  assert_equals(Just(1) + "", "Just(1)");
+  assert_equals([Just(1), Nothing()].join(" "), "Just(1) Nothing");
+  assert_equals(new Error("bad: " + Just(1)).message, "bad: Just(1)");
+});
+
+Deno.test("string contexts fall back to the raw value without a Show instance", () => {
+  const rendered = String(First(["Box", 1]));
+
+  assert_true(
+    rendered.includes("Box"),
+    "expected the raw tagged tuple in " + rendered,
+  );
+});
+
+Deno.test("JSON round-trips a wrapped value through its dictionary", () => {
+  const encoded = JSON.stringify(Just(1));
+
+  assert_equals(encoded, '["Just",1]');
+  assert_equals(JSON.stringify(Nothing()), '["Nothing"]');
+  assert_equals(JSON.stringify(Either.Left(1)), '["Left",1]');
+  assert_equals(JSON.stringify({ result: Just(1) }), '{"result":["Just",1]}');
+  assert_equals(Maybe(JSON.parse(encoded)).value(), ["Just", 1] as const);
+});
+
+Deno.test("tagged payloads stay hidden from ordinary property access", () => {
+  const list = Cons(1, Nil().value());
+
+  assert_equals(Object.keys(Just(1)), []);
+  assert_equals(Object.keys(list), []);
+  assert_equals("payload" in Just(1), false);
+  assert_equals("first" in list, false);
+  assert_equals("second" in list, false);
+  assert_equals(list.value(), ["Cons", 1, ["Nil"]] as const);
 });
 
 Deno.test("MonadError preserves a configured Either error type", () => {

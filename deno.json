@@ -18,6 +18,7 @@
     "./predicate": "./src/predicate.ts",
     "./task": "./src/task.ts",
     "./effects": "./src/effects.ts",
+    "./except": "./src/except.ts",
     "./parallel": "./src/parallel.ts",
     "./stm": "./src/stm.ts",
     "./reader": "./src/reader.ts",
