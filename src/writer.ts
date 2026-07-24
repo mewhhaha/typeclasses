@@ -3,10 +3,10 @@ import {
   type Data,
   data,
   type Dictionary,
-  type DictionaryDataType,
   is_data,
   kind,
   type type_data,
+  type type_identity,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
@@ -116,39 +116,68 @@ export function tell<output extends MonoidDictionary<output>, log>(
 }
 
 /** @ignore */
-export type WithoutWriter<
-  requirements,
-  output extends Dictionary,
-  log,
-> = requirements extends Lift<infer dictionary, infer _item>
-  ? DictionaryDataType<dictionary> extends
-    DictionaryDataType<AsWriter<output, log>> ? never
+export type WithoutWriter<requirements> = requirements extends
+  Lift<infer dictionary, infer _item>
+  ? dictionary[typeof type_identity] extends typeof writer_identity ? never
   : requirements
   : requirements;
 
+/**
+ * The empty output every Writer lift in `requirements` accumulates into.
+ *
+ * All Writer lifts share one runtime dictionary, so a single `run_writer`
+ * concatenates every `tell` in the program into one accumulator. That
+ * accumulator has to satisfy all of them at once: each lift contributes a
+ * parameter position, so lifts writing into different Monoids yield an
+ * intersection no value supplies, and the program is rejected instead of
+ * concatenating mismatched outputs.
+ */
+export type WriterEmpty<requirements> = (
+  requirements extends Lift<infer dictionary, infer _item>
+    ? dictionary[typeof type_identity] extends typeof writer_identity
+      ? dictionary extends
+        { readonly [type_data]: readonly [unknown, infer empty] }
+        ? (empty: empty) => void
+      : never
+    : never
+    : never
+) extends (empty: infer empty) => void ? empty : unknown;
+
 /** Handles Writer lifts from the supplied empty output value. */
-export function run_writer<
-  output extends MonoidDictionary<output>,
-  log,
-  requirements,
-  item,
->(
+export function run_writer<requirements, item>(
   effect: Effect<requirements, item>,
-  empty: Data<output, log>,
+  empty: WriterEmpty<requirements>,
 ): Effect<
-  WithoutWriter<requirements, output, log>,
-  readonly [item, Data<output, log>]
+  WithoutWriter<requirements>,
+  readonly [item, WriterEmpty<requirements>]
 > {
   return handle_lift(effect, writer_kind, empty, {
     done(value, output) {
       return [value as item, output] as const;
     },
-    handle(value, output) {
+    handle(
+      value: Data<AsWriter<Dictionary, unknown>, unknown>,
+      output,
+    ) {
       const [item, next_output] = value.value();
-      return [item, concat_output(output, next_output)] as const;
+      return [
+        item,
+        concat_output(output, next_output) as WriterEmpty<requirements>,
+      ] as const;
     },
-  });
+  }) as Effect<
+    WithoutWriter<requirements>,
+    readonly [item, WriterEmpty<requirements>]
+  >;
 }
+
+/**
+ * The empty output a terminal run needs, or `never` when the effect still
+ * carries requirements that `run_writer_terminal` cannot discharge.
+ */
+export type TerminalWriterEmpty<requirements> =
+  [WithoutWriter<requirements>] extends [never] ? WriterEmpty<requirements>
+    : never;
 
 /** Runs one Writer value or an effect containing only Writer lifts. */
 export function run_writer_terminal<
@@ -160,33 +189,31 @@ export function run_writer_terminal<
   empty: Data<output, log>,
 ): readonly [item, Data<output, log>];
 /** Runs an effect containing only Writer lifts. */
-export function run_writer_terminal<
-  output extends MonoidDictionary<output>,
-  log,
-  item,
->(
-  effect: Effect<Lift<AsWriter<output, log>, unknown>, item>,
-  empty: Data<output, log>,
-): readonly [item, Data<output, log>];
+export function run_writer_terminal<requirements, item>(
+  effect: Effect<requirements, item>,
+  empty: TerminalWriterEmpty<requirements>,
+): readonly [item, WriterEmpty<requirements>];
 /** Runs a Writer value or an effect containing only Writer lifts. */
 export function run_writer_terminal<
+  requirements,
   output extends MonoidDictionary<output>,
   log,
   item,
 >(
   value:
     | WriterValue<output, log, item>
-    | Effect<Lift<AsWriter<output, log>, unknown>, item>,
-  empty: Data<output, log>,
+    | Effect<requirements, item>,
+  empty: Data<output, log> & TerminalWriterEmpty<requirements>,
 ): readonly [item, Data<output, log>];
 export function run_writer_terminal<
+  requirements,
   output extends MonoidDictionary<output>,
   log,
   item,
 >(
   effect:
     | WriterValue<output, log, item>
-    | Effect<Lift<AsWriter<output, log>, unknown>, item>,
+    | Effect<requirements, item>,
   empty: Data<output, log>,
 ): readonly [item, Data<output, log>] {
   if (is_data(effect)) {
