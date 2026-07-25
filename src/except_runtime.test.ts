@@ -1,12 +1,6 @@
 import { assert_equals, assert_true } from "./assert.ts";
-import {
-  Effect,
-  type EffectExit,
-  type Ensuring,
-  Program,
-  type Uses,
-} from "./effects.ts";
-import { Left, Right } from "./either.ts";
+import { Effect, type EffectExit, Program, type Uses } from "./effects.ts";
+import { type EitherValue, Left, Right } from "./either.ts";
 import {
   attempt,
   fail,
@@ -19,6 +13,55 @@ import { ask, type AsReader, run_reader } from "./reader.ts";
 import { type AsTask, from_fn, run_task, succeed } from "./task.ts";
 
 type Missing = readonly ["missing", string];
+type Invalid = readonly ["invalid", number];
+
+// Failures dispatch by tag, so one handler catches every `fail` in the program
+// whatever error it carries. Naming a single error type used to let the types
+// claim the others were still pending while the handler had already caught them
+// and mistyped them into the Either's left branch.
+Deno.test("run_except reports every error the program can raise", async () => {
+  const program = Program(function* () {
+    const value = yield* Effect.lift(succeed(1));
+
+    if (value > 0) {
+      yield* fail<Invalid>(["invalid", value]);
+    }
+
+    yield* fail<Missing>(["missing", "key"]);
+    return 0;
+  });
+
+  const handled = run_except(program);
+  const result = await run_task(handled);
+
+  // The left branch is the union of every error the program can raise, derived
+  // from the requirements rather than named at the call site.
+  expect_type<EitherValue<Missing | Invalid, number>>(result);
+  // @ts-expect-error the left branch cannot be narrowed to one of them
+  expect_type<EitherValue<Missing, number>>(result);
+
+  assert_equals(
+    result.value(),
+    Left<Missing | Invalid, number>(["invalid", 1]).value(),
+  );
+});
+
+Deno.test("run_except removes the failure capability entirely", () => {
+  const program = Program(function* () {
+    yield* fail<Invalid>(["invalid", 1]);
+    yield* fail<Missing>(["missing", "key"]);
+    return 0;
+  });
+
+  // Both failure types leave the requirements together, because the handler
+  // catches both. Neither may be reported as still pending, which is what the
+  // old `WithoutFails<requirements, error>` did for whichever one went unnamed.
+  expect_type<Effect<never, EitherValue<Missing | Invalid, number>>>(
+    run_except(program),
+  );
+});
+
+function expect_type<expected>(_value: expected): void {}
 
 Deno.test("run_except reports a successful program as a right branch", async () => {
   const program = Program(function* () {
@@ -26,7 +69,7 @@ Deno.test("run_except reports a successful program as a right branch", async () 
     return value + 1;
   });
 
-  const handled = run_except<Uses<AsTask>, Missing, number>(program);
+  const handled = run_except(program);
 
   assert_equals((await run_task(handled)).value(), Right(42).value());
 });
@@ -41,11 +84,7 @@ Deno.test("fail short-circuits the rest of the program", async () => {
     return yield* Effect.lift(succeed(1));
   });
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    number
-  >(program);
+  const handled = run_except(program);
   const result = await run_task(handled);
 
   assert_equals(
@@ -63,11 +102,7 @@ Deno.test("from_either routes a left branch into the failure channel", async () 
     return value + 1;
   });
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    number
-  >(program);
+  const handled = run_except(program);
 
   assert_equals(
     (await run_task(handled)).value(),
@@ -83,11 +118,7 @@ Deno.test("attempt converts a rejecting promise into a typed failure", async () 
     );
   });
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    never
-  >(program);
+  const handled = run_except(program);
   const raw = (await run_task(handled)).value();
 
   assert_equals(raw[0], "Left");
@@ -106,11 +137,7 @@ Deno.test("attempt keeps a resolving promise on the success path", async () => {
     return value + 1;
   });
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    number
-  >(program);
+  const handled = run_except(program);
 
   assert_equals((await run_task(handled)).value(), Right(42).value());
 });
@@ -121,7 +148,7 @@ Deno.test("recover replaces a failure with another program", async () => {
     return 0;
   });
 
-  const recovered = recover<Uses<AsTask> | Fails<Missing>, Missing, number>(
+  const recovered = recover(
     program,
     (error) => Effect.pure(error[1].length),
   );
@@ -144,11 +171,7 @@ Deno.test("a replacement that fails keeps the failure for the next handler", asy
       }),
   );
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    number
-  >(recovered);
+  const handled = run_except(recovered);
 
   assert_equals(
     (await run_task(handled)).value(),
@@ -161,7 +184,7 @@ Deno.test("recover leaves a successful program untouched", async () => {
     return yield* Effect.lift(succeed(42));
   });
 
-  const recovered = recover<Uses<AsTask>, Missing, number>(
+  const recovered = recover(
     program,
     () => Effect.pure(0),
   );
@@ -190,7 +213,7 @@ Deno.test("failures compose with other capabilities in one program", async () =>
     });
 
   const run = async (candidate: number) => {
-    const handled = run_except<App, Missing, number>(program(candidate));
+    const handled = run_except(program(candidate));
     return (await run_task(run_reader(handled, { minimum: 10 }))).value();
   };
 
@@ -213,11 +236,7 @@ Deno.test("a failure inside a protected scope still runs the finalizer", async (
     exits.push(exit);
   });
 
-  const handled = run_except<
-    Ensuring | Fails<Missing>,
-    Missing,
-    number
-  >(program);
+  const handled = run_except(program);
   const result = await run_task(handled);
 
   assert_equals(
@@ -238,11 +257,7 @@ Deno.test("a protected scope that succeeds still reports a successful exit", asy
     exits.push(exit);
   });
 
-  const handled = run_except<
-    Uses<AsTask> | Ensuring | Fails<Missing>,
-    Missing,
-    number
-  >(program);
+  const handled = run_except(program);
 
   assert_equals((await run_task(handled)).value(), Right(7).value());
   assert_equals(exits, [{ status: "succeeded" }]);
@@ -259,11 +274,7 @@ Deno.test("run_except handles deep chains without growing the JavaScript stack",
     effect = Effect.bind(effect, (value) => Effect.lift(succeed(value + 1)));
   }
 
-  const handled = run_except<
-    Uses<AsTask> | Fails<Missing>,
-    Missing,
-    number
-  >(effect);
+  const handled = run_except(effect);
 
   assert_equals((await run_task(handled)).value(), Right(20_000).value());
 });

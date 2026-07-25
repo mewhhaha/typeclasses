@@ -1,4 +1,4 @@
-import { ArrayT } from "./array.ts";
+import { ArrayT, type AsArray, to_array } from "./array.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import { Either } from "./either.ts";
 import {
@@ -11,9 +11,9 @@ import {
 import { fn } from "./fn.ts";
 import { Cons, Nil } from "./list.ts";
 import { Just, Maybe, Nothing } from "./maybe.ts";
-import { ask, run_reader, run_reader_terminal } from "./reader.ts";
+import { ask, reader, run_reader, run_reader_terminal } from "./reader.ts";
 import { get, put, run_state, run_state_terminal, state } from "./state.ts";
-import { run_writer, tell } from "./writer.ts";
+import { run_writer, tell, writer_cell } from "./writer.ts";
 import {
   type As,
   type Data,
@@ -78,6 +78,32 @@ function reader_and_state() {
 
 const counter = state<"counter", number>();
 const cursor = state<"cursor", string>();
+
+const config_cell = reader<"config", Config>();
+const database_cell = reader<"database", Database>();
+
+const audit = writer_cell<"audit", AsArray, string>();
+const metrics = writer_cell<"metrics", AsArray, number>();
+
+type TwoEnvironments = Uses<typeof config_cell> | Uses<typeof database_cell>;
+
+function two_environment_cells() {
+  return Program.scope<TwoEnvironments>()(function* () {
+    const config = yield* config_cell.ask();
+    const pool = yield* database_cell.asks((value) => value.pool);
+    return config.url + "/" + pool;
+  });
+}
+
+type TwoOutputs = Uses<typeof audit> | Uses<typeof metrics>;
+
+function two_output_cells() {
+  return Program.scope<TwoOutputs>()(function* () {
+    yield* audit.tell(ArrayT(["started"]));
+    yield* metrics.tell(ArrayT([1]));
+    return "done";
+  });
+}
 
 type TwoCells = Uses<typeof counter> | Uses<typeof cursor>;
 
@@ -266,6 +292,46 @@ Deno.test("a cell runner and the anonymous runner ignore each other", () => {
   assert_equals(run_state_terminal(counter, only_counter, 0), [5, 5] as const);
 });
 
+Deno.test("Reader cells answer two environments independently", () => {
+  const environment = { url: "https://example.test" };
+  const database = { pool: "main" };
+
+  assert_equals(
+    run(
+      run_reader(
+        database_cell,
+        run_reader(config_cell, two_environment_cells(), environment),
+        database,
+      ),
+    ),
+    "https://example.test/main",
+  );
+  assert_equals(
+    run(
+      run_reader(
+        config_cell,
+        run_reader(database_cell, two_environment_cells(), database),
+        environment,
+      ),
+    ),
+    "https://example.test/main",
+  );
+});
+
+Deno.test("Writer cells accumulate into separate Monoids", () => {
+  const [[value, audit_log], metric_log] = run(
+    run_writer(
+      metrics,
+      run_writer(audit, two_output_cells(), ArrayT<string>([])),
+      ArrayT<number>([]),
+    ),
+  );
+
+  assert_equals(value, "done");
+  assert_equals(to_array(audit_log), ["started"]);
+  assert_equals(to_array(metric_log), [1]);
+});
+
 Deno.test("a terminal cell runner names the cell it cannot discharge", () => {
   let message = "";
 
@@ -416,6 +482,50 @@ function check_state_cell_types(): void {
 
   // @ts-expect-error distinct keys give distinct cells
   expect_type<ReturnType<typeof counter.get>>(cursor.get());
+
+  check_reader_cell_types();
+  check_writer_cell_types();
+}
+
+function check_reader_cell_types(): void {
+  run_reader(config_cell, two_environment_cells(), { url: "a" });
+  // @ts-expect-error the config cell reads a Config
+  run_reader(config_cell, two_environment_cells(), { pool: "a" });
+
+  const config_handled = run_reader(config_cell, two_environment_cells(), {
+    url: "a",
+  });
+  expect_type<Effect<Uses<typeof database_cell>, string>>(config_handled);
+  // @ts-expect-error answering config must leave the database lift pending
+  expect_type<Effect<never, string>>(config_handled);
+
+  expect_type<Effect<never, string>>(
+    // @ts-expect-error the anonymous runner must not answer cell lifts
+    run_reader(two_environment_cells(), {} as never),
+  );
+
+  // @ts-expect-error the database lift is still pending
+  run_reader_terminal(config_cell, two_environment_cells(), { url: "a" });
+
+  // @ts-expect-error `string` is not a key
+  reader<string, Config>().ask();
+}
+
+function check_writer_cell_types(): void {
+  run_writer(audit, two_output_cells(), ArrayT<string>([]));
+  // @ts-expect-error the audit cell accumulates strings
+  run_writer(audit, two_output_cells(), ArrayT<number>([]));
+
+  const audit_handled = run_writer(
+    audit,
+    two_output_cells(),
+    ArrayT<string>([]),
+  );
+  // @ts-expect-error draining audit must leave the metrics lift pending
+  expect_type<Effect<never, readonly [string, unknown]>>(audit_handled);
+
+  // @ts-expect-error `string` is not a key
+  writer_cell<string, AsArray, string>().tell(ArrayT(["x"]));
 }
 
 void check_api_types;

@@ -19,6 +19,13 @@ import {
   type TaggedOperation,
 } from "./effects.ts";
 import { configured_dictionary } from "./internal.ts";
+import {
+  cell_dictionary,
+  type CellIdentity,
+  type NominalKey,
+  type WidenedCellKey,
+  type WithoutCell,
+} from "./cell.ts";
 import { inspect } from "./inspect.ts";
 import {
   Applicative,
@@ -115,6 +122,194 @@ export function tell<output extends MonoidDictionary<output>, log>(
   return writer(undefined, output);
 }
 
+/**
+ * A keyed Writer cell: its callable dictionary and the operations writing it.
+ *
+ * The operations live on the dictionary rather than in a wrapper type so that
+ * `typeof cell` is exactly the dictionary its values carry, which is what lets
+ * `Uses<typeof cell>` cancel against those values in `Program.scope`.
+ */
+export interface AsWriterCell<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+> extends
+  As<AsWriterCell<key, output, log>, CellIdentity<typeof writer_identity, key>>,
+  Show<AsWriterCell<key, output, log>>,
+  Monad<AsWriterCell<key, output, log>> {
+  /** The item produced by a cell value. */
+  readonly [type_item]: unknown;
+  /** The item and accumulated output represented by a cell value. */
+  readonly [type_data]: Writer<output, log, this[typeof type_item]>;
+  /** Wraps an item and its accumulated output. */
+  <item>(
+    value: Writer<output, log, item>,
+  ): WriterCellValue<key, output, log, item>;
+  /** Appends output to this cell without producing a meaningful item. */
+  tell(output: Data<output, log>): WriterCellValue<key, output, log, void>;
+  /** Pairs an item with output appended to this cell. */
+  write<item>(
+    value: item,
+    output: Data<output, log>,
+  ): WriterCellValue<key, output, log, item>;
+}
+
+/** A Writer pair wrapped with its cell's dictionary. */
+export type WriterCellValue<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+  item,
+> = WrappedData<
+  AsWriterCell<key, output, log>,
+  Writer<output, log, item>,
+  item
+>;
+
+/**
+ * Declares a keyed Writer cell.
+ *
+ * A cell has its own runtime kind and its own type identity, so it is drained
+ * by its own `run_writer` and is invisible to every other cell and to the
+ * anonymous `tell`. Name the cell, then give its output Monoid and log type:
+ *
+ * ```ts
+ * const audit = writer_cell<"audit", AsArray, string>();
+ * const metrics = writer_cell<"metrics", AsArray, number>();
+ * ```
+ *
+ * The key distinguishes cells accumulating into the same Monoid. It exists only
+ * in the type, so **declare each key exactly once**: two declarations sharing a
+ * key are one cell to the compiler and two at runtime, and the second one's
+ * lifts survive a handler the types said would discharge them. A key that is
+ * not a literal carries no identity at all and is rejected outright.
+ */
+export function writer_cell<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+>(): [NominalKey<key>] extends [never] ? WidenedCellKey
+  : AsWriterCell<key, output, log> {
+  return make_writer_cell() as [NominalKey<key>] extends [never]
+    ? WidenedCellKey
+    : AsWriterCell<key, output, log>;
+}
+
+function make_writer_cell<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+>(): AsWriterCell<key, output, log> {
+  const dictionary = cell_dictionary<AsWriterCell<key, output, log>>();
+
+  Object.defineProperties(dictionary, {
+    tell: {
+      value: (output: Data<output, log>) =>
+        wrap(undefined, output) as WriterCellValue<key, output, log, void>,
+    },
+    write: {
+      value: <item>(value: item, output: Data<output, log>) =>
+        wrap(value, output),
+    },
+  });
+
+  Show.instance(dictionary)({
+    show() {
+      const [value, output] = this.value();
+      return "Writer(" + inspect(value) + ", " +
+        inspect((output as Data<Dictionary, unknown>).value()) + ")";
+    },
+  });
+
+  Functor.instance(dictionary)({
+    map(fn) {
+      const [value, output] = this.value();
+      return wrap(fn(value), output);
+    },
+  });
+
+  Applicative.instance(dictionary)({
+    pure(value) {
+      const [_ignored, output] = (this as unknown as Data<
+        AsWriterCell<key, output, log>,
+        unknown
+      >).value();
+      return wrap(value, empty_output(output) as Data<output, log>);
+    },
+
+    [applicative_lift_method](fn, rest) {
+      const [first, output] = this.value();
+      const values = [first];
+      let combined_output = output;
+
+      for (const current of rest) {
+        const [value, next_output] = current.value();
+        values.push(value);
+        combined_output = concat_output(combined_output, next_output);
+      }
+
+      return wrap(fn(...values), combined_output);
+    },
+
+    ap(value) {
+      const [fn, left_output] = this.value();
+      const [item, right_output] = value.value();
+      return wrap(fn(item), concat_output(left_output, right_output));
+    },
+  });
+
+  Monad.instance(dictionary)({
+    bind(fn) {
+      const [value, left_output] = this.value();
+      const [item, right_output] = fn(value).value();
+      return wrap(item, concat_output(left_output, right_output));
+    },
+  });
+
+  return dictionary;
+
+  function wrap<item>(
+    value: item,
+    output: Data<output, log>,
+  ): WriterCellValue<key, output, log, item> {
+    return dictionary([value, output] as Writer<output, log, item>);
+  }
+}
+
+/** @ignore */
+export type WithoutWriterCell<requirements, key extends PropertyKey> =
+  WithoutCell<requirements, typeof writer_identity, key>;
+
+/**
+ * The empty output every lift of `key` in `requirements` accumulates into.
+ *
+ * One `run_writer` drains every operation addressed to its cell, so the
+ * accumulator has to satisfy all of them at once: each lift contributes a
+ * parameter position, so lifts writing into different Monoids under one key
+ * yield an intersection no value supplies. Lifts of other cells contribute
+ * nothing and stay pending.
+ */
+export type WriterCellEmpty<requirements, key extends PropertyKey> = (
+  requirements extends Lift<infer dictionary, infer _item>
+    ? dictionary[typeof type_identity] extends
+      CellIdentity<typeof writer_identity, key>
+      ? dictionary extends
+        { readonly [type_data]: readonly [unknown, infer empty] }
+        ? (empty: empty) => void
+      : never
+    : never
+    : never
+) extends (empty: infer empty) => void ? empty : unknown;
+
+/**
+ * The empty output a terminal cell run needs, or `never` when the effect still
+ * carries requirements that the terminal runner cannot discharge.
+ */
+export type TerminalWriterCellEmpty<requirements, key extends PropertyKey> =
+  [WithoutWriterCell<requirements, key>] extends [never]
+    ? WriterCellEmpty<requirements, key>
+    : never;
+
 /** @ignore */
 export type WithoutWriter<requirements> = requirements extends
   Lift<infer dictionary, infer _item>
@@ -150,8 +345,55 @@ export function run_writer<requirements, item>(
 ): Effect<
   WithoutWriter<requirements>,
   readonly [item, WriterEmpty<requirements>]
+>;
+/** Handles one cell's lifts from the supplied empty output value. */
+export function run_writer<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect: Effect<requirements, item>,
+  empty: NoInfer<Data<output, log>> & WriterCellEmpty<requirements, key>,
+): Effect<
+  WithoutWriterCell<requirements, key>,
+  readonly [item, Data<output, log> & WriterCellEmpty<requirements, key>]
+>;
+export function run_writer(
+  ...args:
+    | readonly [Effect<unknown, unknown>, unknown]
+    | readonly [
+      AsWriterCell<PropertyKey, Dictionary, unknown>,
+      Effect<unknown, unknown>,
+      unknown,
+    ]
+): Effect<unknown, unknown> {
+  if (args.length === 2) {
+    const [effect, empty] = args;
+
+    return run_writer_kind(effect, writer_kind, empty);
+  }
+
+  const [cell, effect, empty] = args;
+
+  return run_writer_kind(
+    effect,
+    cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+    empty,
+  );
+}
+
+function run_writer_kind<requirements, item>(
+  effect: Effect<requirements, item>,
+  runtime_kind: AsWriter<Dictionary, unknown>[typeof kind],
+  empty: WriterEmpty<requirements>,
+): Effect<
+  WithoutWriter<requirements>,
+  readonly [item, WriterEmpty<requirements>]
 > {
-  return handle_lift(effect, writer_kind, empty, {
+  return handle_lift(effect, runtime_kind, empty, {
     done(value, output) {
       return [value as item, output] as const;
     },

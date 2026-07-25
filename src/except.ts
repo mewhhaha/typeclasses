@@ -22,9 +22,21 @@ import { type AsTask, from_fn, type TaskOptions } from "./task.ts";
 export type Fails<error> = Operation<never> & readonly ["except.fail", error];
 
 /** Removes the failure capability from a requirement union. */
-export type WithoutFails<requirements, error> = requirements extends
-  Fails<error> ? never
+export type WithoutFails<requirements> = requirements extends Fails<unknown>
+  ? never
   : requirements;
+
+/**
+ * The error every failure in `requirements` can short-circuit with.
+ *
+ * Failures are dispatched by tag, so one handler catches every `fail` in the
+ * program regardless of the error type it carries. The handler *produces* that
+ * error rather than consuming it, so several failure types yield their union —
+ * the Either's left branch is whichever one actually fired.
+ */
+export type FailsError<requirements> = requirements extends Fails<infer error>
+  ? error
+  : never;
 
 /** Short-circuits the current program with `error`.
  *
@@ -115,19 +127,24 @@ export function attempt<error, item>(
  * `run_reader` and `run_state` in an interpreter chain:
  *
  * ```ts
- * const handled = run_except<App, Missing, number>(program);
+ * const handled = run_except(program);
  * const result = await run_task(run_reader(handled, config));
  * ```
  *
- * Name the program's whole error union: `run_except` catches every failure it
- * meets, and any `Fails` it does not name stays in the requirements.
+ * `run_except` catches every failure it meets, so it removes the whole failure
+ * capability and the left branch is the union of every error the program can
+ * raise. The error type is read off the requirements rather than named, so it
+ * cannot disagree with what the handler actually catches.
  */
-export function run_except<requirements, error, item>(
+export function run_except<requirements, item>(
   effect: Effect<requirements, item>,
-): Effect<WithoutFails<requirements, error>, EitherValue<error, item>> {
-  return handle_fails<error, item>(effect) as Effect<
-    WithoutFails<requirements, error>,
-    EitherValue<error, item>
+): Effect<
+  WithoutFails<requirements>,
+  EitherValue<FailsError<requirements>, item>
+> {
+  return handle_fails<FailsError<requirements>, item>(effect) as Effect<
+    WithoutFails<requirements>,
+    EitherValue<FailsError<requirements>, item>
   >;
 }
 
@@ -136,12 +153,12 @@ export function run_except<requirements, error, item>(
  * The replacement's own requirements join the result, so a replacement that can
  * fail keeps a `Fails` for the next handler to remove.
  */
-export function recover<requirements, error, item, replacement = never>(
+export function recover<requirements, item, replacement = never>(
   effect: Effect<requirements, item>,
-  on_error: (error: error) => Effect<replacement, item>,
-): Effect<WithoutFails<requirements, error> | replacement, item> {
+  on_error: (error: FailsError<requirements>) => Effect<replacement, item>,
+): Effect<WithoutFails<requirements> | replacement, item> {
   const recovered = bind(
-    handle_fails<error, item>(effect),
+    handle_fails<FailsError<requirements>, item>(effect),
     (outcome): Effect<replacement, item> => {
       const [branch, payload] = outcome.value();
 
@@ -155,7 +172,7 @@ export function recover<requirements, error, item, replacement = never>(
   );
 
   return recovered as Effect<
-    WithoutFails<requirements, error> | replacement,
+    WithoutFails<requirements> | replacement,
     item
   >;
 }

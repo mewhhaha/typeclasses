@@ -17,6 +17,13 @@ import {
   type LiftHandler,
 } from "./effects.ts";
 import {
+  cell_dictionary,
+  type CellIdentity,
+  type NominalKey,
+  type WidenedCellKey,
+  type WithoutCell,
+} from "./cell.ts";
+import {
   Applicative,
   applicative_lift_method,
   Functor,
@@ -84,6 +91,177 @@ export function local<outer, inner, item>(
   return Reader((environment: outer) => reader.value()(fn(environment)));
 }
 
+/**
+ * A keyed Reader cell: its callable dictionary and the operations reading it.
+ *
+ * The operations live on the dictionary rather than in a wrapper type so that
+ * `typeof cell` is exactly the dictionary its values carry, which is what lets
+ * `Uses<typeof cell>` cancel against those values in `Program.scope`.
+ */
+export interface AsReaderCell<key extends PropertyKey, environment> extends
+  As<
+    AsReaderCell<key, environment>,
+    CellIdentity<typeof reader_identity, key>
+  >,
+  Show<AsReaderCell<key, environment>>,
+  Monad<AsReaderCell<key, environment>> {
+  /** The item produced by a cell value. */
+  readonly [type_item]: unknown;
+  /** The environment-dependent computation represented by a cell value. */
+  readonly [type_data]: Reader<environment, this[typeof type_item]>;
+  /** Wraps a computation reading this cell. */
+  <item>(
+    value: Reader<environment, item>,
+  ): ReaderCellValue<key, environment, item>;
+  /** Reads this cell's environment. */
+  ask(): ReaderCellValue<key, environment, environment>;
+  /** Selects a value from this cell's environment. */
+  asks<item>(
+    fn: (environment: environment) => item,
+  ): ReaderCellValue<key, environment, item>;
+}
+
+/** A Reader computation wrapped with its cell's dictionary. */
+export type ReaderCellValue<key extends PropertyKey, environment, item> =
+  WrappedData<
+    AsReaderCell<key, environment>,
+    Reader<environment, item>,
+    item
+  >;
+
+/**
+ * Declares a keyed Reader cell.
+ *
+ * A cell has its own runtime kind and its own type identity, so it is answered
+ * by its own `run_reader` and is invisible to every other cell and to the
+ * anonymous `ask`/`asks` operations. Name the cell, then give its environment:
+ *
+ * ```ts
+ * const config = reader<"config", Config>();
+ * const database = reader<"database", Database>();
+ * ```
+ *
+ * The key distinguishes cells that read the same environment type. It exists
+ * only in the type, so **declare each key exactly once**: two declarations
+ * sharing a key are one cell to the compiler and two at runtime, and the second
+ * one's lifts survive a handler the types said would discharge them. A key that
+ * is not a literal carries no identity at all and is rejected outright.
+ */
+export function reader<key extends PropertyKey, environment>(): [
+  NominalKey<key>,
+] extends [never] ? WidenedCellKey : AsReaderCell<key, environment> {
+  return make_reader_cell() as [NominalKey<key>] extends [never]
+    ? WidenedCellKey
+    : AsReaderCell<key, environment>;
+}
+
+function make_reader_cell<key extends PropertyKey, environment>(): AsReaderCell<
+  key,
+  environment
+> {
+  const dictionary = cell_dictionary<AsReaderCell<key, environment>>();
+
+  Object.defineProperties(dictionary, {
+    ask: {
+      value: () => wrap((environment: environment) => environment),
+    },
+    asks: {
+      value: <item>(fn: (environment: environment) => item) => wrap(fn),
+    },
+  });
+
+  Show.instance(dictionary)({
+    show() {
+      return "Reader(?)";
+    },
+  });
+
+  Functor.instance(dictionary)({
+    map(fn) {
+      const read = this.value();
+
+      return wrap((environment: environment) => fn(read(environment)));
+    },
+  });
+
+  Applicative.instance(dictionary)({
+    pure(value) {
+      return wrap(() => value);
+    },
+
+    [applicative_lift_method](fn, rest) {
+      const first = this.value();
+      const reads = rest.map((current) => current.value());
+
+      return wrap((environment: environment) =>
+        fn(first(environment), ...reads.map((read) => read(environment)))
+      );
+    },
+
+    ap(value) {
+      const read = this.value();
+      const applied = value.value();
+
+      return wrap((environment: environment) =>
+        read(environment)(applied(environment))
+      );
+    },
+  });
+
+  Monad.instance(dictionary)({
+    bind(fn) {
+      const read = this.value();
+
+      return wrap((environment: environment) =>
+        fn(read(environment)).value()(environment)
+      );
+    },
+  });
+
+  return dictionary;
+
+  function wrap<item>(
+    value: Reader<environment, item>,
+  ): ReaderCellValue<key, environment, item> {
+    return dictionary(value);
+  }
+}
+
+/** @ignore */
+export type WithoutReaderCell<requirements, key extends PropertyKey> =
+  WithoutCell<requirements, typeof reader_identity, key>;
+
+/**
+ * The environment every lift of `key` in `requirements` reads.
+ *
+ * One `run_reader` answers every operation addressed to its cell, so the
+ * environment has to satisfy all of them at once: each lift contributes a
+ * parameter position, so several asks against one cell yield their
+ * intersection. Lifts of other cells contribute nothing and stay pending.
+ */
+export type ReaderCellEnvironment<requirements, key extends PropertyKey> = (
+  requirements extends Lift<infer dictionary, infer _item>
+    ? dictionary[typeof type_identity] extends
+      CellIdentity<typeof reader_identity, key>
+      ? dictionary extends
+        { readonly [type_data]: (environment: infer environment) => unknown }
+        ? (environment: environment) => void
+      : never
+    : never
+    : never
+) extends (environment: infer environment) => void ? environment : unknown;
+
+/**
+ * The environment a terminal cell run needs, or `never` when the effect still
+ * carries requirements that the terminal runner cannot discharge.
+ */
+export type TerminalReaderCellEnvironment<
+  requirements,
+  key extends PropertyKey,
+> = [WithoutReaderCell<requirements, key>] extends [never]
+  ? ReaderCellEnvironment<requirements, key>
+  : never;
+
 /** @ignore */
 export type WithoutReader<requirements> = requirements extends
   Lift<infer dictionary, infer _item>
@@ -115,18 +293,46 @@ export type ReaderEnvironment<requirements> = (
 export function run_reader<requirements, item>(
   effect: Effect<requirements, item>,
   environment: ReaderEnvironment<requirements>,
-): Effect<WithoutReader<requirements>, item> {
+): Effect<WithoutReader<requirements>, item>;
+/** Handles one cell's lifts with the supplied environment. */
+export function run_reader<
+  key extends PropertyKey,
+  environment,
+  requirements,
+  item,
+>(
+  cell: AsReaderCell<key, environment>,
+  effect: Effect<requirements, item>,
+  value: NoInfer<environment> & ReaderCellEnvironment<requirements, key>,
+): Effect<WithoutReaderCell<requirements, key>, item>;
+export function run_reader(
+  ...args:
+    | readonly [Effect<unknown, unknown>, unknown]
+    | readonly [
+      AsReaderCell<PropertyKey, unknown>,
+      Effect<unknown, unknown>,
+      unknown,
+    ]
+): Effect<unknown, unknown> {
+  if (args.length === 2) {
+    const [effect, environment] = args;
+
+    return handle_lift(
+      effect,
+      reader_kind,
+      environment,
+      reader_lift_handler,
+    );
+  }
+
+  const [cell, effect, environment] = args;
+
   return handle_lift(
     effect,
-    reader_kind,
+    cell[kind] as AsReader<unknown>[typeof kind],
     environment,
-    reader_lift_handler as LiftHandler<
-      AsReader<unknown>,
-      ReaderEnvironment<requirements>,
-      item,
-      item
-    >,
-  ) as Effect<WithoutReader<requirements>, item>;
+    reader_lift_handler,
+  );
 }
 
 /**
@@ -155,31 +361,75 @@ export function run_reader_terminal<requirements, environment, item>(
     | Effect<requirements, item>,
   environment: environment & TerminalReaderEnvironment<requirements>,
 ): item;
-export function run_reader_terminal<requirements, environment, item>(
+/** Runs one cell value. */
+export function run_reader_terminal<key extends PropertyKey, environment, item>(
+  cell: AsReaderCell<key, environment>,
+  reader: ReaderCellValue<key, environment, item>,
+  value: environment,
+): item;
+/** Runs an effect whose only remaining lifts address `cell`. */
+export function run_reader_terminal<
+  key extends PropertyKey,
+  environment,
+  requirements,
+  item,
+>(
+  cell: AsReaderCell<key, environment>,
+  effect: Effect<requirements, item>,
+  value:
+    & NoInfer<environment>
+    & TerminalReaderCellEnvironment<requirements, key>,
+): item;
+export function run_reader_terminal(
+  ...args:
+    | readonly [
+      ReaderValue<unknown, unknown> | Effect<unknown, unknown>,
+      unknown,
+    ]
+    | readonly [
+      AsReaderCell<PropertyKey, unknown>,
+      | ReaderCellValue<PropertyKey, unknown, unknown>
+      | Effect<unknown, unknown>,
+      unknown,
+    ]
+): unknown {
+  if (args.length === 2) {
+    const [effect, environment] = args;
+
+    return run_reader_kind(effect, reader_kind, environment);
+  }
+
+  const [cell, effect, environment] = args;
+
+  return run_reader_kind(
+    effect,
+    cell[kind] as AsReader<unknown>[typeof kind],
+    environment,
+  );
+}
+
+function run_reader_kind(
   effect:
-    | ReaderValue<environment, item>
-    | Effect<requirements, item>,
-  environment: environment,
-): item {
+    | ReaderValue<unknown, unknown>
+    | ReaderCellValue<PropertyKey, unknown, unknown>
+    | Effect<unknown, unknown>,
+  runtime_kind: AsReader<unknown>[typeof kind],
+  environment: unknown,
+): unknown {
   if (is_data(effect)) {
-    if ((effect as Data<AsReader<unknown>, unknown>)[kind] !== reader_kind) {
+    if ((effect as Data<AsReader<unknown>, unknown>)[kind] !== runtime_kind) {
       throw new TypeError("Unhandled effect operation: lift");
     }
 
-    return (effect as ReaderValue<environment, item>).value()(environment);
+    return (effect as ReaderValue<unknown, unknown>).value()(environment);
   }
 
   return handle_lift_terminal(
-    effect as Effect<Lift<AsReader<unknown>, unknown>, item>,
-    reader_kind,
+    effect as Effect<Lift<AsReader<unknown>, unknown>, unknown>,
+    runtime_kind,
     environment,
-    reader_lift_handler as LiftHandler<
-      AsReader<unknown>,
-      unknown,
-      item,
-      item
-    >,
-  ) as item;
+    reader_lift_handler,
+  );
 }
 
 const reader_lift_handler: LiftHandler<

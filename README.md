@@ -1479,6 +1479,32 @@ Effects use `run_reader` when Reader is one capability inside a larger program:
 const without_reader = run_reader(program, config);
 ```
 
+#### Reader cells
+
+`ask` addresses one anonymous environment, so a program asking for a `Config`
+and a `Database` needs one value satisfying both. When the two are genuinely
+separate, declare a cell for each and answer them independently:
+
+```ts
+const config = reader<"config", Config>();
+const database = reader<"database", Database>();
+
+const program = Program.scope<Uses<typeof config> | Uses<typeof database>>()(
+  function* () {
+    const url = yield* config.asks((value) => value.url);
+    const pool = yield* database.asks((value) => value.pool);
+
+    return url + "/" + pool;
+  },
+);
+
+run(run_reader(database, run_reader(config, program, config_value), db_value));
+```
+
+Cells follow the same rules as [State cells](#state-cells): the key names the
+cell, a key that is not a literal is rejected, and each key must be declared
+exactly once.
+
 ### State
 
 ```hs
@@ -1592,6 +1618,40 @@ log without requiring a dummy Writer value. The unconfigured `Writer` export
 remains useful for `writer`, `tell`, and effect handlers where an output value
 already supplies its `Monoid`.
 
+#### Writer cells
+
+`tell` accumulates into one anonymous log, so a program writing strings and
+numbers has no single accumulator to drain into. Declare a cell per output and
+drain each separately:
+
+```ts
+const audit = writer_cell<"audit", AsArray, string>();
+const metrics = writer_cell<"metrics", AsArray, number>();
+
+const program = Program.scope<Uses<typeof audit> | Uses<typeof metrics>>()(
+  function* () {
+    yield* audit.tell(ArrayT(["started"]));
+    yield* metrics.tell(ArrayT([1]));
+
+    return "done";
+  },
+);
+
+const [[value, audit_log], metric_log] = run(
+  run_writer(
+    metrics,
+    run_writer(audit, program, ArrayT<string>([])),
+    ArrayT<number>([]),
+  ),
+);
+```
+
+Note that `Writer.with` and a cell solve different problems: `Writer.with`
+captures a Monoid identity so `pure` works on a standalone Writer, and
+deliberately shares the base dictionary's runtime kind. A cell mints its own,
+which is what gives it a separate handler. Cells follow the same rules as
+[State cells](#state-cells).
+
 ### Effects Instead of Transformers
 
 Haskell often reaches for transformer stacks such as
@@ -1672,13 +1732,14 @@ const program = App(function* () {
   return config.port;
 });
 
-const handled = run_except<App, Missing, number>(program);
+const handled = run_except(program);
 const result = await run_task(run_reader(handled, config));
 ```
 
-Name the program's whole error union in `run_except`. It catches every failure
-it meets, so a `Fails` left out of the union stays in the requirements and the
-next handler rejects the program.
+`run_except` catches every failure it meets, so it removes the whole failure
+capability at once and the left branch is the union of every error the program
+can raise. Both are read off the requirements rather than named, so they cannot
+disagree with what the handler actually catches.
 
 `fail` never resumes, so the statements after it do not run and
 `yield* fail(...)` type-checks in any position. `Task` reports rejection as an
