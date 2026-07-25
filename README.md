@@ -1501,6 +1501,52 @@ const counter = Do(function* () {
 counter.run(40); // [40, 42]
 ```
 
+#### State cells
+
+`get` and `put` address one anonymous cell, so a program that reads a `number`
+and a `string` is rejected: a single `run_state` handles every State lift, and
+one value cannot be both. When a program needs several independent slots,
+declare a cell for each. A cell has its own handler and its own initial value:
+
+```ts
+const total = state<"total", number>();
+const label = state<"label", string>();
+
+const program = Program.scope<Uses<typeof total> | Uses<typeof label>>()(
+  function* () {
+    const before = yield* total.get();
+
+    yield* total.modify((value) => value * 2);
+    yield* label.put("counted");
+
+    return before;
+  },
+);
+
+run(run_state(label, run_state(total, program, 20), ""));
+// [[20, 40], "counted"]
+```
+
+Each handler removes only its own cell's lifts and passes the others through, so
+the two compose in either order. The results nest, one pair per handler.
+
+The key names the cell so that two cells holding the same state type stay
+distinct — without it, every `number` cell would be one type. A key that is not
+a literal carries no identity, so `state<string, number>()` is rejected at the
+declaration.
+
+**Declare each key exactly once.** The key exists only in the type, so there is
+nothing to derive a runtime identity from and every `state` call mints a fresh
+one. Two declarations sharing a key are therefore one cell to the compiler and
+two at runtime: a handler the types say discharges both leaves the second one's
+lifts pending, and the terminal `run` throws. This is the one rule the compiler
+cannot check for you.
+
+Cells are invisible to `get`/`put` and vice versa, so both styles can coexist in
+one program. Note that `run_state(cell, …)` is not rewritten by the source
+transformer, so cell programs use the general `Effect` path rather than a fused
+terminal runner.
+
 ### Writer
 
 ```hs

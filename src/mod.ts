@@ -9,6 +9,7 @@ export * from "./fn.ts";
 export * from "./tuple.ts";
 export * from "./list.ts";
 export * from "./task.ts";
+export * from "./cell.ts";
 export * from "./reader.ts";
 export * from "./state.ts";
 export * from "./writer.ts";

@@ -12,7 +12,7 @@ import { fn } from "./fn.ts";
 import { Cons, Nil } from "./list.ts";
 import { Just, Maybe, Nothing } from "./maybe.ts";
 import { ask, run_reader, run_reader_terminal } from "./reader.ts";
-import { get, put, run_state, run_state_terminal } from "./state.ts";
+import { get, put, run_state, run_state_terminal, state } from "./state.ts";
 import { run_writer, tell } from "./writer.ts";
 import {
   type As,
@@ -73,6 +73,29 @@ function reader_and_state() {
     const total = yield* get<number>();
     yield* put<number>(total + 1);
     return config.url + total;
+  });
+}
+
+const counter = state<"counter", number>();
+const cursor = state<"cursor", string>();
+
+type TwoCells = Uses<typeof counter> | Uses<typeof cursor>;
+
+function two_cells() {
+  return Program.scope<TwoCells>()(function* () {
+    const total = yield* counter.get();
+    const label = yield* cursor.get();
+    yield* cursor.put(label + "!");
+    yield* counter.modify((value) => value + 1);
+    return label + ":" + total.toString();
+  });
+}
+
+function cell_and_reader() {
+  return Program(function* () {
+    const config = yield* ask<Config>();
+    const total = yield* counter.get();
+    return config.url + total.toString();
   });
 }
 
@@ -204,6 +227,57 @@ Deno.test("handling one dictionary leaves the other's lifts pending", () => {
   );
 });
 
+Deno.test("each cell is handled by its own runner, in either order", () => {
+  assert_equals(
+    run(run_state(cursor, run_state(counter, two_cells(), 10), "x")),
+    [["x:10", 11], "x!"] as const,
+  );
+  assert_equals(
+    run(run_state(counter, run_state(cursor, two_cells(), "x"), 10)),
+    [["x:10", "x!"], 11] as const,
+  );
+});
+
+Deno.test("a cell holds no initial value, so one program runs from many", () => {
+  assert_equals(
+    run(run_state(cursor, run_state(counter, two_cells(), 1), "a")),
+    [["a:1", 2], "a!"] as const,
+  );
+  assert_equals(
+    run(run_state(cursor, run_state(counter, two_cells(), 99), "z")),
+    [["z:99", 100], "z!"] as const,
+  );
+});
+
+Deno.test("a cell runner and the anonymous runner ignore each other", () => {
+  const anonymous = Program(function* () {
+    const value = yield* get<number>();
+    yield* put(value + 1);
+    return value;
+  });
+
+  assert_equals(run(run_state(anonymous, 41)), [41, 42] as const);
+
+  const only_counter = Program(function* () {
+    yield* counter.put(5);
+    return yield* counter.get();
+  });
+
+  assert_equals(run_state_terminal(counter, only_counter, 0), [5, 5] as const);
+});
+
+Deno.test("a terminal cell runner names the cell it cannot discharge", () => {
+  let message = "";
+
+  try {
+    run_state_terminal(counter, cursor.get() as never, 0);
+  } catch (error) {
+    message = (error as Error).message;
+  }
+
+  assert_equals(message, "Unhandled effect operation: lift");
+});
+
 Deno.test("the prelude module is safe to import dynamically", async () => {
   const prelude = await import("./prelude.ts");
 
@@ -287,6 +361,61 @@ function check_effect_handler_types(): void {
   run_reader_terminal(reader_and_state(), { url: "a" });
   // @ts-expect-error a terminal runner cannot discharge another dictionary
   run_state_terminal(reader_and_state(), 1);
+
+  check_state_cell_types();
+}
+
+// A cell carries its key in both worlds at once: as a `unique symbol` type the
+// compiler can tell apart, and as the runtime kind its lifts are stamped with.
+// Neither can drift from the other, so a handler removes exactly its own cell's
+// lifts — where the anonymous `State` removes every State lift there is.
+function check_state_cell_types(): void {
+  run_state(counter, two_cells(), 0);
+  // @ts-expect-error the counter cell holds a number
+  run_state(counter, two_cells(), "nope");
+  // @ts-expect-error the cursor cell holds a string
+  run_state(cursor, two_cells(), 0);
+
+  const counter_handled = run_state(counter, two_cells(), 0);
+  expect_type<Effect<Uses<typeof cursor>, readonly [string, number]>>(
+    counter_handled,
+  );
+  // @ts-expect-error handling counter must leave the cursor lift pending
+  expect_type<Effect<never, readonly [string, number]>>(counter_handled);
+
+  expect_type<Effect<never, readonly [string, never]>>(
+    // @ts-expect-error the anonymous runner must not discharge cell lifts
+    run_state(two_cells(), 0 as never),
+  );
+
+  const anonymous = Program(function* () {
+    return yield* get<number>();
+  });
+  expect_type<Effect<never, readonly [number, number]>>(
+    // @ts-expect-error a cell runner must not discharge anonymous State lifts
+    run_state(counter, anonymous, 0),
+  );
+
+  // @ts-expect-error the cursor lift is still pending
+  run_state_terminal(counter, two_cells(), 0);
+
+  expect_type<Effect<never, readonly [string, number]>>(
+    // @ts-expect-error handling a cell must leave the Reader lift pending
+    run_state(counter, cell_and_reader(), 0),
+  );
+
+  // A key that is not a literal carries no identity, so every cell declared
+  // that way would share one type over distinct runtime symbols — the compiler
+  // believing two cells were one. Rejected at the declaration instead.
+  // @ts-expect-error `string` is not a key
+  state<string, number>().get();
+  // @ts-expect-error `symbol` is not a key
+  state<symbol, number>().get();
+  // @ts-expect-error `PropertyKey` is not a key
+  state<PropertyKey, number>().get();
+
+  // @ts-expect-error distinct keys give distinct cells
+  expect_type<ReturnType<typeof counter.get>>(cursor.get());
 }
 
 void check_api_types;

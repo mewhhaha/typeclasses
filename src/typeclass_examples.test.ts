@@ -108,6 +108,7 @@ import {
   run_state,
   run_state_terminal,
   State,
+  state,
 } from "./state.ts";
 import {
   type AsWriter,
@@ -924,6 +925,57 @@ Deno.test("State monad threads state through Do", () => {
   assert_equals(eval_state(counter, 20), { before: 20, after: 43 });
   assert_equals(exec_state(counter, 20), 42);
   assert_equals(counter.show(), "State(?)");
+});
+
+Deno.test("State cells give each slot its own handler", () => {
+  const total = state<"total", number>();
+  const label = state<"label", string>();
+
+  const program = Program.scope<Uses<typeof total> | Uses<typeof label>>()(
+    function* () {
+      const before = yield* total.get();
+
+      yield* total.modify((value) => value * 2);
+      yield* label.put("counted");
+
+      const after = yield* total.gets((value) => value + 1);
+
+      return { before, after };
+    },
+  );
+
+  assert_equals(
+    run(run_state(label, run_state(total, program, 20), "")),
+    [[{ before: 20, after: 41 }, 40], "counted"] as const,
+  );
+
+  // The same program from a different starting point: a cell names a slot, it
+  // does not carry a value.
+  assert_equals(
+    run(run_state(label, run_state(total, program, 1), "start")),
+    [[{ before: 1, after: 3 }, 2], "counted"] as const,
+  );
+
+  assert_equals(total.get().show(), "State(?)");
+});
+
+Deno.test("a State cell is a Monad in its own right", () => {
+  const slot = state<"slot", number>();
+
+  const doubled = Do(function* () {
+    const before = yield* slot.get();
+
+    yield* slot.put(before + 1);
+
+    return before * 2;
+  });
+
+  assert_equals(doubled.run(20), [40, 21]);
+  assert_equals(run_state_terminal(slot, doubled, 20), [40, 21]);
+  assert_equals(
+    slot.get().map((value) => value + 1).value()(5),
+    [6, 5],
+  );
 });
 
 Deno.test("Writer monad accumulates logs through Do", () => {
