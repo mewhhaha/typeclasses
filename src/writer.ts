@@ -447,30 +447,74 @@ export function run_writer_terminal<
     | Effect<requirements, item>,
   empty: Data<output, log> & TerminalWriterEmpty<requirements>,
 ): readonly [item, Data<output, log>];
+/** Runs one cell value. */
 export function run_writer_terminal<
-  requirements,
+  key extends PropertyKey,
   output extends MonoidDictionary<output>,
   log,
   item,
 >(
-  effect:
-    | WriterValue<output, log, item>
-    | Effect<requirements, item>,
+  cell: AsWriterCell<key, output, log>,
+  writer: WriterCellValue<key, output, log, item>,
   empty: Data<output, log>,
-): readonly [item, Data<output, log>] {
+): readonly [item, Data<output, log>];
+/** Runs an effect whose only remaining lifts address `cell`. */
+export function run_writer_terminal<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect: Effect<requirements, item>,
+  empty:
+    & NoInfer<Data<output, log>>
+    & TerminalWriterCellEmpty<requirements, key>,
+): readonly [item, Data<output, log>];
+export function run_writer_terminal(
+  ...args: readonly unknown[]
+): readonly [unknown, Data<Dictionary, unknown>] {
+  const [effect, empty, runtime_kind] = args.length === 2
+    ? [args[0], args[1], writer_kind] as const
+    : [
+      args[1],
+      args[2],
+      (args[0] as AsWriterCell<PropertyKey, Dictionary, unknown>)[kind],
+    ] as const;
+
+  return run_writer_terminal_kind(
+    effect as Effect<unknown, unknown>,
+    runtime_kind as AsWriter<Dictionary, unknown>[typeof kind],
+    empty as Data<Dictionary, unknown>,
+  );
+}
+
+function run_writer_terminal_kind(
+  effect: Effect<unknown, unknown>,
+  runtime_kind: AsWriter<Dictionary, unknown>[typeof kind],
+  empty: Data<Dictionary, unknown>,
+): readonly [unknown, Data<Dictionary, unknown>] {
+  type output = Dictionary;
+  type log = unknown;
+  type item = unknown;
+
   if (is_data(effect)) {
     if (
       (effect as unknown as Data<AsWriter<Dictionary, unknown>, unknown>)[
         kind
       ] !==
-        writer_kind
+        runtime_kind
     ) {
       throw new TypeError("Unhandled effect operation: lift");
     }
 
-    const [value, next_output] = (effect as WriterValue<output, log, item>)
-      .value();
-    return [value, empty.concat(next_output)];
+    const [value, next_output] = (effect as unknown as WriterValue<
+      output,
+      log,
+      item
+    >).value();
+    return [value, concat_output(empty, next_output)];
   }
 
   let current = effect as Effect<
@@ -494,14 +538,14 @@ export function run_writer_terminal<
 
     const operation = current[1];
 
-    if (!is_lift_of(operation, writer_kind)) {
+    if (!is_lift_of(operation, runtime_kind)) {
       throw new TypeError(
         "Unhandled effect operation: " + (operation as TaggedOperation)[0],
       );
     }
 
     const [value, next_output] = operation[1].value();
-    current_output = current_output.concat(next_output);
+    current_output = concat_output(current_output, next_output);
     current = current[2](value) as Effect<
       Lift<AsWriter<output, log>, unknown>,
       unknown

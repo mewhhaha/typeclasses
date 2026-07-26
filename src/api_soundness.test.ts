@@ -13,7 +13,12 @@ import { Cons, Nil } from "./list.ts";
 import { Just, Maybe, Nothing } from "./maybe.ts";
 import { ask, reader, run_reader, run_reader_terminal } from "./reader.ts";
 import { get, put, run_state, run_state_terminal, state } from "./state.ts";
-import { run_writer, tell, writer_cell } from "./writer.ts";
+import {
+  run_writer,
+  run_writer_terminal,
+  tell,
+  writer_cell,
+} from "./writer.ts";
 import {
   type As,
   type Data,
@@ -332,6 +337,57 @@ Deno.test("Writer cells accumulate into separate Monoids", () => {
   assert_equals(to_array(metric_log), [1]);
 });
 
+Deno.test("every cell family composes in one program", () => {
+  const mixed = Program(function* () {
+    const config = yield* config_cell.ask();
+    const total = yield* counter.get();
+
+    yield* audit.tell(ArrayT([config.url]));
+    yield* counter.put(total + 1);
+
+    return config.url + ":" + total.toString();
+  });
+
+  const [[value, final], log] = run(
+    run_writer(
+      audit,
+      run_state(counter, run_reader(config_cell, mixed, { url: "u" }), 5),
+      ArrayT<string>([]),
+    ),
+  );
+
+  assert_equals(value, "u:5");
+  assert_equals(final, 6);
+  assert_equals(to_array(log), ["u"]);
+});
+
+Deno.test("terminal cell runners exist for every cell family", () => {
+  const state_only = Program(function* () {
+    return yield* counter.get();
+  });
+  const reader_only = Program(function* () {
+    return yield* config_cell.asks((value) => value.url);
+  });
+  const writer_only = Program(function* () {
+    yield* audit.tell(ArrayT(["entry"]));
+    return "done";
+  });
+
+  assert_equals(run_state_terminal(counter, state_only, 7), [7, 7] as const);
+  assert_equals(
+    run_reader_terminal(config_cell, reader_only, { url: "u" }),
+    "u",
+  );
+
+  const [value, log] = run_writer_terminal(
+    audit,
+    writer_only,
+    ArrayT<string>([]),
+  );
+  assert_equals(value, "done");
+  assert_equals(to_array(log), ["entry"]);
+});
+
 Deno.test("a terminal cell runner names the cell it cannot discharge", () => {
   let message = "";
 
@@ -521,8 +577,14 @@ function check_writer_cell_types(): void {
     two_output_cells(),
     ArrayT<string>([]),
   );
+  expect_type<Effect<Uses<typeof metrics>, readonly [string, unknown]>>(
+    audit_handled,
+  );
   // @ts-expect-error draining audit must leave the metrics lift pending
   expect_type<Effect<never, readonly [string, unknown]>>(audit_handled);
+
+  // @ts-expect-error the metrics lift is still pending
+  run_writer_terminal(audit, two_output_cells(), ArrayT<string>([]));
 
   // @ts-expect-error `string` is not a key
   writer_cell<string, AsArray, string>().tell(ArrayT(["x"]));

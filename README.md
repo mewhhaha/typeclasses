@@ -1498,7 +1498,14 @@ const program = Program.scope<Uses<typeof config> | Uses<typeof database>>()(
   },
 );
 
-run(run_reader(database, run_reader(config, program, config_value), db_value));
+run(
+  run_reader(
+    database,
+    run_reader(config, program, { url: "https://example.test" }),
+    { pool: "main" },
+  ),
+);
+// "https://example.test/main"
 ```
 
 Cells follow the same rules as [State cells](#state-cells): the key names the

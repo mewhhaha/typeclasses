@@ -30,19 +30,11 @@ export function is_kind_of<dictionary extends Dictionary>(
     (value as Dictionary)[kind] === dictionary[kind];
 }
 
-/** Give a dictionary an explicit runtime kind. */
-export function retag_dictionary<dictionary extends Dictionary>(
-  dictionary: dictionary,
-  runtime_kind: dictionary[typeof kind],
-): dictionary {
-  Object.defineProperty(dictionary, kind, { value: runtime_kind });
-  return dictionary;
-}
-
 /** Retag a configured dictionary so it shares its base dictionary's runtime kind. */
 export function configured_dictionary<
   base extends Dictionary,
   configured extends Dictionary,
 >(base: base, dictionary: configured): configured {
-  return retag_dictionary(dictionary, base[kind] as configured[typeof kind]);
+  Object.defineProperty(dictionary, kind, { value: base[kind] });
+  return dictionary;
 }
