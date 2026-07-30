@@ -19,6 +19,7 @@ const expected_entrypoints: Readonly<Record<string, readonly string[]>> = {
   "./predicate": ["Predicate", "predicate", "test"],
   "./task": ["Task", "from_fn", "succeed"],
   "./effects": ["Effect", "Program", "run"],
+  "./quickcheck": ["Gen", "check", "check_effect"],
   "./except": ["fail", "recover", "run_except"],
   "./parallel": ["create_worker_pool", "worker_map"],
   "./stm": ["Stm", "atomically", "new_tvar"],

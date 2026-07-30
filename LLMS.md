@@ -1456,6 +1456,72 @@ For a new typeclass instance, test:
 Use independently known expected values. Do not copy the implementation's fold
 or comparison algorithm into the assertion.
 
+### Check broad invariants with QuickCheck
+
+Import the dependency-free property checker from its focused entrypoint:
+
+```ts
+import { check, integer_arbitrary } from "@mewhhaha/typeclasses/quickcheck";
+
+check({
+  arbitrary: integer_arbitrary(),
+  seed: 42,
+  iterations: 500,
+  property: (value) => value + 0 === value,
+});
+```
+
+Use example-based tests for precise domain scenarios and property tests for
+invariants over a broad input space. A property passes by returning `true` or
+`void`; it fails by returning `false` or throwing. A `PropertyFailure` reports
+the failing case's seed, size, original input, shrunk counterexample, and shrink
+count. Replay it with one iteration, the reported `seed`, and
+`start_size: failure.size`.
+
+`Gen` implements `Monad`, so use normal fluent composition or `Do` when later
+generated values depend on earlier ones:
+
+```ts
+const route = Do(Gen, function* () {
+  const method = yield* element(["GET", "POST"] as const);
+  const id = yield* integer({ min: 1, max: 1_000 });
+
+  return { method, path: "/read/" + id.toString() };
+});
+```
+
+Use `integer_arbitrary`, `boolean_arbitrary`, `string_arbitrary`,
+`array_arbitrary`, `maybe_arbitrary`, `either_arbitrary`, and `list_arbitrary`
+before writing a domain-specific generator. `pair_arbitrary` and
+`triple_arbitrary` compose inputs and shrink one component at a time. Use
+`map_arbitrary` with forward and reverse conversions to construct a domain type
+without losing its source shrinker.
+
+For custom dictionaries, run the applicable `functor_laws`, `applicative_laws`,
+`monad_laws`, `eq_laws`, and `ord_laws` with `check_laws`. These supplement
+behavior tests; laws do not prove that an instance has the intended domain
+meaning.
+
+Use `check_async` for promise-returning properties. For a `Program`, use
+`check_effect` and provide an interpreter that runs the generated program
+through controlled handlers:
+
+```ts
+await check_effect({
+  arbitrary: integer_arbitrary({ min: 0 }),
+  property: (subtotal_cents) => price_never_decreases(subtotal_cents),
+  run: (effect) =>
+    run(run_reader(effect, {
+      basis_points: 2_300,
+    })),
+});
+```
+
+Do not add a randomness operation to production effect requirements just to
+generate test inputs. Keep `Gen` deterministic and outside the program; use the
+supplied interpreter to control Reader services, State, Writer output, clocks,
+or custom effects.
+
 ## Defining a data type or instance
 
 Before adding a new wrapper, inspect one neighboring source module with a
@@ -1501,6 +1567,8 @@ Read these files when a pattern is unclear:
 - `examples/keyed_cells.ts` for several independent Reader, State, and Writer
   cells in one program.
 - `examples/matching.ts` for exhaustive standalone and fluent tagged matching.
+- `examples/quickcheck.ts` for generator `Do` and property-checking an effect
+  under a Reader handler.
 - `examples/stm_coordination.ts` for local admission, rollback, and fallback.
 - `case_studies/http_router/` for declarative routing into effectful pages.
 - `case_studies/cloudflare_crud_worker/` for request-wide routing and custom

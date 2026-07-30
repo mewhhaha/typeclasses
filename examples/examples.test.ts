@@ -4,6 +4,7 @@ import { choose_coordinates, resolve_endpoint } from "./do_contexts.ts";
 import { run_instrumented_effect_scenario } from "./instrumented_effects.ts";
 import { run_keyed_cell_scenario } from "./keyed_cells.ts";
 import { run_matching_scenario } from "./matching.ts";
+import { run_quickcheck_scenario } from "./quickcheck.ts";
 import { run_stm_coordination_scenario } from "./stm_coordination.ts";
 import {
   type Account,
@@ -63,6 +64,16 @@ Deno.test("match handles custom unions and wrapped values exhaustively", () => {
     ],
     maybe: "value 42",
     either: ["ok: 42", "error: invalid port"],
+  });
+});
+
+Deno.test("QuickCheck generates inputs and interprets effectful properties", async () => {
+  const result = await run_quickcheck_scenario();
+
+  assert_equals(result.generated_requests.length, 4);
+  assert_equals(result.report, {
+    seed: 42,
+    iterations: 100,
   });
 });
 

@@ -251,6 +251,8 @@ entrypoints let applications and build tools import only the domain they need:
   `/predicate`, `/list`, and `/tagged` for data values.
 - `/task`, `/effects`, `/except`, `/reader`, `/state`, `/writer`, `/stm`, and
   `/parallel` for effectful programs.
+- `/quickcheck` for deterministic generators, shrinking, property checks, and
+  reusable typeclass laws.
 - `/loop` for stack-safe tail loops.
 - `/transform` and `/transform/plugin` for the source transformer and bundler
   adapters.
@@ -2152,6 +2154,110 @@ Entries are added one typeclass at a time next to the implementation.
 exists, installs the collision-free symbol slot, and copies direct fluent
 aliases onto the dictionary.
 
+## Property Checking
+
+The optional, dependency-free `/quickcheck` entrypoint generates reproducible
+inputs, shrinks failures, and checks common typeclass laws. Use example-based
+tests for named domain cases and properties for invariants that should hold over
+many values.
+
+`Gen` is a regular `Monad`, so fluent methods and `Do` compose dependent
+generators:
+
+```ts
+import { Do } from "@mewhhaha/typeclasses";
+import {
+  element,
+  Gen,
+  integer,
+  sample,
+} from "@mewhhaha/typeclasses/quickcheck";
+
+const request = Do(Gen, function* () {
+  const method = yield* element(["GET", "POST"] as const);
+  const id = yield* integer({ min: 1, max: 1_000 });
+
+  return { method, path: "/read/" + id.toString() };
+});
+
+sample(request, { seed: 42, count: 5 });
+```
+
+A `Gen<item>` only creates values. An `Arbitrary<item>` adds a shrinker, which
+lets `check` reduce a failing input toward a smaller counterexample:
+
+```ts
+import { check, integer_arbitrary } from "@mewhhaha/typeclasses/quickcheck";
+
+check({
+  arbitrary: integer_arbitrary(),
+  seed: 42,
+  iterations: 500,
+  property: (value) => value + 0 === value,
+});
+```
+
+A property passes when it returns `true` or `void`. Returning `false` or
+throwing produces `PropertyFailure`, including the generated case's `seed`,
+`size`, original value, smallest counterexample found, and shrink count. Replay
+that exact case with `iterations: 1`, the reported `seed`, and
+`start_size: failure.size`.
+
+The module includes arbitraries for integers, booleans, strings, arrays,
+`Maybe`, `Either`, and `List`, plus pair and triple combinators. Build a domain
+arbitrary from those pieces with `map_arbitrary`; its reverse conversion keeps
+shrinking available. Do not put randomness inside production code.
+
+For a custom instance, combine its domain behavior tests with the reusable
+Functor, Applicative, Monad, Eq, and Ord law collections:
+
+```ts
+import {
+  arbitrary,
+  check_laws,
+  element,
+  functor_laws,
+  integer_arbitrary,
+  maybe_arbitrary,
+} from "@mewhhaha/typeclasses/quickcheck";
+
+const values = maybe_arbitrary(integer_arbitrary());
+const functions = arbitrary(element([
+  (value: number) => value,
+  (value: number) => value + 1,
+  (value: number) => -value,
+]));
+
+check_laws(
+  functor_laws({
+    values,
+    functions,
+    equals: (left, right) => left.eq(right),
+  }),
+  { seed: 42 },
+);
+```
+
+Use `check_async` for promises. Use `check_effect` for `Effect` programs and
+provide the interpreter explicitly; the property describes the program while the
+test controls Reader services, State, Writer output, clocks, or custom
+operations through handlers:
+
+```ts
+await check_effect({
+  arbitrary: integer_arbitrary({ min: 0 }),
+  property: (subtotal_cents) => price_never_decreases(subtotal_cents),
+  run: (effect) =>
+    run(run_reader(effect, {
+      basis_points: 2_300,
+    })),
+});
+```
+
+This keeps generation pure and deterministic. Randomness is test input, not an
+implicit effect capability, and effect properties are checked under the same
+handlers used by ordinary tests.
+
 ## Examples
 
 Focused repository examples live in `examples/` and progress from individual
@@ -2178,6 +2284,9 @@ operations to application-shaped workflows:
 - [`examples/matching.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/matching.ts)
   demonstrates exhaustive standalone and fluent matching for custom unions,
   `Maybe`, and `Either`.
+- [`examples/quickcheck.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/quickcheck.ts)
+  composes generators with `Do` and checks an effectful property under a Reader
+  test handler.
 - [`examples/task_workflow.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/task_workflow.ts)
   starts independent request branches together, fans out account-dependent calls
   as soon as their input arrives, and recovers an optional-service failure.
