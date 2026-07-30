@@ -28,53 +28,6 @@ export type HttpProblem =
   | readonly ["method_not_allowed", { readonly method: string }]
   | readonly ["storage_failed", { readonly message: string }];
 
-export type Route =
-  | readonly ["list"]
-  | readonly ["create"]
-  | readonly ["read", { readonly id: string }]
-  | readonly ["update", { readonly id: string }]
-  | readonly ["delete", { readonly id: string }]
-  | readonly ["missing", { readonly path: string }]
-  | readonly ["method_not_allowed", { readonly method: string }];
-
-export function parse_route(request: Request): Route {
-  const url = new URL(request.url);
-  const parts = url.pathname.split("/").filter((part) => part.length > 0);
-
-  if (parts[0] !== "todos") {
-    return ["missing", { path: url.pathname }];
-  }
-
-  if (parts.length === 1) {
-    switch (request.method) {
-      case "GET":
-        return ["list"];
-      case "POST":
-        return ["create"];
-      default:
-        return ["method_not_allowed", { method: request.method }];
-    }
-  }
-
-  if (parts.length === 2) {
-    const id = decodeURIComponent(parts[1]);
-
-    switch (request.method) {
-      case "GET":
-        return ["read", { id }];
-      case "PATCH":
-      case "PUT":
-        return ["update", { id }];
-      case "DELETE":
-        return ["delete", { id }];
-      default:
-        return ["method_not_allowed", { method: request.method }];
-    }
-  }
-
-  return ["missing", { path: url.pathname }];
-}
-
 export function decode_create(value: unknown): TodoCreate | HttpProblem {
   if (!is_record(value)) {
     return bad_input("expected a JSON object");

@@ -1,5 +1,8 @@
 import { assert_equals, assert_true } from "../src/assert.ts";
 import { price_order } from "./composable_functions.ts";
+import { choose_coordinates, resolve_endpoint } from "./do_contexts.ts";
+import { run_instrumented_effect_scenario } from "./instrumented_effects.ts";
+import { run_keyed_cell_scenario } from "./keyed_cells.ts";
 import { run_stm_coordination_scenario } from "./stm_coordination.ts";
 import {
   type Account,
@@ -9,6 +12,46 @@ import {
 } from "./task_workflow.ts";
 import { decode_registration_request } from "./validated_request.ts";
 import { analyze_log_shard } from "./worker_pool_job.ts";
+
+Deno.test("Maybe Do stops endpoint decoding when a field is absent", () => {
+  assert_equals(
+    resolve_endpoint({ host: "localhost" }).value(),
+    ["Nothing"] as const,
+  );
+});
+
+Deno.test("List Do expands choices that depend on an earlier branch", () => {
+  assert_equals(choose_coordinates(), [
+    { row: 1, column: "left" },
+    { row: 1, column: "right" },
+    { row: 2, column: "center" },
+  ]);
+});
+
+Deno.test("an instrumentation handler wraps a stock operation with tracing", () => {
+  assert_equals(run_instrumented_effect_scenario(), {
+    status: {
+      sku: "sku-42",
+      quantity: 3,
+      available: true,
+    },
+    trace: [
+      "stock.lookup.start sku=sku-42",
+      "stock.lookup.finish sku=sku-42",
+    ],
+  });
+});
+
+Deno.test("keyed cells keep Reader, State, and Writer values independent", () => {
+  assert_equals(run_keyed_cell_scenario(), {
+    endpoint: "https://api.example.test/todos/42",
+    previous_request_count: 7,
+    request_count: 8,
+    last_route: "/todos/42",
+    audit: ["request request-42"],
+    metrics: [1],
+  });
+});
 
 Deno.test("registration decoding normalizes an accepted request", () => {
   const form = new FormData();

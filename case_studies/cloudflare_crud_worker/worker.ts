@@ -12,6 +12,7 @@ import {
   run_database,
 } from "./database.ts";
 import { crud_program } from "./program.ts";
+import { router_trace_scope, run_router } from "./router.ts";
 import {
   console_trace_sink,
   run_trace_scopes,
@@ -58,10 +59,11 @@ export function handle_request(
   }
 
   return Effect.interpret(crud_program)
-    .handle((effect) => run_reader(effect, context))
     .handle((effect) => run_clock(effect, read_now))
-    .handle((effect) => run_trace_scopes(effect, database_trace_scope))
+    .handle((effect) => run_trace_scopes(effect, application_trace_scope))
     .handle((effect) => run_trace_with_sink(effect, trace_sink))
+    .handle(run_router)
+    .handle((effect) => run_reader(effect, context))
     .handle((effect) => run_database(effect, database))
     .run(run_task);
 }
@@ -75,10 +77,11 @@ export async function handle_request_with_trace_log(
   const read_now = clock_from_options(options);
   const empty_trace = ArrayT<string>([]);
   const [response, trace] = await Effect.interpret(crud_program)
-    .handle((effect) => run_reader(effect, context))
     .handle((effect) => run_clock(effect, read_now))
-    .handle((effect) => run_trace_scopes(effect, database_trace_scope))
+    .handle((effect) => run_trace_scopes(effect, application_trace_scope))
     .handle(run_trace_to_writer)
+    .handle(run_router)
+    .handle((effect) => run_reader(effect, context))
     .handle((effect) => run_database(effect, database))
     .handle((effect) => run_writer(effect, empty_trace))
     .run(run_task);
@@ -87,6 +90,10 @@ export async function handle_request_with_trace_log(
     response,
     trace: to_array(trace),
   };
+}
+
+function application_trace_scope(operation: unknown) {
+  return router_trace_scope(operation) ?? database_trace_scope(operation);
 }
 
 function request_context(

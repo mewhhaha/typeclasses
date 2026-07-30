@@ -14,12 +14,12 @@ import {
   update_todo,
 } from "./database.ts";
 import { json_response, no_content, problem_response } from "./response.ts";
+import { parse_route, type Router } from "./router.ts";
 import { type Trace, trace_event } from "./trace.ts";
 import {
   decode_create,
   decode_patch,
   type HttpProblem,
-  parse_route,
   type RequestContext,
   type TodoCreate,
   type TodoPatch,
@@ -29,6 +29,7 @@ export type CrudApp =
   | Uses<AsReader<RequestContext>>
   | Uses<AsTask>
   | Database
+  | Router
   | Trace
   | Clock;
 
@@ -45,7 +46,7 @@ export const crud_program = CrudApp(function* () {
     path: url.pathname,
   });
 
-  const response = yield* route_request(context);
+  const response = yield* route_response(context);
 
   yield* trace_event("http.request.finish", {
     request_id: context.request_id,
@@ -57,28 +58,35 @@ export const crud_program = CrudApp(function* () {
   return response;
 });
 
-function route_request(context: RequestContext) {
+function route_response(context: RequestContext) {
   return CrudApp(function* () {
-    const request = context.request;
-    const [tag, payload] = parse_route(request);
+    const [path, params] = yield* parse_route();
 
-    switch (tag) {
-      case "list":
-        return yield* list_response(context);
-      case "create":
+    switch (path) {
+      case "/todos": {
+        if (params.method === "GET") {
+          return yield* list_response(context);
+        }
+
         return yield* create_response(context);
-      case "read":
-        return yield* read_response(context, payload.id);
-      case "update":
-        return yield* update_response(context, payload.id);
-      case "delete":
-        return yield* delete_response(context, payload.id);
+      }
+      case "/todos/:id": {
+        if (params.method === "GET") {
+          return yield* read_response(context, params.id);
+        }
+
+        if (params.method === "DELETE") {
+          return yield* delete_response(context, params.id);
+        }
+
+        return yield* update_response(context, params.id);
+      }
       case "missing":
-        return problem_response(["not_found", { path: payload.path }]);
+        return problem_response(["not_found", { path: params.path }]);
       case "method_not_allowed":
         return problem_response([
           "method_not_allowed",
-          { method: payload.method },
+          { method: params.method },
         ]);
     }
   });

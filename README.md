@@ -2143,6 +2143,9 @@ operations to application-shaped workflows:
 - [`examples/monads.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/monads.ts)
   shows `Do` with `Reader`, `State`, `Task`, `Stm`, and fail-fast decoding with
   `Either`.
+- [`examples/do_contexts.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/do_contexts.ts)
+  contrasts `Do` semantics across `Maybe` short-circuiting and dependent `List`
+  branching.
 - [`examples/task_workflow.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/task_workflow.ts)
   starts independent request branches together, fans out account-dependent calls
   as soon as their input arrives, and recovers an optional-service failure.
@@ -2154,6 +2157,9 @@ operations to application-shaped workflows:
   overflow queues with rollback on full queues.
 - [`examples/effects.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/effects.ts)
   composes `Reader`, `State`, `Writer`, and `Task` with `Program`.
+- [`examples/instrumented_effects.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/instrumented_effects.ts)
+  wraps a custom stock operation with tracing in an effect-transforming handler,
+  then interprets those trace operations through `Writer`.
 - [`examples/custom_typeclass.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/custom_typeclass.ts)
   shows extending a data type with a local typeclass.
 
