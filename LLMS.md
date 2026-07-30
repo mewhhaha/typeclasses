@@ -109,6 +109,50 @@ Use `Left.is`, `Right.is`, `Nothing.is`, `Just.is`, `Invalid.is`, or `Valid.is`
 when only one branch needs special handling. These guards operate on the raw
 value returned by `.value()`.
 
+Use `match` when every branch contributes to one expression. It accepts either a
+raw tagged tuple or a wrapped value, and its case record must cover every tag:
+
+```ts
+import { match } from "@mewhhaha/typeclasses/tagged";
+
+type ProfileLookup =
+  | readonly ["found", { readonly id: string; readonly name: string }]
+  | readonly ["missing"]
+  | readonly ["forbidden", { readonly reason: string }];
+
+function describe_profile(profile: ProfileLookup): string {
+  return match(profile, {
+    found: ({ id, name }) => id + ": " + name,
+    missing: () => "profile not found",
+    forbidden: ({ reason }) => "forbidden: " + reason,
+  });
+}
+```
+
+Wrapped `Maybe`, `Either`, `Validation`, and `List` values expose the same
+operation fluently:
+
+```ts
+const label = Right<string, number>(42).match({
+  Left: (message) => "error: " + message,
+  Right: (value) => "value: " + value.toString(),
+});
+
+const optional_label = Just(41)
+  .map((value) => value + 1)
+  .match({
+    Just: (value) => "value: " + value.toString(),
+    Nothing: () => "missing",
+  });
+```
+
+Case names come from the tuple tags, payloadless branches receive no argument,
+and payload branches receive the tuple's second element. Prefer `match` for a
+small exhaustive expression, a constructor guard when only one branch is
+special, and a `switch` when branches contain substantial control flow or
+several statements. Non-tagged wrappers such as `Task` and `Fn` do not support
+fluent matching.
+
 ## Pick a calling style deliberately
 
 For a concrete value, prefer the fluent methods carried by that value:
@@ -1456,6 +1500,7 @@ Read these files when a pattern is unclear:
   instrumentation.
 - `examples/keyed_cells.ts` for several independent Reader, State, and Writer
   cells in one program.
+- `examples/matching.ts` for exhaustive standalone and fluent tagged matching.
 - `examples/stm_coordination.ts` for local admission, rollback, and fallback.
 - `case_studies/http_router/` for declarative routing into effectful pages.
 - `case_studies/cloudflare_crud_worker/` for request-wide routing and custom

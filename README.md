@@ -2175,6 +2175,9 @@ operations to application-shaped workflows:
 - [`examples/do_contexts.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/do_contexts.ts)
   contrasts `Do` semantics across `Maybe` short-circuiting and dependent `List`
   branching.
+- [`examples/matching.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/matching.ts)
+  demonstrates exhaustive standalone and fluent matching for custom unions,
+  `Maybe`, and `Either`.
 - [`examples/task_workflow.ts`](https://github.com/mewhhaha/typeclasses/blob/main/examples/task_workflow.ts)
   starts independent request branches together, fans out account-dependent calls
   as soon as their input arrives, and recovers an optional-service failure.

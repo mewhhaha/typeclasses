@@ -3,6 +3,7 @@ import { price_order } from "./composable_functions.ts";
 import { choose_coordinates, resolve_endpoint } from "./do_contexts.ts";
 import { run_instrumented_effect_scenario } from "./instrumented_effects.ts";
 import { run_keyed_cell_scenario } from "./keyed_cells.ts";
+import { run_matching_scenario } from "./matching.ts";
 import { run_stm_coordination_scenario } from "./stm_coordination.ts";
 import {
   type Account,
@@ -50,6 +51,18 @@ Deno.test("keyed cells keep Reader, State, and Writer values independent", () =>
     last_route: "/todos/42",
     audit: ["request request-42"],
     metrics: [1],
+  });
+});
+
+Deno.test("match handles custom unions and wrapped values exhaustively", () => {
+  assert_equals(run_matching_scenario(), {
+    custom_union: [
+      "profile-42: Ada",
+      "profile not found",
+      "forbidden: private profile",
+    ],
+    maybe: "value 42",
+    either: ["ok: 42", "error: invalid port"],
   });
 });
 
