@@ -28,10 +28,10 @@ export function analyze_sources(
   files: readonly SourceFile[],
   options: AnalyzeSourcesOptions = {},
 ): Effect<AnalyzeSources, readonly AnalyzeResult[]> {
-  return Effect.send([
+  return Effect.send<AnalyzeSources>([
     "parallel_analyzer.analyze_sources",
     { files, workers: options.workers },
-  ] as AnalyzeSources);
+  ]);
 }
 
 export function run_analyze_sources_with_workers<requirements, item>(

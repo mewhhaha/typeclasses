@@ -1190,7 +1190,7 @@ Deno.test("Terminal lift runners match composable lift handlers", () => {
   assert_equals(observe_writer_order(true), ["concat", "resume"]);
 
   type Custom = EffectOperation<number> & readonly ["terminal.custom"];
-  const custom = Effect.send(["terminal.custom"] as Custom);
+  const custom = Effect.send<Custom>(["terminal.custom"]);
   const terminal_runners = [
     () => run_reader_terminal(custom as never, 0),
     () => run_state_terminal(custom as never, 0),
@@ -1265,9 +1265,8 @@ Deno.test("Terminal lift runners match composable lift handlers", () => {
 });
 
 Deno.test("Effects allow new capabilities without changing the core", () => {
-  type ClockNow =
-    & EffectOperation<number>
-    & readonly ["clock.now"];
+  const clock_now = Effect.operation<number>()(["clock.now"]);
+  type ClockNow = typeof clock_now;
   type WithoutClock<requirements> = requirements extends readonly [
     "clock.now",
     ...readonly unknown[],
@@ -1275,7 +1274,7 @@ Deno.test("Effects allow new capabilities without changing the core", () => {
     : requirements;
 
   function now(): Effect<ClockNow, number> {
-    return Effect.send(["clock.now"] as ClockNow);
+    return Effect.send(clock_now);
   }
 
   function run_clock<requirements, item>(

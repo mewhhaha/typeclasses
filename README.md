@@ -1707,6 +1707,35 @@ straight-line `Program` bodies step by step. Composable
 `run_reader`/`run_state`/`run_writer` calls keep their existing behavior, while
 unsupported terminal shapes fall back to the general `Effect` path.
 
+### Custom operations
+
+An operation's output is a phantom type: the tagged tuple has no runtime field
+from which TypeScript could infer what an interpreter will eventually return.
+Declare that output once with `Effect.operation`, then `Effect.send` preserves
+it without a type assertion:
+
+```ts
+const Clock = Effect.operation<string>()(["clock.now"]);
+
+type Clock = typeof Clock;
+
+function now() {
+  return Effect.send(Clock);
+}
+```
+
+When an operation carries a payload constructed at each call, supplying the
+operation type explicitly is also cast-free:
+
+```ts
+function read_todo(id: string): Effect<ReadTodo, DatabaseResult<Todo>> {
+  return Effect.send<ReadTodo>(["database.read_todo", { id }]);
+}
+```
+
+`satisfies ReadTodo` checks structural compatibility but does not attach the
+optional phantom output property for later inference.
+
 ### Typed Failure
 
 Haskell reaches for `ExceptT` when a program can stop early with a typed error:

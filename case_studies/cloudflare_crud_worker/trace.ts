@@ -50,7 +50,7 @@ export function trace_event(
   name: string,
   attributes: TraceAttributes = {},
 ): Effect<TraceEvent, void> {
-  return Effect.send(["trace.event", { name, attributes }] as TraceEvent);
+  return Effect.send<TraceEvent>(["trace.event", { name, attributes }]);
 }
 
 export function run_trace_scopes<requirements, item>(

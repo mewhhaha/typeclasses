@@ -107,7 +107,7 @@ export function parallel_map<input, output>(
   inputs: readonly input[],
   options: ParallelOptions = {},
 ): Effect<ParallelMap<input, output>, readonly output[]> {
-  return Effect.send([
+  return Effect.send<ParallelMap<input, output>>([
     "parallel.map",
     {
       worker: worker_href(worker),
@@ -115,7 +115,7 @@ export function parallel_map<input, output>(
       workers: options.workers,
       signal: options.signal,
     },
-  ] as ParallelMap<input, output>);
+  ]);
 }
 
 /** Creates a deferred Task that maps inputs with temporary workers. */

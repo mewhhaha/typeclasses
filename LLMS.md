@@ -771,14 +771,12 @@ type Route =
   | readonly ["/read/:id", { readonly id: string }]
   | readonly ["missing", { readonly path: string }];
 
-type ParseRoute =
-  & Operation<Route>
-  & readonly ["router.parse_route"];
+const Router = Effect.operation<Route>()(["router.parse_route"]);
 
-type Router = ParseRoute;
+type Router = typeof Router;
 
-function parse_route(): Effect<ParseRoute, Route> {
-  return Effect.send(["router.parse_route"] as ParseRoute);
+function parse_route() {
+  return Effect.send(Router);
 }
 ```
 
@@ -955,26 +953,24 @@ examples include:
   implementations.
 - Parallel analysis interpreted by one-shot workers or a reusable pool.
 
-A custom operation is a tagged tuple intersected with `Operation<output>`.
-Construct it with `Effect.send`:
+A custom operation is a tagged tuple with a phantom output type. Declare the
+tuple and its output together with `Effect.operation`, then suspend it with
+`Effect.send`:
 
 ```ts
 import {
   Effect,
-  type Operation,
   Program,
   run,
   type TaggedOperation,
 } from "@mewhhaha/typeclasses/effects";
 
-type Now =
-  & Operation<string>
-  & readonly ["clock.now"];
+const Clock = Effect.operation<string>()(["clock.now"]);
 
-type Clock = Now;
+type Clock = typeof Clock;
 
-function now(): Effect<Now, string> {
-  return Effect.send(["clock.now"] as Now);
+function now() {
+  return Effect.send(Clock);
 }
 
 type WithoutClock<requirements> = requirements extends Clock ? never
@@ -1012,6 +1008,21 @@ const result = Effect.interpret(
   run_clock(timestamped, () => "2026-01-02T03:04:05.000Z"),
 ).run(run);
 ```
+
+The raw tuple cannot determine its interpreter's eventual output, so that type
+must be declared once. `Effect.operation<item>()` retains it on the tuple and
+lets every later `Effect.send` infer it without an assertion. For an operation
+whose payload is constructed at each call, an explicit operation argument is
+also cast-free:
+
+```ts
+function read_todo(id: string): Effect<ReadTodo, DatabaseResult<Todo>> {
+  return Effect.send<ReadTodo>(["crud.database.read", { id }]);
+}
+```
+
+`satisfies ReadTodo` only checks that a tuple is structurally compatible. It
+does not attach the optional phantom output type for `Effect.send` inference.
 
 A handler walks the effect, consumes the operations it owns, resumes the
 continuation with their output, and suspends every unknown operation unchanged.

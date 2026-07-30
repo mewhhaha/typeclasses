@@ -22,6 +22,15 @@ export type TaggedOperation<tag extends string = string> =
   | readonly [tag]
   | readonly [tag, unknown];
 
+/** Gives a tagged tuple an operation output type without changing its value. */
+export function operation<item>(): <
+  const tagged extends TaggedOperation,
+>(
+  tagged: tagged,
+) => tagged & Operation<item> {
+  return (tagged) => tagged;
+}
+
 /** An operation that lifts a dictionary value into an effect program. */
 export type Lift<dictionary extends Dictionary, item> =
   & Operation<item>
@@ -231,6 +240,7 @@ export const Program = Object.assign(program, {
 
 /** @ignore */
 export type EffectConstructors = {
+  readonly operation: typeof operation;
   readonly pure: typeof pure;
   readonly from: typeof from;
   readonly lift: typeof lift;
@@ -252,6 +262,7 @@ export type EffectConstructors = {
  * See https://github.com/mewhhaha/typeclasses/issues/5.
  */
 export const Effect: EffectConstructors = {
+  operation,
   pure,
   from,
   lift,

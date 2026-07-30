@@ -44,14 +44,14 @@ type WithoutFileSystem<requirements> = requirements extends FileSystem ? never
 export function read_file(
   path: string,
 ): Effect<ReadFile, FileSystemResult<string>> {
-  return Effect.send(["fs.read_file", { path }] as ReadFile);
+  return Effect.send<ReadFile>(["fs.read_file", { path }]);
 }
 
 export function write_file(
   path: string,
   text: string,
 ): Effect<WriteFile, FileSystemResult<void>> {
-  return Effect.send(["fs.write_file", { path, text }] as WriteFile);
+  return Effect.send<WriteFile>(["fs.write_file", { path, text }]);
 }
 
 export function run_file_system<requirements, item>(

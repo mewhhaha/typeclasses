@@ -79,11 +79,11 @@ export function run_instrumented_effect_examples() {
 }
 
 function lookup_stock(sku: string): Effect<StockLookup, number> {
-  return Effect.send(["stock.lookup", { sku }] as StockLookup);
+  return Effect.send<StockLookup>(["stock.lookup", { sku }]);
 }
 
 function trace(message: string): Effect<TraceRecord, void> {
-  return Effect.send(["trace.record", { message }] as TraceRecord);
+  return Effect.send<TraceRecord>(["trace.record", { message }]);
 }
 
 function instrument_stock_operations<requirements, item>(

@@ -33,6 +33,21 @@ Deno.test("Effect frames remain ordered when bind introduces another operation",
   assert_equals(await run_task(result), 43);
 });
 
+Deno.test("operation builders preserve phantom output inference", () => {
+  const ReadAnswer = Effect.operation<number>()(["test.read_answer"]);
+  const requested: Effect<typeof ReadAnswer, number> = Effect.send(ReadAnswer);
+  const doubled = Effect.map(requested, (answer) => answer * 2);
+
+  assert_equals(doubled[0], "impure");
+
+  if (doubled[0] === "pure") {
+    throw new Error("expected the read operation to remain suspended");
+  }
+
+  assert_equals(doubled[1], ["test.read_answer"]);
+  assert_equals(doubled[2](21)[1], 42);
+});
+
 Deno.test("Effect ensuring finalizes a Program when a lifted Task rejects", async () => {
   const exits: EffectExit[] = [];
   const program = Program(function* () {

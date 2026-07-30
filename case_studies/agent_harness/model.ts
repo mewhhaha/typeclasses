@@ -24,7 +24,7 @@ type WithoutLanguageModel<requirements> = requirements extends LanguageModel
 export function complete(
   messages: readonly AgentMessage[],
 ): Effect<Complete, ModelAction> {
-  return Effect.send(["model.complete", { messages }] as Complete);
+  return Effect.send<Complete>(["model.complete", { messages }]);
 }
 
 export function run_language_model<requirements, item>(

@@ -93,23 +93,23 @@ export function list_todos(): Effect<
   ListTodos,
   DatabaseResult<readonly Todo[]>
 > {
-  return Effect.send(["crud.database.list"] as ListTodos);
+  return Effect.send<ListTodos>(["crud.database.list"]);
 }
 
 export function create_todo(
   input: TodoCreate,
   now: string,
 ): Effect<CreateTodo, DatabaseResult<Todo>> {
-  return Effect.send([
+  return Effect.send<CreateTodo>([
     "crud.database.create",
     { input, now },
-  ] as CreateTodo);
+  ]);
 }
 
 export function read_todo(
   id: string,
 ): Effect<ReadTodo, DatabaseResult<Todo>> {
-  return Effect.send(["crud.database.read", { id }] as ReadTodo);
+  return Effect.send<ReadTodo>(["crud.database.read", { id }]);
 }
 
 export function update_todo(
@@ -117,16 +117,16 @@ export function update_todo(
   patch: TodoPatch,
   now: string,
 ): Effect<UpdateTodo, DatabaseResult<Todo>> {
-  return Effect.send([
+  return Effect.send<UpdateTodo>([
     "crud.database.update",
     { id, patch, now },
-  ] as UpdateTodo);
+  ]);
 }
 
 export function delete_todo(
   id: string,
 ): Effect<DeleteTodo, DatabaseResult<Todo>> {
-  return Effect.send(["crud.database.delete", { id }] as DeleteTodo);
+  return Effect.send<DeleteTodo>(["crud.database.delete", { id }]);
 }
 
 export function database_trace_scope(

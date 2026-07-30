@@ -1,20 +1,14 @@
-import {
-  Effect,
-  type Operation,
-  type TaggedOperation,
-} from "../../src/effects.ts";
+import { Effect, type TaggedOperation } from "../../src/effects.ts";
 
-export type Now =
-  & Operation<string>
-  & readonly ["clock.now"];
+const Clock = Effect.operation<string>()(["clock.now"]);
 
-export type Clock = Now;
+export type Clock = typeof Clock;
 
 type WithoutClock<requirements> = requirements extends Clock ? never
   : requirements;
 
-export function now(): Effect<Now, string> {
-  return Effect.send(["clock.now"] as Now);
+export function now() {
+  return Effect.send(Clock);
 }
 
 export function run_clock<requirements, item>(

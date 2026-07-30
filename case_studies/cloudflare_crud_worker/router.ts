@@ -1,9 +1,4 @@
-import {
-  Effect,
-  type Operation,
-  type TaggedOperation,
-  type Uses,
-} from "../../src/effects.ts";
+import { Effect, type TaggedOperation, type Uses } from "../../src/effects.ts";
 import { ask, type AsReader } from "../../src/reader.ts";
 import type { TraceScope } from "./trace.ts";
 import type { RequestContext } from "./types.ts";
@@ -20,17 +15,15 @@ export type Route =
   | readonly ["missing", { readonly path: string }]
   | readonly ["method_not_allowed", { readonly method: string }];
 
-type ParseRoute =
-  & Operation<Route>
-  & readonly ["router.parse_route"];
+const Router = Effect.operation<Route>()(["router.parse_route"]);
 
-export type Router = ParseRoute;
+export type Router = typeof Router;
 
 type WithoutRouter<requirements> = requirements extends Router ? never
   : requirements;
 
-export function parse_route(): Effect<ParseRoute, Route> {
-  return Effect.send(["router.parse_route"] as ParseRoute);
+export function parse_route() {
+  return Effect.send(Router);
 }
 
 export function router_trace_scope(
