@@ -933,11 +933,11 @@ runtime identities should not use the source transform for those calls.
 
 Supported generator control flow includes `if`, non-fallthrough `switch`,
 classic `for`, `while`, `do/while`, and `for...of`, including unlabeled
-`break`/`continue`. Iterables in `for...of` are materialized once. An explicit
-dictionary `Do` can lower `try/catch` through `MonadError.catch_error`;
-`Program` try/catch remains diagnosed until an Effect-level error handler
-exists. Labeled jumps, switch fallthrough, `for await`, and `try/finally` stay
-unsupported.
+`break`/`continue`. Iterables in `for...of` are materialized once. `Do` and
+`Program` generators containing `try/catch` are diagnosed and left unchanged
+because the syntax-only transformer cannot preserve both JavaScript exceptions
+and dictionary-specific monadic errors. Labeled jumps, switch fallthrough,
+`for await`, and `try/finally` stay unsupported.
 
 Loop lowering uses named recursive binding functions. This preserves per-
 iteration `let` bindings, but very large strict-monad loops can still exhaust

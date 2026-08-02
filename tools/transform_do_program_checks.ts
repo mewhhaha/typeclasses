@@ -1564,53 +1564,59 @@ const program = Program(function* () {
 });
 
 Deno.test({
-  name:
-    "transformer lowers explicit Do try/catch and retains unsupported diagnostics",
+  name: "transformer diagnoses Do try/catch and preserves its source",
   permissions: { env: true },
   async fn() {
-    const handled = await transform(`
+    const maybe_source = `
 import { Do } from "../src/typeclasses.ts";
-const program = Do(Either, function* () {
+import { Maybe, from_nullable, Nothing } from "../src/maybe.ts";
+
+const parse = (raw?: string) => Do(Maybe, function* () {
+  const value = yield* from_nullable(raw);
   try {
-    return yield* load();
-  } catch (error) {
-    return recover(error);
+    return yield* from_nullable(JSON.parse(value));
+  } catch {
+    return yield* Nothing();
   }
 });
-`);
-    assert_equals(handled.transformed, 1);
-    assert_equals(handled.diagnostics, []);
-    assert_includes(handled.code, ".catch_error(error =>");
+`;
+    const maybe = await transform(maybe_source);
+
+    assert_equals(maybe.transformed, 0);
+    assert_equals(maybe.code, maybe_source);
     assert_true(
-      !handled.code.includes(".bind(() =>"),
-      "expected terminal try/catch to preserve its returned value",
+      maybe.diagnostics[0].message.includes(
+        "try statements containing yield* or return are not supported",
+      ),
+      "expected Do try/catch diagnostic",
     );
-
-    const continued = await transform(`
-import { Do } from "../src/typeclasses.ts";
-const program = Do(Either, function* () {
-  try { yield* load(); } catch (error) { yield* recover(error); }
-  return 1;
+  },
 });
-`);
-    assert_equals(continued.transformed, 1);
-    assert_equals(continued.diagnostics, []);
-    assert_includes(continued.code, ".catch_error(error =>");
-    assert_includes(continued.code, ".map(() => {");
-    assert_includes(continued.code, "return 1;");
 
-    const unsupported = await transform(`
+Deno.test({
+  name: "transformer diagnoses Program try/catch",
+  permissions: { env: true },
+  async fn() {
+    const program = await transform(`
 import { Program } from "../src/effects.ts";
 const program = Program(function* () {
   try { return yield* load(); } catch (error) { return recover(error); }
 });
 `);
-    assert_equals(unsupported.transformed, 0);
+    assert_equals(program.transformed, 0);
     assert_true(
-      unsupported.diagnostics[0].message.includes("catch_error"),
-      "expected Program catch diagnostic",
+      program.diagnostics[0].message.includes(
+        "try statements containing yield* or return are not supported",
+      ),
+      "expected Program try/catch diagnostic",
     );
+  },
+});
 
+Deno.test({
+  name: "transformer diagnoses labeled control flow",
+  permissions: { env: true },
+  async fn() {
     const labeled = await transform(`
 import { Program } from "../src/effects.ts";
 const program = Program(function* () {
@@ -1703,28 +1709,6 @@ const program = Do(dictionary(), function* () {
 });
 
 Deno.test({
-  name: "explicit Do try/catch handles monadic Left values like runtime Do",
-  permissions: { env: true, read: true },
-  async fn() {
-    const source = `
-import { Do } from "../src/typeclasses.ts";
-
-const load = () => Left("missing");
-const recover = (error) => Right("recovered:" + error);
-
-const program = Do(Either, function* () {
-  try {
-    return yield* load();
-  } catch (error) {
-    return yield* recover(error);
-  }
-});
-`;
-    await assert_do_equivalent(source);
-  },
-});
-
-Deno.test({
   name: "transformer diagnoses a zero-argument anchored Do call",
   permissions: { env: true },
   async fn() {
@@ -1762,7 +1746,9 @@ Deno.test({
 
     assert_equals(output.code, 1);
     assert_true(
-      new TextDecoder().decode(output.stderr).includes("try/catch requires"),
+      new TextDecoder().decode(output.stderr).includes(
+        "try statements containing yield* or return are not supported",
+      ),
       "expected CLI diagnostic on stderr",
     );
 

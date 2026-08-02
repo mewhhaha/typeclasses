@@ -834,21 +834,13 @@ function transform_statements(
     }
 
     if (ts.isTryStatement(statement) && contains_yield_or_return(statement)) {
-      const transformed = transform_try(
-        statement,
-        statements.slice(index + 1),
-        current_context,
+      add_diagnostic(
         state,
-        options,
+        statement,
+        "Skipped " + state.kind +
+          ": try statements containing yield* or return are not supported by the source transformer.",
       );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
+      throw new UnsupportedGenerator();
     }
 
     if (
@@ -1439,109 +1431,6 @@ function recursive_loop_block(
       ),
       state.factory.createReturnStatement(
         state.factory.createCallExpression(loop_name, undefined, []),
-      ),
-    ], true),
-    yielded: true,
-  };
-}
-
-function transform_try(
-  statement: ts.TryStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  if (state.kind === "program") {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped Program: try/catch requires an Effect-level catch_error API.",
-    );
-    throw new UnsupportedGenerator();
-  }
-  if (state.dictionary === undefined) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped Do: try/catch requires the explicit dictionary form Do(dictionary, function* () { ... }).",
-    );
-    throw new UnsupportedGenerator();
-  }
-  if (
-    statement.finallyBlock !== undefined || statement.catchClause === undefined
-  ) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped Do: try/finally and try without catch are not supported.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  const tried = transform_statements(
-    [...statement.tryBlock.statements],
-    current_context,
-    state,
-    options,
-  );
-  const caught = transform_statements(
-    [...statement.catchClause.block.statements],
-    current_context,
-    state,
-    options,
-  );
-  const variable = statement.catchClause.variableDeclaration;
-  const parameters = variable === undefined
-    ? []
-    : [state.factory.createParameterDeclaration(
-      undefined,
-      undefined,
-      variable.name,
-      undefined,
-      variable.type,
-    )];
-  const caught_expression = state.factory.createCallExpression(
-    state.factory.createPropertyAccessExpression(
-      block_to_expression(tried.block, state.factory),
-      "catch_error",
-    ),
-    undefined,
-    [create_arrow(parameters, caught.block, state.factory)],
-  );
-
-  if (rest.length === 0) {
-    return {
-      block: state.factory.createBlock([
-        state.factory.createReturnStatement(caught_expression),
-      ], true),
-      yielded: true,
-    };
-  }
-
-  if (
-    contains_return(statement.tryBlock) ||
-    contains_return(statement.catchClause.block)
-  ) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped Do: try/catch with a return followed by more generator statements is not supported.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  const continuation = transform_statements(
-    rest,
-    caught_expression,
-    state,
-    options,
-  );
-
-  return {
-    block: state.factory.createBlock([
-      state.factory.createReturnStatement(
-        create_bind(caught_expression, [], continuation.block, state),
       ),
     ], true),
     yielded: true,
@@ -4610,28 +4499,6 @@ function contains_yield_or_return(node: ts.Node): boolean {
 
   ts.forEachChild(node, visit);
 
-  return found;
-}
-
-function contains_return(node: ts.Node): boolean {
-  if (ts.isFunctionLike(node)) {
-    return false;
-  }
-
-  let found = false;
-
-  function visit(child: ts.Node) {
-    if (found || ts.isFunctionLike(child)) {
-      return;
-    }
-    if (ts.isReturnStatement(child)) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(child, visit);
-  }
-
-  ts.forEachChild(node, visit);
   return found;
 }
 
