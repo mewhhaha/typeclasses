@@ -1,4 +1,18 @@
 import { assert_equals, assert_true } from "../src/assert.ts";
+import {
+  arbitrary,
+  array_arbitrary,
+  array_of,
+  boolean,
+  check_async,
+  element,
+  Gen,
+  integer,
+  integer_arbitrary,
+  map_arbitrary,
+  pair_arbitrary,
+} from "../src/quickcheck.ts";
+import { Do } from "../src/typeclasses.ts";
 
 Deno.test({
   name: "transformer lowers Do generators to direct typeclass methods",
@@ -1476,6 +1490,34 @@ const program = Program(function* () {
 });
 
 Deno.test({
+  name: "transformer lowers a final switch clause without an explicit break",
+  permissions: { env: true, read: true },
+  async fn() {
+    await assert_do_equivalent(`
+import { Do } from "../src/typeclasses.ts";
+
+const program = Do(Maybe, function* () {
+  let total = 0;
+
+  switch (2) {
+    case 0: {
+      const value = yield* Just(-5);
+      total += value;
+      break;
+    }
+    default: {
+      const value = yield* Just(5);
+      total += value;
+    }
+  }
+
+  return total;
+});
+`);
+  },
+});
+
+Deno.test({
   name:
     "transformer lowers explicit Do dictionaries including yield-free blocks",
   permissions: { env: true },
@@ -1875,6 +1917,247 @@ const value = Do(Maybe, function* () {
   assert_includes(result.code, "Just(41).map");
 });
 
+Deno.test({
+  name: "QuickCheck optimizes supported Do programs without changing behavior",
+  permissions: { env: true, read: true },
+  async fn() {
+    type GeneratedStep =
+      | {
+        readonly kind: "yield";
+        readonly present: boolean;
+        readonly value: number;
+      }
+      | {
+        readonly kind: "if";
+        readonly condition: boolean;
+        readonly when_true: number;
+        readonly when_false: number;
+      }
+      | {
+        readonly kind: "switch";
+        readonly selected: number;
+        readonly final_clause: "case" | "default";
+        readonly first: number;
+        readonly second: number;
+        readonly fallback: number;
+      }
+      | {
+        readonly kind: "for";
+        readonly repetitions: number;
+        readonly value: number;
+        readonly skip: number;
+        readonly stop: number;
+      }
+      | {
+        readonly kind: "while" | "do_while";
+        readonly repetitions: number;
+        readonly value: number;
+      }
+      | {
+        readonly kind: "for_of";
+        readonly values: readonly number[];
+      };
+
+    type GeneratedProgram = {
+      readonly initial: number;
+      readonly steps: readonly GeneratedStep[];
+    };
+
+    const generated_step = Do(Gen, function* () {
+      const kind = yield* element(
+        [
+          "yield",
+          "if",
+          "switch",
+          "for",
+          "while",
+          "do_while",
+          "for_of",
+        ] as const,
+      );
+
+      switch (kind) {
+        case "yield":
+          return {
+            kind,
+            present: yield* boolean(),
+            value: yield* integer({ min: -5, max: 5 }),
+          };
+        case "if":
+          return {
+            kind,
+            condition: yield* boolean(),
+            when_true: yield* integer({ min: -5, max: 5 }),
+            when_false: yield* integer({ min: -5, max: 5 }),
+          };
+        case "switch":
+          return {
+            kind,
+            selected: yield* integer({ min: 0, max: 2 }),
+            final_clause: yield* element(["case", "default"] as const),
+            first: yield* integer({ min: -5, max: 5 }),
+            second: yield* integer({ min: -5, max: 5 }),
+            fallback: yield* integer({ min: -5, max: 5 }),
+          };
+        case "for": {
+          const repetitions = yield* integer({ min: 0, max: 4 });
+          return {
+            kind,
+            repetitions,
+            value: yield* integer({ min: -5, max: 5 }),
+            skip: yield* integer({ min: -1, max: repetitions }),
+            stop: yield* integer({ min: -1, max: repetitions }),
+          };
+        }
+        case "while":
+          return {
+            kind,
+            repetitions: yield* integer({ min: 0, max: 4 }),
+            value: yield* integer({ min: -5, max: 5 }),
+          };
+        case "do_while":
+          return {
+            kind,
+            repetitions: yield* integer({ min: 1, max: 4 }),
+            value: yield* integer({ min: -5, max: 5 }),
+          };
+        case "for_of":
+          return {
+            kind,
+            values: yield* array_of(integer({ min: -5, max: 5 }), {
+              max_length: 4,
+            }),
+          };
+      }
+    });
+    const program_pairs = pair_arbitrary(
+      integer_arbitrary({ min: -10, max: 10 }),
+      array_arbitrary(arbitrary(generated_step), { max_length: 6 }),
+    );
+    const programs = map_arbitrary(
+      program_pairs,
+      ([initial, generated_steps]): GeneratedProgram => ({
+        initial,
+        steps: generated_steps,
+      }),
+      (program): readonly [number, readonly GeneratedStep[]] => [
+        program.initial,
+        program.steps,
+      ],
+    );
+
+    await check_async({
+      arbitrary: programs,
+      seed: 0x5452414e,
+      iterations: 200,
+      async property(program) {
+        const statements = program.steps.map((step, index) => {
+          switch (step.kind) {
+            case "yield": {
+              const yielded = step.present
+                ? `Just(${step.value})`
+                : "Nothing()";
+              return `
+  const value_${index} = yield* ${yielded};
+  total += value_${index};`;
+            }
+            case "if":
+              return `
+  if (${step.condition}) {
+    const value_${index} = yield* Just(${step.when_true});
+    total += value_${index};
+  } else {
+    const value_${index} = yield* Just(${step.when_false});
+    total += value_${index};
+  }`;
+            case "switch":
+              return `
+  switch (${step.selected}) {
+    case 0: {
+      const value_${index} = yield* Just(${step.first});
+      total += value_${index};
+      break;
+    }
+    case 1: {
+      const value_${index} = yield* Just(${step.second});
+      total += value_${index};
+      break;
+    }
+    ${step.final_clause === "case" ? "case 2:" : "default:"} {
+      const value_${index} = yield* Just(${step.fallback});
+      total += value_${index};
+    }
+  }`;
+            case "for":
+              return `
+  for (let index_${index} = 0; index_${index} < ${step.repetitions}; index_${index} += 1) {
+    if (index_${index} === ${step.skip}) continue;
+    const value_${index} = yield* Just(${step.value} + index_${index});
+    total += value_${index};
+    if (index_${index} === ${step.stop}) break;
+  }`;
+            case "while":
+              return `
+  let index_${index} = 0;
+  while (index_${index} < ${step.repetitions}) {
+    const value_${index} = yield* Just(${step.value} + index_${index});
+    total += value_${index};
+    index_${index} += 1;
+  }`;
+            case "do_while":
+              return `
+  let index_${index} = 0;
+  do {
+    const value_${index} = yield* Just(${step.value} + index_${index});
+    total += value_${index};
+    index_${index} += 1;
+  } while (index_${index} < ${step.repetitions});`;
+            case "for_of":
+              return `
+  for (const value_${index} of ${JSON.stringify(step.values)}) {
+    const yielded_${index} = yield* Just(value_${index});
+    total += yielded_${index};
+  }`;
+          }
+        }).join("\n");
+        const source = `
+import { Do } from "../src/typeclasses.ts";
+
+const program = Do(Maybe, function* () {
+  let total = ${program.initial};
+${statements}
+  return total;
+});
+`;
+        const transformed = await transform(source);
+
+        if (transformed.transformed !== 1) {
+          throw new Error(
+            "supported Do program was not optimized\n\n" + source + "\n" +
+              JSON.stringify(transformed.diagnostics),
+          );
+        }
+        if (transformed.diagnostics.length !== 0) {
+          throw new Error(
+            "supported Do program produced diagnostics\n\n" + source +
+              "\n" + JSON.stringify(transformed.diagnostics),
+          );
+        }
+
+        const repeated = await transform(transformed.code);
+        assert_equals(repeated.transformed, 0);
+        assert_equals(repeated.code, transformed.code);
+        assert_equals(
+          await evaluate_do_raw(transformed.code),
+          await evaluate_do_raw(source),
+          "generated Do program changed behavior\n\n" + source + "\n\n" +
+            transformed.code,
+        );
+      },
+    });
+  },
+});
+
 async function transform(source: string) {
   const transformer = await import("./transform_do_program.ts");
 
@@ -1954,7 +2237,7 @@ async function evaluate_do_raw(source: string): Promise<unknown> {
   const either = new URL("../src/either.ts", import.meta.url).href;
   const executable = `
 import { Do } from ${JSON.stringify(typeclasses)};
-import { Maybe, Just } from ${JSON.stringify(maybe)};
+import { Maybe, Just, Nothing } from ${JSON.stringify(maybe)};
 import { ArrayT } from ${JSON.stringify(array)};
 import { Either, Left, Right } from ${JSON.stringify(either)};
 ${strip_anchoring_import(source)}

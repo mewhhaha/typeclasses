@@ -1099,9 +1099,16 @@ function transform_switch(
 ): TransformBlock {
   const clauses: ts.CaseOrDefaultClause[] = [];
   let yielded = current_context !== undefined;
+  const source_clauses = statement.caseBlock.clauses;
 
-  for (const clause of statement.caseBlock.clauses) {
-    const normalized = normalize_switch_case(clause, rest, state);
+  for (let index = 0; index < source_clauses.length; index += 1) {
+    const clause = source_clauses[index];
+    const normalized = normalize_switch_case(
+      clause,
+      rest,
+      index === source_clauses.length - 1,
+      state,
+    );
     const transformed = transform_statements(
       normalized,
       current_context,
@@ -1136,11 +1143,16 @@ function transform_switch(
 function normalize_switch_case(
   clause: ts.CaseOrDefaultClause,
   rest: readonly ts.Statement[],
+  is_final_clause: boolean,
   state: TransformState,
 ): readonly ts.Statement[] {
   const statements = unwrap_case_block(clause.statements);
 
   if (statements.length === 0) {
+    if (is_final_clause) {
+      return rest;
+    }
+
     add_diagnostic(
       state,
       clause,
@@ -1169,6 +1181,10 @@ function normalize_switch_case(
     ts.isContinueStatement(last)
   ) {
     return statements;
+  }
+
+  if (is_final_clause) {
+    return [...statements, ...rest];
   }
 
   add_diagnostic(
