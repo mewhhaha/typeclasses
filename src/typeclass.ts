@@ -273,6 +273,16 @@ const tagged_data_singleton_tags = Symbol("Data.tagged_singleton_tags");
 const tagged_payload = Symbol("Data.tagged_payload");
 const tagged_first_payload = Symbol("Data.tagged_first_payload");
 const tagged_second_payload = Symbol("Data.tagged_second_payload");
+const instance_method_owners = Symbol("Data.instance_method_owners");
+const same_dictionary_methods = new Set<PropertyKey>([
+  "alt",
+  "ap",
+  "compare",
+  "compose",
+  "concat",
+  "eq",
+]);
+const runtime_kind_ids = new Map<unknown, number>();
 
 type TaggedDataDictionary<dictionary extends object> = object & {
   [tagged_data_constructor_cache]?: Map<
@@ -406,7 +416,7 @@ function tagged_data<dictionary extends Dictionary>(
   const target = function <item>(
     value: ContextData<dictionary, item>,
   ): Data<dictionary, item> {
-    const tagged = value as TaggedData;
+    const tagged = parse_tagged_value(value, variants);
     const tag = tagged[0];
 
     if (tagged.length === 1 && singleton_tags.has(tag)) {
@@ -465,6 +475,47 @@ function tagged_data<dictionary extends Dictionary>(
   }
 }
 
+function parse_tagged_value<dictionary extends Dictionary>(
+  value: ContextData<dictionary, unknown>,
+  variants: TaggedVariants<dictionary> | undefined,
+): TaggedData {
+  if (!Array.isArray(value)) {
+    throw new TypeError(
+      `Tagged data must be an array; received ${describe_runtime_value(value)}`,
+    );
+  }
+
+  const tagged = value as unknown as TaggedData;
+
+  if (variants === undefined) {
+    return tagged;
+  }
+
+  const tag = tagged[0];
+
+  if (!Object.hasOwn(variants, tag)) {
+    throw new TypeError(`Unknown tagged data variant ${String(tag)}`);
+  }
+
+  const expected_length = Reflect.get(variants, tag) as number;
+
+  if (tagged.length !== expected_length) {
+    throw new TypeError(
+      `Tagged data variant ${String(tag)} expects ${
+        expected_length - 1
+      } payload value(s); received ${tagged.length - 1}`,
+    );
+  }
+
+  return tagged;
+}
+
+function describe_runtime_value(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
 function is_union_definition<dictionary extends Dictionary>(
   value:
     | DataConstructor<dictionary>
@@ -496,7 +547,7 @@ function tagged_data_from_union<dictionary extends Dictionary>(
 function tagged_variants_from_union<dictionary extends Dictionary>(
   shape: UnionVariantsShape,
 ): TaggedVariants<dictionary> {
-  const variants = {} as Record<PropertyKey, number>;
+  const variants = Object.create(null) as Record<PropertyKey, number>;
 
   for (const variant of shape) {
     const tag = variant[0];
@@ -873,10 +924,105 @@ export function install_instance<implementation extends object>(
   token: PropertyKey,
   implementation: implementation,
 ): implementation {
-  Object.assign(dictionary, implementation);
-  (dictionary as { [key: PropertyKey]: unknown })[token] = implementation;
+  const target = dictionary as {
+    [instance_method_owners]?: Map<PropertyKey, PropertyKey>;
+    [key: PropertyKey]: unknown;
+  };
+  let owners = target[instance_method_owners];
 
-  return implementation;
+  if (owners === undefined) {
+    owners = new Map();
+    Object.defineProperty(target, instance_method_owners, { value: owners });
+  }
+
+  const installed = Object.create(Object.getPrototypeOf(implementation));
+
+  for (const method of Reflect.ownKeys(implementation)) {
+    const descriptor = Object.getOwnPropertyDescriptor(implementation, method)!;
+    const owner = owners.get(method);
+    const existing = target[method];
+
+    if (
+      owner !== undefined && owner !== token && existing !== descriptor.value
+    ) {
+      throw new TypeError(
+        `Cannot install ${describe_property_key(token)} method ${
+          describe_property_key(method)
+        }; it is already owned by ${describe_property_key(owner)}`,
+      );
+    }
+
+    if (
+      owner === undefined && method in target && existing !== descriptor.value
+    ) {
+      throw new TypeError(
+        `Cannot install ${describe_property_key(token)} method ${
+          describe_property_key(method)
+        }; the dictionary already defines that property`,
+      );
+    }
+
+    if (
+      "value" in descriptor && typeof descriptor.value === "function" &&
+      same_dictionary_methods.has(method)
+    ) {
+      descriptor.value = same_dictionary_method(
+        descriptor.value as (...args: unknown[]) => unknown,
+        method,
+      );
+    }
+
+    Object.defineProperty(installed, method, descriptor);
+    owners.set(method, token);
+  }
+
+  Object.assign(target, installed);
+  target[token] = installed;
+
+  return installed as implementation;
+}
+
+function same_dictionary_method(
+  method: (...args: unknown[]) => unknown,
+  name: PropertyKey,
+): (...args: unknown[]) => unknown {
+  return function (this: Dictionary, ...args: unknown[]): unknown {
+    const right = args[0];
+
+    if (
+      typeof right === "object" && right !== null && kind in right &&
+      right[kind as keyof typeof right] !== this[kind]
+    ) {
+      throw new TypeError(
+        `${
+          describe_property_key(name)
+        } requires values from the same dictionary; left ${
+          describe_runtime_kind(this[kind])
+        }, right ${describe_runtime_kind(right[kind as keyof typeof right])}`,
+      );
+    }
+
+    return method.apply(this, args);
+  };
+}
+
+function describe_property_key(key: PropertyKey): string {
+  if (typeof key === "symbol") {
+    return key.description === undefined ? key.toString() : key.description;
+  }
+
+  return String(key);
+}
+
+function describe_runtime_kind(runtime_kind: unknown): string {
+  let identifier = runtime_kind_ids.get(runtime_kind);
+
+  if (identifier === undefined) {
+    identifier = runtime_kind_ids.size + 1;
+    runtime_kind_ids.set(runtime_kind, identifier);
+  }
+
+  return `dictionary #${identifier.toString()}`;
 }
 
 type TypeclassInstance<
@@ -960,9 +1106,32 @@ export const TypeclassDefinition: TypeclassDefinitionPrototype = {
     this: TypeclassDefinitionReceiver<token>,
     receiver: receiver,
   ): TypeclassInstance<token, receiver> {
-    return receiver[this.token];
+    const instance = receiver?.[this.token];
+
+    if (instance === undefined) {
+      throw new TypeError(
+        `Missing ${describe_property_key(this.token)} instance on ${
+          describe_instance_receiver(receiver)
+        }`,
+      );
+    }
+
+    return instance;
   },
 };
+
+function describe_instance_receiver(receiver: unknown): string {
+  if (
+    (typeof receiver === "object" && receiver !== null) ||
+    typeof receiver === "function"
+  ) {
+    if (kind in receiver) {
+      return describe_runtime_kind(receiver[kind as keyof typeof receiver]);
+    }
+  }
+
+  return `value ${describe_runtime_value(receiver)}`;
+}
 
 function install_typeclass_instance<
   token extends PropertyKey,

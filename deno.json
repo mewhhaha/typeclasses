@@ -1,6 +1,6 @@
 {
   "name": "@mewhhaha/typeclasses",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "license": "MIT",
   "sideEffects": false,
   "exports": {
@@ -56,6 +56,7 @@
     "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
     "fp-ts/StateReaderTaskEither": "npm:fp-ts@2.16.11/lib/StateReaderTaskEither.js",
     "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
+    "miniflare": "npm:miniflare@4.20260730.0",
     "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
     "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
     "rolldown": "npm:rolldown@1.1.5",
@@ -72,6 +73,9 @@
     "test:entrypoints": "deno run --allow-env --allow-read tools/package_entrypoint_smoke.ts",
     "test:node": "node --experimental-strip-types tools/node_portability_smoke.ts",
     "test:bun": "bun tools/node_portability_smoke.ts",
+    "test:browser": "deno run --allow-env --allow-net=127.0.0.1 --allow-read --allow-run --allow-write=/tmp tools/browser_portability_smoke.ts",
+    "test:workerd": "deno run --allow-env --allow-net=127.0.0.1 --allow-read --allow-run --allow-write=/tmp tools/workerd_portability_smoke.ts",
+    "test:mutations": "deno run --allow-env --allow-read --allow-run --allow-write=/tmp tools/mutation_checks.ts",
     "publish": "deno task prepublish && deno publish",
     "publish:dry-run": "deno publish --dry-run --allow-dirty",
     "fmt:check": "deno fmt --check",
@@ -79,10 +83,10 @@
     "check": "deno check src/mod.ts src/*.test.ts examples/*.ts case_studies/**/*.ts bench/*.bench.ts tools/*.ts learn_you_a_typeclasses_for_greater_good/**/*.ts",
     "example": "deno run --allow-read=examples,src examples/main.ts",
     "learn": "deno run learn_you_a_typeclasses_for_greater_good/main.ts",
-    "test": "deno test",
+    "test": "deno test --clean --coverage=/tmp/typeclasses-coverage --coverage-threshold=70 src examples case_studies",
     "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts",
     "test:benchmarks": "deno bench --filter '/$a/' bench/algorithm_contexts.bench.ts bench/iterable_pipeline.bench.ts",
-    "verify": "deno task fmt:check && deno task check && deno lint && deno task doc:check && deno task test && deno task test:transformer && deno task test:benchmarks && deno task check:portability && deno task test:entrypoints && deno task test:node && deno task test:bun && deno task example && deno task learn && deno task case-study",
+    "verify": "deno task fmt:check && deno task check && deno lint && deno task doc:check && deno task test && deno task test:mutations && deno task test:transformer && deno task test:benchmarks && deno task check:portability && deno task test:entrypoints && deno task test:node && deno task test:bun && deno task test:browser && deno task test:workerd && deno task example && deno task learn && deno task case-study",
     "prepublish": "deno task verify && deno task publish:dry-run"
   }
 }

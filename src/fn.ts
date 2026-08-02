@@ -52,8 +52,6 @@ export type FnConstructor =
   & {
     <input, item>(value: Fn<input, item>): FnValue<input, item>;
     with_input<input>(): AsFn<input>;
-    /** @deprecated Use with_input. */
-    withInput<input>(): AsFn<input>;
   }
   & {
     readonly [key in keyof AsFn<unknown>]: AsFn<unknown>[key];
@@ -63,10 +61,6 @@ export type FnConstructor =
 export const Fn = data<AsFn<unknown>>() as FnConstructor;
 
 Object.defineProperty(Fn, "with_input", {
-  value: fn_with_input,
-});
-
-Object.defineProperty(Fn, "withInput", {
   value: fn_with_input,
 });
 

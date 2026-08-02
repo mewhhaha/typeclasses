@@ -302,6 +302,14 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+- Task cancellation is now supplied at execution with `.run(signal)` or
+  `run_task(effect, { signal })`, so it propagates through the whole composed
+  computation. `from_fn` and `from_promise` no longer accept constructor
+  options. Use `run_task_exit` when cancellation should be returned as a value.
+- Deprecated camel-case APIs and short transformer-plugin aliases have been
+  removed. Transformer plugins now fail unsupported recognized syntax by
+  default; use `on_unsupported: "warn"` or `"preserve"` for an explicit fallback
+  policy.
 - Existing root and `/prelude` imports continue to work except for the prelude's
   `then`, which is now `sequence_right`. Exporting `then` makes the JavaScript
   module namespace thenable, so dynamic imports try to call it instead of
@@ -319,22 +327,23 @@ own adapter or use `Task` for asynchronous work on the main isolate.
   `map_error(validation, fn, target_semigroup)`, then use `.map(...)` for the
   success side. Use `Validation.with_semigroup(semigroup)` when several custom
   errors must accumulate.
-- Deprecated camel-case aliases remain for compatibility. New code should use
-  snake-case names such as `with_left`, `with_monoid`, and `map_error`.
+- The public API uses snake-case names consistently, including `with_left`,
+  `with_monoid`, and `map_error`.
 
 ## Development
 
-Run the complete release gate, including Deno tests, transformer bundles,
-package entrypoints, Node and Bun smokes, examples, the tutorial, and case
-studies:
+Run the complete release gate, including coverage and mutation checks,
+transformer bundles, package entrypoints, Deno, Node, Bun, browser, and workerd
+runtime smokes, examples, the tutorial, and case studies:
 
 ```sh
 deno task verify
 ```
 
-`verify` requires Deno, Node, and Bun. Run `deno task prepublish` to add the JSR
-dry run. The CI workflow runs both. Benchmarks stay separate because they are a
-measurement harness rather than a correctness gate:
+`verify` requires Deno, Node, Bun, and Chrome, Chromium, or Firefox. Run
+`deno task prepublish` to add the JSR dry run. The CI workflow runs both.
+Benchmarks stay separate because they are a measurement harness rather than a
+correctness gate:
 
 ```sh
 deno task bench
@@ -725,10 +734,8 @@ operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
 `sequence_right` replaces Haskell's `then`, which makes a module thenable when
 exported from JavaScript.
 
-The earlier camel-case spellings remain deprecated aliases for compatibility,
-but new code should use the snake-case names shown above. The same applies to
-the configured dictionary factories such as `Either.with_left` and
-`Tuple.with_monoid`.
+Configured dictionary factories follow the same convention, including
+`Either.with_left` and `Tuple.with_monoid`.
 
 ## Tagged Values
 
@@ -941,8 +948,8 @@ and dictionary-specific monadic errors. Labeled jumps, switch fallthrough,
 
 Loop lowering uses named recursive binding functions. This preserves per-
 iteration `let` bindings, but very large strict-monad loops can still exhaust
-the JavaScript stack; use the library's stack-safe `loop`/`rec`/`done` API for
-unbounded iteration.
+the JavaScript stack. Use `MonadRec.tail_rec_m` for generic monadic recursion or
+the standalone `loop`/`rec`/`done` API for pure unbounded iteration.
 
 Detection is anchored to package imports, including aliases and namespace
 imports. Local functions that merely happen to be named `Do` or `Program` are
@@ -974,18 +981,19 @@ import {
   typeclasses_rollup_plugin,
 } from "@mewhhaha/typeclasses/transform/plugin";
 
-const esbuild = typeclasses_esbuild_plugin({ check: true });
-const vite_or_rollup = typeclasses_rollup_plugin({ check: true });
-const rolldown = typeclasses_rolldown_plugin({ check: true });
+const esbuild = typeclasses_esbuild_plugin();
+const vite_or_rollup = typeclasses_rollup_plugin();
+const rolldown = typeclasses_rolldown_plugin();
 ```
 
 The adapters skip non-TypeScript files and sources without likely transform
-targets, and forward file/line/column diagnostics to the host warning or error
-channel. The Rolldown adapter also exposes a native hook filter so skipped files
-do not cross into JavaScript. Transformed output carries a version 3 source map
-with the original TypeScript in `sourcesContent`. Rollup and Rolldown receive
-the map directly; the esbuild adapter appends it inline to the transformed
-source.
+targets. Unsupported recognized syntax fails the build by default. Set
+`on_unsupported` to `"warn"` to keep supported rewrites while warning, or to
+`"preserve"` to return the whole file unchanged. The Rolldown adapter also
+exposes a native hook filter so skipped files do not cross into JavaScript.
+Transformed output carries a version 3 source map with the original TypeScript
+in `sourcesContent`. Rollup and Rolldown receive the map directly; the esbuild
+adapter appends it inline to the transformed source.
 
 ## Tail Loops
 
@@ -1828,19 +1836,22 @@ const program = Do(function* () {
 await program.run();
 ```
 
-`Task` is deferred async work. It is intentionally a thunk,
-`() => Promise<item>`, so construction does not start the operation. Its
-`MonadError` instance turns `throw_error` into a deferred rejection and
-`catch_error` into deferred promise recovery. `from_promise(promise)` can adopt
-an existing promise, but that promise is already running; use `from_fn` when the
-operation itself must wait for `.run()`.
+`Task` is deferred async work. It is intentionally a signal-aware thunk,
+`(signal?: AbortSignal) => Promise<item>`, so construction does not start the
+operation. Its `MonadError` instance turns `throw_error` into a deferred
+rejection and `catch_error` into deferred promise recovery.
+`from_promise(promise)` can adopt an existing promise, but that promise is
+already running; use `from_fn` when the operation itself must wait for `.run()`.
 
 Task items cannot themselves be `PromiseLike`. Keep `.map(...)` and applicative
 callbacks synchronous, and use `.bind(...)` or `from_fn(...)` for dependent
-asynchronous work. Both `from_fn` and `from_promise` accept an `AbortSignal`.
-`from_fn` also passes that signal to the producer so cooperative work can stop;
-aborting `from_promise` stops waiting but cannot undo work already started by
-the original promise.
+asynchronous work. Pass an `AbortSignal` to `.run(signal)` or to
+`run_task(effect, { signal })`. The signal propagates through mapped, bound, and
+applicative tasks; an applicative failure aborts its siblings. `from_fn` passes
+the execution signal to its producer so cooperative work can stop. Aborting
+`from_promise` stops waiting but cannot undo work already started by the
+original promise. Use `run_task_exit` when success, failure, and cancellation
+must be handled as values.
 
 ### Async and Concurrency
 
@@ -2208,8 +2219,10 @@ The module includes arbitraries for integers, booleans, strings, arrays,
 arbitrary from those pieces with `map_arbitrary`; its reverse conversion keeps
 shrinking available. Do not put randomness inside production code.
 
-For a custom instance, combine its domain behavior tests with the reusable
-Functor, Applicative, Monad, Eq, and Ord law collections:
+For a custom instance, combine its domain behavior tests with the reusable law
+collections for Functor, Applicative, Monad, MonadError, Semigroup, Monoid,
+Alternative, Foldable, Traversable, Eq, Ord, Bifunctor, Contravariant,
+Profunctor, Category, Arrow, and Comonad:
 
 ```ts
 import {

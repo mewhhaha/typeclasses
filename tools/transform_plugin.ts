@@ -9,8 +9,8 @@ import { readFile } from "node:fs/promises";
 
 /** Configuration shared by the esbuild, Rollup, Vite, and Rolldown adapters. */
 export type TransformPluginOptions = TransformConfig & {
-  /** Fail the bundler transform when a generator could not be lowered. */
-  readonly check?: boolean;
+  /** Action taken when a recognized expression cannot be transformed. */
+  readonly on_unsupported?: "error" | "warn" | "preserve";
 };
 
 /** @ignore */
@@ -77,7 +77,12 @@ export function typeclasses_esbuild_plugin(
         const code = await readFile(path, "utf8");
         if (!might_contain_target(code)) return undefined;
         const result = transform_do_program_source(code, path, options);
-        report_diagnostics(result.diagnostics, options);
+        if (report_diagnostics(result.diagnostics, options)) {
+          return {
+            contents: code,
+            loader: path.endsWith(".tsx") ? "tsx" : "ts",
+          };
+        }
         return {
           contents: with_inline_source_map(result.code, result.map),
           loader: path.endsWith(".tsx") ? "tsx" : "ts",
@@ -114,19 +119,6 @@ export function typeclasses_rolldown_plugin(
   };
 }
 
-/** Short alias for typeclasses_esbuild_plugin. */
-export const esbuild_plugin: typeof typeclasses_esbuild_plugin =
-  typeclasses_esbuild_plugin;
-/** Short alias for typeclasses_rollup_plugin for Vite configuration. */
-export const vite_plugin: typeof typeclasses_rollup_plugin =
-  typeclasses_rollup_plugin;
-/** Short alias for typeclasses_rollup_plugin. */
-export const rollup_plugin: typeof typeclasses_rollup_plugin =
-  typeclasses_rollup_plugin;
-/** Short alias for typeclasses_rolldown_plugin. */
-export const rolldown_plugin: typeof typeclasses_rolldown_plugin =
-  typeclasses_rolldown_plugin;
-
 function transform_rollup_source(
   context: RollupContext,
   code: string,
@@ -135,9 +127,20 @@ function transform_rollup_source(
 ): TransformHookResult {
   if (!is_typescript_file(id) || !might_contain_target(code)) return null;
   const result = transform_do_program_source(code, id, options);
+  const policy = options.on_unsupported ?? "error";
+
+  if (result.diagnostics.length > 0 && policy === "preserve") {
+    return { code, map: null };
+  }
+
   for (const diagnostic of result.diagnostics) {
     const message = format_diagnostic(diagnostic);
-    if (options.check && context.error !== undefined) context.error(message);
+
+    if (policy === "error") {
+      if (context.error !== undefined) context.error(message);
+      throw new Error(message);
+    }
+
     context.warn(message);
   }
   return { code: result.code, map: result.map };
@@ -166,11 +169,16 @@ function might_contain_target(code: string): boolean {
 function report_diagnostics(
   diagnostics: readonly TransformDiagnostic[],
   options: TransformPluginOptions,
-) {
-  if (diagnostics.length === 0) return;
+): boolean {
+  if (diagnostics.length === 0) return false;
+  const policy = options.on_unsupported ?? "error";
+
+  if (policy === "preserve") return true;
+
   const message = diagnostics.map(format_diagnostic).join("\n");
-  if (options.check) throw new Error(message);
+  if (policy === "error") throw new Error(message);
   console.warn(message);
+  return false;
 }
 
 function format_diagnostic(diagnostic: TransformDiagnostic): string {

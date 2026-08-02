@@ -11,7 +11,7 @@ import {
   type Uses,
 } from "./effects.ts";
 import { type EitherValue, Left, Right } from "./either.ts";
-import { type AsTask, from_fn, type TaskOptions } from "./task.ts";
+import { type AsTask, from_fn, is_task_cancellation } from "./task.ts";
 
 /** An operation that short-circuits a program with a typed error.
  *
@@ -99,15 +99,18 @@ export function from_either<error, item>(
 export function attempt<error, item>(
   run: (signal: AbortSignal | undefined) => Promise<item>,
   on_error: (cause: unknown) => error,
-  options: TaskOptions = {},
 ): Effect<Uses<AsTask> | Fails<error>, item> {
   const settled = from_fn<Settled<error, item>>(async (signal) => {
     try {
       return ["ok", await run(signal)] as const;
     } catch (cause) {
+      if (is_task_cancellation(cause)) {
+        throw cause;
+      }
+
       return ["error", on_error(cause)] as const;
     }
-  }, options);
+  });
 
   return bind_from(settled, (outcome) => {
     const [branch, payload] = outcome;

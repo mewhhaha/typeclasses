@@ -166,15 +166,11 @@ Semigroup.instance(IterableT)({
 });
 
 Monoid.instance(IterableT)({
-  empty() {
-    return IterableT(function* () {});
-  },
+  empty: empty_iterable,
 });
 
 Alternative.instance(IterableT)({
-  empty() {
-    return IterableT(function* () {});
-  },
+  empty: empty_iterable,
 
   alt(right) {
     const left = this.value();
@@ -186,6 +182,10 @@ Alternative.instance(IterableT)({
     });
   },
 });
+
+function empty_iterable<item>(this: AsIterable): Data<AsIterable, item> {
+  return IterableT(function* () {});
+}
 
 Monad.instance(IterableT)({
   bind(fn) {

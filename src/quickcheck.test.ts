@@ -1,26 +1,45 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { Effect, run } from "./effects.ts";
+import { Either } from "./either.ts";
+import { fn, type FnValue } from "./fn.ts";
+import { Identity, identity, type IdentityValue } from "./identity.ts";
 import { Just, Maybe, type MaybeValue, Nothing } from "./maybe.ts";
+import { predicate, type PredicateValue } from "./predicate.ts";
 import {
+  alternative_laws,
   applicative_laws,
   arbitrary,
   array_of,
+  arrow_laws,
+  bifunctor_laws,
+  category_laws,
   check,
   check_effect,
   check_laws,
+  comonad_laws,
   constant,
+  contravariant_laws,
+  either_arbitrary,
   element,
   eq_laws,
+  foldable_laws,
   functor_laws,
   Gen,
   integer,
   integer_arbitrary,
+  map_arbitrary,
   maybe_arbitrary,
+  monad_error_laws,
   monad_laws,
+  monoid_laws,
   ord_laws,
+  profunctor_laws,
   PropertyFailure,
   sample,
+  semigroup_laws,
   sized,
+  string_arbitrary,
+  traversable_laws,
 } from "./quickcheck.ts";
 import { Do } from "./typeclasses.ts";
 
@@ -181,6 +200,158 @@ Deno.test("Maybe satisfies the reusable typeclass laws", () => {
   ], { seed: 91, iterations: 50 });
 
   assert_equals(reports.length, 15);
+});
+
+Deno.test("advanced typeclasses satisfy their reusable laws", () => {
+  const integers = integer_arbitrary({ min: -20, max: 20 });
+  const functions = arbitrary(element<(value: number) => number>([
+    (value) => value,
+    (value) => value + 1,
+    (value) => -value,
+  ]));
+  const maybe_values = maybe_arbitrary(integers);
+  const either_values = either_arbitrary(string_arbitrary(), integers);
+  const predicates = arbitrary(element<PredicateValue<number>>([
+    predicate((value) => value >= 0),
+    predicate((value) => value % 2 === 0),
+    predicate(() => true),
+  ]));
+  const function_values = map_arbitrary(
+    functions,
+    (value) => fn(value),
+    (value) => value.value(),
+  );
+  const identity_values = map_arbitrary(
+    integers,
+    identity,
+    (value: IdentityValue<number>) => value.value(),
+  );
+  const function_equals = (
+    left: FnValue<number, number>,
+    right: FnValue<number, number>,
+  ) =>
+    [-5, -1, 0, 1, 5].every((value) =>
+      Object.is(left.run(value), right.run(value))
+    );
+  const predicate_equals = (
+    left: PredicateValue<number>,
+    right: PredicateValue<number>,
+  ) => [-5, -1, 0, 1, 5].every((value) => left.run(value) === right.run(value));
+  const Strings = Either.with_left<string>();
+
+  const reports = check_laws([
+    ...semigroup_laws({
+      values: maybe_values,
+      concat: (left, right) => left.concat(right),
+      equals: (left, right) => left.eq(right),
+    }),
+    ...monoid_laws({
+      values: maybe_values,
+      empty: () => Maybe.empty<number>(),
+      concat: (left, right) => left.concat(right),
+      equals: (left, right) => left.eq(right),
+    }),
+    ...alternative_laws({
+      values: maybe_values,
+      empty: () => Nothing<number>(),
+      alt: (left, right) => left.alt(right),
+      equals: (left, right) => left.eq(right),
+    }),
+    ...foldable_laws({
+      values: maybe_values,
+      fold: (value, initial, combine) => value.fold(initial, combine),
+      to_array: (value) => {
+        const [tag, item] = value.value();
+        return tag === "Nothing" ? [] : [item];
+      },
+      equals_item: Object.is,
+    }),
+    ...traversable_laws({
+      values: maybe_values,
+      functions,
+      traverse: (value, transform) =>
+        value.traverse(Identity, (item) => identity(transform(item))).value(),
+      equals: (left, right) => left.eq(right),
+    }),
+    ...bifunctor_laws({
+      values: either_values,
+      left_functions: arbitrary(element([
+        (value: string) => value,
+        (value: string) => value + "!",
+      ])),
+      right_functions: functions,
+      bimap: (value, left, right) => value.bimap(left, right),
+      equals: (left, right) => left.eq(right),
+    }),
+    ...contravariant_laws({
+      values: predicates,
+      functions,
+      contramap: (value, transform) => value.contramap(transform),
+      equals: predicate_equals,
+    }),
+    ...profunctor_laws({
+      values: function_values,
+      input_functions: functions,
+      output_functions: functions,
+      dimap: (value, input, output) => value.dimap(input, output),
+      equals: function_equals,
+    }),
+    ...category_laws({
+      arrows: function_values,
+      identity: () => identity_arrow(),
+      compose: (after, before) => after.compose(before),
+      equals: function_equals,
+    }),
+    ...arrow_laws({
+      functions,
+      identity_function: (value: number) => value,
+      compose_functions: (after, before) => (value) => after(before(value)),
+      arr: (transform) => fn(transform),
+      identity_arrow: () => identity_arrow(),
+      compose_arrows: (after, before) => after.compose(before),
+      first_coherence: (transform) => {
+        const lifted = fn(transform).first<number, number>();
+        const direct = fn((pair: readonly [number, number]) => {
+          return [transform(pair[0]), pair[1]] as const;
+        });
+
+        const pairs = [[-2, 1], [0, 3], [4, 5]] as const;
+
+        return pairs.every((pair) => {
+          return JSON.stringify(lifted.run(pair)) ===
+            JSON.stringify(direct.run(pair));
+        });
+      },
+      equals: function_equals,
+    }),
+    ...comonad_laws({
+      values: identity_values,
+      functions: arbitrary(element([
+        (value: IdentityValue<number>) => value.value(),
+        (value: IdentityValue<number>) => value.value() + 1,
+      ])),
+      extract: (value) => value.extract(),
+      extend: (value, extend) => value.extend(extend),
+      equals: (left, right) => left.eq(right),
+      equals_item: Object.is,
+    }),
+    ...monad_error_laws({
+      values: either_values,
+      items: integers,
+      errors: string_arbitrary(),
+      pure: (item) => Strings.pure(item),
+      throw_error: (error) => Strings.throw_error<number>(error),
+      catch_error: (value, recover) => value.catch_error(recover),
+      recover: (error) => Strings.pure(error.length),
+      equals: (left, right) => left.eq(right),
+    }),
+  ], { seed: 171, iterations: 50 });
+
+  assert_equals(reports.length, 28);
+
+  function identity_arrow(): FnValue<number, number> {
+    return fn((value: number) => value);
+  }
 });
 
 Deno.test("check_effect runs generated programs through the supplied interpreter", async () => {

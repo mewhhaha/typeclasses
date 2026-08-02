@@ -71,6 +71,27 @@ const value = Do(Maybe, function* () {
   assert_true(result.map.mappings.length > 0, "expected source mappings");
 });
 
+Deno.test("transformer parses and lowers Do expressions inside TSX", async () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+import { Just, Maybe } from "../src/maybe.ts";
+
+const view = <div>{Do(Maybe, function* () {
+  const value = yield* Just(41);
+  return value + 1;
+})}</div>;
+`;
+  const result = await transform(source, "view.tsx");
+
+  assert_equals(result.transformed, 1);
+  assert_equals(result.diagnostics, []);
+  assert_true(
+    !result.code.includes("function*"),
+    "expected the TSX generator to lower\n\n" + result.code,
+  );
+  assert_true(result.code.includes("<div>"), "expected JSX to remain JSX");
+});
+
 Deno.test({
   name: "transformer lowers Program generators to Effect bind/map chains",
   permissions: { env: true },
@@ -2158,10 +2179,10 @@ ${statements}
   },
 });
 
-async function transform(source: string) {
+async function transform(source: string, file_name?: string) {
   const transformer = await import("./transform_do_program.ts");
 
-  return transformer.transform_do_program_source(source);
+  return transformer.transform_do_program_source(source, file_name);
 }
 
 async function evaluate_module(

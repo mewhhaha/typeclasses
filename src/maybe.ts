@@ -18,6 +18,7 @@ import {
   Foldable,
   Functor,
   Monad,
+  MonadRec,
   Monoid,
   Ord,
   Semigroup,
@@ -26,6 +27,7 @@ import {
 } from "./typeclasses.ts";
 import { type EitherValue, Left, Right } from "./either.ts";
 import { inspect } from "./inspect.ts";
+import { loop_done, loop_rec } from "./loop.ts";
 
 /** @ignore */
 export declare const maybe_identity: unique symbol;
@@ -47,6 +49,7 @@ export interface AsMaybe
     Show<AsMaybe>,
     Alternative<AsMaybe>,
     Monad<AsMaybe>,
+    MonadRec<AsMaybe>,
     Monoid<AsMaybe>,
     Traversable<AsMaybe>,
     Ord<AsMaybe> {
@@ -266,9 +269,7 @@ Applicative.instance(Maybe)({
 });
 
 Alternative.instance(Maybe)({
-  empty() {
-    return nothing_value();
-  },
+  empty: empty_maybe,
 
   alt(right) {
     if (is_Nothing_value(this)) {
@@ -304,10 +305,12 @@ Semigroup.instance(Maybe)({
 });
 
 Monoid.instance(Maybe)({
-  empty() {
-    return nothing_value();
-  },
+  empty: empty_maybe,
 });
+
+function empty_maybe<item>(this: AsMaybe): Data<AsMaybe, item> {
+  return nothing_value();
+}
 
 Monad.instance(Maybe)({
   bind(fn) {
@@ -322,6 +325,34 @@ Monad.instance(Maybe)({
         return same_context(this);
       case "Just":
         return fn(payload);
+    }
+  },
+});
+
+MonadRec.instance(Maybe)({
+  tail_rec_m(initial, step) {
+    let state = initial;
+
+    while (true) {
+      const current = step(state);
+      const [maybe_tag, loop_step] = current.value();
+
+      switch (maybe_tag) {
+        case "Nothing":
+          return Nothing();
+        case "Just": {
+          const [loop_tag, value] = loop_step;
+
+          switch (loop_tag) {
+            case loop_done:
+              return Just(value);
+            case loop_rec:
+              state = value;
+              break;
+          }
+          break;
+        }
+      }
     }
   },
 });

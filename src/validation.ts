@@ -115,8 +115,6 @@ export type ValidationConstructor =
     with_semigroup<error>(
       semigroup: ValidationSemigroup<error>,
     ): ConfiguredValidationDictionary<error>;
-    /** @deprecated Use with_error. */
-    withError<error>(): ValidationDictionary<error>;
   }
   & {
     readonly [key in keyof UnionDictionary<AsValidation<unknown>>]:
@@ -156,10 +154,6 @@ export const Validation = data<AsValidation<unknown>>(
 ) as ValidationConstructor;
 
 Object.defineProperty(Validation, "with_error", {
-  value: validation_with_error,
-});
-
-Object.defineProperty(Validation, "withError", {
   value: validation_with_error,
 });
 

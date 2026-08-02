@@ -879,6 +879,408 @@ export function ord_laws<
   ];
 }
 
+/** Builds Semigroup associativity over caller-supplied operations. */
+export function semigroup_laws<value>(options: {
+  readonly values: Arbitrary<value>;
+  readonly concat: (left: value, right: value) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Semigroup associativity",
+      triple_arbitrary(options.values, options.values, options.values),
+      ([left, middle, right]) =>
+        options.equals(
+          options.concat(options.concat(left, middle), right),
+          options.concat(left, options.concat(middle, right)),
+        ),
+    ),
+  ];
+}
+
+/** Builds Monoid identity laws over caller-supplied operations. */
+export function monoid_laws<value>(options: {
+  readonly values: Arbitrary<value>;
+  readonly empty: () => value;
+  readonly concat: (left: value, right: value) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Monoid left identity",
+      options.values,
+      (value) => options.equals(options.concat(options.empty(), value), value),
+    ),
+    law(
+      "Monoid right identity",
+      options.values,
+      (value) => options.equals(options.concat(value, options.empty()), value),
+    ),
+  ];
+}
+
+/** Builds Alternative choice identity and associativity laws. */
+export function alternative_laws<value>(options: {
+  readonly values: Arbitrary<value>;
+  readonly empty: () => value;
+  readonly alt: (left: value, right: value) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Alternative left identity",
+      options.values,
+      (value) => options.equals(options.alt(options.empty(), value), value),
+    ),
+    law(
+      "Alternative right identity",
+      options.values,
+      (value) => options.equals(options.alt(value, options.empty()), value),
+    ),
+    law(
+      "Alternative associativity",
+      triple_arbitrary(options.values, options.values, options.values),
+      ([left, middle, right]) =>
+        options.equals(
+          options.alt(options.alt(left, middle), right),
+          options.alt(left, options.alt(middle, right)),
+        ),
+    ),
+  ];
+}
+
+/** Builds Foldable order and cardinality laws against an independent view. */
+export function foldable_laws<container, item>(options: {
+  readonly values: Arbitrary<container>;
+  readonly fold: <result>(
+    value: container,
+    initial: result,
+    fn: (state: result, item: item) => result,
+  ) => result;
+  readonly to_array: (value: container) => readonly item[];
+  readonly equals_item: (left: item, right: item) => boolean;
+}): readonly Law[] {
+  return [
+    law("Foldable preserves order", options.values, (value) => {
+      const folded = options.fold(value, [] as item[], (items, item) => {
+        return [...items, item];
+      });
+      const expected = options.to_array(value);
+
+      return folded.length === expected.length && folded.every(
+        (item, index) => options.equals_item(item, expected[index]),
+      );
+    }),
+    law(
+      "Foldable counts every value once",
+      options.values,
+      (value) =>
+        options.fold(value, 0, (count) => count + 1) ===
+          options.to_array(value).length,
+    ),
+  ];
+}
+
+/** Builds Traversable identity and composition laws. */
+export function traversable_laws<container, item>(options: {
+  readonly values: Arbitrary<container>;
+  readonly functions: Arbitrary<(value: item) => item>;
+  readonly traverse: (
+    value: container,
+    fn: (value: item) => item,
+  ) => container;
+  readonly equals: (left: container, right: container) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Traversable identity",
+      options.values,
+      (value) => options.equals(options.traverse(value, identity), value),
+    ),
+    law(
+      "Traversable composition",
+      triple_arbitrary(
+        options.values,
+        options.functions,
+        options.functions,
+      ),
+      ([value, first, second]) =>
+        options.equals(
+          options.traverse(options.traverse(value, first), second),
+          options.traverse(value, (item) => second(first(item))),
+        ),
+    ),
+  ];
+}
+
+/** Builds Bifunctor identity and composition laws. */
+export function bifunctor_laws<value, left, right>(options: {
+  readonly values: Arbitrary<value>;
+  readonly left_functions: Arbitrary<(value: left) => left>;
+  readonly right_functions: Arbitrary<(value: right) => right>;
+  readonly bimap: (
+    value: value,
+    left: (value: left) => left,
+    right: (value: right) => right,
+  ) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Bifunctor identity",
+      options.values,
+      (value) =>
+        options.equals(options.bimap(value, identity, identity), value),
+    ),
+    law(
+      "Bifunctor composition",
+      triple_arbitrary(
+        options.values,
+        pair_arbitrary(options.left_functions, options.right_functions),
+        pair_arbitrary(options.left_functions, options.right_functions),
+      ),
+      ([value, [first_left, first_right], [second_left, second_right]]) =>
+        options.equals(
+          options.bimap(
+            options.bimap(value, first_left, first_right),
+            second_left,
+            second_right,
+          ),
+          options.bimap(
+            value,
+            (left) => second_left(first_left(left)),
+            (right) => second_right(first_right(right)),
+          ),
+        ),
+    ),
+  ];
+}
+
+/** Builds Contravariant identity and composition laws. */
+export function contravariant_laws<value, item>(options: {
+  readonly values: Arbitrary<value>;
+  readonly functions: Arbitrary<(value: item) => item>;
+  readonly contramap: (value: value, fn: (value: item) => item) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Contravariant identity",
+      options.values,
+      (value) => options.equals(options.contramap(value, identity), value),
+    ),
+    law(
+      "Contravariant composition",
+      triple_arbitrary(
+        options.values,
+        options.functions,
+        options.functions,
+      ),
+      ([value, first, second]) =>
+        options.equals(
+          options.contramap(options.contramap(value, first), second),
+          options.contramap(value, (item) => first(second(item))),
+        ),
+    ),
+  ];
+}
+
+/** Builds Profunctor identity and composition laws. */
+export function profunctor_laws<value, input, output>(options: {
+  readonly values: Arbitrary<value>;
+  readonly input_functions: Arbitrary<(value: input) => input>;
+  readonly output_functions: Arbitrary<(value: output) => output>;
+  readonly dimap: (
+    value: value,
+    input: (value: input) => input,
+    output: (value: output) => output,
+  ) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Profunctor identity",
+      options.values,
+      (value) =>
+        options.equals(options.dimap(value, identity, identity), value),
+    ),
+    law(
+      "Profunctor composition",
+      triple_arbitrary(
+        options.values,
+        pair_arbitrary(options.input_functions, options.output_functions),
+        pair_arbitrary(options.input_functions, options.output_functions),
+      ),
+      ([value, [first_input, first_output], [second_input, second_output]]) =>
+        options.equals(
+          options.dimap(
+            options.dimap(value, first_input, first_output),
+            second_input,
+            second_output,
+          ),
+          options.dimap(
+            value,
+            (input) => first_input(second_input(input)),
+            (output) => second_output(first_output(output)),
+          ),
+        ),
+    ),
+  ];
+}
+
+/** Builds Category identity and associativity laws. */
+export function category_laws<arrow>(options: {
+  readonly arrows: Arbitrary<arrow>;
+  readonly identity: () => arrow;
+  readonly compose: (after: arrow, before: arrow) => arrow;
+  readonly equals: (left: arrow, right: arrow) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Category left identity",
+      options.arrows,
+      (arrow) =>
+        options.equals(options.compose(options.identity(), arrow), arrow),
+    ),
+    law(
+      "Category right identity",
+      options.arrows,
+      (arrow) =>
+        options.equals(options.compose(arrow, options.identity()), arrow),
+    ),
+    law(
+      "Category associativity",
+      triple_arbitrary(options.arrows, options.arrows, options.arrows),
+      ([first, second, third]) =>
+        options.equals(
+          options.compose(options.compose(third, second), first),
+          options.compose(third, options.compose(second, first)),
+        ),
+    ),
+  ];
+}
+
+/** Builds Arrow lifting laws from generated pure functions. */
+export function arrow_laws<fn, arrow>(options: {
+  readonly functions: Arbitrary<fn>;
+  readonly identity_function: fn;
+  readonly compose_functions: (after: fn, before: fn) => fn;
+  readonly arr: (fn: fn) => arrow;
+  readonly identity_arrow: () => arrow;
+  readonly compose_arrows: (after: arrow, before: arrow) => arrow;
+  readonly first_coherence: (fn: fn) => boolean;
+  readonly equals: (left: arrow, right: arrow) => boolean;
+}): readonly Law[] {
+  return [
+    law("Arrow identity", arbitrary(constant(undefined)), () =>
+      options.equals(
+        options.arr(options.identity_function),
+        options.identity_arrow(),
+      )),
+    law(
+      "Arrow composition",
+      pair_arbitrary(options.functions, options.functions),
+      ([first, second]) =>
+        options.equals(
+          options.arr(options.compose_functions(second, first)),
+          options.compose_arrows(options.arr(second), options.arr(first)),
+        ),
+    ),
+    law(
+      "Arrow first preserves lifting",
+      options.functions,
+      (fn) => options.first_coherence(fn),
+    ),
+  ];
+}
+
+/** Builds Comonad extraction, extension, and associativity laws. */
+export function comonad_laws<container, item>(options: {
+  readonly values: Arbitrary<container>;
+  readonly functions: Arbitrary<(value: container) => item>;
+  readonly extract: (value: container) => item;
+  readonly extend: (
+    value: container,
+    fn: (value: container) => item,
+  ) => container;
+  readonly equals: (left: container, right: container) => boolean;
+  readonly equals_item: (left: item, right: item) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "Comonad extend extract",
+      options.values,
+      (value) => options.equals(options.extend(value, options.extract), value),
+    ),
+    law(
+      "Comonad extract extend",
+      pair_arbitrary(options.values, options.functions),
+      ([value, fn]) =>
+        options.equals_item(
+          options.extract(options.extend(value, fn)),
+          fn(value),
+        ),
+    ),
+    law(
+      "Comonad extend associativity",
+      triple_arbitrary(options.values, options.functions, options.functions),
+      ([value, first, second]) =>
+        options.equals(
+          options.extend(options.extend(value, first), second),
+          options.extend(value, (current) =>
+            second(options.extend(current, first))),
+        ),
+    ),
+  ];
+}
+
+/** Builds MonadError recovery and preservation laws. */
+export function monad_error_laws<value, item, error>(options: {
+  readonly values: Arbitrary<value>;
+  readonly items: Arbitrary<item>;
+  readonly errors: Arbitrary<error>;
+  readonly pure: (item: item) => value;
+  readonly throw_error: (error: error) => value;
+  readonly catch_error: (
+    value: value,
+    recover: (error: error) => value,
+  ) => value;
+  readonly recover: (error: error) => value;
+  readonly equals: (left: value, right: value) => boolean;
+}): readonly Law[] {
+  return [
+    law(
+      "MonadError catches thrown errors",
+      options.errors,
+      (error) =>
+        options.equals(
+          options.catch_error(options.throw_error(error), options.recover),
+          options.recover(error),
+        ),
+    ),
+    law(
+      "MonadError preserves pure values",
+      options.items,
+      (item) =>
+        options.equals(
+          options.catch_error(options.pure(item), options.recover),
+          options.pure(item),
+        ),
+    ),
+    law(
+      "MonadError catch is idempotent on successes",
+      options.values,
+      (value) => {
+        const once = options.catch_error(value, options.recover);
+        return options.equals(
+          options.catch_error(once, options.recover),
+          once,
+        );
+      },
+    ),
+  ];
+}
+
 Show.instance(Gen)({
   show() {
     return "Gen(?)";

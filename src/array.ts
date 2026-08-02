@@ -7,6 +7,7 @@ import {
 } from "./typeclass.ts";
 import { append_item } from "./internal.ts";
 import { inspect } from "./inspect.ts";
+import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
 import {
   Alternative,
   Applicative,
@@ -16,6 +17,7 @@ import {
   Foldable,
   Functor,
   Monad,
+  MonadRec,
   Monoid,
   Ord,
   Semigroup,
@@ -37,6 +39,7 @@ export interface AsArray
     Monoid<AsArray>,
     Alternative<AsArray>,
     Monad<AsArray>,
+    MonadRec<AsArray>,
     Traversable<AsArray>,
     Ord<AsArray> {
   /** Higher-kinded slot for the array element type. */
@@ -164,21 +167,21 @@ Semigroup.instance(ArrayT)({
 });
 
 Monoid.instance(ArrayT)({
-  empty() {
-    return ArrayT([]);
-  },
+  empty: empty_array,
 });
 
 Alternative.instance(ArrayT)({
-  empty() {
-    return ArrayT([]);
-  },
+  empty: empty_array,
 
   alt(right) {
     const left = this.value();
     return ArrayT([...left, ...right.value()]);
   },
 });
+
+function empty_array<item>(this: AsArray): Data<AsArray, item> {
+  return ArrayT([]);
+}
 
 Monad.instance(ArrayT)({
   bind<from, to>(
@@ -206,6 +209,36 @@ Monad.instance(ArrayT)({
     }
 
     return ArrayT(out);
+  },
+});
+
+MonadRec.instance(ArrayT)({
+  tail_rec_m<state, output>(
+    initial: state,
+    step: (state: state) => Data<AsArray, LoopStep<state, output>>,
+  ): Data<AsArray, output> {
+    const pending: LoopStep<state, output>[] = [rec(initial)];
+    const output: output[] = [];
+
+    while (pending.length > 0) {
+      const [tag, value] = pending.pop()!;
+
+      switch (tag) {
+        case loop_done:
+          output.push(value);
+          break;
+        case loop_rec: {
+          const next = step(value).value();
+
+          for (let index = next.length - 1; index >= 0; index -= 1) {
+            pending.push(next[index]);
+          }
+          break;
+        }
+      }
+    }
+
+    return ArrayT(output);
   },
 });
 

@@ -147,15 +147,11 @@ Semigroup.instance(AsyncIterableT)({
 });
 
 Monoid.instance(AsyncIterableT)({
-  empty() {
-    return AsyncIterableT(async function* () {});
-  },
+  empty: empty_async_iterable,
 });
 
 Alternative.instance(AsyncIterableT)({
-  empty() {
-    return AsyncIterableT(async function* () {});
-  },
+  empty: empty_async_iterable,
 
   alt(right) {
     const left = this.value();
@@ -167,6 +163,12 @@ Alternative.instance(AsyncIterableT)({
     });
   },
 });
+
+function empty_async_iterable<item>(
+  this: AsAsyncIterable,
+): Data<AsAsyncIterable, item> {
+  return AsyncIterableT(async function* () {});
+}
 
 Monad.instance(AsyncIterableT)({
   bind(fn) {

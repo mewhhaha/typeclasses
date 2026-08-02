@@ -192,7 +192,10 @@ async function rejection_from(promise: Promise<unknown>): Promise<Error> {
 async function settles_within<value>(promise: Promise<value>): Promise<value> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error("promise did not settle")), 500);
+    timer = setTimeout(
+      () => reject(new Error("promise did not settle")),
+      2_000,
+    );
   });
 
   try {

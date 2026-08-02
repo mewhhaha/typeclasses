@@ -21,12 +21,14 @@ import {
   Functor,
   Monad,
   MonadError,
+  MonadRec,
   Ord,
   Show,
   Traversable,
 } from "./typeclasses.ts";
 import { Just, type MaybeValue, Nothing } from "./maybe.ts";
 import { inspect } from "./inspect.ts";
+import { loop_done, loop_rec, type LoopStep } from "./loop.ts";
 
 /** @ignore */
 export declare const either_identity: unique symbol;
@@ -56,6 +58,7 @@ export interface AsEither<left = AnyLeft>
     As<AsEither<left>, typeof either_identity>,
     Show<AsEither<left>>,
     MonadError<AsEither<left>, left>,
+    MonadRec<AsEither<left>>,
     Traversable<AsEither<left>>,
     Bifunctor<AsEither<left>, left, EitherBifunctorContext>,
     Ord<AsEither<left>> {
@@ -90,8 +93,6 @@ export type EitherConstructor =
     <left, right>(value: Either<left, right>): EitherValue<left, right>;
     /** View the shared dictionary at a particular left type. */
     with_left<left>(): EitherDictionary<left>;
-    /** @deprecated Use with_left. */
-    withLeft<left>(): EitherDictionary<left>;
   }
   & {
     readonly [key in keyof UnionDictionary<AsEither<unknown>>]: UnionDictionary<
@@ -139,10 +140,6 @@ export const Either = data<AsEither<unknown>>(
 ) as EitherConstructor;
 
 Object.defineProperty(Either, "with_left", {
-  value: either_with_left,
-});
-
-Object.defineProperty(Either, "withLeft", {
   value: either_with_left,
 });
 
@@ -413,6 +410,39 @@ Monad.instance(Either)({
         return same_context(this);
       case "Right":
         return fn(payload);
+    }
+  },
+});
+
+MonadRec.instance(Either)({
+  tail_rec_m<state, output>(
+    initial: state,
+    step: (
+      state: state,
+    ) => Data<AsEither<unknown>, LoopStep<state, output>>,
+  ): Data<AsEither<unknown>, output> {
+    let state = initial;
+
+    while (true) {
+      const current = step(state);
+      const [either_tag, loop_step] = current.value();
+
+      switch (either_tag) {
+        case "Left":
+          return Either<unknown, output>(["Left", loop_step]);
+        case "Right": {
+          const [loop_tag, value] = loop_step;
+
+          switch (loop_tag) {
+            case loop_done:
+              return Right(value);
+            case loop_rec:
+              state = value;
+              break;
+          }
+          break;
+        }
+      }
     }
   },
 });

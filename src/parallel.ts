@@ -124,7 +124,12 @@ export function worker_map<input, output>(
   inputs: readonly input[],
   options: ParallelOptions = {},
 ): Data<AsTask, readonly output[]> {
-  return from_fn(() => run_worker_map<input, output>(worker, inputs, options));
+  return from_fn((signal) =>
+    run_worker_map<input, output>(worker, inputs, {
+      ...options,
+      signal: combine_signals(options.signal, signal),
+    })
+  );
 }
 
 /** Interprets parallel requests as deferred Task lifts. */
@@ -325,7 +330,9 @@ export function worker_pool_map<input, output>(
   inputs: readonly input[],
   options: WorkerMapOptions = {},
 ): Data<AsTask, readonly output[]> {
-  return from_fn(() => pool.map(inputs, options));
+  return from_fn((signal) =>
+    pool.map(inputs, { signal: combine_signals(options.signal, signal) })
+  );
 }
 
 /** Maps inputs with temporary workers and terminates them afterward. */
@@ -761,6 +768,15 @@ function compact_signals(
   }
 
   return [first, second];
+}
+
+function combine_signals(
+  first: AbortSignal | undefined,
+  second: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (first === undefined) return second;
+  if (second === undefined) return first;
+  return AbortSignal.any([first, second]);
 }
 
 function worker_abort_error(

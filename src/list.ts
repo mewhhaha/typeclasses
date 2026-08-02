@@ -10,6 +10,7 @@ import {
 } from "./typeclass.ts";
 import { append_item } from "./internal.ts";
 import { inspect } from "./inspect.ts";
+import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
 import {
   Alternative,
   Applicative,
@@ -19,6 +20,7 @@ import {
   Foldable,
   Functor,
   Monad,
+  MonadRec,
   Monoid,
   Ord,
   Semigroup,
@@ -47,6 +49,7 @@ export interface AsList
     Monoid<AsList>,
     Alternative<AsList>,
     Monad<AsList>,
+    MonadRec<AsList>,
     Traversable<AsList>,
     Ord<AsList> {
   /** Higher-kinded slot for the list element type. */
@@ -227,20 +230,20 @@ Semigroup.instance(List)({
 });
 
 Monoid.instance(List)({
-  empty() {
-    return Nil();
-  },
+  empty: empty_list,
 });
 
 Alternative.instance(List)({
-  empty() {
-    return Nil();
-  },
+  empty: empty_list,
 
   alt(right) {
     return List(list_append(this.value(), right.value()));
   },
 });
+
+function empty_list<item>(this: AsList): Data<AsList, item> {
+  return Nil();
+}
 
 Monad.instance(List)({
   bind<from, to>(
@@ -264,6 +267,36 @@ Monad.instance(List)({
     }
 
     return List(list_reverse(reversed));
+  },
+});
+
+MonadRec.instance(List)({
+  tail_rec_m<state, output>(
+    initial: state,
+    step: (state: state) => Data<AsList, LoopStep<state, output>>,
+  ): Data<AsList, output> {
+    const pending: LoopStep<state, output>[] = [rec(initial)];
+    const output: output[] = [];
+
+    while (pending.length > 0) {
+      const [tag, value] = pending.pop()!;
+
+      switch (tag) {
+        case loop_done:
+          output.push(value);
+          break;
+        case loop_rec: {
+          const next = to_array(step(value));
+
+          for (let index = next.length - 1; index >= 0; index -= 1) {
+            pending.push(next[index]);
+          }
+          break;
+        }
+      }
+    }
+
+    return from_array(output);
   },
 });
 

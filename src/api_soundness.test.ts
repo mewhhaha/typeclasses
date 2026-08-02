@@ -26,7 +26,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import { Applicative, MonadError, Parse } from "./typeclasses.ts";
+import { Applicative, Eq, MonadError, Parse } from "./typeclasses.ts";
 
 type Box<item> = readonly ["Box", item];
 
@@ -174,6 +174,57 @@ Deno.test("JSON round-trips a wrapped value through its dictionary", () => {
   assert_equals(JSON.stringify(Either.Left(1)), '["Left",1]');
   assert_equals(JSON.stringify({ result: Just(1) }), '{"result":["Just",1]}');
   assert_equals(Maybe(JSON.parse(encoded)).value(), ["Just", 1] as const);
+});
+
+Deno.test("tagged dictionaries reject malformed raw values", () => {
+  for (
+    const malformed of [
+      null,
+      ["Unknown"],
+      ["Just"],
+      ["Nothing", 1],
+    ]
+  ) {
+    let failure: unknown;
+
+    try {
+      Maybe(malformed as never);
+    } catch (error) {
+      failure = error;
+    }
+
+    assert_true(
+      failure instanceof TypeError,
+      `expected ${JSON.stringify(malformed)} to be rejected`,
+    );
+  }
+});
+
+Deno.test("typeclass dispatch reports missing and mismatched dictionaries", () => {
+  let missing: unknown;
+  let mismatched: unknown;
+
+  try {
+    Eq.eq(First(["Box", 1]) as never, First(["Box", 1]) as never);
+  } catch (error) {
+    missing = error;
+  }
+
+  try {
+    Just(1).eq(ArrayT([1]) as never);
+  } catch (error) {
+    mismatched = error;
+  }
+
+  assert_true(
+    missing instanceof TypeError && missing.message.includes("Missing Eq"),
+    "missing instances name the requested typeclass",
+  );
+  assert_true(
+    mismatched instanceof TypeError &&
+      mismatched.message.includes("same dictionary"),
+    "binary methods reject values from different dictionaries",
+  );
 });
 
 Deno.test("tagged payloads stay hidden from ordinary property access", () => {

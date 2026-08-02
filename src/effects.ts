@@ -42,10 +42,11 @@ export type Uses<dictionary extends Dictionary, item = unknown> = Lift<
   item
 >;
 
-/** Describes whether an effect completed successfully or failed. */
+/** Describes how an effect scope completed. */
 export type EffectExit =
   | { readonly status: "succeeded" }
-  | { readonly status: "failed"; readonly error: unknown };
+  | { readonly status: "failed"; readonly error: unknown }
+  | { readonly status: "cancelled"; readonly reason: unknown };
 
 /** Cleanup run after an effect exits. */
 export type EffectFinalizer = (

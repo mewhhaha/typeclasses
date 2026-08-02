@@ -6,6 +6,7 @@ export * from "./functor.ts";
 export * from "./applicative.ts";
 export * from "./alternative.ts";
 export * from "./monad.ts";
+export * from "./monad_rec.ts";
 export * from "./foldable.ts";
 export * from "./traversable.ts";
 export * from "./ord.ts";

@@ -6,6 +6,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
+import { loop_done, loop_rec } from "./loop.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -15,6 +16,7 @@ import {
   Foldable,
   Functor,
   Monad,
+  MonadRec,
   Ord,
   Show,
   Traversable,
@@ -32,6 +34,7 @@ export interface AsIdentity
     As<AsIdentity, typeof identity_identity>,
     Show<AsIdentity>,
     Monad<AsIdentity>,
+    MonadRec<AsIdentity>,
     Traversable<AsIdentity>,
     Comonad<AsIdentity>,
     Ord<AsIdentity> {
@@ -99,6 +102,24 @@ Applicative.instance(Identity)({
 Monad.instance(Identity)({
   bind(fn) {
     return fn(this.value());
+  },
+});
+
+MonadRec.instance(Identity)({
+  tail_rec_m(initial, step) {
+    let state = initial;
+
+    while (true) {
+      const [tag, value] = step(state).value();
+
+      switch (tag) {
+        case loop_done:
+          return identity(value);
+        case loop_rec:
+          state = value;
+          break;
+      }
+    }
   },
 });
 

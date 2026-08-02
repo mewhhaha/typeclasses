@@ -121,6 +121,56 @@ const value = run(run_reader(effect, config));
   );
 });
 
+Deno.test("transform plugin lowers TSX and fails unsupported syntax by default", () => {
+  const tsx = `
+import { Do } from "../src/typeclasses.ts";
+import { Just, Maybe } from "../src/maybe.ts";
+const view = <div>{Do(Maybe, function* () {
+  const value = yield* Just(1);
+  return value;
+})}</div>;
+`;
+  const transformed = typeclasses_rollup_plugin().transform.call(
+    { warn() {} },
+    tsx,
+    "view.tsx",
+  );
+
+  assert_true(transformed !== null, "expected TSX source to be handled");
+  assert_true(
+    transformed !== null && !transformed.code.includes("function*"),
+    "expected TSX Do expression to lower",
+  );
+
+  const unsupported = `
+import { Do } from "../src/typeclasses.ts";
+const value = Do(Maybe, function* () {
+  try { return 1; } catch { return 2; }
+});
+`;
+  let failure: unknown;
+
+  try {
+    typeclasses_rollup_plugin().transform.call(
+      { warn() {} },
+      unsupported,
+      "unsupported.ts",
+    );
+  } catch (error) {
+    failure = error;
+  }
+
+  assert_true(
+    failure instanceof Error && failure.message.includes("try"),
+    "expected unsupported syntax to fail the transform",
+  );
+
+  const preserved = typeclasses_rollup_plugin({
+    on_unsupported: "preserve",
+  }).transform.call({ warn() {} }, unsupported, "unsupported.ts");
+  assert_equals(preserved, { code: unsupported, map: null });
+});
+
 Deno.test({
   name: "esbuild bundles examples/monads.ts with transitive library source",
   permissions: { env: true, read: true, run: true },

@@ -151,7 +151,7 @@ export function transform_do_program_source(
     source,
     ts.ScriptTarget.Latest,
     false,
-    ts.ScriptKind.TS,
+    script_kind(file_name),
   );
   const diagnostics: TransformDiagnostic[] = [];
   const imports = collect_imports(source_file, config);
@@ -383,6 +383,11 @@ export function transform_do_program_source(
   } finally {
     result.dispose();
   }
+}
+
+function script_kind(file_name: string): ts.ScriptKind {
+  const path = file_name.split("?", 1)[0].toLowerCase();
+  return path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 }
 
 function unchanged_transform_result(source: string): TransformResult {

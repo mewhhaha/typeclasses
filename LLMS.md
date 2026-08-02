@@ -672,9 +672,11 @@ Keep `.map(...)` and `Applicative.lift(...)` callbacks synchronous. Use
 `.bind(...)`, `Do`, or another `from_fn(...)` for dependent asynchronous work. A
 `Task` item cannot itself be `PromiseLike`.
 
-Pass an `AbortSignal` through to APIs that support cancellation. Aborting a task
-created with `from_promise` stops waiting but cannot undo the already started
-operation.
+Pass an `AbortSignal` to `.run(signal)` or `run_task(effect, { signal })`.
+Cancellation propagates through Task composition and applicative failures abort
+their siblings. A task created with `from_promise` can stop waiting but cannot
+undo the already started operation. Use `run_task_exit` to observe cancellation
+without catching an exception.
 
 ## Programs and capabilities
 
@@ -1497,8 +1499,10 @@ before writing a domain-specific generator. `pair_arbitrary` and
 `map_arbitrary` with forward and reverse conversions to construct a domain type
 without losing its source shrinker.
 
-For custom dictionaries, run the applicable `functor_laws`, `applicative_laws`,
-`monad_laws`, `eq_laws`, and `ord_laws` with `check_laws`. These supplement
+For custom dictionaries, run every applicable reusable law collection with
+`check_laws`. The module covers Functor, Applicative, Monad, MonadError,
+Semigroup, Monoid, Alternative, Foldable, Traversable, Eq, Ord, Bifunctor,
+Contravariant, Profunctor, Category, Arrow, and Comonad. These supplement
 behavior tests; laws do not prove that an instance has the intended domain
 meaning.
 
