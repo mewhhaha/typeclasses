@@ -84,7 +84,26 @@ try {
   }
   await child.status;
   await server.shutdown();
-  await Deno.remove(profile, { recursive: true });
+  await remove_browser_profile(profile);
+}
+
+async function remove_browser_profile(profile: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await Deno.remove(profile, { recursive: true });
+      return;
+    } catch (error) {
+      const code = error instanceof Error
+        ? (error as Error & { readonly code?: string }).code
+        : undefined;
+
+      if (code !== "ENOTEMPTY" || attempt === 9) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 }
 
 async function browser_command(
