@@ -1,9 +1,10 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { Applicative } from "./typeclasses.ts";
-import { Effect } from "./effects.ts";
+import { Effect, has_tag } from "./effects.ts";
 import {
   from_fn,
   from_promise,
+  handle_operation_task,
   run_task,
   run_task_exit,
   succeed,
@@ -92,6 +93,48 @@ Deno.test("run_task_exit distinguishes cancellation from failure", async () => {
   if (exit.status === "cancelled") {
     assert_equals(exit.reason, "stop");
   }
+});
+
+Deno.test("ordinary AbortError rejections remain Task failures", async () => {
+  const host_error = Object.assign(
+    new Error("HTTP request was aborted upstream"),
+    { name: "AbortError" },
+  );
+  const exits: string[] = [];
+  const protected_effect = Effect.ensuring(
+    Effect.lift(from_fn<never>(() => Promise.reject(host_error))),
+    (exit) => {
+      exits.push(exit.status);
+    },
+  );
+  const exit = await run_task_exit(protected_effect);
+
+  assert_equals(exit.status, "failed");
+  if (exit.status === "failed") {
+    assert_true(exit.error === host_error, "the host error is preserved");
+  }
+  assert_equals(exits, ["failed"]);
+});
+
+Deno.test("Task operation handlers receive the execution AbortSignal", async () => {
+  const ReadAnswer = Effect.operation<number>()(["test.task_read_answer"]);
+  const controller = new AbortController();
+  let received: AbortSignal | undefined;
+  const handled = handle_operation_task(
+    Effect.send(ReadAnswer),
+    (operation): operation is typeof ReadAnswer =>
+      has_tag(operation, "test.task_read_answer"),
+    (_operation, signal) => {
+      received = signal;
+      return Promise.resolve(42);
+    },
+  );
+
+  assert_equals(
+    await run_task(handled, { signal: controller.signal }),
+    42,
+  );
+  assert_equals(received, controller.signal);
 });
 
 Deno.test("Task Applicative aborts siblings after one fails", async () => {

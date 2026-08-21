@@ -1,5 +1,12 @@
 import { assert_equals, assert_true } from "./assert.ts";
-import { Effect, type EffectExit, Program, type Uses } from "./effects.ts";
+import {
+  Effect,
+  type EffectExit,
+  has_tag,
+  Program,
+  run,
+  type Uses,
+} from "./effects.ts";
 import { type AsTask, from_fn, run_task, succeed } from "./task.ts";
 
 Deno.test("Effect runs deep map chains without growing the JavaScript stack", async () => {
@@ -46,6 +53,60 @@ Deno.test("operation builders preserve phantom output inference", () => {
 
   assert_equals(doubled[1], ["test.read_answer"]);
   assert_equals(doubled[2](21)[1], 42);
+});
+
+Deno.test("custom operation handlers resume deep synchronous sequences iteratively", () => {
+  const Tick = Effect.operation<void>()(["test.tick"]);
+  const TickProgram = Program.scope<typeof Tick>();
+  const program = TickProgram(function* () {
+    for (let index = 0; index < 10_000; index += 1) {
+      yield* Effect.send(Tick);
+    }
+
+    return "done";
+  });
+  let ticks = 0;
+  const handled = Effect.handle_operation(
+    program,
+    (operation): operation is typeof Tick => has_tag(operation, "test.tick"),
+    () => {
+      ticks += 1;
+      return Effect.pure<void>(undefined);
+    },
+  );
+
+  assert_equals(run(handled), "done");
+  assert_equals(ticks, 10_000);
+});
+
+Deno.test("custom operation handlers preserve unmatched operations", () => {
+  const ReadAnswer = Effect.operation<number>()(["test.read_answer"]);
+  const RecordAnswer = Effect.operation<void>()(["test.record_answer"]);
+  const App = Program.scope<typeof ReadAnswer | typeof RecordAnswer>();
+  const program = App(function* () {
+    const answer = yield* Effect.send(ReadAnswer);
+    yield* Effect.send(RecordAnswer);
+    return answer * 2;
+  });
+  const answered = Effect.handle_operation(
+    program,
+    (operation): operation is typeof ReadAnswer =>
+      has_tag(operation, "test.read_answer"),
+    () => Effect.pure(21),
+  );
+  let records = 0;
+  const recorded = Effect.handle_operation(
+    answered,
+    (operation): operation is typeof RecordAnswer =>
+      has_tag(operation, "test.record_answer"),
+    () => {
+      records += 1;
+      return Effect.pure<void>(undefined);
+    },
+  );
+
+  assert_equals(run(recorded), 42);
+  assert_equals(records, 1);
 });
 
 Deno.test("Effect ensuring finalizes a Program when a lifted Task rejects", async () => {

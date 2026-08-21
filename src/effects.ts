@@ -14,7 +14,9 @@ export type Operation<item> = {
   readonly [operation_output]?: item;
 };
 
-type OperationOutput<operation> = operation extends Operation<infer item> ? item
+/** Extracts the item produced when an operation is interpreted. */
+export type OperationOutput<operation> = operation extends Operation<infer item>
+  ? item
   : never;
 
 /** A tuple-tagged operation that can carry one payload. */
@@ -158,6 +160,11 @@ export type WithoutLift<
   : requirements
   : requirements;
 
+/** Removes selected operations from an effect requirement union. */
+export type WithoutOperation<requirements, selected> = requirements extends
+  selected ? never
+  : requirements;
+
 /** Interprets lifted dictionary values while carrying explicit state. */
 export type LiftHandler<
   dictionary extends Dictionary,
@@ -252,6 +259,7 @@ export type EffectConstructors = {
   readonly bind: typeof bind;
   readonly bind_from: typeof bind_from;
   readonly ensuring: typeof ensuring;
+  readonly handle_operation: typeof handle_operation;
   readonly handle_with: typeof handle_with;
   readonly interpret: typeof interpret;
 };
@@ -274,6 +282,7 @@ export const Effect: EffectConstructors = {
   bind,
   bind_from,
   ensuring,
+  handle_operation,
   handle_with,
   interpret,
 };
@@ -702,6 +711,84 @@ export function run<item>(effect: Effect<never, item>): item {
 
   const operation = effect[1] as unknown as TaggedOperation;
   throw new TypeError("Unhandled effect operation: " + operation[0]);
+}
+
+/**
+ * Handles selected operations while preserving unmatched requirements.
+ *
+ * Pure handler results are resumed iteratively, so long synchronous operation
+ * sequences do not grow the JavaScript stack. A handler may also translate the
+ * selected operation into another effect capability.
+ */
+export function handle_operation<
+  requirements,
+  selected extends TaggedOperation & Operation<unknown>,
+  handled_requirements,
+  item,
+>(
+  effect: Effect<requirements, item>,
+  select: (operation: unknown) => operation is selected,
+  handle: (
+    operation: selected,
+  ) => Effect<handled_requirements, OperationOutput<selected>>,
+): Effect<
+  WithoutOperation<requirements, selected> | handled_requirements,
+  item
+> {
+  let current = effect as Effect<requirements, unknown>;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure":
+        return pure(current[1] as item);
+      case "impure": {
+        const suspended = current;
+
+        if (!select(suspended[1])) {
+          return new NewImpureEffect(
+            suspended[1] as WithoutOperation<requirements, selected>,
+            (value) =>
+              handle_operation(
+                suspended[2](value),
+                select,
+                handle,
+              ),
+          ) as Effect<
+            WithoutOperation<requirements, selected> | handled_requirements,
+            item
+          >;
+        }
+
+        const handled = handle(suspended[1]);
+
+        if (!is_effect(handled)) {
+          throw new TypeError("Operation handler returned an invalid effect");
+        }
+
+        switch (handled[0]) {
+          case "pure":
+            current = suspended[2](handled[1]) as Effect<
+              requirements,
+              unknown
+            >;
+            continue;
+          case "impure":
+            return bind(
+              handled,
+              (value) =>
+                handle_operation(
+                  suspended[2](value),
+                  select,
+                  handle,
+                ),
+            ) as Effect<
+              WithoutOperation<requirements, selected> | handled_requirements,
+              item
+            >;
+        }
+      }
+    }
+  }
 }
 
 /** Runs an effect whose only operation is a lift for `dictionary`. */
