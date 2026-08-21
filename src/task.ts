@@ -6,7 +6,18 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import type { Effect, EffectFinalizer, Ensuring, Lift } from "./effects.ts";
+import {
+  Effect,
+  type EffectFinalizer,
+  type Ensuring,
+  handle_operation,
+  type Lift,
+  type Operation,
+  type OperationOutput,
+  type TaggedOperation,
+  type Uses,
+  type WithoutOperation,
+} from "./effects.ts";
 import { is_kind_of } from "./internal.ts";
 import { loop_done, loop_rec } from "./loop.ts";
 import {
@@ -21,6 +32,8 @@ import {
 
 /** @ignore */
 export declare const task_identity: unique symbol;
+
+const task_cancellation = Symbol("Task cancellation");
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
 export type TaskItem<item> = Extract<item, PromiseLike<unknown>> extends never
@@ -101,6 +114,34 @@ export function from_promise<item>(
     const pending = Promise.resolve(promise);
     return await_with_signal(pending, signal, "Task.from_promise");
   });
+}
+
+/**
+ * Handles selected operations as deferred Tasks.
+ *
+ * The handler receives the signal supplied to `run_task`; unmatched operations
+ * remain suspended for later handlers.
+ */
+export function handle_operation_task<
+  requirements,
+  selected extends TaggedOperation & Operation<unknown>,
+  item,
+>(
+  effect: Effect<requirements, item>,
+  select: (operation: unknown) => operation is selected,
+  handle: (
+    operation: selected,
+    signal: AbortSignal | undefined,
+  ) => Promise<TaskItem<OperationOutput<selected>>>,
+): Effect<
+  WithoutOperation<requirements, selected> | Uses<AsTask>,
+  item
+> {
+  return handle_operation(
+    effect,
+    select,
+    (operation) => Effect.lift(from_fn((signal) => handle(operation, signal))),
+  );
 }
 
 /** Runs an effect containing Task lifts and cleanup scopes. */
@@ -432,13 +473,14 @@ function task_abort_error(operation: string, signal: AbortSignal): Error {
 
   const error = new Error(message, { cause: reason });
   error.name = "AbortError";
+  Object.defineProperty(error, task_cancellation, { value: true });
 
   return error;
 }
 
 /** Tests whether an unknown failure represents Task cancellation. */
 export function is_task_cancellation(error: unknown): error is Error {
-  return error instanceof Error && error.name === "AbortError";
+  return error instanceof Error && task_cancellation in error;
 }
 
 async function finalize_successful_effect(

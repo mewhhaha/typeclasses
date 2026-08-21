@@ -1006,9 +1006,10 @@ tuple and its output together with `Effect.operation`, then suspend it with
 ```ts
 import {
   Effect,
+  has_tag,
   Program,
   run,
-  type TaggedOperation,
+  type WithoutOperation,
 } from "@mewhhaha/typeclasses/effects";
 
 const Clock = Effect.operation<string>()(["clock.now"]);
@@ -1019,26 +1020,14 @@ function now() {
   return Effect.send(Clock);
 }
 
-type WithoutClock<requirements> = requirements extends Clock ? never
-  : requirements;
-
 function run_clock<requirements, item>(
   effect: Effect<requirements, item>,
   read_now: () => string,
-): Effect<WithoutClock<requirements>, item> {
-  if (effect[0] === "pure") {
-    return Effect.pure(effect[1]);
-  }
-
-  const operation = effect[1] as TaggedOperation;
-
-  if (operation[0] === "clock.now") {
-    return run_clock(effect[2](read_now()), read_now);
-  }
-
-  return Effect.suspend(
-    effect[1] as WithoutClock<requirements>,
-    (value) => run_clock(effect[2](value), read_now),
+): Effect<WithoutOperation<requirements, Clock>, item> {
+  return Effect.handle_operation(
+    effect,
+    (operation): operation is Clock => has_tag(operation, "clock.now"),
+    () => Effect.pure(read_now()),
   );
 }
 
@@ -1075,7 +1064,24 @@ continuation with their output, and suspends every unknown operation unchanged.
 Its result type removes the handled capability. A handler may also translate an
 operation into another capability: a database handler commonly turns database
 operations into `Task`, while a trace handler can turn trace events into
-`Writer`.
+`Writer`. `Effect.handle_operation` implements that walk and resumes consecutive
+pure results iteratively, so a long synchronous program does not consume the
+JavaScript call stack.
+
+For a promise-backed runtime, use `handle_operation_task` from the Task module.
+It defers the runtime call until `run_task`, preserves unmatched operations, and
+passes the execution signal to the handler:
+
+```ts
+return handle_operation_task(
+  effect,
+  is_read_file,
+  (operation, signal) => runtime.read(operation[1].path, signal),
+);
+```
+
+`OperationOutput<operation>` is exported for reusable handler interfaces that
+need to name the selected operation's phantom result type.
 
 ### Instrument operations in a handler
 

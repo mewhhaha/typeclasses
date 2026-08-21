@@ -1,11 +1,13 @@
 import {
   Effect,
+  has_tag,
   type Operation,
   type TaggedOperation,
   type Uses,
+  type WithoutOperation,
 } from "../../src/effects.ts";
 import { type EitherValue, Left, Right } from "../../src/either.ts";
-import { type AsTask, from_fn } from "../../src/task.ts";
+import { type AsTask, handle_operation_task } from "../../src/task.ts";
 import type { TraceAttributes, TraceScope } from "./trace.ts";
 import type { HttpProblem, Todo, TodoCreate, TodoPatch } from "./types.ts";
 
@@ -77,9 +79,6 @@ export type D1PreparedStatement = {
   all<row extends object>(): Promise<{ readonly results: readonly row[] }>;
   run(): Promise<unknown>;
 };
-
-type WithoutDatabase<requirements> = requirements extends Database ? never
-  : requirements;
 
 type TodoRow = {
   readonly id: string;
@@ -162,59 +161,44 @@ export function database_trace_scope(
 export function run_database<requirements, item>(
   effect: Effect<requirements, item>,
   runtime: DatabaseRuntime,
-): Effect<WithoutDatabase<requirements> | Uses<AsTask>, item> {
-  if (effect[0] === "pure") {
-    return Effect.pure(effect[1]);
-  }
-
-  const operation = effect[1] as TaggedOperation;
-
-  switch (operation[0]) {
-    case "crud.database.list":
-      return Effect.bind(
-        Effect.lift(from_fn(() => runtime.list())),
-        (result) => run_database(effect[2](result), runtime),
-      );
-    case "crud.database.create": {
-      const [, create] = effect[1] as CreateTodo;
-
-      return Effect.bind(
-        Effect.lift(from_fn(() => runtime.create(create.input, create.now))),
-        (result) => run_database(effect[2](result), runtime),
-      );
-    }
-    case "crud.database.read": {
-      const [, read] = effect[1] as ReadTodo;
-
-      return Effect.bind(
-        Effect.lift(from_fn(() => runtime.read(read.id))),
-        (result) => run_database(effect[2](result), runtime),
-      );
-    }
-    case "crud.database.update": {
-      const [, update] = effect[1] as UpdateTodo;
-
-      return Effect.bind(
-        Effect.lift(
-          from_fn(() => runtime.update(update.id, update.patch, update.now)),
-        ),
-        (result) => run_database(effect[2](result), runtime),
-      );
-    }
-    case "crud.database.delete": {
-      const [, remove] = effect[1] as DeleteTodo;
-
-      return Effect.bind(
-        Effect.lift(from_fn(() => runtime.delete(remove.id))),
-        (result) => run_database(effect[2](result), runtime),
-      );
-    }
-  }
-
-  return Effect.suspend(
-    effect[1] as WithoutDatabase<requirements>,
-    (value) => run_database(effect[2](value), runtime),
+): Effect<
+  WithoutOperation<requirements, Database> | Uses<AsTask>,
+  item
+> {
+  return handle_operation_task(
+    effect,
+    is_database,
+    (operation) => {
+      switch (operation[0]) {
+        case "crud.database.list":
+          return runtime.list();
+        case "crud.database.create": {
+          const [, create] = operation;
+          return runtime.create(create.input, create.now);
+        }
+        case "crud.database.read": {
+          const [, read] = operation;
+          return runtime.read(read.id);
+        }
+        case "crud.database.update": {
+          const [, update] = operation;
+          return runtime.update(update.id, update.patch, update.now);
+        }
+        case "crud.database.delete": {
+          const [, remove] = operation;
+          return runtime.delete(remove.id);
+        }
+      }
+    },
   );
+}
+
+function is_database(operation: unknown): operation is Database {
+  return has_tag(operation, "crud.database.list") ||
+    has_tag(operation, "crud.database.create") ||
+    has_tag(operation, "crud.database.read") ||
+    has_tag(operation, "crud.database.update") ||
+    has_tag(operation, "crud.database.delete");
 }
 
 export function memory_database(

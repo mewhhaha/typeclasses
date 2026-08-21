@@ -30,10 +30,12 @@ export type {
   Operation,
   /** @ignore */
   operation_output,
+  OperationOutput,
   ProgramConstructor,
   ProgramScope,
   TaggedOperation,
   Uses,
+  WithoutOperation,
 } from "./effects.ts";
 /** Namespace containing the complete algebraic-effects API. */
 export * as effects from "./effects.ts";

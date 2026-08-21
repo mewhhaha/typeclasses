@@ -1,11 +1,12 @@
 import { ArrayT, type AsArray } from "../../src/array.ts";
 import {
   Effect,
+  has_tag,
   type Operation,
   type TaggedOperation,
   type Uses,
 } from "../../src/effects.ts";
-import { type AsTask, from_fn } from "../../src/task.ts";
+import { type AsTask, handle_operation_task } from "../../src/task.ts";
 import { type AsWriter, tell } from "../../src/writer.ts";
 
 export type TraceAttributes = Readonly<
@@ -118,31 +119,16 @@ export function run_trace_with_sink<requirements, item>(
   effect: Effect<requirements, item>,
   sink: TraceSink,
 ): Effect<WithoutTrace<requirements> | Uses<AsTask>, item> {
-  if (effect[0] === "pure") {
-    return Effect.pure(effect[1]);
-  }
-
-  const operation = effect[1] as TaggedOperation;
-
-  if (operation[0] === "trace.event") {
-    const [, trace] = effect[1] as TraceEvent;
-
-    return Effect.bind(
-      Effect.lift(
-        from_fn(() =>
-          sink.event({
-            name: trace.name,
-            attributes: trace.attributes,
-          })
-        ),
-      ),
-      () => run_trace_with_sink(effect[2](undefined), sink),
-    );
-  }
-
-  return Effect.suspend(
-    effect[1] as WithoutTrace<requirements>,
-    (value) => run_trace_with_sink(effect[2](value), sink),
+  return handle_operation_task(
+    effect,
+    (operation): operation is TraceEvent => has_tag(operation, "trace.event"),
+    (operation) => {
+      const [, trace] = operation;
+      return sink.event({
+        name: trace.name,
+        attributes: trace.attributes,
+      });
+    },
   );
 }
 

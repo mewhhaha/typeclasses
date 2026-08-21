@@ -1734,6 +1734,41 @@ function now() {
 }
 ```
 
+Interpret a custom operation with `Effect.handle_operation`. The type guard
+selects the operation, the handler must produce its phantom output, and the
+result removes that operation from the requirement union while leaving every
+unmatched operation suspended:
+
+```ts
+import {
+  Effect,
+  has_tag,
+  type WithoutOperation,
+} from "jsr:@mewhhaha/typeclasses/effects";
+
+function is_clock(operation: unknown): operation is Clock {
+  return has_tag(operation, "clock.now");
+}
+
+function run_clock<requirements, item>(
+  effect: Effect<requirements, item>,
+  read_now: () => string,
+): Effect<WithoutOperation<requirements, Clock>, item> {
+  return Effect.handle_operation(
+    effect,
+    is_clock,
+    () => Effect.pure(read_now()),
+  );
+}
+```
+
+The handler may return another effect instead of `Effect.pure`, which translates
+the custom operation into another capability. For promise-backed runtimes,
+`handle_operation_task` performs that translation into `Task`; its handler is
+deferred until `run_task` and receives the execution `AbortSignal`. Both forms
+resume long operation sequences without recursively growing the JavaScript
+stack.
+
 When an operation carries a payload constructed at each call, supplying the
 operation type explicitly is also cast-free:
 

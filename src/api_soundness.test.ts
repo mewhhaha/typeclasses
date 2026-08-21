@@ -2,11 +2,14 @@ import { ArrayT, type AsArray, to_array } from "./array.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import { Either } from "./either.ts";
 import {
-  type Effect,
+  Effect,
+  has_tag,
+  type OperationOutput,
   Program,
   run,
   type Uses,
   type WithoutLift,
+  type WithoutOperation,
 } from "./effects.ts";
 import { fn } from "./fn.ts";
 import { Cons, Nil } from "./list.ts";
@@ -496,6 +499,38 @@ function check_api_types(): void {
   expect_type<Uses<AsFirst>>(null as unknown as Remaining);
 
   check_effect_handler_types();
+  check_operation_handler_types();
+}
+
+function check_operation_handler_types(): void {
+  const ReadText = Effect.operation<string>()(["test.read_text"]);
+  const WriteText = Effect.operation<void>()(["test.write_text"]);
+  const App = Program.scope<typeof ReadText | typeof WriteText>();
+  const program = App(function* () {
+    const text = yield* Effect.send(ReadText);
+    yield* Effect.send(WriteText);
+    return text.length;
+  });
+  const is_read_text = (operation: unknown): operation is typeof ReadText =>
+    has_tag(operation, "test.read_text");
+  const handled = Effect.handle_operation(
+    program,
+    is_read_text,
+    () => Effect.pure("contents"),
+  );
+
+  expect_type<OperationOutput<typeof ReadText>>("contents");
+  expect_type<
+    WithoutOperation<typeof ReadText | typeof WriteText, typeof ReadText>
+  >(WriteText);
+  expect_type<Effect<typeof WriteText, number>>(handled);
+
+  Effect.handle_operation(
+    program,
+    is_read_text,
+    // @ts-expect-error ReadText handlers have to resume with a string
+    () => Effect.pure(42),
+  );
 }
 
 // One handler consumes every lift of its dictionary, so the value it is given
