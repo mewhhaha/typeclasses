@@ -76,6 +76,19 @@ const success = Right<string, number>(42);
 const failure = Left<string, number>("missing port");
 ```
 
+The same constructors and guards are available on `Either` and `Validation`:
+`Either.Right(42)` and `Validation.Valid(42)` infer the successful item without
+type arguments. A configured `Either.with_left<error>()` or
+`Validation.with_semigroup(semigroup)` dictionary remains useful when `pure`,
+yield-free `Do`, or validation failures need a fixed context.
+
+Fluent maps on a plain `Right` preserve its success-only type until `bind`
+introduces an error. Fix the error context with `Either.with_left<error>()` when
+generic typeclass operations need it. A bottom-valued failure such as
+`Left("missing")` can infer the item from its `catch_error` handler; recovery of
+an existing successful item keeps that item type. `from_nullable` removes `null`
+and `undefined` from the wrapped payload type.
+
 Use `.value()` only when raw data is needed at a boundary, for matching, or in
 an assertion:
 
@@ -194,6 +207,19 @@ function total<
 Use `@mewhhaha/typeclasses/prelude` when the surrounding code is intentionally
 function-first or mirrors Haskell. Do not mix fluent, typeclass, and prelude
 spellings arbitrarily within one short pipeline.
+
+Typeclass operations retain their dispatcher when detached, so
+`const { map } = Functor; map(Just(41), value => value + 1)` is valid. The
+prelude's `lift(fn, first, ...rest)` has the same positional inference and
+variadic input support as `Applicative.lift`; the `lift_A`–`lift_A5` aliases
+remain available. Import data constructors from their own entry points:
+
+```ts
+import { Just } from "@mewhhaha/typeclasses/maybe";
+import { lift } from "@mewhhaha/typeclasses/prelude";
+
+const answer = lift((left, right) => left + right, Just(20), Just(22));
+```
 
 ## Independent values: use Applicative
 
@@ -689,6 +715,12 @@ abort their siblings. A task created with `from_promise` can stop waiting but
 cannot undo the already started operation. Use `run_task_exit` to observe
 cancellation without catching an exception.
 
+`run_task` and `run_task_exit` also accept a direct `Task` or `ParallelTask`, so
+`await run_task(from_fn(async () => 42))` needs no `Effect.lift` wrapper. For
+conditional unit effects, `when(Task, condition, action)` and
+`unless(Task, condition, action)` from `/prelude` accept Tasks returning
+ordinary `void`, run only the selected action, and produce an `undefined` item.
+
 ## Programs and capabilities
 
 Use `Program.scope<requirements>()` to state every capability a program may
@@ -734,12 +766,17 @@ calculation does not become clearer merely because it can be yielded.
 
 ## Several Reader, State, or Writer values
 
+For one environment or state type, `Reader.with_environment<Config>()` and
+`State.with_state<number>()` fix the context for direct construction, `pure`,
+and dependent steps. They share the anonymous dictionary's handler. Declare
+keyed cells when several contexts need independent handlers.
+
 The anonymous `ask`, `get`, and `tell` operations each address one capability.
 When a program has several genuinely independent environments, state slots, or
 logs, create a keyed cell for each:
 
 ```ts
-import { ArrayT, type AsArray } from "@mewhhaha/typeclasses/array";
+import { ArrayT } from "@mewhhaha/typeclasses/array";
 import { Effect, Program, run, type Uses } from "@mewhhaha/typeclasses/effects";
 import { reader, run_reader } from "@mewhhaha/typeclasses/reader";
 import { run_state, state } from "@mewhhaha/typeclasses/state";
@@ -751,9 +788,12 @@ const request = reader<"request", RequestContext>();
 const counter = state<"counter", number>();
 const last_route = state<"last_route", string>();
 
-const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
-const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
+const audit = writer_cell("audit", ArrayT<string>([]));
+const metrics = writer_cell("metrics", ArrayT<number>([]));
 ```
+
+The Writer factory infers its key, monoid, and log item from the arguments. The
+explicit `writer_cell<key, output, log>(emptyOutput)` form remains supported.
 
 The literal key distinguishes cell types, even when two cells contain the same
 value type. Each declaration also receives its own runtime identity. Use the
@@ -1583,6 +1623,8 @@ Read these files when a pattern is unclear:
 - `src/reader.ts`, `src/state.ts`, and `src/writer.ts` for standard capabilities
   and their handlers.
 - `examples/validated_request.ts` for accumulating independent errors.
+- `examples/consumer_ergonomics.ts` for equivalent calling styles, inferred
+  constructors, configured dictionaries, and direct Task runners.
 - `examples/task_workflow.ts` for parallel and dependent async work.
 - `examples/do_contexts.ts` for `Do` short-circuiting and dependent list
   branches.

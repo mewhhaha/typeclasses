@@ -13,6 +13,8 @@ import {
   sequential,
   succeed,
   Task,
+  type TaskExit,
+  type TaskRequirements,
 } from "./task.ts";
 
 Deno.test("Task rejects thenable values returned from map", async () => {
@@ -306,4 +308,139 @@ Deno.test("Task throw_error observes direct cancellation and preserves ordinary 
     (await rejection_from(task.run())) === failure,
     "ordinary failures keep their identity",
   );
+});
+
+Deno.test("Task terminal runners accept repeatable sequential and parallel values directly", async () => {
+  let executions = 0;
+  const task = from_fn(() => Promise.resolve(++executions));
+  const first: number = await run_task(task);
+  const second: TaskExit<number> = await run_task_exit(task);
+  assert_equals(first, 1);
+  assert_equals(second, { status: "succeeded", value: 2 });
+
+  const combined = Applicative.lift(
+    (left, right) => [left, right] as const,
+    parallel(succeed(3)),
+    parallel(succeed("four")),
+  );
+  const values: readonly [number, string] = await run_task(combined);
+  const exit: TaskExit<readonly [number, string]> = await run_task_exit(
+    combined,
+  );
+  assert_equals(values, [3, "four"] as const);
+  assert_equals(exit, { status: "succeeded", value: [3, "four"] as const });
+});
+
+Deno.test("direct Task terminal inputs preserve failures and cancellation", async () => {
+  const failure = new Error("direct failure");
+  for (
+    const task of [
+      Task.throw_error(failure),
+      parallel(Task.throw_error(failure)),
+    ]
+  ) {
+    const failed = await run_task_exit(task);
+    assert_equals(failed.status, "failed");
+    if (failed.status === "failed") {
+      assert_true(
+        failed.error === failure,
+        "the failure identity is preserved",
+      );
+    }
+
+    const controller = new AbortController();
+    controller.abort("direct cancellation");
+    const cancelled = await run_task_exit(task, { signal: controller.signal });
+    assert_equals(cancelled.status, "cancelled");
+    if (cancelled.status === "cancelled") {
+      assert_equals(cancelled.reason, "direct cancellation");
+    }
+  }
+
+  const controller = new AbortController();
+  let received: AbortSignal | undefined;
+  const task = from_fn<number>((signal) => {
+    received = signal;
+    return new Promise(() => {});
+  });
+  const pending = run_task_exit(task, { signal: controller.signal });
+  controller.abort("cancel running direct task");
+  const cancelled = await pending;
+  assert_equals(received, controller.signal);
+  assert_equals(cancelled.status, "cancelled");
+});
+
+Deno.test("Task terminal runners infer heterogeneous Task, parallel, and Effect unions", async () => {
+  for (const choose_first of [true, false]) {
+    const direct = choose_first ? succeed(1) : succeed("two");
+    const direct_result: Promise<1 | "two"> = run_task(direct);
+    const direct_exit: Promise<TaskExit<1 | "two">> = run_task_exit(direct);
+    const expected = choose_first ? 1 : "two";
+    assert_equals(await direct_result, expected);
+    assert_equals(await direct_exit, { status: "succeeded", value: expected });
+
+    const mixed = choose_first ? succeed(1) : parallel(succeed("two"));
+    const mixed_result: Promise<1 | "two"> = run_task(mixed);
+    assert_equals(await mixed_result, expected);
+
+    const effect = choose_first
+      ? succeed(1)
+      : Effect.lift(parallel(succeed("two")));
+    const effect_result: Promise<1 | "two"> = run_task(effect);
+    const effect_exit: Promise<TaskExit<1 | "two">> = run_task_exit(effect);
+    assert_equals(await effect_result, expected);
+    assert_equals(await effect_exit, { status: "succeeded", value: expected });
+  }
+
+  const explicit: Promise<number> = run_task<TaskRequirements, number>(
+    succeed(3),
+  );
+  const explicit_exit: Promise<TaskExit<number>> = run_task_exit<
+    TaskRequirements,
+    number
+  >(
+    succeed(3),
+  );
+  const interpreted: Promise<number> = Effect.handle_with(Effect.pure(4), [
+    run_task,
+  ]);
+  const interpreted_exit: Promise<TaskExit<number>> = Effect.handle_with(
+    Effect.pure(4),
+    [run_task_exit],
+  );
+  assert_equals(await explicit, 3);
+  assert_equals(await explicit_exit, { status: "succeeded", value: 3 });
+  assert_equals(await interpreted, 4);
+  assert_equals(await interpreted_exit, { status: "succeeded", value: 4 });
+});
+
+Deno.test("heterogeneous Task terminal inputs preserve rejected errors", async () => {
+  const failure = new Error("heterogeneous failure");
+  for (const should_fail of [true, false]) {
+    const direct = should_fail
+      ? Task.throw_error<number>(failure)
+      : parallel(succeed("ready"));
+    const direct_exit: Promise<TaskExit<number | "ready">> = run_task_exit(
+      direct,
+    );
+    const effect = should_fail
+      ? Effect.lift(Task.throw_error<number>(failure))
+      : succeed("ready");
+    const effect_exit: Promise<TaskExit<number | "ready">> = run_task_exit(
+      effect,
+    );
+
+    for (const pending of [direct_exit, effect_exit]) {
+      const exit = await pending;
+      assert_equals(exit.status, should_fail ? "failed" : "succeeded");
+      if (exit.status === "failed") {
+        assert_true(
+          exit.error === failure,
+          "rejected errors keep their identity",
+        );
+      } else if (exit.status === "succeeded") {
+        assert_equals(exit.value, "ready");
+      }
+    }
+  }
 });

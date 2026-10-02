@@ -40,6 +40,7 @@ import {
   guard,
   join,
   length,
+  lift,
   lift_A,
   lift_A2,
   lift_A3,
@@ -65,6 +66,10 @@ import {
   voided,
   when,
 } from "./prelude.ts";
+import { reader } from "./reader.ts";
+import { state } from "./state.ts";
+import { from_fn, Task } from "./task.ts";
+import { Writer } from "./writer.ts";
 
 Deno.test("prelude maps, applies, and binds with contextual inference", () => {
   const lifted: MaybeValue<number> = pure(Maybe, 42);
@@ -111,12 +116,30 @@ Deno.test("prelude lifts functions and folds values", () => {
     Just(4),
     Just(5),
   );
+  const six: MaybeValue<
+    readonly [number, string, boolean, bigint, null, undefined]
+  > = lift(
+    (a, b, c, d, e, f) => [a, b, c, d, e, f] as const,
+    Just(1),
+    Just("two"),
+    Just(true),
+    Just(4n),
+    Just(null),
+    Just(undefined),
+  );
 
   assert_equals(one.value(), ["Just", 2] as const);
   assert_equals(two.value(), ["Just", 3] as const);
   assert_equals(three.value(), ["Just", 6] as const);
   assert_equals(four.value(), ["Just", 10] as const);
   assert_equals(five.value(), ["Just", 15] as const);
+  assert_equals(
+    six.value(),
+    [
+      "Just",
+      [1, "two", true, 4n, null, undefined],
+    ] as const,
+  );
   assert_equals(
     foldl((sum, value) => sum + value, 0, ArrayT([1, 2, 3, 4])),
     10,
@@ -270,6 +293,137 @@ Deno.test("prelude folds and traverses linear and multi-shot contexts", () => {
       .value(),
     [undefined, undefined],
   );
+});
+
+Deno.test("traverse_ runs large Task sequences in order on every execution", async () => {
+  const items = Array.from({ length: 20_001 }, (_, index) => index);
+  const constructed: number[] = [];
+  const executed: number[] = [];
+  const action = traverse_(Task, (item: number) => {
+    constructed.push(item);
+    return from_fn(() => {
+      executed.push(item);
+      return Promise.resolve(item);
+    });
+  }, ArrayT(items));
+
+  assert_equals(constructed, items);
+  assert_equals(executed, []);
+  assert_equals(await action.run(), undefined);
+  assert_equals(executed, items);
+  executed.length = 0;
+  assert_equals(await action.run(), undefined);
+  assert_equals(executed, items);
+
+  const failure = new Error("stop traversal");
+  let completed = 0;
+  const failing = traverse_(
+    Task,
+    (item: number) =>
+      from_fn(() => {
+        if (item === 10_000) return Promise.reject(failure);
+        completed += 1;
+        return Promise.resolve(item);
+      }),
+    ArrayT(items),
+  );
+
+  assert_equals(await failing.run().catch((error) => error), failure);
+  assert_equals(completed, 10_000);
+});
+
+Deno.test("traverse_ preserves Reader, State, and Writer order across uneven groups", () => {
+  const items = Array.from({ length: 20_001 }, (_, index) => index);
+  const observations = reader<"prelude-traverse-reader", number[]>();
+  const read = traverse_(
+    observations,
+    (item: number) => observations.asks((seen) => seen.push(item)),
+    ArrayT(items),
+  );
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const seen: number[] = [];
+    assert_equals(read.run(seen), undefined);
+    assert_equals(seen, items);
+  }
+
+  const position = state<"prelude-traverse-state", number>();
+  const advance = traverse_(
+    position,
+    (item: number) =>
+      position((current) => {
+        assert_equals(current, item);
+        return [item, current + 1];
+      }),
+    ArrayT(items),
+  );
+
+  assert_equals(advance.run(0), [undefined, items.length]);
+  assert_equals(advance.run(0), [undefined, items.length]);
+
+  const entries = ArrayT(items.slice(0, 11));
+  const Audit = Writer.with(ArrayT<number>([]));
+  const written = traverse_(
+    Audit,
+    (item: number) => Audit([item, ArrayT([item])]),
+    entries,
+  );
+  assert_equals(written.value()[0], undefined);
+  assert_equals(written.value()[1].value(), entries.value());
+  assert_equals(written.value()[1].value(), entries.value());
+});
+
+Deno.test("traverse_ preserves branching cardinality and empty identities", () => {
+  const counts = [2, 3, 2, 3, 2];
+  const constructed: number[] = [];
+  const branches = traverse_(ArrayT, (count: number) => {
+    constructed.push(count);
+    return ArrayT(Array.from({ length: count }, (_, index) => index));
+  }, ArrayT(counts));
+
+  assert_equals(constructed, counts);
+  assert_equals(branches.value(), Array(72).fill(undefined));
+  assert_equals(
+    traverse_(ArrayT, (_item: number) => ArrayT([1, 2]), ArrayT<number>([]))
+      .value(),
+    [undefined],
+  );
+  assert_equals(
+    traverse_(
+      ArrayT,
+      (count: number) => ArrayT(Array(count).fill(0)),
+      ArrayT([
+        2,
+        0,
+        3,
+      ]),
+    ).value(),
+    [],
+  );
+});
+
+Deno.test("when and unless accept void Tasks and skip inactive actions", async () => {
+  let executions = 0;
+  const action = from_fn(async (): Promise<void> => {
+    await Promise.resolve();
+    executions += 1;
+  });
+
+  assert_equals(await when(Task, false, action).run(), undefined);
+  assert_equals(await unless(Task, true, action).run(), undefined);
+  assert_equals(executions, 0);
+  assert_equals(await when(Task, true, action).run(), undefined);
+  assert_equals(await unless(Task, false, action).run(), undefined);
+  assert_equals(executions, 2);
+
+  const branches = ArrayT<void>([undefined, undefined]);
+  assert_equals(when(ArrayT, true, branches).value(), [undefined, undefined]);
+  assert_equals(unless(ArrayT, false, branches).value(), [
+    undefined,
+    undefined,
+  ]);
+  assert_equals(when(ArrayT, false, branches).value(), [undefined]);
+  assert_equals(unless(ArrayT, true, branches).value(), [undefined]);
 });
 
 Deno.test("Maybe and Either eliminators preserve their success values", () => {

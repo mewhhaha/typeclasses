@@ -78,7 +78,7 @@ const nothing_singleton = Nothing<never>();
 /** Convert null or undefined to Nothing and every other value to Just. */
 export function from_nullable<item>(
   value: item | null | undefined,
-): MaybeValue<item> {
+): MaybeValue<NonNullable<item>> {
   if (value === null) {
     return nothing_value();
   }

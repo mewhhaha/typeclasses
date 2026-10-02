@@ -1,6 +1,7 @@
 import { run_basic_examples } from "./basics.ts";
 import { run_builtin_shape_examples } from "./built_in_shapes.ts";
 import { run_composable_function_examples } from "./composable_functions.ts";
+import { run_consumer_ergonomics_examples } from "./consumer_ergonomics.ts";
 import { run_custom_typeclass_examples } from "./custom_typeclass.ts";
 import { run_do_context_examples } from "./do_contexts.ts";
 import { run_effect_examples } from "./effects.ts";
@@ -15,6 +16,7 @@ import { run_validated_request_examples } from "./validated_request.ts";
 import { run_worker_pool_examples } from "./worker_pool.ts";
 
 await run_basic_examples();
+await run_consumer_ergonomics_examples();
 run_do_context_examples();
 run_validated_request_examples();
 run_composable_function_examples();

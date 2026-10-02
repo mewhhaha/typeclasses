@@ -660,6 +660,7 @@ function install_tagged_variants<dictionary extends Dictionary>(
 
   for (const [tag, length] of variants) {
     Object.defineProperty(dictionary, tagged_constructor_name(tag), {
+      configurable: true,
       value: tagged_variant(dictionary, tag, length),
     });
   }
@@ -1091,12 +1092,20 @@ type TypeclassInstance<
 > = dictionary[token];
 
 /** A typeclass token with operations for installing and retrieving instances. */
-export type TypeclassDefinition<token extends PropertyKey = PropertyKey> =
-  & TypeclassDefinitionPrototype<token>
-  & {
-    /** The property key under which an instance is installed. */
-    readonly token: token;
-  };
+export type TypeclassDefinition<token extends PropertyKey = PropertyKey> = {
+  /** The property key under which an instance is installed. */
+  readonly token: token;
+  /** Installs an instance using this definition's bound token. */
+  instance<dictionary extends Dictionary & { [key in token]: object }>(
+    dictionary: dictionary,
+  ): (
+    implementation: dictionary[token],
+  ) => dictionary[token];
+  /** Looks up an instance using this definition's bound token. */
+  instance_for<receiver extends { [key in token]: object }>(
+    receiver: receiver,
+  ): receiver[token];
+};
 
 /** A typeclass definition combined with its reusable derived methods. */
 export type Typeclass<
@@ -1146,6 +1155,25 @@ export function typeclass<token extends PropertyKey, methods extends object>(
   Object.defineProperty(definition, "token", {
     enumerable: true,
     value: token,
+  });
+
+  // Derived operations belong to their definition. Binding once keeps them
+  // usable as ordinary functions without changing generic call signatures.
+  for (const key of Reflect.ownKeys(methods)) {
+    const method = Reflect.get(definition, key);
+    if (typeof method === "function" && !(kind in method)) {
+      const operation = method.bind(definition);
+      Object.defineProperties(
+        operation,
+        Object.getOwnPropertyDescriptors(method),
+      );
+      Reflect.set(definition, key, operation);
+    }
+  }
+
+  Object.defineProperties(definition, {
+    instance: { value: definition.instance.bind(definition) },
+    instance_for: { value: definition.instance_for.bind(definition) },
   });
 
   return definition;

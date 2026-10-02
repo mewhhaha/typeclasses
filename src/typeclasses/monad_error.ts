@@ -19,10 +19,16 @@ export type MonadErrorImplementation<dictionary extends Dictionary, error> = {
     this: dictionary,
     error: error,
   ) => Data<dictionary, item>;
-  catch_error: <item>(
-    this: Data<dictionary, item>,
-    handler: (error: error) => Data<dictionary, item>,
-  ) => Data<dictionary, item>;
+  catch_error: {
+    <item>(
+      this: Data<dictionary, item>,
+      handler: (error: error) => Data<dictionary, item>,
+    ): Data<dictionary, item>;
+    <item>(
+      this: Data<dictionary, NoInfer<item>>,
+      handler: (error: error) => Data<dictionary, item>,
+    ): Data<dictionary, item>;
+  };
 };
 
 /** Monad dictionary capability for throwing and recovering typed errors. */
@@ -60,6 +66,12 @@ export type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
   ): Data<dictionary, item>;
   catch_error<dictionary extends MonadErrorDictionary, item>(
     value: Data<dictionary, item>,
+    handler: (
+      error: MonadErrorType<dictionary>,
+    ) => Data<dictionary, item>,
+  ): Data<dictionary, item>;
+  catch_error<dictionary extends MonadErrorDictionary, item>(
+    value: Data<dictionary, NoInfer<item>>,
     handler: (
       error: MonadErrorType<dictionary>,
     ) => Data<dictionary, item>,

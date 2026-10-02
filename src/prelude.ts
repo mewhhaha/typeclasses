@@ -95,6 +95,9 @@ export function ap<
   return Applicative.ap(fn, value);
 }
 
+/** Lift a function with any positive number of contextual arguments. */
+export const lift: typeof Applicative.lift = Applicative.lift;
+
 /** Lift a unary function into an applicative. */
 export function lift_A<
   dictionary extends ApplicativeDictionary<dictionary>,
@@ -211,10 +214,10 @@ export function voided<dictionary extends FunctorDictionary<dictionary>>(
 export function when<dictionary extends ApplicativeDictionary<dictionary>>(
   dictionary: ApplicativeDictionary<dictionary>,
   condition: boolean,
-  action: Data<dictionary, undefined>,
+  action: Data<dictionary, void>,
 ): Data<dictionary, undefined> {
   if (condition) {
-    return action;
+    return voided(action);
   }
 
   return Applicative.pure<dictionary, undefined>(
@@ -227,7 +230,7 @@ export function when<dictionary extends ApplicativeDictionary<dictionary>>(
 export function unless<dictionary extends ApplicativeDictionary<dictionary>>(
   dictionary: ApplicativeDictionary<dictionary>,
   condition: boolean,
-  action: Data<dictionary, undefined>,
+  action: Data<dictionary, void>,
 ): Data<dictionary, undefined> {
   return when(dictionary, !condition, action);
 }
@@ -440,13 +443,38 @@ export function traverse_<
   fn: (value: DataItem<dictionary, item>) => Data<applicative, unknown>,
   value: Data<dictionary, item>,
 ): Data<applicative, undefined> {
-  return Foldable.fold(
-    value,
-    Applicative.pure<applicative, undefined>(
-      applicative as applicative,
-      undefined,
-    ),
-    (state, item) => ap_second(state, Functor.map(fn(item), () => undefined)),
+  // Merge equally sized groups as a binary carry. Callbacks still run in the
+  // source's fold order, while deferred execution needs only logarithmic depth.
+  const pending: (Data<applicative, undefined> | undefined)[] = [];
+
+  Foldable.fold(value, undefined, (_state, item) => {
+    let action = voided<applicative>(fn(item));
+    let level = 0;
+
+    while (true) {
+      const earlier = pending[level];
+      if (earlier === undefined) break;
+      action = ap_second(earlier, action);
+      pending[level] = undefined;
+      level += 1;
+    }
+
+    pending[level] = action;
+    return undefined;
+  });
+
+  let result: Data<applicative, undefined> | undefined;
+
+  for (let level = pending.length - 1; level >= 0; level -= 1) {
+    const action = pending[level];
+    if (action !== undefined) {
+      result = result === undefined ? action : ap_second(result, action);
+    }
+  }
+
+  return result ?? Applicative.pure<applicative, undefined>(
+    applicative as applicative,
+    undefined,
   );
 }
 

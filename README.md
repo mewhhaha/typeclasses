@@ -310,6 +310,12 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+- In `0.12.0`, `Either.Left<error, item>` and `Validation.Invalid<error, item>`
+  use the same generic argument order as their standalone aliases. A single
+  explicit argument selects the error type. Use both arguments to select a
+  successful item, or configure the error once with
+  `Either.with_left<error>().Left<item>(error)` or
+  `Validation.with_semigroup(semigroup).Invalid<item>(error)`.
 - `Task.ap` and `Applicative.lift` on Tasks now run sequentially, in input
   order, matching `bind`. Wrap independent inputs with `parallel(task)` to use
   the applicative-only `ParallelTask` dictionary. Use `sequential(result)` when
@@ -501,7 +507,7 @@ wrapped value, not the callable dictionary. A later `Functor.instance(...)` or
 first and then install a hot-path specialization.
 
 ```ts
-Monad.derive<AsMaybe>(Maybe)({
+Monad.derive(Maybe)({
   pure(value) {
     return Just(value);
   },
@@ -605,17 +611,19 @@ curried `Typeclass.instance(dictionary)(implementation)` form when generic
 methods need contextual typing. The first call fixes the dictionary before
 TypeScript checks the implementation's higher-rank methods. Typeclass
 definitions are prototype-backed objects made with `typeclass`; each definition
-inherits the shared installer and instance accessor, while public helper methods
-keep typeclass-specific types. Their bodies usually dispatch through
-`call_typeclass_method`. Outside the declaring module, extend a dictionary by
-augmenting its exported `As...` interface and installing the implementation on
-the callable dictionary.
+binds the shared installer, instance accessor, and derived operations once,
+while public helper methods keep typeclass-specific types. Their bodies usually
+dispatch through `call_typeclass_method`. Outside the declaring module, extend a
+dictionary by augmenting its exported `As...` interface and installing the
+implementation on the callable dictionary.
 
 Implementation methods usually do not need explicit generic parameters.
 Collection traversal builds a balanced immutable tree, then materializes each
 applicative result once. Callbacks run in input order, branch results never
 share a mutable accumulator, and applicative nesting has logarithmic depth.
-Empty inputs use the supplied dictionary's `pure`.
+Empty inputs use the supplied dictionary's `pure`. `traverse_` also combines
+discarded results at logarithmic depth, so large Reader, State, and Task
+traversals can run without overflowing the call stack.
 
 ```ts
 import {
@@ -671,10 +679,33 @@ const parsed = Right("42").bind((text) => {
 parsed.value(); // ["Right", 42]
 ```
 
+Typeclass operations can also be passed around or destructured. They retain
+their dispatcher and infer the item type from the wrapped value:
+
+```ts
+import { Just } from "@mewhhaha/typeclasses/maybe";
+import { Functor } from "@mewhhaha/typeclasses/typeclasses";
+
+const { map } = Functor;
+map(Just(41), (value) => value + 1); // Just(42)
+```
+
 `Either` does not fix the error payload to `string`; `Left(value)` keeps the
 error value's type. The examples use strings because they are easy to inspect.
 `Left` and `Right` are typed constructor exports over the `Either` dictionary,
-so callers do not need casts to preserve the left payload type.
+so callers do not need casts to preserve the left payload type. `Either.Left`,
+`Either.Right`, `Validation.Valid`, and `Validation.Invalid` are the
+corresponding standalone constructors, including their guards and inference.
+
+Fluent `Right(...).map(...).bind(...)` chains retain the error type introduced
+by the dependent step. For generic operations that need a fixed error type,
+select `Either.with_left<error>()`. A failure with no success item can infer its
+recovery result: `Left("missing").catch_error(error => Right(error.length))`.
+Recovery of an existing success keeps that success type.
+
+`from_nullable(value)` produces `MaybeValue<NonNullable<typeof value>>`, so a
+`map` callback receives a non-null payload even when the input type includes
+`null` or `undefined`.
 
 Fixed context parameters are part of the open dictionary too. `AsEither<left>`,
 `AsTuple<left>`, `AsValidation<error>`, and `AsFn<input>` keep their fixed
@@ -724,6 +755,8 @@ fluent chains. The functions dispatch through the same dictionaries and wrapped
 values; this is an additional surface, not a second implementation:
 
 ```ts
+import { ArrayT } from "jsr:@mewhhaha/typeclasses/array";
+import { Just, Maybe, Nothing } from "jsr:@mewhhaha/typeclasses/maybe";
 import {
   ap_first,
   ap_second,
@@ -735,6 +768,7 @@ import {
   from_maybe,
   guard,
   join,
+  lift,
   mempty,
   pure,
   sum,
@@ -748,6 +782,7 @@ const rendered = bind(incremented, (value) => Just(value.toString()));
 const total = foldl((sum, value) => sum + value, 0, ArrayT([1, 2, 3]));
 const checked = traverse((value) => Just(value + 1), Maybe, ArrayT([1, 2]));
 const flattened = join(Just(Just(42)));
+const combined = lift((left, right) => left + right, Just(20), Just(22));
 const defaulted = from_maybe(0, Nothing<number>());
 
 empty(Maybe); // Nothing
@@ -756,17 +791,27 @@ mempty(ArrayT); // []
 
 The prelude keeps familiar Haskell vocabulary where JavaScript syntax allows it:
 
-| Area                          | Functions                                                                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `sequence_right`, `bind` |
-| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`                      |
-| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                                   |
-| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                              |
+| Area                          | Functions                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `sequence_right`, `bind` |
+| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`                              |
+| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                                           |
+| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                                      |
 
 `voided` is the spelling of Haskell's `void` because `void` is a JavaScript
 operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
 `sequence_right` replaces Haskell's `then`, which makes a module thenable when
 exported from JavaScript.
+
+`lift(fn, first, ...rest)` accepts any nonempty number of contextual inputs,
+with each callback parameter inferred from its corresponding input. The
+`lift_A`–`lift_A5` arity-specific spellings remain available. `when` and
+`unless` accept ordinary effects returning `void`, skip inactive actions, and
+return an `undefined` item in either branch.
+
+[The consumer ergonomics example](./examples/consumer_ergonomics.ts) compares
+fluent, detached typeclass, and prelude calls, then uses configured dictionaries
+and deferred Tasks without casts.
 
 Configured dictionary factories follow the same convention, including
 `Either.with_left` and `Tuple.with_monoid`.
@@ -1525,6 +1570,20 @@ const endpoint = Do(function* () {
 endpoint.run({ host: "localhost", port: 8080 });
 ```
 
+For direct construction or `pure`, fix the environment once with
+`Reader.with_environment<Config>()`:
+
+```ts
+const ConfigReader = Reader.with_environment<Config>();
+const label = ConfigReader((config) => config.host)
+  .bind((host) => ConfigReader.pure(host + ":ready"));
+
+label.run({ host: "localhost", port: 8080 });
+```
+
+This is a typed view of the anonymous Reader dictionary. Use Reader cells when
+several environments need independent handlers.
+
 Effects use `run_reader` when Reader is one capability inside a larger program:
 
 ```ts
@@ -1585,6 +1644,19 @@ const counter = Do(function* () {
 
 counter.run(40); // [40, 42]
 ```
+
+`State.with_state<state>()` fixes the state type for direct construction and
+`pure`:
+
+```ts
+const Counter = State.with_state<number>();
+const increment = Counter((state) => [state, state + 1] as const)
+  .bind((previous) => Counter.pure(previous));
+
+increment.run(40); // [40, 41]
+```
+
+The view shares the anonymous State handler; keyed cells give independent slots.
 
 #### State cells
 
@@ -1684,8 +1756,8 @@ numbers has no single accumulator to drain into. Declare a cell per output and
 drain each separately:
 
 ```ts
-const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
-const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
+const audit = writer_cell("audit", ArrayT<string>([]));
+const metrics = writer_cell("metrics", ArrayT<number>([]));
 
 const program = Program.scope<Uses<typeof audit> | Uses<typeof metrics>>()(
   function* () {
@@ -1709,6 +1781,9 @@ Both `Writer.with` and Writer cells capture an empty output value, so their
 dictionary `pure` works without a wrapped receiver. `Writer.with` shares the
 base dictionary's runtime kind. Each cell mints its own kind for a separate
 handler. Cells follow the same key rules as [State cells](#state-cells).
+`writer_cell(key, emptyOutput)` infers the key, monoid, and log item from its
+arguments. The explicit `writer_cell<key, output, log>(emptyOutput)` spelling
+remains available.
 
 ### Effects Instead of Transformers
 
@@ -1935,6 +2010,14 @@ Aborting `from_promise` stops waiting but cannot undo work already started by
 the original promise. Adopted promise rejections remain observed even when
 execution starts with an already-aborted signal. Use `run_task_exit` when
 success, failure, and cancellation must be handled as values.
+
+`run_task` and `run_task_exit` accept a direct `Task` or `ParallelTask` as well
+as a handled effect. Use the same runner when an application has both forms:
+
+```ts
+await run_task(from_fn(async () => 42));
+await run_task_exit(from_fn(async () => 42)); // { status: "succeeded", value: 42 }
+```
 
 ### Async and Concurrency
 

@@ -92,10 +92,14 @@ export type ValidationDictionary<error> = UnionDictionary<
 
 /** A Validation dictionary whose failure constructor carries one semigroup. */
 export type ConfiguredValidationDictionary<error> = AsValidation<error> & {
-  readonly Invalid: <item = never>(
-    error: error,
-  ) => ValidationValue<error, item>;
-  readonly Valid: <item>(value: item) => ValidationValue<error, item>;
+  readonly Invalid: {
+    <item = never>(error: error): ValidationValue<error, item>;
+    readonly is: InvalidGuard;
+  };
+  readonly Valid: {
+    <item>(value: item): ValidationValue<error, item>;
+    readonly is: ValidGuard;
+  };
 };
 
 type ValidationError<value> = value extends Invalid<infer error> ? error
@@ -115,10 +119,11 @@ export type ValidationConstructor =
     with_semigroup<error>(
       semigroup: ValidationSemigroup<error>,
     ): ConfiguredValidationDictionary<error>;
+    readonly Valid: ValidConstructor;
+    readonly Invalid: InvalidConstructor;
   }
   & {
-    readonly [key in keyof UnionDictionary<AsValidation<unknown>>]:
-      UnionDictionary<AsValidation<unknown>>[key];
+    readonly [key in keyof AsValidation<unknown>]: AsValidation<unknown>[key];
   };
 
 /** Runtime predicate for correctly shaped valid tuples. */
@@ -162,13 +167,13 @@ Object.defineProperty(Validation, "with_semigroup", {
 });
 
 /** Construct or match a successful Validation value. */
-export const Valid: ValidConstructor = Object.assign(construct_valid, {
-  is: is_valid,
-});
+export const Valid: ValidConstructor = Validation.Valid;
 /** Construct or match a failed Validation value with an explicit semigroup. */
 export const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
   is: is_invalid,
 });
+
+Object.defineProperty(Validation, "Invalid", { value: Invalid });
 
 function validation_with_error<error>(): ValidationDictionary<error> {
   return Validation as unknown as ValidationDictionary<error>;
@@ -185,21 +190,31 @@ function validation_with_semigroup<error>(
   Object.setPrototypeOf(dictionary, Validation);
   Object.defineProperties(dictionary, {
     Invalid: {
-      value<item = never>(error: error): ValidationValue<error, item> {
-        return dictionary<item>([
-          "invalid",
-          error,
-          semigroup,
-        ]) as ValidationValue<error, item>;
-      },
+      value: Object.assign(
+        function construct_configured_invalid<item = never>(
+          error: error,
+        ): ValidationValue<error, item> {
+          return dictionary<item>([
+            "invalid",
+            error,
+            semigroup,
+          ]) as ValidationValue<error, item>;
+        },
+        { is: Invalid.is },
+      ),
     },
     Valid: {
-      value<item>(item: item): ValidationValue<error, item> {
-        return dictionary<item>([
-          "valid",
-          item,
-        ]) as ValidationValue<error, item>;
-      },
+      value: Object.assign(
+        function construct_configured_valid<item>(
+          item: item,
+        ): ValidationValue<error, item> {
+          return dictionary<item>([
+            "valid",
+            item,
+          ]) as ValidationValue<error, item>;
+        },
+        { is: Valid.is },
+      ),
     },
   });
 
@@ -233,22 +248,6 @@ export function map_error<error, next_error, item>(
   }
 }
 
-function is_valid<error, item>(
-  value: Validation<error, item>,
-): value is Valid<item>;
-function is_valid(value: unknown): value is Valid<unknown>;
-function is_valid<error, item>(
-  value: Validation<error, item> | unknown,
-): value is Valid<item> {
-  if (!Array.isArray(value)) {
-    return false;
-  }
-
-  const [tag] = value;
-
-  return tag === "valid" && value.length === 2;
-}
-
 function is_invalid<error, item>(
   value: Validation<error, item>,
 ): value is Invalid<error>;
@@ -272,13 +271,6 @@ function is_invalid<error, item>(
 
   return typeof (semigroup as ValidationSemigroup<unknown>).concat ===
     "function";
-}
-
-function construct_valid<item>(value: item): ValidationValue<never, item> {
-  return Validation<never, item>([
-    "valid",
-    value,
-  ]) as ValidationValue<never, item>;
 }
 
 function construct_invalid<error, item = never>(

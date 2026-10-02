@@ -1,14 +1,17 @@
 import { assert_equals } from "./assert.ts";
 import {
+  $slot,
   type As,
   type Data,
   data,
   type type_data,
   type type_item,
+  union,
 } from "./typeclass.ts";
 import {
   Applicative,
   type Applicative as ApplicativeDictionary,
+  compare_unknown,
   Do,
   Eq,
   Functor,
@@ -162,4 +165,102 @@ Ord.derive(OrdBox)({
 Deno.test("Ord.derive installs Eq from compare", () => {
   assert_equals(Eq.eq(OrdBox(["Box", 42]), OrdBox(["Box", 42])), true);
   assert_equals(Ord.lt(OrdBox(["Box", 20]), OrdBox(["Box", 22])), true);
+});
+
+Deno.test("Monad.derive infers a tagged dictionary without constructor metadata", () => {
+  const TaggedBox = Object.assign(data<AsBox>(union(["Box", $slot])), {
+    description: "tagged monad",
+  });
+  const { derive } = Monad;
+
+  derive(TaggedBox)({
+    pure: TaggedBox.Box,
+    bind(fn) {
+      // @ts-expect-error constructor metadata does not change the value dictionary
+      void this.description;
+      // @ts-expect-error generated constructors do not change the value dictionary
+      void this.Box;
+      return fn(this.value()[1]);
+    },
+  });
+
+  const mapped: Data<AsBox, number> = TaggedBox.Box(21)
+    .map((value) => value * 2);
+  const direct: Data<AsBox, number> = Applicative.pure(TaggedBox, 42);
+  assert_equals(mapped.value(), ["Box", 42]);
+  assert_equals(direct.value(), ["Box", 42]);
+
+  // Explicit dictionary arguments remain accepted for existing applications.
+  derive<AsBox>(TaggedBox)({
+    pure: TaggedBox.Box,
+    bind(fn) {
+      return fn(this.value()[1]);
+    },
+  });
+  assert_equals(
+    TaggedBox.Box(20).bind((value) => TaggedBox.Box(value + 22)).value(),
+    [
+      "Box",
+      42,
+    ],
+  );
+});
+
+Deno.test("Applicative.derive infers a tagged dictionary without constructor metadata", () => {
+  const TaggedBox = Object.assign(data<AsApBox>(union(["Box", $slot])), {
+    description: "tagged applicative",
+  });
+
+  Applicative.derive(TaggedBox)({
+    pure: TaggedBox.Box,
+    ap(value) {
+      // @ts-expect-error constructor metadata does not change the value dictionary
+      void this.description;
+      const fn = this.value()[1];
+      return TaggedBox.Box(fn(value.value()[1]));
+    },
+  });
+
+  const mapped: Data<AsApBox, string> = TaggedBox.Box(42)
+    .map((value) => value.toFixed(1));
+  assert_equals(mapped.value(), ["Box", "42.0"]);
+  assert_equals(
+    TaggedBox.Box((value: number) => value + 1).ap(TaggedBox.Box(41)).value(),
+    ["Box", 42],
+  );
+
+  Applicative.derive<AsApBox>(TaggedBox)({
+    pure: TaggedBox.Box,
+    ap(value) {
+      return TaggedBox.Box(this.value()[1](value.value()[1]));
+    },
+  });
+  assert_equals(Applicative.pure(TaggedBox, 42).value(), ["Box", 42]);
+});
+
+Deno.test("Ord.derive infers a tagged dictionary without constructor metadata", () => {
+  const TaggedBox = Object.assign(data<AsOrdBox>(union(["Box", $slot])), {
+    description: "tagged order",
+  });
+
+  Ord.derive(TaggedBox)({
+    compare(right) {
+      // @ts-expect-error generated constructors do not change the value dictionary
+      void this.Box;
+      return compare_unknown(this.value()[1], right.value()[1]);
+    },
+  });
+  assert_equals(Eq.eq(TaggedBox.Box(42), TaggedBox.Box(42)), true);
+  assert_equals(Ord.lt(TaggedBox.Box(20), TaggedBox.Box(22)), true);
+
+  Ord.derive<AsOrdBox>(TaggedBox)({
+    compare(right) {
+      return compare_unknown(this.value()[1], right.value()[1]);
+    },
+  });
+  const maximum: Data<AsOrdBox, number> = Ord.max(
+    TaggedBox.Box(20),
+    TaggedBox.Box(42),
+  );
+  assert_equals(maximum.value(), ["Box", 42]);
 });

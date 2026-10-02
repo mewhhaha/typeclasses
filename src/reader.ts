@@ -65,11 +65,18 @@ export type ReaderConstructor =
     <environment, item>(
       value: Reader<environment, item>,
     ): ReaderValue<environment, item>;
+    /** Selects the environment type for pure values and generic operations. */
+    with_environment<environment>(): AsReader<environment>;
   };
 
 /** The Reader dictionary and constructor. */
 export const Reader = data<AsReader<unknown>>() as ReaderConstructor;
 const reader_kind = Reader[kind];
+
+Object.defineProperty(Reader, "with_environment", {
+  value: <environment>(): AsReader<environment> =>
+    Reader as unknown as AsReader<environment>,
+});
 
 /** Reads the current environment. */
 export function ask<environment>(): ReaderValue<environment, environment> {

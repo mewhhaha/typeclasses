@@ -65,11 +65,17 @@ export type StateConstructor =
   & AsState<unknown>
   & {
     <state, item>(value: State<state, item>): StateValue<state, item>;
+    /** Selects the state type for pure values and generic operations. */
+    with_state<state>(): AsState<state>;
   };
 
 /** The State dictionary and constructor. */
 export const State = data<AsState<unknown>>() as StateConstructor;
 const state_kind = State[kind];
+
+Object.defineProperty(State, "with_state", {
+  value: <state>(): AsState<state> => State as unknown as AsState<state>,
+});
 
 /** Reads the current state. */
 export function get<state>(): StateValue<state, state> {
