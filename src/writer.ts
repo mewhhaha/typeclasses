@@ -174,8 +174,8 @@ export type WriterCellValue<
  * anonymous `tell`. Name the cell, then give its output Monoid and log type:
  *
  * ```ts
- * const audit = writer_cell<"audit", AsArray, string>();
- * const metrics = writer_cell<"metrics", AsArray, number>();
+ * const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
+ * const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
  * ```
  *
  * The key distinguishes cells accumulating into the same Monoid. It exists only
@@ -188,10 +188,10 @@ export function writer_cell<
   key extends PropertyKey,
   output extends MonoidDictionary<output>,
   log,
->(): [NominalKey<key>] extends [never] ? WidenedCellKey
+>(empty: Data<output, log>): [NominalKey<key>] extends [never] ? WidenedCellKey
   : AsWriterCell<key, output, log> {
-  return make_writer_cell() as [NominalKey<key>] extends [never]
-    ? WidenedCellKey
+  return make_writer_cell<key, output, log>(empty) as [NominalKey<key>] extends
+    [never] ? WidenedCellKey
     : AsWriterCell<key, output, log>;
 }
 
@@ -199,7 +199,7 @@ function make_writer_cell<
   key extends PropertyKey,
   output extends Dictionary,
   log,
->(): AsWriterCell<key, output, log> {
+>(empty: Data<output, log>): AsWriterCell<key, output, log> {
   const dictionary = cell_dictionary<AsWriterCell<key, output, log>>();
 
   Object.defineProperties(dictionary, {
@@ -230,11 +230,7 @@ function make_writer_cell<
 
   Applicative.instance(dictionary)({
     pure(value) {
-      const [_ignored, output] = (this as unknown as Data<
-        AsWriterCell<key, output, log>,
-        unknown
-      >).value();
-      return wrap(value, empty_output(output) as Data<output, log>);
+      return wrap(value, empty_output(empty) as Data<output, log>);
     },
 
     [applicative_lift_method](fn, rest) {

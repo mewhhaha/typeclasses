@@ -1,6 +1,7 @@
 import {
   call_typeclass_method,
   type Data,
+  type DataItem,
   type Dictionary,
   type Typeclass,
   typeclass,
@@ -20,7 +21,7 @@ export interface Foldable<dictionary extends Dictionary>
         fold: <item, result>(
           this: Data<dictionary, item>,
           initial: result,
-          fn: (state: result, item: item) => result,
+          fn: (state: result, item: DataItem<dictionary, item>) => result,
         ) => result;
       }
     > {}
@@ -30,7 +31,7 @@ export type FoldableTypeclass = Typeclass<typeof foldable_typeclass, {
   fold<dictionary extends Foldable<dictionary>, item, result>(
     value: Data<dictionary, item>,
     initial: result,
-    fn: (state: result, item: item) => result,
+    fn: (state: result, item: DataItem<dictionary, item>) => result,
   ): result;
 }>;
 
@@ -43,7 +44,7 @@ export const Foldable: FoldableTypeclass = typeclass(foldable_typeclass, {
   >(
     value: Data<dictionary, item>,
     initial: result,
-    fn: (state: result, item: item) => result,
+    fn: (state: result, item: DataItem<dictionary, item>) => result,
   ): result {
     return call_typeclass_method(
       this.instance_for(value).fold<item, result>,

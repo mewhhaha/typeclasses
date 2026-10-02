@@ -50,11 +50,19 @@ export function from_factory<item>(
   return AsyncIterableT(factory);
 }
 
-/** Wrap an existing async iterable without eagerly consuming it. */
-export function from_async_iterable<item>(
+/** Snapshot a finite async iterable so the wrapped value can be replayed. */
+export async function from_async_iterable<item>(
   iterable: AsyncIterable<item>,
-): AsyncIterableValue<item> {
-  return AsyncIterableT(() => iterable);
+): Promise<AsyncIterableValue<item>> {
+  const items: item[] = [];
+
+  for await (const item of iterable) {
+    items.push(item);
+  }
+
+  return AsyncIterableT(async function* () {
+    yield* items;
+  });
 }
 
 /** Asynchronously materialize a wrapped iterable into a mutable array. */

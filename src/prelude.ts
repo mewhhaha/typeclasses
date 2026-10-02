@@ -1,4 +1,4 @@
-import type { Data } from "./typeclass.ts";
+import type { Data, DataItem } from "./typeclass.ts";
 export { from_maybe, maybe, to_either, to_nullable } from "./maybe.ts";
 export { either, from_left, from_right, hush, note } from "./either.ts";
 import {
@@ -289,7 +289,7 @@ export function foldl<
   item,
   result,
 >(
-  fn: (state: result, item: item) => result,
+  fn: (state: result, item: DataItem<dictionary, item>) => result,
   initial: result,
   value: Data<dictionary, item>,
 ): result {
@@ -304,7 +304,7 @@ export function fold_map<
   result,
 >(
   monoid: MonoidDictionary<monoid>,
-  fn: (value: item) => Data<monoid, result>,
+  fn: (value: DataItem<dictionary, item>) => Data<monoid, result>,
   value: Data<dictionary, item>,
 ): Data<monoid, result> {
   return Foldable.fold(
@@ -332,11 +332,15 @@ export function to_array<
   item,
 >(
   value: Data<dictionary, item>,
-): item[] {
-  return Foldable.fold(value, [] as item[], (items, item) => {
-    items.push(item);
-    return items;
-  });
+): DataItem<dictionary, item>[] {
+  return Foldable.fold(
+    value,
+    [] as DataItem<dictionary, item>[],
+    (items, item) => {
+      items.push(item);
+      return items;
+    },
+  );
 }
 
 /** Haskell `length :: Foldable t => t a -> Int`. */
@@ -348,21 +352,25 @@ export function length<dictionary extends FoldableDictionary<dictionary>>(
 
 /** Haskell `sum :: (Foldable t, Num a) => t a -> a`, specialized to number. */
 export function sum<dictionary extends FoldableDictionary<dictionary>>(
-  value: Data<dictionary, number>,
+  value:
+    & Data<dictionary, number>
+    & (DataItem<dictionary, number> extends number ? unknown : never),
 ): number {
   return Foldable.fold(value, 0, (total, item) => total + item);
 }
 
 /** Haskell `product :: (Foldable t, Num a) => t a -> a`, specialized to number. */
 export function product<dictionary extends FoldableDictionary<dictionary>>(
-  value: Data<dictionary, number>,
+  value:
+    & Data<dictionary, number>
+    & (DataItem<dictionary, number> extends number ? unknown : never),
 ): number {
   return Foldable.fold(value, 1, (total, item) => total * item);
 }
 
 /** Haskell `elem :: (Foldable t, Eq a) => a -> t a -> Bool`. */
 export function elem<dictionary extends FoldableDictionary<dictionary>, item>(
-  item: item,
+  item: NoInfer<DataItem<dictionary, item>>,
   value: Data<dictionary, item>,
 ): boolean;
 /** Test membership using an explicit Eq dictionary for wrapped items. */
@@ -429,7 +437,7 @@ export function traverse_<
   item,
 >(
   applicative: ApplicativeDictionary<applicative>,
-  fn: (value: item) => Data<applicative, unknown>,
+  fn: (value: DataItem<dictionary, item>) => Data<applicative, unknown>,
   value: Data<dictionary, item>,
 ): Data<applicative, undefined> {
   return Foldable.fold(

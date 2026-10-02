@@ -4,6 +4,17 @@ import { done, loop, rec } from "../src/loop.ts";
 import { fmap } from "../src/prelude.ts";
 import { atomically, new_tvar, read_tvar } from "../src/stm.ts";
 import { succeed } from "../src/task.ts";
+import { from_entries as record_from_entries } from "../src/record.ts";
+
+const special_record = record_from_entries([["__proto__", 42]]);
+const mapped_record = special_record.map((value) => value);
+
+if (
+  !special_record.eq(mapped_record) ||
+  !Object.hasOwn(mapped_record.value(), "__proto__")
+) {
+  throw new Error("Record mapping lost an own __proto__ entry");
+}
 
 const shown = Just({ count: 1 }).show();
 

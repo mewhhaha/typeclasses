@@ -59,9 +59,25 @@ export type DoGenerator<
   result,
 > = Generator<Data<dictionary, unknown>, result, unknown>;
 
+type DoInput = {
+  readonly tag: "next" | "throw";
+  readonly value: unknown;
+};
+
 type DoPath = {
   readonly previous: DoPath | undefined;
-  readonly value: unknown;
+  readonly value: DoInput;
+};
+
+type DoErrorMethods<dictionary extends Dictionary> = {
+  catch_error<item>(
+    this: Data<dictionary, item>,
+    handler: (error: unknown) => Data<dictionary, item>,
+  ): Data<dictionary, item>;
+  throw_error<item>(
+    this: Data<dictionary, unknown>,
+    error: unknown,
+  ): Data<dictionary, item>;
 };
 
 /** Operations for sequencing values through Monad dictionaries. */
@@ -160,7 +176,9 @@ export function Do<dictionary extends Monad<dictionary>, result>(
         return { iterator, next };
       }
 
-      next = iterator.next(value);
+      next = value.tag === "next"
+        ? iterator.next(value.value)
+        : iterator.throw(value.value);
     }
 
     return { iterator, next };
@@ -172,79 +190,60 @@ export function Do<dictionary extends Monad<dictionary>, result>(
     iterator: DoGenerator<dictionary, result>,
   ): Data<dictionary, result> {
     let calls = 0;
+    const implementation = (current as Data<dictionary, unknown> & {
+      [monad_error_typeclass]?: DoErrorMethods<dictionary>;
+    })[monad_error_typeclass];
 
-    const bound = current.bind((value) => {
-      if (calls === 0) {
-        calls += 1;
-        const next = iterator.next(value);
-
-        if (next.done) {
-          return current.pure(next.value);
+    function advance(input: DoInput): Data<dictionary, result> {
+      const next_path = append_do_path(path, input);
+      let state: ReturnType<typeof run_with>;
+      try {
+        if (calls === 0) {
+          calls += 1;
+          state = {
+            iterator,
+            next: input.tag === "next"
+              ? iterator.next(input.value)
+              : iterator.throw(input.value),
+          };
+        } else {
+          calls += 1;
+          state = run_with(next_path);
         }
-
-        const next_path = append_do_path(path, value);
-        return step(next_path, next.value, iterator);
+      } catch (error) {
+        // A rejected yield has already run. Propagate its error through that
+        // value's dictionary rather than evaluating the failed computation again.
+        if (implementation !== undefined) {
+          return implementation.throw_error.call(current, error) as Data<
+            dictionary,
+            result
+          >;
+        }
+        throw error;
       }
 
-      calls += 1;
-      const next_path = append_do_path(path, value);
-      const state = run_with(next_path);
-
-      if (state.next.done) {
-        return current.pure(state.next.value);
-      }
-
+      if (state.next.done) return current.pure(state.next.value);
       return step(next_path, state.next.value, state.iterator);
-    });
-
-    return catch_generator_error(bound, path, current, iterator);
-  }
-
-  function catch_generator_error(
-    failed: Data<dictionary, result>,
-    path: DoPath | undefined,
-    witness: Data<dictionary, unknown>,
-    iterator: DoGenerator<dictionary, result>,
-  ): Data<dictionary, result> {
-    const catchable = failed as Data<dictionary, result> & {
-      [monad_error_typeclass]?: {
-        catch_error: (
-          this: Data<dictionary, result>,
-          handler: (error: unknown) => Data<dictionary, result>,
-        ) => Data<dictionary, result>;
-      };
-    };
-    const implementation = catchable[monad_error_typeclass];
-
-    if (implementation === undefined) {
-      return failed;
     }
 
-    return implementation.catch_error.call(failed, (error) => {
-      let next: IteratorResult<Data<dictionary, unknown>, result>;
+    if (implementation === undefined) {
+      return current.bind((value) => advance({ tag: "next", value }));
+    }
 
-      try {
-        next = iterator.throw(error);
-      } catch (thrown) {
-        if (thrown === error) {
-          return failed;
-        }
-
-        throw thrown;
-      }
-
-      if (next.done) {
-        return witness.pure(next.value);
-      }
-
-      return step(path, next.value, iterator);
-    });
+    // Catch only this yield, before binding the rest of the program. Otherwise
+    // every enclosing step catches a descendant failure and resumes it again.
+    const yielded = current.map((value): DoInput => ({ tag: "next", value }));
+    const input = implementation.catch_error.call(
+      yielded,
+      (error) => current.pure<DoInput>({ tag: "throw", value: error }),
+    );
+    return input.bind((value) => advance(value as DoInput));
   }
 }
 
 function append_do_path(
   previous: DoPath | undefined,
-  value: unknown,
+  value: DoInput,
 ): DoPath {
   return {
     previous,
@@ -252,12 +251,12 @@ function append_do_path(
   };
 }
 
-function values_from_path(path: DoPath | undefined): unknown[] {
+function values_from_path(path: DoPath | undefined): DoInput[] {
   if (path === undefined) {
     return [];
   }
 
-  const values = new Array<unknown>(do_path_length(path));
+  const values = new Array<DoInput>(do_path_length(path));
   let index = values.length - 1;
 
   for (

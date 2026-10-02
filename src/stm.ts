@@ -137,16 +137,19 @@ export function or_else<item>(
   right: StmValue<item>,
 ): StmValue<item> {
   return Stm((journal) => {
-    const snapshot = snapshot_journal(journal);
+    // The branch gets its own values before it can mutate them. Restoring map
+    // entries afterward cannot restore references held by the enclosing program.
+    const branch = snapshot_journal(journal);
 
     try {
-      return run_stm(left, journal);
+      const value = run_stm(left, branch);
+      restore_journal(journal, branch);
+      return value;
     } catch (error) {
       if (!(error instanceof StmRetry)) {
         throw error;
       }
 
-      restore_journal(journal, snapshot);
       return run_stm(right, journal);
     }
   });

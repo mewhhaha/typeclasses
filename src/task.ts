@@ -33,6 +33,9 @@ import {
 /** @ignore */
 export declare const task_identity: unique symbol;
 
+/** @ignore */
+export declare const parallel_task_identity: unique symbol;
+
 const task_cancellation = Symbol("Task cancellation");
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
@@ -80,6 +83,42 @@ export type TaskValue<item> = Data<AsTask, item>;
 /** The Task dictionary and constructor. */
 export const Task: AsTask = data<AsTask>();
 
+/** Deferred tasks whose Applicative instance runs independent work concurrently. */
+export interface AsParallelTask
+  extends
+    As<AsParallelTask, typeof parallel_task_identity>,
+    Show<AsParallelTask>,
+    Applicative<AsParallelTask> {
+  /** The item carried by a parallel Task value. */
+  readonly [type_item]: unknown;
+  /** The deferred computation represented by this value. */
+  readonly [type_data]: Task<this[typeof type_item]>;
+}
+
+/** A Task using the concurrent, applicative-only dictionary. */
+export type ParallelTaskValue<item> = Data<AsParallelTask, item>;
+
+/** The parallel Task dictionary and constructor. */
+export const ParallelTask: AsParallelTask = data<AsParallelTask>();
+
+/** Selects concurrent Applicative composition without starting this Task. */
+export function parallel<item>(task: TaskValue<item>): ParallelTaskValue<item> {
+  return ParallelTask(task.value());
+}
+
+/** Selects sequential Monad composition without starting this parallel Task. */
+export function sequential<item>(
+  task: ParallelTaskValue<item>,
+): TaskValue<item> {
+  return Task(task.value());
+}
+
+/** Operations supported by the Task terminal runners. */
+export type TaskRequirements =
+  | Lift<AsTask, unknown>
+  | Lift<AsParallelTask, unknown>
+  | Ensuring;
+
 /** Creates a Task that succeeds with a non-thenable value. */
 export function succeed<item>(value: item & TaskItem<item>): TaskValue<item> {
   return succeed_task(value, "Task.succeed");
@@ -110,10 +149,13 @@ export function from_fn<item>(
 export function from_promise<item>(
   promise: PromiseLike<TaskItem<item>>,
 ): TaskValue<item> {
-  return Task((signal) => {
-    const pending = Promise.resolve(promise);
-    return await_with_signal(pending, signal, "Task.from_promise");
-  });
+  const pending = Promise.resolve(promise);
+  // Adoption takes responsibility for rejection immediately, even if the Task
+  // is run later or starts with an already-aborted signal.
+  void pending.catch(ignore_failure);
+  return Task((signal) =>
+    await_with_signal(pending, signal, "Task.from_promise")
+  );
 }
 
 /**
@@ -140,26 +182,34 @@ export function handle_operation_task<
   return handle_operation(
     effect,
     select,
-    (operation) => Effect.lift(from_fn((signal) => handle(operation, signal))),
+    (operation) =>
+      Effect.lift<AsTask, OperationOutput<selected>>(
+        from_fn<OperationOutput<selected>>((signal) =>
+          handle(operation, signal)
+        ),
+      ),
   );
 }
 
-/** Runs an effect containing Task lifts and cleanup scopes. */
+/** Runs an effect containing sequential or parallel Task lifts and cleanup scopes. */
 export async function run_task<
-  requirements extends Lift<AsTask, unknown> | Ensuring,
+  requirements extends TaskRequirements,
   item,
 >(
   effect: Effect<requirements, item>,
   options: RunTaskOptions = {},
 ): Promise<item> {
   let current = effect as Effect<
-    Lift<AsTask, unknown> | Ensuring,
+    TaskRequirements,
     unknown
   >;
 
   while (true) {
     switch (current[0]) {
       case "pure":
+        if (options.signal?.aborted) {
+          throw task_abort_error("run_task", options.signal);
+        }
         return current[1] as item;
       case "impure": {
         const operation = current[1] as readonly [string, unknown];
@@ -169,20 +219,21 @@ export async function run_task<
           current = current[2](
             await start_task(lifted[1].value(), options.signal, "run_task"),
           ) as Effect<
-            Lift<AsTask, unknown> | Ensuring,
+            TaskRequirements,
             unknown
           >;
           continue;
         }
 
         if (operation[0] === "effect.ensuring") {
-          const [, scope] = current[1] as Ensuring;
+          let [, scope] = current[1] as Ensuring;
+          while (scope.prepare !== undefined) scope = scope.prepare();
           let value: unknown;
 
           try {
             value = await run_task(
               scope.effect as Effect<
-                Lift<AsTask, unknown> | Ensuring,
+                TaskRequirements,
                 unknown
               >,
               options,
@@ -201,7 +252,7 @@ export async function run_task<
 
           await finalize_successful_effect(scope.finalize);
           current = current[2](value) as Effect<
-            Lift<AsTask, unknown> | Ensuring,
+            TaskRequirements,
             unknown
           >;
           continue;
@@ -219,7 +270,7 @@ export async function run_task<
 
 /** Runs a Task effect and returns its success, failure, or cancellation. */
 export async function run_task_exit<
-  requirements extends Lift<AsTask, unknown> | Ensuring,
+  requirements extends TaskRequirements,
   item,
 >(
   effect: Effect<requirements, item>,
@@ -241,7 +292,7 @@ export async function run_task_exit<
 }
 
 function is_task_value(value: unknown): value is Dictionary {
-  return is_kind_of(value, Task);
+  return is_kind_of(value, Task) || is_kind_of(value, ParallelTask);
 }
 
 Show.instance(Task)({
@@ -266,34 +317,84 @@ Applicative.instance(Task)({
   },
 
   [applicative_lift_method](fn, rest) {
+    const tasks = [this.value(), ...rest.map((current) => current.value())];
+    return Task(async (signal) => {
+      const values: unknown[] = [];
+      for (const task of tasks) {
+        values.push(await start_task(task, signal, "Task Applicative.lift"));
+      }
+      return task_item(fn(...values), "Task Applicative.lift");
+    });
+  },
+
+  ap(value) {
+    const first = this.value();
+    const second = value.value();
+    return Task(async (signal) => {
+      const fn = await start_task(first, signal, "Task.ap");
+      const item = await start_task(second, signal, "Task.ap");
+      return task_item(fn(item), "Task.ap");
+    });
+  },
+});
+
+Show.instance(ParallelTask)({
+  show() {
+    return "ParallelTask(?)";
+  },
+});
+
+Functor.instance(ParallelTask)({
+  map(fn) {
+    return ParallelTask((signal) => {
+      return start_task(this.value(), signal, "ParallelTask.map").then(
+        (value) => {
+          return task_item(fn(value), "ParallelTask.map");
+        },
+      );
+    });
+  },
+});
+
+Applicative.instance(ParallelTask)({
+  pure(value) {
+    const resolved = task_item(value, "ParallelTask.pure");
+    return ParallelTask((signal) =>
+      signal?.aborted
+        ? Promise.reject(task_abort_error("ParallelTask.pure", signal))
+        : Promise.resolve(resolved)
+    );
+  },
+
+  [applicative_lift_method](fn, rest) {
     const first = this.value();
     const tasks = rest.map((current) => current.value());
 
-    return Task((signal) => {
+    return ParallelTask((signal) => {
       return run_concurrently(
         [first, ...tasks],
         signal,
-        "Task Applicative.lift",
+        "ParallelTask Applicative.lift",
       )
         .then((values) => {
-          return task_item(fn(...values), "Task Applicative.lift");
+          return task_item(fn(...values), "ParallelTask Applicative.lift");
         });
     });
   },
 
   ap<from, to>(
-    this: Data<AsTask, (value: NoInfer<from>) => to>,
-    value: Data<AsTask, from>,
-  ): Data<AsTask, to> {
-    return Task((signal) => {
+    this: Data<AsParallelTask, (value: NoInfer<from>) => to>,
+    value: Data<AsParallelTask, from>,
+  ): Data<AsParallelTask, to> {
+    return ParallelTask((signal) => {
       return run_concurrently(
         [this.value() as Task<unknown>, value.value() as Task<unknown>],
         signal,
-        "Task.ap",
+        "ParallelTask.ap",
       ).then(([fn, item]) => {
         return task_item(
           (fn as (value: from) => to)(item as from),
-          "Task.ap",
+          "ParallelTask.ap",
         );
       });
     });
@@ -336,7 +437,11 @@ MonadRec.instance(Task)({
 
 MonadError.instance(Task)({
   throw_error(error) {
-    return Task(() => Promise.reject(error));
+    return Task((signal) =>
+      signal?.aborted
+        ? Promise.reject(task_abort_error("Task.throw_error", signal))
+        : Promise.reject(error)
+    );
   },
 
   catch_error(handler) {
@@ -376,7 +481,11 @@ function start_task<item>(
 
 function succeed_task<item>(value: item, operation: string): TaskValue<item> {
   const resolved = task_item(value, operation);
-  return Task(() => Promise.resolve(resolved));
+  return Task((signal) =>
+    signal?.aborted
+      ? Promise.reject(task_abort_error(operation, signal))
+      : Promise.resolve(resolved)
+  );
 }
 
 function run_concurrently(
@@ -441,6 +550,7 @@ function await_with_signal<item>(
   }
 
   if (signal.aborted) {
+    void pending.catch(ignore_failure);
     return Promise.reject(task_abort_error(operation, signal));
   }
 
@@ -525,3 +635,5 @@ async function finalize_cancelled_effect(
 
   throw cancellation;
 }
+
+function ignore_failure(_error: unknown): void {}

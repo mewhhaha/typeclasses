@@ -1,4 +1,10 @@
-import { type AsTask, from_fn, succeed } from "../src/task.ts";
+import {
+  type AsTask,
+  from_fn,
+  parallel,
+  sequential,
+  succeed,
+} from "../src/task.ts";
 import type { Data } from "../src/typeclass.ts";
 import { Applicative, Do, MonadError } from "../src/typeclasses.ts";
 
@@ -43,10 +49,10 @@ export function load_account_dashboard(
 ): Data<AsTask, AccountDashboard> {
   const account_details = Do(function* () {
     const account = yield* from_fn(() => services.load_account(account_id));
-    const team_and_tip = Applicative.lift(
+    const team_and_tip = sequential(Applicative.lift(
       (team, tip) => ({ team, tip }),
-      from_fn(() => services.load_team(account.team_id)),
-      MonadError.catch_error(
+      parallel(from_fn(() => services.load_team(account.team_id))),
+      parallel(MonadError.catch_error(
         from_fn<DashboardTip>(async () => ({
           source: "service",
           text: await services.load_tip(account.id),
@@ -56,23 +62,23 @@ export function load_account_dashboard(
             source: "fallback",
             text: "Review your open alerts",
           }),
-      ),
-    );
+      )),
+    ));
     const { team, tip } = yield* team_and_tip;
 
     return { account, team, tip };
   });
 
-  return Applicative.lift(
+  return sequential(Applicative.lift(
     ({ account, team, tip }, open_alerts) => ({
       account,
       team,
       open_alerts,
       tip,
     }),
-    account_details,
-    from_fn(() => services.count_open_alerts(account_id)),
-  );
+    parallel(account_details),
+    parallel(from_fn(() => services.count_open_alerts(account_id))),
+  ));
 }
 
 export async function run_task_workflow_scenario(): Promise<

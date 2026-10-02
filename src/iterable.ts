@@ -6,6 +6,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { append_item } from "./internal.ts";
+import { traverse_items } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import {
   Alternative,
@@ -78,18 +79,32 @@ Show.instance(IterableT)({
 Eq.instance(IterableT)({
   eq(right) {
     const left_iterator = this.value()()[Symbol.iterator]();
-    const right_iterator = right.value()()[Symbol.iterator]();
+    let right_iterator: Iterator<unknown> | undefined;
 
-    while (true) {
-      const left = left_iterator.next();
-      const right = right_iterator.next();
+    let left_done = false;
+    let right_done = false;
 
-      if (left.done === true || right.done === true) {
-        return left.done === right.done;
+    try {
+      right_iterator = right.value()()[Symbol.iterator]();
+      while (true) {
+        const left = left_iterator.next();
+        left_done = left.done === true;
+        const right = right_iterator.next();
+        right_done = right.done === true;
+
+        if (left_done || right_done) {
+          return left_done === right_done;
+        }
+
+        if (!Object.is(left.value, right.value)) {
+          return false;
+        }
       }
-
-      if (!Object.is(left.value, right.value)) {
-        return false;
+    } finally {
+      try {
+        if (!left_done) left_iterator.return?.();
+      } finally {
+        if (!right_done) right_iterator?.return?.();
       }
     }
   },
@@ -213,40 +228,12 @@ Foldable.instance(IterableT)({
 
 Traversable.instance(IterableT)({
   traverse(applicative, fn) {
-    const items = [...this.value()()];
-
-    if (items.length === 0) {
-      return Applicative.pure(applicative, IterableT(function* () {}));
-    }
-
-    let index = items.length - 1;
-    let out = Functor.map(fn(items[index]), iterable_single);
-
-    for (index -= 1; index >= 0; index -= 1) {
-      out = Applicative.ap(
-        Functor.map(fn(items[index]), iterable_prepend),
-        out,
-      );
-    }
-
-    return out;
+    return Functor.map(
+      traverse_items([...this.value()()], applicative, fn),
+      (items) => IterableT(() => items),
+    );
   },
 });
-
-function iterable_single<item>(item: item): IterableValue<item> {
-  return IterableT(function* () {
-    yield item;
-  });
-}
-
-function iterable_prepend<item>(head: item) {
-  return (tail: IterableValue<item>) => {
-    return IterableT(function* () {
-      yield head;
-      yield* tail.value()();
-    });
-  };
-}
 
 function lift_iterable_two<output>(
   fn: (...values: unknown[]) => output,

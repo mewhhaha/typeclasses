@@ -18,11 +18,37 @@ import {
 import type { AsMaybe } from "../src/maybe.ts";
 import { Just, Nothing } from "../src/maybe.ts";
 import type { Data } from "../src/typeclass.ts";
-import { Applicative, Do } from "../src/typeclasses.ts";
+import { Applicative } from "../src/typeclasses.ts";
+import { assert_equals } from "../src/assert.ts";
+import { load_benchmark_variants } from "./generated_modules.ts";
+
+const variants = await load_benchmark_variants<
+  typeof import("./fixtures/large_chains.ts")
+>(
+  new URL("./fixtures/large_chains.ts", import.meta.url),
+);
+const { maybe_do, either_do, do_length } = variants.original;
+const { maybe_do: maybe_do_transformed, either_do: either_do_transformed } =
+  variants.transformed;
+
+for (const input of [-10, 0, 2_000]) {
+  const observed = variants.original.observe(input);
+  assert_equals(observed, {
+    maybe: ["Just", (input + do_length) * 2],
+    either: ["Right", (input + do_length) * 2],
+    absent: ["Nothing"],
+    failed: ["Left", "bad"],
+    events: ["maybe:" + (input + do_length), "either:" + (input + do_length)],
+  });
+  assert_equals(
+    variants.transformed.observe(input),
+    observed,
+    "large-chain transformer output differs in values, failures, or events",
+  );
+}
 
 const iterations = 2_000;
 const chain_length = 20;
-const do_length = 8;
 let _sink: unknown;
 
 const add_one = (value: number) => value + 1;
@@ -299,15 +325,7 @@ Deno.bench("large Maybe Do typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    const current = Do(function* () {
-      let value = yield* Just(index);
-
-      for (let step = 0; step < do_length; step += 1) {
-        value = yield* Just(add_one(value));
-      }
-
-      return double(value);
-    });
+    const current = maybe_do(index);
 
     checksum += consume_typeclasses_maybe(current);
   }
@@ -577,15 +595,7 @@ Deno.bench("large Either Do typeclasses", () => {
   let checksum = 0;
 
   for (let index = 0; index < iterations; index += 1) {
-    const current = Do(function* () {
-      let value = yield* TypeclassesRight(index);
-
-      for (let step = 0; step < do_length; step += 1) {
-        value = yield* TypeclassesRight(add_one(value));
-      }
-
-      return double(value);
-    });
+    const current = either_do(index);
 
     checksum += consume_typeclasses_either(current);
   }
@@ -742,47 +752,3 @@ Deno.bench("large Either map chain true-myth", () => {
 
   _sink = checksum;
 });
-
-function maybe_do_transformed(index: number): Data<AsMaybe, number> {
-  return Just(index).bind((value_1) => {
-    return Just(add_one(value_1)).bind((value_2) => {
-      return Just(add_one(value_2)).bind((value_3) => {
-        return Just(add_one(value_3)).bind((value_4) => {
-          return Just(add_one(value_4)).bind((value_5) => {
-            return Just(add_one(value_5)).bind((value_6) => {
-              return Just(add_one(value_6)).bind((value_7) => {
-                return Just(add_one(value_7)).bind((value_8) => {
-                  return Just(add_one(value_8)).map((value_9) => {
-                    return double(value_9);
-                  });
-                });
-              });
-            });
-          });
-        });
-      });
-    });
-  });
-}
-
-function either_do_transformed(index: number): Data<AsEither, number> {
-  return TypeclassesRight(index).bind((value_1) => {
-    return TypeclassesRight(add_one(value_1)).bind((value_2) => {
-      return TypeclassesRight(add_one(value_2)).bind((value_3) => {
-        return TypeclassesRight(add_one(value_3)).bind((value_4) => {
-          return TypeclassesRight(add_one(value_4)).bind((value_5) => {
-            return TypeclassesRight(add_one(value_5)).bind((value_6) => {
-              return TypeclassesRight(add_one(value_6)).bind((value_7) => {
-                return TypeclassesRight(add_one(value_7)).bind((value_8) => {
-                  return TypeclassesRight(add_one(value_8)).map((value_9) => {
-                    return double(value_9);
-                  });
-                });
-              });
-            });
-          });
-        });
-      });
-    });
-  });
-}

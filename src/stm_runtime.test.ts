@@ -135,3 +135,28 @@ Deno.test("STM prepares every committed value before changing any TVar", () => {
   assert_equals(atomically(read_tvar(first)), 1);
   assert_equals(atomically(read_tvar(second)), { count: 1 });
 });
+
+Deno.test("STM retry preserves read references held outside its branch", () => {
+  const state = new_tvar({ count: 1 });
+  const failed = read_tvar(state).bind((current) => {
+    current.count += 1;
+    return retry<void>();
+  });
+  const transaction = Do(function* () {
+    const before = yield* read_tvar(state);
+    yield* or_else(failed, read_tvar(state).map(() => {}));
+    yield* write_tvar(state, before);
+    return before.count;
+  });
+  assert_equals(atomically(transaction), 1);
+  assert_equals(atomically(read_tvar(state)), { count: 1 });
+});
+
+Deno.test("STM commits successful alternatives and discards retried writes", () => {
+  const state = new_tvar(1);
+  const failed = write_tvar(state, 2).bind(() => retry<number>());
+  const fallback = write_tvar(state, 3).bind(() => read_tvar(state));
+  assert_equals(atomically(or_else(failed, fallback)), 3);
+  assert_equals(atomically(read_tvar(state)), 3);
+  assert_equals(atomically(or_else(fallback, failed)), 3);
+});

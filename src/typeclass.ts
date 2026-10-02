@@ -23,6 +23,8 @@ export const data_type = Symbol("Data.type");
 
 /** Phantom property that selects the item carried by a data type. */
 export declare const type_item: unique symbol;
+/** Phantom property for contexts whose elements have a fixed type. */
+export declare const type_element: unique symbol;
 /** Phantom property that resolves a data type after its item is selected. */
 export declare const type_data: unique symbol;
 /** Phantom property that distinguishes otherwise identical dictionaries. */
@@ -63,8 +65,13 @@ export type DictionaryDataType<dictionary extends Dictionary> =
 export type Data<dictionary extends Dictionary, item> = WrappedData<
   dictionary,
   ContextData<dictionary, item>,
-  item
+  DataItem<dictionary, item>
 >;
+
+/** Resolve the element exposed by a context, including fixed-element contexts. */
+export type DataItem<dictionary extends Dictionary, item> = dictionary extends
+  { readonly [type_element]: infer element } ? element
+  : item;
 
 /** @ignore */
 export type IdentifiedDataType<type extends DataType, identity> =
@@ -88,21 +95,26 @@ export type Dictionary<
 export interface As<type extends DataType, identity>
   extends Dictionary<type, identity> {
   /** Wrap a raw value and attach this dictionary's operations. */
-  <item>(value: AppliedData<type, item>): WrappedData<
+  <item extends DataItem<this, unknown> = DataItem<this, unknown>>(
+    value: AppliedData<type, item>,
+  ): WrappedData<
     this,
     AppliedData<type, item>,
-    item
+    DataItem<this, item>
   >;
 }
 
 /** Wrap a value whose raw shape is described by a data dictionary. */
-export function as_data<dictionary extends Dictionary, item>(
+export function as_data<
+  dictionary extends Dictionary,
+  item extends DataItem<dictionary, unknown> = DataItem<dictionary, unknown>,
+>(
   dictionary: dictionary,
   value: ContextData<dictionary, item>,
 ): Data<dictionary, item>;
 /** Wrap an arbitrary value with the members of an object dictionary. */
 export function as_data<dictionary extends object, value, item = unknown>(
-  dictionary: dictionary,
+  dictionary: dictionary & { readonly [type_identity]?: never },
   value: value,
 ): WrappedData<dictionary, value, item>;
 export function as_data<dictionary extends object, value, item = unknown>(
@@ -115,10 +127,12 @@ export function as_data<dictionary extends object, value, item = unknown>(
 /** Create a reusable wrapper for values described by a data dictionary. */
 export function as_data_cached<dictionary extends Dictionary>(
   dictionary: dictionary,
-): <item>(value: ContextData<dictionary, item>) => Data<dictionary, item>;
+): <item extends DataItem<dictionary, unknown> = DataItem<dictionary, unknown>>(
+  value: ContextData<dictionary, item>,
+) => Data<dictionary, item>;
 /** Create a reusable wrapper that attaches an object dictionary. */
 export function as_data_cached<dictionary extends object>(
-  dictionary: dictionary,
+  dictionary: dictionary & { readonly [type_identity]?: never },
 ): <value, item = unknown>(
   value: value,
 ) => WrappedData<dictionary, value, item>;
@@ -131,7 +145,9 @@ export function as_data_cached<dictionary extends object>(
 }
 
 /** A function that wraps raw values for one dictionary. */
-export type DataWrapper<dictionary extends Dictionary> = <item>(
+export type DataWrapper<dictionary extends Dictionary> = <
+  item extends DataItem<dictionary, unknown> = DataItem<dictionary, unknown>,
+>(
   value: ContextData<dictionary, item>,
 ) => Data<dictionary, item>;
 
@@ -142,7 +158,9 @@ export type DataConstructorContext<dictionary extends Dictionary> = {
 };
 
 /** A custom constructor used to build values for a dictionary. */
-export type DataConstructor<dictionary extends Dictionary> = <item>(
+export type DataConstructor<dictionary extends Dictionary> = <
+  item extends DataItem<dictionary, unknown> = DataItem<dictionary, unknown>,
+>(
   this: DataConstructorContext<dictionary>,
   value: ContextData<dictionary, item>,
 ) => Data<dictionary, item>;
@@ -257,8 +275,10 @@ export function data<dictionary extends Dictionary>(
   target[kind] = runtime_kind;
   const wrap_data = as_data_cached(target);
   const context: DataConstructorContext<dictionary> = {
-    data<item>(value: ContextData<dictionary, item>) {
-      return wrap_data(value);
+    data<item extends DataItem<dictionary, unknown>>(
+      value: ContextData<dictionary, item>,
+    ) {
+      return wrap_data<item>(value);
     },
   };
 
@@ -350,12 +370,10 @@ export type TaggedPayload<value, tag extends PropertyKey> = value extends
   : never
   : never;
 
-type TaggedVariants<dictionary extends Dictionary> = {
-  readonly [tag in TaggedTag<dictionary>]: number;
-};
+type TaggedVariants = ReadonlyMap<PropertyKey, number>;
 
 type TaggedDataOptions<dictionary extends Dictionary> = {
-  readonly variants?: TaggedVariants<dictionary>;
+  readonly variants?: TaggedVariants;
 };
 
 /** @ignore */
@@ -477,7 +495,7 @@ function tagged_data<dictionary extends Dictionary>(
 
 function parse_tagged_value<dictionary extends Dictionary>(
   value: ContextData<dictionary, unknown>,
-  variants: TaggedVariants<dictionary> | undefined,
+  variants: TaggedVariants | undefined,
 ): TaggedData {
   if (!Array.isArray(value)) {
     throw new TypeError(
@@ -493,11 +511,11 @@ function parse_tagged_value<dictionary extends Dictionary>(
 
   const tag = tagged[0];
 
-  if (!Object.hasOwn(variants, tag)) {
+  const expected_length = variants.get(tag);
+
+  if (expected_length === undefined) {
     throw new TypeError(`Unknown tagged data variant ${String(tag)}`);
   }
-
-  const expected_length = Reflect.get(variants, tag) as number;
 
   if (tagged.length !== expected_length) {
     throw new TypeError(
@@ -544,17 +562,17 @@ function tagged_data_from_union<dictionary extends Dictionary>(
   }) as UnionDictionary<dictionary>;
 }
 
-function tagged_variants_from_union<dictionary extends Dictionary>(
+function tagged_variants_from_union(
   shape: UnionVariantsShape,
-): TaggedVariants<dictionary> {
-  const variants = Object.create(null) as Record<PropertyKey, number>;
+): TaggedVariants {
+  const variants = new Map<PropertyKey, number>();
 
   for (const variant of shape) {
     const tag = variant[0];
-    variants[tag] = variant.length;
+    variants.set(tag, variant.length);
   }
 
-  return variants as TaggedVariants<dictionary>;
+  return variants;
 }
 
 function tagged_variant<
@@ -614,8 +632,8 @@ function tagged_variant<
   return construct;
 }
 
-function tagged_singleton_tags<dictionary extends Dictionary>(
-  variants: TaggedVariants<dictionary> | undefined,
+function tagged_singleton_tags(
+  variants: TaggedVariants | undefined,
 ): Set<PropertyKey> {
   const singletons = new Set<PropertyKey>();
 
@@ -623,8 +641,8 @@ function tagged_singleton_tags<dictionary extends Dictionary>(
     return singletons;
   }
 
-  for (const tag of Reflect.ownKeys(variants)) {
-    if (Reflect.get(variants, tag) === 1) {
+  for (const [tag, length] of variants) {
+    if (length === 1) {
       singletons.add(tag);
     }
   }
@@ -634,15 +652,15 @@ function tagged_singleton_tags<dictionary extends Dictionary>(
 
 function install_tagged_variants<dictionary extends Dictionary>(
   dictionary: dictionary,
-  variants: TaggedVariants<dictionary> | undefined,
+  variants: TaggedVariants | undefined,
 ): void {
   if (variants === undefined) {
     return;
   }
 
-  for (const tag of Reflect.ownKeys(variants)) {
+  for (const [tag, length] of variants) {
     Object.defineProperty(dictionary, tagged_constructor_name(tag), {
-      value: tagged_variant(dictionary, tag, Reflect.get(variants, tag)),
+      value: tagged_variant(dictionary, tag, length),
     });
   }
 }
@@ -962,6 +980,10 @@ export function install_instance<implementation extends object>(
       );
     }
 
+    if (descriptor.enumerable) {
+      assert_property_assignable(target, method);
+    }
+
     if (
       "value" in descriptor && typeof descriptor.value === "function" &&
       same_dictionary_methods.has(method)
@@ -973,13 +995,51 @@ export function install_instance<implementation extends object>(
     }
 
     Object.defineProperty(installed, method, descriptor);
-    owners.set(method, token);
   }
 
+  assert_property_assignable(target, token);
   Object.assign(target, installed);
   target[token] = installed;
 
+  for (const method of Reflect.ownKeys(implementation)) {
+    owners.set(method, token);
+  }
+
   return installed as implementation;
+}
+
+function assert_property_assignable(target: object, key: PropertyKey): void {
+  if (!Object.hasOwn(target, key) && !Object.isExtensible(target)) {
+    throw new TypeError(
+      `Cannot install ${
+        describe_property_key(key)
+      } on a non-extensible dictionary`,
+    );
+  }
+
+  for (
+    let owner: object | null = target;
+    owner !== null;
+    owner = Object.getPrototypeOf(owner)
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+
+    if (descriptor === undefined) continue;
+
+    if (
+      "value" in descriptor
+        ? !descriptor.writable
+        : descriptor.set === undefined
+    ) {
+      throw new TypeError(
+        `Cannot install read-only dictionary property ${
+          describe_property_key(key)
+        }`,
+      );
+    }
+
+    return;
+  }
 }
 
 function same_dictionary_method(

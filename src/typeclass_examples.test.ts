@@ -88,6 +88,7 @@ import { match } from "./tagged.ts";
 import {
   type AsTask,
   from_fn as task_from_fn,
+  parallel,
   run_task,
   succeed as task_succeed,
 } from "./task.ts";
@@ -745,13 +746,13 @@ Deno.test("Do chains monadic generator yields with bind", () => {
   assert_equals(list_to_array(list), [11, 21, 12, 22]);
 });
 
-Deno.test("Applicative lift combines Task applicatives without sequencing effects", async () => {
+Deno.test("Applicative lift combines ParallelTask values without sequencing effects", async () => {
   const events: string[] = [];
   let resolve_left: () => void = () => {};
   let resolve_right: () => void = () => {};
   const computed = Applicative.lift(
     (left, right) => left + right,
-    task_from_fn(() => {
+    parallel(task_from_fn(() => {
       return new Promise<number>((resolve) => {
         events.push("left start");
         resolve_left = () => {
@@ -759,8 +760,8 @@ Deno.test("Applicative lift combines Task applicatives without sequencing effect
           resolve(20);
         };
       });
-    }),
-    task_from_fn(() => {
+    })),
+    parallel(task_from_fn(() => {
       return new Promise<number>((resolve) => {
         events.push("right start");
         resolve_right = () => {
@@ -768,7 +769,7 @@ Deno.test("Applicative lift combines Task applicatives without sequencing effect
           resolve(22);
         };
       });
-    }),
+    })),
   );
 
   const promise = computed.run();
