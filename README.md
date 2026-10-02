@@ -30,9 +30,14 @@ import {
   map,
   Nothing,
   set,
+  type type_element,
 } from "@mewhhaha/typeclasses";
 
-function total<dictionary extends Foldable<dictionary>>(
+function total<
+  dictionary extends Foldable<dictionary> & {
+    readonly [type_element]?: number;
+  },
+>(
   values: Data<dictionary, number>,
 ): number {
   return Foldable.fold(values, 0, (running, value) => running + value);
@@ -78,9 +83,9 @@ union of requirements instead of nesting into `ReaderT` over `StateT` over
 **Pay for the ergonomics at build time.** Generator-based `Do` and `Program`
 blocks read like ordinary code, but interpreting a generator at runtime costs
 something. The bundled source transformer lowers them to direct method chains
-during your build — measured at 3–15× on this repository's benchmarks — so the
-readable spelling is also the fast one. Plugins for esbuild and Rolldown ship
-with the package.
+during your build. The benchmarks compare the generated modules with runtime
+interpretation and check their behavior before timing. Plugins for esbuild and
+Rolldown ship with the package.
 
 ### What it is not
 
@@ -214,15 +219,15 @@ The library provides these typeclass definitions:
 
 Core instance coverage is intentionally visible:
 
-| Data dictionary              | Principal instances                                                                |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                |
-| `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                    |
-| `Validation`                 | accumulating `Applicative`, `Traversable`, `Ord`                                   |
-| `Task`                       | parallel `Applicative`, sequential `Monad`, `MonadError`                           |
-| `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                   |
-| `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid` |
-| `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                      |
+| Data dictionary              | Principal instances                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `Maybe`                      | `Monad`, `Alternative`, `Traversable`, `Ord`, first-biased `Monoid`                            |
+| `Either`                     | `MonadError`, `Traversable`, `Bifunctor`, `Ord`                                                |
+| `Validation`                 | accumulating `Applicative`, `Traversable`, `Ord`                                               |
+| `Task`                       | sequential `Applicative`, `Monad`, `MonadError`; concurrent application through `ParallelTask` |
+| `Fn`                         | Reader-style `Monad`, `Profunctor`, `Category`, `Arrow`, `Parse`                               |
+| `Tuple`                      | `Bifunctor`, `Traversable`, `Comonad`, `Ord`; writer `Monad` through `with_monoid`             |
+| `Identity`, `List`, `ArrayT` | the expected identity and list-like instances                                                  |
 
 The JavaScript-shape wrappers — `RecordT`, `MapT`, `SetT`, `IterableT`,
 `AsyncIterableT`, `TypedArrayT`, `DateT`, and the rest — carry the instances
@@ -249,6 +254,10 @@ entrypoints let applications and build tools import only the domain they need:
 - `/typeclass` and `/typeclasses` for dictionary machinery and definitions.
 - `/maybe`, `/either`, `/validation`, `/identity`, `/fn`, `/tuple`, `/array`,
   `/predicate`, `/list`, and `/tagged` for data values.
+- `/map`, `/record`, `/set`, `/iterable`, `/async_iterable`, `/typed_array`,
+  `/array_buffer`, `/data_view`, `/form_data`, `/url_search_params`,
+  `/readable_stream`, `/date`, `/regexp`, `/error`, `/weak_map`, and `/weak_set`
+  for JavaScript shape wrappers and their conversions.
 - `/task`, `/effects`, `/except`, `/reader`, `/state`, `/writer`, `/stm`, and
   `/parallel` for effectful programs.
 - `/quickcheck` for deterministic generators, shrinking, property checks, and
@@ -260,10 +269,9 @@ entrypoints let applications and build tools import only the domain they need:
 Deno can also use explicit `jsr:` specifiers, for example
 `jsr:@mewhhaha/typeclasses/validation`.
 
-The wrappers for built-in JavaScript shapes are reached through a namespace at
-the root, because their helpers would otherwise collide — every one of them
-wants to export `from_array`, `to_array`, `from_entries`, and friends. Both of
-these work:
+JavaScript shape wrappers have both granular entrypoints and root namespaces.
+The namespaces keep conversion helpers such as `from_entries` and `to_array`
+unambiguous. Both of these work:
 
 ```ts
 import { array } from "@mewhhaha/typeclasses";
@@ -286,13 +294,13 @@ an `ArrayT`.
 
 ### Runtime Support
 
-| Surface                          | Deno                         | Node               | Bun                                    | Browsers / workerd                                |
-| -------------------------------- | ---------------------------- | ------------------ | -------------------------------------- | ------------------------------------------------- |
-| Data types, typeclasses, prelude | CI                           | CI                 | CI                                     | Runtime-neutral core; not CI-smoked               |
-| `Task`                           | CI                           | CI                 | CI                                     | Uses standard promises and `AbortSignal`          |
-| Web Worker pool                  | CI                           | No global `Worker` | Requires compatible Web Worker globals | Browser workers only; workerd has no pool support |
-| Transformer CLI                  | Deno                         | —                  | —                                      | Build-time only                                   |
-| Bundler adapters                 | CI with esbuild and Rolldown | Bundler host       | Bundler host                           | Build-time only                                   |
+| Surface                          | Deno                         | Node               | Bun                                    | Browsers / workerd                                  |
+| -------------------------------- | ---------------------------- | ------------------ | -------------------------------------- | --------------------------------------------------- |
+| Data types, typeclasses, prelude | CI                           | CI                 | CI                                     | CI smoke tests                                      |
+| `Task`                           | CI                           | CI                 | CI                                     | CI smoke tests; standard promises and `AbortSignal` |
+| Web Worker pool                  | CI                           | No global `Worker` | Requires compatible Web Worker globals | Browser workers only; workerd has no pool support   |
+| Transformer CLI                  | Deno                         | —                  | —                                      | Build-time only                                     |
+| Bundler adapters                 | CI with esbuild and Rolldown | Bundler host       | Bundler host                           | Build-time only                                     |
 
 Importing the root package does not start workers. Calling `/parallel` worker
 operations requires `Worker`, `navigator`, `AbortController`, and explicit
@@ -302,6 +310,26 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+- `Task.ap` and `Applicative.lift` on Tasks now run sequentially, in input
+  order, matching `bind`. Wrap independent inputs with `parallel(task)` to use
+  the applicative-only `ParallelTask` dictionary. Use `sequential(result)` when
+  the combined task needs to enter a `Do` block or use `MonadError` recovery.
+- Writer cells now require an empty-log witness:
+  `writer_cell<"audit", AsArray, string>(ArrayT<string>([]))`. Their
+  dictionaries support `pure` and yield-free `Do` blocks without a dummy Writer
+  value.
+- `await async_iterable.from_async_iterable(source)` snapshots a finite async
+  source for replay. Use `from_factory` to keep a replayable source lazy.
+- Byte and entry wrappers infer their actual folded element type. Typed-array
+  constructors distinguish numeric arrays from BigInt arrays; generic type
+  arguments cannot change the runtime element type. `as_data` checks typed
+  dictionaries' raw shapes even through its object-dictionary overload.
+- The transformer diagnoses captured mutable state across yields and arbitrary
+  `for...of` sources. Use the runtime generator with an explicit preserve policy
+  when its state or iteration cannot be lowered safely.
+- Collection traversal calls its callback in input order and materializes each
+  result once. Deferred execution follows the selected applicative: `Task` is
+  sequential and `ParallelTask` starts independent work together.
 - Task cancellation is now supplied at execution with `.run(signal)` or
   `run_task(effect, { signal })`, so it propagates through the whole composed
   computation. `from_fn` and `from_promise` no longer accept constructor
@@ -342,8 +370,8 @@ deno task verify
 
 `verify` requires Deno, Node, Bun, and Chrome, Chromium, or Firefox. Run
 `deno task prepublish` to add the JSR dry run. The CI workflow runs both.
-Benchmarks stay separate because they are a measurement harness rather than a
-correctness gate:
+Benchmark timings run separately; equivalence and scaling preflights are part of
+verification:
 
 ```sh
 deno task bench
@@ -386,8 +414,8 @@ inferred:
 Typeclass instance methods receive the wrapped value as `this`. The installer
 stores that this-based instance in the canonical symbol slot and exposes direct
 fluent aliases like `.show()` and `.map()`. The canonical typeclass slot is a
-unique symbol, so two typeclasses can both have a method named `show` without
-sharing a runtime property.
+unique symbol, which keeps implementations separate. Direct fluent method names
+must be unique on a dictionary; installing a conflicting alias throws.
 
 ```ts
 import {
@@ -552,6 +580,12 @@ Each data type declares its raw value shape once on the `As...` interface.
 `Data` uses that shape to type helper functions, instance methods, and fluent
 methods.
 
+For a shape with a fixed folded element, declare `[type_element]` alongside
+`[type_item]` and `[type_data]`. Byte wrappers use `number`; form and URL
+wrappers use their entry tuples. `DataItem<dictionary, item>` resolves that
+associated element so generic folds cannot change it by choosing a different
+type argument. Ordinary containers continue to use their generic `item` slot.
+
 The wrapped value's prototype points at a shared data prototype, which delegates
 to the dictionary. Symbol-scoped implementations and direct fluent aliases are
 inherited through that prototype. Since implementations are this-based, the
@@ -577,11 +611,11 @@ keep typeclass-specific types. Their bodies usually dispatch through
 augmenting its exported `As...` interface and installing the implementation on
 the callable dictionary.
 
-Implementation methods usually do not need explicit generic parameters. For
-`Traversable.traverse`, collection implementations split empty and non-empty
-inputs: the empty branch returns the contextual empty structure, while the
-non-empty branch seeds the accumulator from the last mapped value so TypeScript
-can infer the output item type before the fold continues.
+Implementation methods usually do not need explicit generic parameters.
+Collection traversal builds a balanced immutable tree, then materializes each
+applicative result once. Callbacks run in input order, branch results never
+share a mutable accumulator, and applicative nesting has logarithmic depth.
+Empty inputs use the supplied dictionary's `pure`.
 
 ```ts
 import {
@@ -939,12 +973,20 @@ behavior have not been monkey-patched. Code that intentionally changes those
 runtime identities should not use the source transform for those calls.
 
 Supported generator control flow includes `if`, non-fallthrough `switch`,
-classic `for`, `while`, `do/while`, and `for...of`, including unlabeled
-`break`/`continue`. Iterables in `for...of` are materialized once. `Do` and
-`Program` generators containing `try/catch` are diagnosed and left unchanged
-because the syntax-only transformer cannot preserve both JavaScript exceptions
-and dictionary-specific monadic errors. Labeled jumps, switch fallthrough,
-`for await`, and `try/finally` stay unsupported.
+classic `for`, `while`, `do/while`, and `for...of` over literal primitive
+arrays, including unlabeled `break`/`continue`. Array-loop `let` and `const`
+bindings keep their declaration semantics. Arbitrary iterables are diagnosed and
+retained so early exits keep their iteration and cleanup behavior.
+Function-scoped `var` locals also retain the generator. Captured locals mutated
+after a yield and local objects, functions, or classes shared across yields
+retain their runtime allocation and scope. Observable prefix work such as opaque
+calls or external mutation before a later yield is diagnosed because generator
+replay can repeat it across branches. Put observable work in the yielded context
+or choose the explicit runtime fallback. `Do` and `Program` generators
+containing `try/catch` are diagnosed and left unchanged because the syntax-only
+transformer cannot preserve both JavaScript exceptions and dictionary-specific
+monadic errors. Labeled jumps, switch fallthrough, `for await`, and
+`try/finally` stay unsupported.
 
 Loop lowering uses named recursive binding functions. This preserves per-
 iteration `let` bindings, but very large strict-monad loops can still exhaust
@@ -1642,8 +1684,8 @@ numbers has no single accumulator to drain into. Declare a cell per output and
 drain each separately:
 
 ```ts
-const audit = writer_cell<"audit", AsArray, string>();
-const metrics = writer_cell<"metrics", AsArray, number>();
+const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
+const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
 
 const program = Program.scope<Uses<typeof audit> | Uses<typeof metrics>>()(
   function* () {
@@ -1663,11 +1705,10 @@ const [[value, audit_log], metric_log] = run(
 );
 ```
 
-Note that `Writer.with` and a cell solve different problems: `Writer.with`
-captures a Monoid identity so `pure` works on a standalone Writer, and
-deliberately shares the base dictionary's runtime kind. A cell mints its own,
-which is what gives it a separate handler. Cells follow the same rules as
-[State cells](#state-cells).
+Both `Writer.with` and Writer cells capture an empty output value, so their
+dictionary `pure` works without a wrapped receiver. `Writer.with` shares the
+base dictionary's runtime kind. Each cell mints its own kind for a separate
+handler. Cells follow the same key rules as [State cells](#state-cells).
 
 ### Effects Instead of Transformers
 
@@ -1852,6 +1893,12 @@ program body is not equivalent: a failure abandons the generator rather than
 resuming it, so its `finally` block never runs. Use `Effect.ensuring` for
 cleanup that must survive a failure.
 
+Cleanup outcomes belong to each execution, including repeated and concurrent
+runs of one handled effect. `run_task` initializes that scope automatically. A
+custom terminal runner for `Ensuring` must resolve its optional `prepare`
+factory before entering the scope, repeating while another `prepare` remains.
+Forwarding handlers should retain the entire operation payload.
+
 ### IO and Task
 
 ```hs
@@ -1882,11 +1929,12 @@ Task items cannot themselves be `PromiseLike`. Keep `.map(...)` and applicative
 callbacks synchronous, and use `.bind(...)` or `from_fn(...)` for dependent
 asynchronous work. Pass an `AbortSignal` to `.run(signal)` or to
 `run_task(effect, { signal })`. The signal propagates through mapped, bound, and
-applicative tasks; an applicative failure aborts its siblings. `from_fn` passes
-the execution signal to its producer so cooperative work can stop. Aborting
-`from_promise` stops waiting but cannot undo work already started by the
-original promise. Use `run_task_exit` when success, failure, and cancellation
-must be handled as values.
+applicative tasks; a `ParallelTask` failure aborts its siblings. `from_fn`
+passes the execution signal to its producer so cooperative work can stop.
+Aborting `from_promise` stops waiting but cannot undo work already started by
+the original promise. Adopted promise rejections remain observed even when
+execution starts with an already-aborted signal. Use `run_task_exit` when
+success, failure, and cancellation must be handled as values.
 
 ### Async and Concurrency
 
@@ -1898,14 +1946,16 @@ UserAndScore <$> fetchUser id <*> fetchScore id
 fetchUser id >>= fetchProfile
 ```
 
-The same distinction matters for `Task`. Applicative composition can start
-independent tasks together, while `Do` sequences dependent work:
+`Task` runs both applicative and monadic composition sequentially. Select
+`ParallelTask` explicitly when independent operations should start together:
 
 ```ts
-const parallel = Applicative.lift(
+import { from_fn, parallel, sequential } from "@mewhhaha/typeclasses/task";
+
+const independent = Applicative.lift(
   (user, score) => ({ user, score }),
-  from_fn(() => fetch_user(id)),
-  from_fn(() => fetch_score(id)),
+  parallel(from_fn(() => fetch_user(id))),
+  parallel(from_fn(() => fetch_score(id))),
 );
 
 const dependent = Do(function* () {
@@ -1914,16 +1964,22 @@ const dependent = Do(function* () {
   return yield* from_fn(() => fetch_profile(user.id));
 });
 
-await parallel.run();
+await independent.run();
 await dependent.run();
+
+const combined_task = sequential(independent); // supports bind and error recovery
 ```
 
-This is the same rule as Haskell's `Applicative` versus `Monad`: use applicative
-style when later operations do not need earlier results, and use monadic style
-when they do.
+Applicative style expresses independence; concurrency is a property of the
+selected dictionary. `ParallelTask` provides `Functor` and `Applicative`, while
+`Task` also provides `Monad` and `MonadError`.
+`Traversable.traverse(values,
+ParallelTask, (value) => parallel(load(value)))`
+uses the same explicit choice for a collection. `run_task` and `run_task_exit`
+can execute lifts from either dictionary.
 
-`Task` provides asynchronous concurrency on one JavaScript isolate. CPU-bound
-work can instead cross isolate boundaries with Web Workers:
+`Task` and `ParallelTask` run asynchronous work on one JavaScript isolate.
+CPU-bound work can cross isolate boundaries with Web Workers:
 
 ```ts
 const summaries = await worker_map<LogShard, LogShardSummary>(
@@ -2085,7 +2141,7 @@ surprising runtime behavior.
 | `Readonly<Record<string, item>>` | `RecordT`                        | Same value-focused typeclasses as `MapT`, plus lexicographic `Ord`                                                  |
 | `Set<item>`                      | `SetT`                           | `Functor`, `Foldable`, `Semigroup`, `Monoid`; mapping keeps JavaScript set semantics and can collapse duplicates    |
 | `PromiseLike<item>`              | `Task` via `from_promise`        | Adopts work that is already running; use `from_fn` to defer starting it                                             |
-| `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, parallel `Applicative`, sequential `Monad`, `MonadError`                                                 |
+| `() => Promise<item>`            | `Task` via `from_fn`             | `Functor`, sequential `Applicative`, `Monad`, `MonadError`; `ParallelTask` opts into concurrency                    |
 | `Iterable<item>` / generator     | `IterableT`                      | replayable lazy `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, `Semigroup`, `Monoid`, `Alternative`  |
 | `AsyncIterable<item>`            | `AsyncIterableT`                 | replayable async `Functor`, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Alternative`; collect with `to_array`   |
 | `ReadableStream<item>`           | `ReadableStreamT`                | opaque stream wrapper plus `to_async_iterable`; native streams are stateful and can be locked/consumed              |
@@ -2107,8 +2163,17 @@ That can still be useful, but it is set behavior rather than list behavior.
 For `IterableT` and `AsyncIterableT`, the main design choice is replayability.
 Many iterators are one-shot mutable cursors. The preferred constructors store a
 factory, `() => Iterable<item>` or `() => AsyncIterable<item>`. The plain
-`from_iterable` helper materializes values to make a replayable source. Calling
-a continuation more than once must not accidentally reuse a consumed iterator.
+`from_iterable` helper materializes values to make a replayable source.
+`await async_iterable.from_async_iterable(source)` likewise snapshots a finite
+async source before returning its wrapper. Use `from_factory` for lazy sources
+and supply a fresh iterator on every call. Stream adapters remain stateful and
+are intended for one consumption. Calling a continuation more than once must not
+accidentally reuse a consumed iterator.
+
+Byte wrappers fold numbers; form and URL parameter wrappers fold their entry
+tuples. These fixed element types survive generic operations such as `empty` and
+`fold`. `TypedArrayT(new BigInt64Array(...))` folds `bigint`, while numeric
+typed arrays fold `number`.
 
 Chained `IterableT` maps compose lazily. Each `.map` adds a generator layer, but
 it does not allocate an intermediate collection. Work happens when a consumer
@@ -2195,10 +2260,10 @@ import {
 ```
 
 Each data type has an open dictionary interface such as `AsMaybe` or `AsList`.
-Entries are added one typeclass at a time next to the implementation.
-`Show.instance(Maybe)({ ... })` validates that every required `Show` method
-exists, installs the collision-free symbol slot, and copies direct fluent
-aliases onto the dictionary.
+Entries are added one typeclass at a time next to the implementation. TypeScript
+checks the required methods in `Show.instance(Maybe)({ ... })`. Installation
+records the implementation under its symbol and copies direct fluent aliases
+onto the dictionary, rejecting conflicting alias names.
 
 ## Property Checking
 
@@ -2398,8 +2463,9 @@ Larger repository-only application-shaped demos live in `case_studies/`:
 
 ## Benchmarks
 
-The benchmark folder is a measurement harness, not part of the correctness gate.
-Run every benchmark or select a focused comparison:
+Benchmark timing runs separately from the correctness gate. Fixture equivalence
+and scaling preflights also run through `deno task test:benchmarks`. Run every
+benchmark or select a focused comparison:
 
 ```sh
 deno task bench
@@ -2407,6 +2473,7 @@ deno bench --allow-env --allow-read --allow-write=/tmp bench/algorithm_contexts.
 deno bench bench/iterable_pipeline.bench.ts
 deno bench --allow-env --allow-read --allow-write=/tmp bench/do_vs_program.bench.ts
 deno task bench:case-studies
+deno task bench:scaling
 ```
 
 `bench/algorithm_contexts.bench.ts` runs the same Functor scoring, Applicative
@@ -2420,8 +2487,23 @@ baselines are forced to arrays before their result is recorded.
 `bench/iterable_pipeline.bench.ts` compares one lazy `IterableT` pipeline with
 materialized `Array.map` steps, native generator maps, and a manual fused loop.
 `bench/do_vs_program.bench.ts` compares runtime generator interpretation with
-the source transformer, including direct `Do` chains, optimized Effect spines,
-and statically visible terminal handlers.
+actual generated modules from the source transformer, including direct `Do`
+chains, optimized Effect spines, and statically visible terminal handlers.
+Preflights compare outputs, failure behavior, and observable events before
+timing. Case-study benchmarks check original and transformed reports and expose
+preserved-source diagnostics.
+
+`bench/large_chains_comparison.bench.ts` compares repeated Maybe and Either
+chains with other libraries. Its runtime and transformed `Do` variants share the
+same source fixture; preflights check success, short-circuit failures, and
+observable events.
+
+`bench/scaling.bench.ts` exercises Array, Map, Record, and Iterable traversal,
+impure Effect bind chains, and pure Program yields at 1,000 through 16,000
+elements or steps. Traversal stores immutable branches and materializes once;
+Effect continuations share their remaining frames. These workloads reveal
+allocation growth and stack limits that short happy-path chains miss. Use
+increasing-size results to assess scaling; absolute timings depend on the host.
 
 `bench/value_construction.bench.ts` compares the current prototype-chain wrapper
 against constructor-cache variants and cheaper construction shapes. Each

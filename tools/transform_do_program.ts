@@ -597,6 +597,39 @@ function transform_call(
     return undefined;
   }
 
+  const var_binding = generator_var_binding(run.body);
+  if (var_binding !== undefined) {
+    add_diagnostic(
+      state,
+      var_binding,
+      "Skipped " + state.kind +
+        ": var-scoped generator locals are not supported; use let or const.",
+    );
+    return undefined;
+  }
+
+  const capture = unsafe_generator_capture(run.body);
+  if (capture !== undefined) {
+    add_diagnostic(
+      state,
+      capture,
+      "Skipped " + state.kind +
+        ": generator-local state captured across yield* cannot preserve branching or repeated execution.",
+    );
+    return undefined;
+  }
+
+  const prefix_effect = unsafe_generator_prefix(run.body);
+  if (prefix_effect !== undefined) {
+    add_diagnostic(
+      state,
+      prefix_effect,
+      "Skipped " + state.kind +
+        ": observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.",
+    );
+    return undefined;
+  }
+
   try {
     const dictionary = explicit_dictionary === undefined
       ? undefined
@@ -656,6 +689,352 @@ function transform_call(
 
     throw error;
   }
+}
+
+type GeneratorBinding = {
+  readonly declaration:
+    | ts.VariableDeclaration
+    | ts.FunctionDeclaration
+    | ts.ClassDeclaration;
+  readonly allocated: boolean;
+  readonly yields: number[];
+  readonly references: number[];
+  readonly writes: number[];
+  closure_write: boolean;
+};
+
+function unsafe_generator_capture(
+  body: ts.Block,
+): ts.Node | undefined {
+  // A continuation can run several times, including when a deferred value is
+  // executed again. Mutation of a captured generator local would then reuse
+  // the same storage instead of the generator's fresh storage.
+  const scopes: Map<string, GeneratorBinding | undefined>[] = [];
+  const bindings: GeneratorBinding[] = [];
+
+  function lookup(name: string): GeneratorBinding | undefined {
+    for (let index = scopes.length - 1; index >= 0; index -= 1) {
+      if (scopes[index].has(name)) return scopes[index].get(name);
+    }
+    return undefined;
+  }
+
+  function declare(
+    name: ts.BindingName,
+    declaration: ts.VariableDeclaration | undefined,
+    nested: boolean,
+  ): void {
+    if (!ts.isIdentifier(name)) {
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element)) {
+          declare(element.name, declaration, nested);
+        }
+      }
+      return;
+    }
+    const binding = declaration === undefined || nested ? undefined : {
+      declaration,
+      allocated: declaration.initializer !== undefined &&
+        is_local_allocation(declaration.initializer),
+      yields: [],
+      references: [],
+      writes: [],
+      closure_write: false,
+    };
+    scopes[scopes.length - 1].set(name.text, binding);
+    if (binding !== undefined) bindings.push(binding);
+  }
+
+  function record_write(expression: ts.Expression, nested: boolean): void {
+    const target = unwrap_parentheses(expression);
+    if (ts.isIdentifier(target)) {
+      const binding = lookup(target.text);
+      if (binding !== undefined) {
+        binding.writes.push(target.pos);
+        binding.closure_write ||= nested;
+      }
+    } else if (
+      ts.isPropertyAccessExpression(target) ||
+      ts.isElementAccessExpression(target)
+    ) {
+      record_write(target.expression, nested);
+    } else if (ts.isArrayLiteralExpression(target)) {
+      for (const item of target.elements) {
+        if (!ts.isOmittedExpression(item)) record_write(item, nested);
+      }
+    } else if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          record_write(property.name, nested);
+        }
+        if (ts.isPropertyAssignment(property)) {
+          record_write(property.initializer, nested);
+        }
+        if (ts.isSpreadAssignment(property)) {
+          record_write(property.expression, nested);
+        }
+      }
+    } else if (ts.isSpreadElement(target)) {
+      record_write(target.expression, nested);
+    }
+  }
+
+  function visit(node: ts.Node, nested = false, parent?: ts.Node): void {
+    if (ts.isTypeNode(node)) return;
+    if (ts.isFunctionLike(node)) {
+      scopes.push(new Map());
+      for (const parameter of node.parameters) {
+        declare(parameter.name, undefined, true);
+      }
+      ts.forEachChild(node, (child) => visit(child, true, node));
+      scopes.pop();
+      return;
+    }
+    if (ts.isBlock(node)) {
+      scopes.push(new Map());
+      for (const statement of node.statements) {
+        if (ts.isVariableStatement(statement)) {
+          for (const declaration of statement.declarationList.declarations) {
+            declare(declaration.name, declaration, nested);
+          }
+        } else if (
+          (ts.isFunctionDeclaration(statement) ||
+            ts.isClassDeclaration(statement)) && statement.name !== undefined
+        ) {
+          const binding = nested ? undefined : {
+            declaration: statement,
+            allocated: true,
+            yields: [],
+            references: [],
+            writes: [],
+            closure_write: false,
+          };
+          scopes[scopes.length - 1].set(statement.name.text, binding);
+          if (binding !== undefined) bindings.push(binding);
+        }
+      }
+      ts.forEachChild(node, (child) => visit(child, nested, node));
+      scopes.pop();
+      return;
+    }
+    if (
+      ts.isForStatement(node) || ts.isForOfStatement(node) ||
+      ts.isForInStatement(node)
+    ) {
+      scopes.push(new Map());
+      if (
+        node.initializer !== undefined &&
+        ts.isVariableDeclarationList(node.initializer)
+      ) {
+        for (const declaration of node.initializer.declarations) {
+          declare(declaration.name, declaration, nested);
+        }
+      }
+      // The classic-for incrementor becomes a new recursive-loop argument.
+      if (ts.isForStatement(node)) {
+        if (node.initializer !== undefined) visit(node.initializer, nested);
+        if (node.condition !== undefined) visit(node.condition, nested);
+        visit(node.statement, nested);
+      } else {
+        visit(node.expression, nested);
+        visit(node.statement, nested);
+      }
+      scopes.pop();
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      if (node.initializer !== undefined) visit(node.initializer, nested);
+      return;
+    }
+    if (ts.isYieldExpression(node) && !nested) {
+      for (const scope of scopes) {
+        for (const binding of scope.values()) {
+          if (binding !== undefined && binding.declaration.end <= node.pos) {
+            binding.yields.push(node.pos);
+          }
+        }
+      }
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      record_write(node.left, nested);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      record_write(node.operand, nested);
+    }
+    if (ts.isDeleteExpression(node)) record_write(node.expression, nested);
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      generator_mutating_methods.has(node.expression.name.text)
+    ) {
+      record_write(node.expression.expression, nested);
+    }
+    if (
+      ts.isIdentifier(node) && !(parent !== undefined &&
+        ((ts.isPropertyAccessExpression(parent) ||
+          ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) &&
+          parent.name === node))
+    ) {
+      lookup(node.text)?.references.push(node.pos);
+    }
+    ts.forEachChild(node, (child) => visit(child, nested, node));
+  }
+
+  visit(body);
+  return bindings.find((binding) =>
+    binding.yields.some((yielded) =>
+      binding.closure_write || binding.writes.some((write) =>
+        write > yielded
+      ) ||
+      binding.allocated &&
+        binding.references.some((reference) => reference > yielded)
+    )
+  )?.declaration;
+}
+
+function generator_var_binding(
+  body: ts.Block,
+): ts.VariableDeclarationList | undefined {
+  let binding: ts.VariableDeclarationList | undefined;
+  function visit(node: ts.Node): void {
+    if (binding !== undefined || ts.isFunctionLike(node)) return;
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      binding = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(body);
+  return binding;
+}
+
+function is_local_allocation(expression: ts.Expression): boolean {
+  const value = unwrap_parentheses(expression);
+  if (ts.isConditionalExpression(value)) {
+    return is_local_allocation(value.whenTrue) ||
+      is_local_allocation(value.whenFalse);
+  }
+  return ts.isArrayLiteralExpression(value) ||
+    ts.isObjectLiteralExpression(value) ||
+    ts.isNewExpression(value) || ts.isArrowFunction(value) ||
+    ts.isFunctionExpression(value);
+}
+
+const generator_mutating_methods = new Set([
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "sort",
+  "reverse",
+  "fill",
+  "copyWithin",
+  "set",
+  "add",
+  "delete",
+  "clear",
+]);
+
+function unsafe_generator_prefix(body: ts.Block): ts.Node | undefined {
+  const scopes: Set<string>[] = [];
+  const yields: number[] = [];
+  const effects: { readonly node: ts.Node; readonly loop: boolean }[] = [];
+
+  function binding(name: ts.BindingName): void {
+    if (ts.isIdentifier(name)) scopes[scopes.length - 1].add(name.text);
+    else {for (const element of name.elements) {
+        if (ts.isBindingElement(element)) binding(element.name);
+      }}
+  }
+  function local(name: string): boolean {
+    return scopes.some((scope) => scope.has(name));
+  }
+
+  function visit(node: ts.Node, loop = false): void {
+    if (ts.isTypeNode(node) || ts.isFunctionLike(node)) return;
+    if (ts.isBlock(node)) {
+      scopes.push(new Set());
+      for (const statement of node.statements) {
+        if (ts.isVariableStatement(statement)) {
+          for (const declaration of statement.declarationList.declarations) {
+            binding(declaration.name);
+          }
+        }
+      }
+      ts.forEachChild(node, (child) => visit(child, loop));
+      scopes.pop();
+      return;
+    }
+    if (ts.isYieldExpression(node)) {
+      yields.push(node.pos);
+      return;
+    }
+    const in_loop = loop ||
+      ((ts.isForStatement(node) || ts.isForOfStatement(node) ||
+        ts.isWhileStatement(node) || ts.isDoStatement(node)) &&
+        contains_yield_or_return(node));
+    if (
+      ts.isForStatement(node) || ts.isForOfStatement(node) ||
+      ts.isForInStatement(node)
+    ) {
+      scopes.push(new Set());
+      if (
+        node.initializer !== undefined &&
+        ts.isVariableDeclarationList(node.initializer)
+      ) {
+        for (const declaration of node.initializer.declarations) {
+          binding(declaration.name);
+        }
+      }
+      // Unsupported iterable expressions get their specific diagnostic during
+      // loop lowering; they are never converted to eager materialization.
+      if (ts.isForOfStatement(node)) visit(node.statement, in_loop);
+      else ts.forEachChild(node, (child) => visit(child, in_loop));
+      scopes.pop();
+      return;
+    }
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      effects.push({ node, loop: in_loop });
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      const left = unwrap_parentheses(node.left);
+      if (!ts.isIdentifier(left) || !local(left.text)) {
+        effects.push({ node, loop: in_loop });
+      }
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      const operand = unwrap_parentheses(node.operand);
+      if (!ts.isIdentifier(operand) || !local(operand.text)) {
+        effects.push({ node, loop: in_loop });
+      }
+    }
+    if (ts.isDeleteExpression(node)) effects.push({ node, loop: in_loop });
+    ts.forEachChild(node, (child) => visit(child, in_loop));
+  }
+  visit(body);
+  return effects.find(({ node, loop }) =>
+    yields.some((yielded) => loop || node.end < yielded)
+  )?.node;
 }
 
 function transform_statements(
@@ -1357,6 +1736,23 @@ function transform_for_of(
     return unsupported_for_loop(statement, state, "of-loop initializer");
   }
 
+  if (!is_primitive_array_literal(statement.expression)) {
+    add_diagnostic(
+      state,
+      statement.expression,
+      "Skipped " + state.kind +
+        ": for...of requires a literal array of primitive values; arbitrary iterables must preserve lazy iteration and iterator closing.",
+    );
+    throw new UnsupportedGenerator();
+  }
+  if ((statement.initializer.flags & ts.NodeFlags.BlockScoped) === 0) {
+    return unsupported_for_loop(
+      statement,
+      state,
+      "var-scoped of-loop initializer",
+    );
+  }
+
   const items = state.factory.createUniqueName("items");
   const index = state.factory.createUniqueName("index");
   const loop_name = state.factory.createUniqueName("loop");
@@ -1374,7 +1770,7 @@ function transform_for_of(
         declaration.type,
         state.factory.createElementAccessExpression(items, index),
       ),
-    ], ts.NodeFlags.Const),
+    ], statement.initializer.flags),
   );
   const body = transform_statements(
     [
@@ -1404,9 +1800,7 @@ function transform_for_of(
             items,
             undefined,
             undefined,
-            state.factory.createArrayLiteralExpression([
-              state.factory.createSpreadElement(statement.expression),
-            ]),
+            statement.expression,
           ),
         ], ts.NodeFlags.Const),
       ),
@@ -1430,6 +1824,24 @@ function transform_for_of(
     ], true),
     yielded: true,
   };
+}
+
+function is_primitive_array_literal(expression: ts.Expression): boolean {
+  const value = unwrap_parentheses(expression);
+  if (!ts.isArrayLiteralExpression(value)) return false;
+  return value.elements.every((element) => {
+    const item = unwrap_parentheses(element);
+    if (ts.isPrefixUnaryExpression(item)) {
+      return (item.operator === ts.SyntaxKind.PlusToken ||
+        item.operator === ts.SyntaxKind.MinusToken) &&
+        ts.isNumericLiteral(item.operand);
+    }
+    return ts.isStringLiteralLike(item) || ts.isNumericLiteral(item) ||
+      ts.isBigIntLiteral(item) ||
+      item.kind === ts.SyntaxKind.TrueKeyword ||
+      item.kind === ts.SyntaxKind.FalseKeyword ||
+      item.kind === ts.SyntaxKind.NullKeyword;
+  });
 }
 
 function recursive_loop_block(
@@ -3783,7 +4195,7 @@ function create_readonly_tuple(
 function contains_fusion_lexical_hazard(node: ts.Node): boolean {
   let found = false;
 
-  function visit(child: ts.Node) {
+  function visit(child: ts.Node, parent?: ts.Node) {
     if (found) {
       return;
     }
@@ -3791,14 +4203,21 @@ function contains_fusion_lexical_hazard(node: ts.Node): boolean {
     if (
       child.kind === ts.SyntaxKind.ThisKeyword ||
       child.kind === ts.SyntaxKind.SuperKeyword || ts.isMetaProperty(child) ||
-      (ts.isIdentifier(child) &&
-        (child.text === "arguments" || child.text === "eval"))
+      (ts.isIdentifier(child) && child.text === "arguments" &&
+        !(parent !== undefined &&
+          ((ts.isPropertyAccessExpression(parent) ||
+            ts.isPropertyAssignment(parent) ||
+            ts.isPropertySignature(parent)) &&
+            parent.name === child))) ||
+      (ts.isCallExpression(child) && ts.isIdentifier(child.expression) &&
+        child.expression.text === "eval" &&
+        child.questionDotToken === undefined)
     ) {
       found = true;
       return;
     }
 
-    ts.forEachChild(child, visit);
+    ts.forEachChild(child, (descendant) => visit(descendant, child));
   }
 
   visit(node);

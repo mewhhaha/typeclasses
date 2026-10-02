@@ -2,27 +2,58 @@ import {
   from_array as array_from_array,
   to_array as array_to_array,
 } from "../src/array.ts";
-import { Effect, Program, run } from "../src/effects.ts";
-import { Just, Maybe } from "../src/maybe.ts";
-import { ask, asks, run_reader, run_reader_terminal } from "../src/reader.ts";
-import { get, modify, run_state, run_state_terminal } from "../src/state.ts";
-import { from_fn, run_task } from "../src/task.ts";
-import { Do } from "../src/typeclasses.ts";
-import {
-  run_writer,
-  run_writer_terminal,
-  tell,
-  writer,
-} from "../src/writer.ts";
+import { run } from "../src/effects.ts";
+import { run_reader, run_reader_terminal } from "../src/reader.ts";
+import { run_state, run_state_terminal } from "../src/state.ts";
+import { run_task } from "../src/task.ts";
+import { run_writer, run_writer_terminal } from "../src/writer.ts";
+import { assert_equals } from "../src/assert.ts";
+import { load_benchmark_variants } from "./generated_modules.ts";
+import type { Config } from "./fixtures/do_vs_program.ts";
+
+const variants = await load_benchmark_variants<
+  typeof import("./fixtures/do_vs_program.ts")
+>(
+  new URL("./fixtures/do_vs_program.ts", import.meta.url),
+);
+const {
+  make_reader_do,
+  maybe_explicit_do,
+  make_reader_program,
+  make_state_do,
+  make_state_program,
+  make_writer_do,
+  make_writer_program,
+  make_task_do,
+  make_task_program,
+} = variants.original;
+const {
+  make_reader_do: make_reader_do_transformed,
+  maybe_explicit_do: maybe_explicit_do_transformed,
+  make_reader_program: make_reader_program_transformed,
+  make_state_do: make_state_do_transformed,
+  make_state_program: make_state_program_transformed,
+  make_writer_do: make_writer_do_transformed,
+  make_writer_program: make_writer_program_transformed,
+  make_task_do: make_task_do_transformed,
+  make_task_program: make_task_program_transformed,
+  run_reader_program_fused,
+  run_state_program_fused,
+  run_writer_program_fused,
+} = variants.transformed;
+
+for (const input of [-1, 0, 41]) {
+  const config = { label: "step-" + input, increment: input + 2 };
+  assert_equals(
+    await variants.transformed.observe(input, config),
+    await variants.original.observe(input, config),
+    "transformed benchmark differs in values, failures, or events",
+  );
+}
 
 const iterations = 10_000;
 const input_count = 1024;
 let _sink = 0;
-
-type Config = {
-  readonly label: string;
-  readonly increment: number;
-};
 
 // Vary every hot-loop input so V8 cannot fold the native baselines to a
 // constant checksum. Reuse pools are built outside timed benchmark callbacks.
@@ -716,66 +747,6 @@ function make_reader_native() {
   };
 }
 
-function make_reader_do() {
-  return Do(function* () {
-    const config = yield* ask<Config>();
-    const label = yield* asks<Config, string>((config) => config.label);
-
-    return label.length + config.increment;
-  });
-}
-
-function maybe_explicit_do(value: number) {
-  return Do(Maybe, function* () {
-    const input = yield* Just(value);
-    return input + 2;
-  });
-}
-
-function maybe_explicit_do_transformed(value: number) {
-  return Just(value).map((input) => input + 2);
-}
-
-function make_reader_do_transformed() {
-  return ask<Config>().bind((config) => {
-    return asks<Config, string>((config) => config.label).map((label) => {
-      return label.length + config.increment;
-    });
-  });
-}
-
-function make_reader_program() {
-  return Program(function* () {
-    const config = yield* ask<Config>();
-    const label = yield* asks<Config, string>((config) => config.label);
-
-    return label.length + config.increment;
-  });
-}
-
-function make_reader_program_transformed() {
-  return Effect.bind_from(ask<Config>(), (config) => {
-    return Effect.map_from(
-      asks<Config, string>((config) => config.label),
-      (label) => {
-        return label.length + config.increment;
-      },
-    );
-  });
-}
-
-// These helpers mirror the transformer's emitted statement and property-read
-// order; the transformer checks exercise the corresponding generated source.
-function run_reader_program_fused(input: () => Config): number {
-  const environment = input();
-  const ask_value: Config = environment;
-  const config = ask_value;
-  const asks_argument = (config: Config) => config.label;
-  const label = asks_argument(environment);
-
-  return label.length + config.increment;
-}
-
 function make_state_native() {
   return (
     state: number,
@@ -789,70 +760,6 @@ function make_state_native() {
 
     return [{ before, after }, after_state];
   };
-}
-
-function make_state_do() {
-  return Do(function* () {
-    const before = yield* get<number>();
-
-    yield* modify((value: number) => value + 2);
-
-    const after = yield* get<number>();
-
-    return { before, after };
-  });
-}
-
-function make_state_do_transformed() {
-  return get<number>().bind((before) => {
-    return modify((value: number) => value + 2).bind(() => {
-      return get<number>().map((after) => {
-        return { before, after };
-      });
-    });
-  });
-}
-
-function make_state_program() {
-  return Program(function* () {
-    const before = yield* get<number>();
-
-    yield* modify((value: number) => value + 2);
-
-    const after = yield* get<number>();
-
-    return { before, after };
-  });
-}
-
-function make_state_program_transformed() {
-  return Effect.bind_from(get<number>(), (before) => {
-    return Effect.bind_from(
-      modify((value: number) => value + 2),
-      () => {
-        return Effect.map_from(get<number>(), (after) => {
-          return { before, after };
-        });
-      },
-    );
-  });
-}
-
-function run_state_program_fused(
-  input: () => number,
-): readonly [
-  { readonly before: number; readonly after: number },
-  number,
-] {
-  let state = input();
-  const first_value: number = state;
-  const before = first_value;
-  const modify_argument = (value: number) => value + 2;
-  state = modify_argument(state);
-  const final_value: number = state;
-  const after = final_value;
-
-  return [{ before, after }, state];
 }
 
 function make_writer_native(value: number) {
@@ -877,69 +784,6 @@ function run_writer_native_monoid(
   return [value + 2, output];
 }
 
-function make_writer_do(input: number) {
-  return Do(function* () {
-    yield* tell(array_from_array(["start"]));
-    const value = yield* writer(input, array_from_array(["value"]));
-    yield* tell(array_from_array(["end"]));
-
-    return value + 2;
-  });
-}
-
-function make_writer_do_transformed(value: number) {
-  return tell(array_from_array(["start"])).bind(() => {
-    return writer(value, array_from_array(["value"])).bind((value) => {
-      return tell(array_from_array(["end"])).map(() => {
-        return value + 2;
-      });
-    });
-  });
-}
-
-function make_writer_program(input: number) {
-  return Program(function* () {
-    yield* tell(array_from_array(["start"]));
-    const value = yield* writer(input, array_from_array(["value"]));
-    yield* tell(array_from_array(["end"]));
-
-    return value + 2;
-  });
-}
-
-function make_writer_program_transformed(value: number) {
-  return Effect.bind_from(tell(array_from_array(["start"])), () => {
-    return Effect.bind_from(
-      writer(value, array_from_array(["value"])),
-      (value) => {
-        return Effect.map_from(
-          tell(array_from_array(["end"])),
-          () => {
-            return value + 2;
-          },
-        );
-      },
-    );
-  });
-}
-
-function run_writer_program_fused(
-  input: () => number,
-  writer_input: () => ReturnType<typeof array_from_array<string>>,
-): readonly [number, ReturnType<typeof array_from_array<string>>] {
-  const tell_argument = array_from_array(["start"]);
-  let output = writer_input();
-  output = output.concat(tell_argument);
-  const writer_value = input();
-  const writer_output = array_from_array(["value"]);
-  output = output.concat(writer_output);
-  const value = writer_value;
-  const final_output = array_from_array(["end"]);
-  output = output.concat(final_output);
-
-  return [value + 2, output];
-}
-
 function make_task_native(value: number) {
   return async () => {
     const left = await Promise.resolve(value);
@@ -947,46 +791,6 @@ function make_task_native(value: number) {
 
     return left + right;
   };
-}
-
-function make_task_do(value: number) {
-  return Do(function* () {
-    const left = yield* from_fn(() => Promise.resolve(value));
-    const right = yield* from_fn(() => Promise.resolve(2));
-
-    return left + right;
-  });
-}
-
-function make_task_do_transformed(value: number) {
-  return from_fn(() => Promise.resolve(value)).bind((left) => {
-    return from_fn(() => Promise.resolve(2)).map((right) => {
-      return left + right;
-    });
-  });
-}
-
-function make_task_program(value: number) {
-  return Program(function* () {
-    const left = yield* from_fn(() => Promise.resolve(value));
-    const right = yield* from_fn(() => Promise.resolve(2));
-
-    return left + right;
-  });
-}
-
-function make_task_program_transformed(value: number) {
-  return Effect.bind_from(
-    from_fn(() => Promise.resolve(value)),
-    (left) => {
-      return Effect.map_from(
-        from_fn(() => Promise.resolve(2)),
-        (right) => {
-          return left + right;
-        },
-      );
-    },
-  );
 }
 
 function consume_reader(value: number): number {

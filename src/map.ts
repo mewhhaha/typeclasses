@@ -6,8 +6,8 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
+import { traverse_items } from "./traversal.ts";
 import {
-  Applicative,
   Eq,
   Foldable,
   Functor,
@@ -149,34 +149,11 @@ Foldable.instance(MapT)({
 
 Traversable.instance(MapT)({
   traverse(applicative, fn) {
-    const map = this.value();
-    const entries = [...map.entries()];
-
-    if (entries.length === 0) {
-      return Applicative.pure(applicative, MapT(new Map()));
-    }
-
-    let index = entries.length - 1;
-    const [key, item] = entries[index];
-    let out = Functor.map(fn(item), map_single(key));
-
-    for (index -= 1; index >= 0; index -= 1) {
-      const [key, value] = entries[index];
-      out = Applicative.ap(Functor.map(fn(value), map_prepend(key)), out);
-    }
-
-    return out;
+    const entries = traverse_items(
+      [...this.value()],
+      applicative,
+      ([key, value]) => Functor.map(fn(value), (item) => [key, item] as const),
+    );
+    return Functor.map(entries, (items) => MapT(new Map(items)));
   },
 });
-
-function map_single<item>(key: string) {
-  return (value: item): MapValue<item> => MapT(new Map([[key, value]]));
-}
-
-function map_prepend<item>(key: string) {
-  return (value: item) => {
-    return (tail: MapValue<item>) => {
-      return MapT(new Map([[key, value], ...tail.value()]));
-    };
-  };
-}

@@ -171,6 +171,50 @@ const value = Do(Maybe, function* () {
   assert_equals(preserved, { code: unsupported, map: null });
 });
 
+Deno.test("transform plugin reports captured generator state through its fallback policy", () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+const value = Do(ArrayT, function* () {
+  let total = 0;
+  const item = yield* ArrayT([1, 2]);
+  total += item;
+  return total;
+});
+`;
+  let failure: unknown;
+  try {
+    typeclasses_rollup_plugin().transform.call(
+      { warn() {} },
+      source,
+      "captured.ts",
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert_true(
+    failure instanceof Error &&
+      failure.message.includes("generator-local state"),
+    "expected default plugin policy to reject unsafe capture",
+  );
+  const warnings: string[] = [];
+  const warned = typeclasses_rollup_plugin({ on_unsupported: "warn" }).transform
+    .call(
+      { warn: (message) => warnings.push(message) },
+      source,
+      "captured.ts",
+    );
+  assert_equals(warned, { code: source, map: null });
+  assert_equals(warnings.length, 1);
+  assert_equals(
+    typeclasses_rollup_plugin({ on_unsupported: "preserve" }).transform.call(
+      { warn() {} },
+      source,
+      "captured.ts",
+    ),
+    { code: source, map: null },
+  );
+});
+
 Deno.test({
   name: "esbuild bundles examples/monads.ts with transitive library source",
   permissions: { env: true, read: true, run: true },

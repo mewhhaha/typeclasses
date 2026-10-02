@@ -3,6 +3,7 @@ import {
   type Data,
   data,
   type type_data,
+  type type_element,
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
@@ -25,7 +26,9 @@ export interface AsURLSearchParams
     Monoid<AsURLSearchParams>,
     Foldable<AsURLSearchParams> {
   /** Higher-kinded slot exposed as an entry when folding. */
-  readonly [type_item]: unknown;
+  readonly [type_item]: URLSearchParamsEntry;
+  /** Folding always exposes a name-value pair. */
+  readonly [type_element]: URLSearchParamsEntry;
   /** Raw `URLSearchParams` representation for this dictionary. */
   readonly [type_data]: URLSearchParamsT;
 }
@@ -113,12 +116,12 @@ Foldable.instance(URLSearchParamsT)({
   fold<item, output>(
     this: Data<AsURLSearchParams, item>,
     initial: output,
-    fn: (state: output, item: item) => output,
+    fn: (state: output, item: URLSearchParamsEntry) => output,
   ) {
     let state = initial;
 
     for (const entry of this.value().entries()) {
-      state = fn(state, entry as unknown as item);
+      state = fn(state, entry);
     }
 
     return state;

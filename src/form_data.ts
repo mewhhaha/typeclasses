@@ -3,6 +3,7 @@ import {
   type Data,
   data,
   type type_data,
+  type type_element,
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
@@ -25,7 +26,9 @@ export interface AsFormData
     Monoid<AsFormData>,
     Foldable<AsFormData> {
   /** Higher-kinded slot exposed as a form entry when folding. */
-  readonly [type_item]: unknown;
+  readonly [type_item]: FormDataEntry;
+  /** Folding always exposes a form entry. */
+  readonly [type_element]: FormDataEntry;
   /** Raw `FormData` representation for this dictionary. */
   readonly [type_data]: FormDataT;
 }
@@ -102,12 +105,12 @@ Foldable.instance(FormDataT)({
   fold<item, output>(
     this: Data<AsFormData, item>,
     initial: output,
-    fn: (state: output, item: item) => output,
+    fn: (state: output, item: FormDataEntry) => output,
   ) {
     let state = initial;
 
     for (const entry of this.value().entries()) {
-      state = fn(state, entry as unknown as item);
+      state = fn(state, entry);
     }
 
     return state;

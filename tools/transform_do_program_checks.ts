@@ -1264,21 +1264,15 @@ const program = App(function* () {
 
     case "cat": {
       const result = yield* read_file(payload.path);
-      const [result_tag, result_payload] = result.value();
-      let exit_code: number;
-
+      const [result_tag, result_payload] = result;
       switch (result_tag) {
         case "right":
           yield* stdout(result_payload);
-          exit_code = 0;
-          break;
+          return 0;
         case "left":
           yield* stdout(format_error(result_payload));
-          exit_code = 1;
-          break;
+          return 1;
       }
-
-      return exit_code;
     }
   }
 });
@@ -1296,7 +1290,7 @@ const program = App(function* () {
       result.code,
       "Effect.map_from(stdout(result_payload)",
     );
-    assert_includes(result.code, "return Effect.pure(exit_code);");
+    assert_includes(result.code, "return 1;");
   },
 });
 
@@ -1310,7 +1304,7 @@ import { Do } from "../src/typeclasses.ts";
 const identifier = Do(function* () {
   const name = yield* read_name();
 
-  if (reserved_words.has(name)) {
+  if (name === "reserved") {
     yield* fail("identifier", "reserved word");
   }
 
@@ -1320,7 +1314,7 @@ const identifier = Do(function* () {
 
     assert_equals(result.transformed, 1);
     assert_equals(result.diagnostics, []);
-    assert_includes(result.code, "if (reserved_words.has(name))");
+    assert_includes(result.code, 'if (name === "reserved")');
     assert_includes(result.code, "const identifier = context_1.bind");
     assert_includes(result.code, "return fail");
     assert_includes(result.code, ").map");
@@ -1518,21 +1512,16 @@ Deno.test({
 import { Do } from "../src/typeclasses.ts";
 
 const program = Do(Maybe, function* () {
-  let total = 0;
-
   switch (2) {
     case 0: {
       const value = yield* Just(-5);
-      total += value;
-      break;
+      return value;
     }
     default: {
       const value = yield* Just(5);
-      total += value;
+      return value;
     }
   }
-
-  return total;
 });
 `);
   },
@@ -1605,9 +1594,9 @@ const program = Program(function* () {
     yield* tick();
   } while (again);
 
-  for (const item of items()) {
+  for (const item of [1, 2, 3]) {
     yield* visit(item);
-    if (stop(item)) break;
+    if (item === 2) break;
   }
 
   return 1;
@@ -1618,7 +1607,7 @@ const program = Program(function* () {
     assert_equals(result.diagnostics, []);
     assert_includes(result.code, "function loop");
     assert_includes(result.code, "const items_");
-    assert_includes(result.code, "[...items()]");
+    assert_includes(result.code, "[1, 2, 3]");
     assert_true(
       !result.code.includes("break;"),
       "expected loop breaks to lower\n\n" + result.code,
@@ -1696,11 +1685,11 @@ const program = Program(function* () {
 });
 
 Deno.test({
-  name:
-    "transformer executes lowered loop control flow with the same Maybe result",
+  name: "transformer preserves captured loop state with the same Maybe result",
   permissions: { env: true, read: true },
   async fn() {
-    await assert_do_equivalent(`
+    await assert_do_equivalent(
+      `
 import { Do } from "../src/typeclasses.ts";
 
 const program = Do(Maybe, function* () {
@@ -1726,7 +1715,9 @@ const program = Do(Maybe, function* () {
 
   return total;
 });
-`);
+`,
+      0,
+    );
   },
 });
 
@@ -1745,8 +1736,170 @@ const program = Do(ArrayT, function* () {
 
   return "done";
 });
+
 `);
   },
+});
+
+Deno.test("transformer preserves lazy for-of iteration, failures, and closing", async () => {
+  for (
+    const tail of [
+      `events.push("unexpected"); throw new Error("iterated too far");`,
+      `while (true) yield 2;`,
+    ]
+  ) {
+    const source = `
+import { Do } from "../src/typeclasses.ts";
+import { Maybe, Just } from "../src/maybe.ts";
+const events = [];
+function* items() {
+  try { yield 1; ${tail} }
+  finally { events.push("closed"); }
+}
+const program = Do(Maybe, function* () {
+  for (const item of items()) { yield* Just(item); break; }
+  return 42;
+});
+export default { value: program.value(), events };
+`;
+    const result = await transform(source);
+    assert_equals(result.transformed, 0);
+    assert_equals(result.code, source);
+    assert_true(
+      result.diagnostics[0]?.message.includes("lazy iteration"),
+      "expected iterable preservation diagnostic",
+    );
+    assert_equals(await evaluate_library_observation(result.code), {
+      value: ["Just", 42],
+      events: ["closed"],
+    });
+  }
+});
+
+Deno.test("transformer retains mutable let bindings in literal-array loops", async () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+import { Maybe, Just } from "../src/maybe.ts";
+const program = Do(Maybe, function* () {
+  for (let item of [1, 2]) {
+    item += 1;
+    const value = yield* Just(item);
+    return value;
+  }
+  return 0;
+});
+export default program.value();
+`;
+  const result = await transform(source);
+  assert_equals(result.transformed, 1);
+  assert_equals(result.diagnostics, []);
+  assert_equals(await evaluate_library_observation(result.code), ["Just", 2]);
+  assert_equals(
+    await evaluate_library_observation(result.code),
+    await evaluate_library_observation(source),
+  );
+
+  const var_source = source.replace("let item", "var item");
+  const preserved = await transform(var_source);
+  assert_equals(preserved.transformed, 0);
+  assert_equals(preserved.code, var_source);
+  assert_true(
+    preserved.diagnostics[0]?.message.includes("var-scoped"),
+    "expected var scope diagnostic",
+  );
+});
+
+Deno.test("transformer preserves generator-local storage across ArrayT branches", async () => {
+  for (
+    const [prefix, update, returned, expected] of [
+      ["let total = 0;", "total += item;", "total", [1, 2]],
+      ["const state = { total: 0 };", "state.total += item;", "state.total", [
+        1,
+        2,
+      ]],
+      ["const items = [];", "items.push(item);", "items.slice()", [[1], [2]]],
+      [
+        "let total = 0; const change = () => { total += 1; };",
+        "change();",
+        "total",
+        [1, 1],
+      ],
+    ] as const
+  ) {
+    const source = `
+import { Do } from "../src/typeclasses.ts";
+import { ArrayT } from "../src/array.ts";
+const program = Do(ArrayT, function* () {
+  ${prefix}
+  const item = yield* ArrayT([1, 2]);
+  ${update}
+  return ${returned};
+});
+export default program.value();
+`;
+    const result = await transform(source);
+    assert_equals(result.transformed, 0);
+    assert_equals(result.code, source);
+    assert_true(
+      result.diagnostics[0]?.message.includes("generator-local state"),
+      "expected captured storage diagnostic",
+    );
+    assert_equals(await evaluate_library_observation(result.code), expected);
+  }
+});
+
+Deno.test("transformer preserves captured state for repeated deferred execution", async () => {
+  const imports = `
+import { Do } from "../src/typeclasses.ts";
+import { from_fn, run_task } from "../src/task.ts";
+import { Program } from "../src/effects.ts";
+`;
+  for (
+    const [constructor, execute] of [["Do", "program.run()"], [
+      "Program",
+      "run_task(program)",
+    ]]
+  ) {
+    const source = `${imports}
+const events = [];
+const program = ${constructor}(function* () {
+  let total = 0;
+  const item = yield* from_fn(() => { events.push("run"); return Promise.resolve(1); });
+  total += item;
+  return total;
+});
+export default { values: [await ${execute}, await ${execute}], events };
+`;
+    const result = await transform(source);
+    assert_equals(result.transformed, 0);
+    assert_equals(result.code, source);
+    assert_equals(await evaluate_library_observation(result.code), {
+      values: [1, 1],
+      events: ["run", "run"],
+    });
+  }
+});
+
+Deno.test("transformer lowers fresh mutable locals and ordinary arguments properties", async () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+import { ArrayT } from "../src/array.ts";
+const program = Do(ArrayT, function* () {
+  let fixed = 0;
+  fixed += 1;
+  const item = yield* ArrayT([1, 2]);
+  let total = item + fixed;
+  total += 1;
+  return { arguments: total };
+});
+export default program.value();
+`;
+  const result = await transform(source);
+  assert_equals(result.transformed, 1);
+  assert_equals(result.diagnostics, []);
+  assert_equals(await evaluate_library_observation(result.code), [{
+    arguments: 3,
+  }, { arguments: 4 }]);
 });
 
 Deno.test({
@@ -1939,7 +2092,7 @@ const value = Do(Maybe, function* () {
 });
 
 Deno.test({
-  name: "QuickCheck optimizes supported Do programs without changing behavior",
+  name: "QuickCheck lowers or preserves Do programs without changing behavior",
   permissions: { env: true, read: true },
   async fn() {
     type GeneratedStep =
@@ -2152,13 +2305,16 @@ ${statements}
 `;
         const transformed = await transform(source);
 
-        if (transformed.transformed !== 1) {
-          throw new Error(
-            "supported Do program was not optimized\n\n" + source + "\n" +
-              JSON.stringify(transformed.diagnostics),
+        if (transformed.transformed === 0) {
+          assert_equals(transformed.code, source);
+          assert_true(
+            transformed.diagnostics.length > 0 &&
+              transformed.diagnostics.every((diagnostic) =>
+                diagnostic.message.includes("generator-local state")
+              ),
+            "expected captured generator state to be diagnosed",
           );
-        }
-        if (transformed.diagnostics.length !== 0) {
+        } else if (transformed.diagnostics.length !== 0) {
           throw new Error(
             "supported Do program produced diagnostics\n\n" + source +
               "\n" + JSON.stringify(transformed.diagnostics),
@@ -2196,6 +2352,15 @@ async function evaluate_module(
   );
 
   return module.default;
+}
+
+function evaluate_library_observation(source: string): Promise<unknown> {
+  const executable = source.replaceAll(
+    /\.\.\/src\/([a-z_]+)\.ts/g,
+    (_match, module: string) =>
+      new URL(`../src/${module}.ts`, import.meta.url).href,
+  );
+  return evaluate_module(executable, "transform-observation");
 }
 
 async function assert_module_typechecks(source: string): Promise<void> {
@@ -2239,11 +2404,19 @@ async function assert_module_has_type_error(source: string): Promise<void> {
   }
 }
 
-async function assert_do_equivalent(source: string) {
+async function assert_do_equivalent(source: string, rewrites = 1) {
   const transformed = await transform(source);
 
-  assert_equals(transformed.transformed, 1);
-  assert_equals(transformed.diagnostics, []);
+  assert_equals(transformed.transformed, rewrites);
+  if (rewrites === 0) {
+    assert_equals(transformed.code, source);
+    assert_true(
+      transformed.diagnostics.length > 0,
+      "expected a preservation diagnostic",
+    );
+  } else {
+    assert_equals(transformed.diagnostics, []);
+  }
   assert_equals(
     await evaluate_do_raw(transformed.code),
     await evaluate_do_raw(source),
@@ -2284,3 +2457,93 @@ function assert_includes(value: string, part: string) {
     "expected output to include: " + part + "\n\n" + value,
   );
 }
+
+Deno.test("transformer preserves observable prefixes when a generator replays", async () => {
+  for (
+    const prefix of [
+      `events.push("start");`,
+      `const marker = events.push("start");`,
+      `count += 1;`,
+    ]
+  ) {
+    const original = `
+import { Do } from "../src/typeclasses.ts";
+import { ArrayT } from "../src/array.ts";
+const events = [];
+let count = 0;
+const program = Do(ArrayT, function* () {
+  ${prefix}
+  const item = yield* ArrayT([1, 2]);
+  return item;
+});
+export default { value: program.value(), events, count };
+`;
+    const result = await transform(original);
+    assert_equals(result.transformed, 0);
+    assert_equals(result.code, original);
+    assert_true(
+      result.diagnostics[0]?.message.includes(
+        "observable generator statements",
+      ),
+      "expected replay diagnostic",
+    );
+    const observed = await evaluate_library_observation(result.code);
+    assert_equals(observed, await evaluate_library_observation(original));
+    assert_equals(observed, {
+      value: [1, 2],
+      events: prefix.startsWith("count") ? [] : ["start", "start"],
+      count: prefix.startsWith("count") ? 2 : 0,
+    });
+  }
+});
+
+Deno.test("transformer preserves var scope and named local closures", async () => {
+  for (
+    const [prefix, update, returned] of [
+      ["if (true) { var total = 0; }", "total += item;", "total"],
+      [
+        "const state = { total: 0 }; function increment() { state.total += 1; return state.total; }",
+        "",
+        "increment()",
+      ],
+    ]
+  ) {
+    const source = `
+import { Do } from "../src/typeclasses.ts";
+import { ArrayT } from "../src/array.ts";
+const program = Do(ArrayT, function* () {
+  ${prefix}
+  const item = yield* ArrayT([1, 2]);
+  ${update}
+  return ${returned};
+});
+export default program.value();
+`;
+    const result = await transform(source);
+    assert_equals(result.transformed, 0);
+    assert_equals(result.code, source);
+    assert_equals(
+      await evaluate_library_observation(result.code),
+      prefix.includes("var") ? [1, 2] : [1, 1],
+    );
+  }
+});
+
+Deno.test("transformer does not treat property names as captured local references", async () => {
+  const source = `
+import { Do } from "../src/typeclasses.ts";
+import { Maybe, Just } from "../src/maybe.ts";
+const program = Do(Maybe, function* () {
+  const value = { discarded: true };
+  const item = yield* Just(1);
+  return { value: item };
+});
+export default program.value();
+`;
+  const result = await transform(source);
+  assert_equals(result.transformed, 1);
+  assert_equals(result.diagnostics, []);
+  assert_equals(await evaluate_library_observation(result.code), ["Just", {
+    value: 1,
+  }]);
+});

@@ -30,7 +30,8 @@ deno run learn_you_a_typeclasses_for_greater_good/main.ts
 8. `08_monads_and_do.ts`: dependent computation with `Do`.
 9. `09_custom_data_types.ts`: defining a local tree dictionary.
 10. `10_reader_state_writer.ts`: environment, mutable state, and logs.
-11. `11_tasks.ts`: deferred async work as a monad and applicative.
+11. `11_tasks.ts`: deferred async work with sequential `Task` and explicit
+    `ParallelTask` applicative concurrency.
 12. `12_effect_programs.ts`: composing capabilities with `Program`.
 13. `13_alternative_and_traversable.ts`: choice and traversing structures.
 14. `14_stm.ts`: small transactional updates with `Stm`.

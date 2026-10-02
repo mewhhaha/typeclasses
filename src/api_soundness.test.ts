@@ -90,8 +90,8 @@ const cursor = state<"cursor", string>();
 const config_cell = reader<"config", Config>();
 const database_cell = reader<"database", Database>();
 
-const audit = writer_cell<"audit", AsArray, string>();
-const metrics = writer_cell<"metrics", AsArray, number>();
+const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
+const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
 
 type TwoEnvironments = Uses<typeof config_cell> | Uses<typeof database_cell>;
 
@@ -673,7 +673,7 @@ function check_writer_cell_types(): void {
   run_writer_terminal(audit, two_output_cells(), ArrayT<string>([]));
 
   // @ts-expect-error `string` is not a key
-  writer_cell<string, AsArray, string>().tell(ArrayT(["x"]));
+  writer_cell<string, AsArray, string>(ArrayT<string>([])).tell(ArrayT(["x"]));
 }
 
 void check_api_types;

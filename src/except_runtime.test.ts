@@ -9,8 +9,17 @@ import {
   recover,
   run_except,
 } from "./except.ts";
-import { ask, type AsReader, run_reader } from "./reader.ts";
-import { type AsTask, from_fn, run_task, succeed } from "./task.ts";
+import { ask, type AsReader, reader, run_reader } from "./reader.ts";
+import { ArrayT, type AsArray } from "./array.ts";
+import { run_state, state } from "./state.ts";
+import { run_writer, writer_cell } from "./writer.ts";
+import {
+  type AsTask,
+  from_fn,
+  run_task,
+  run_task_exit,
+  succeed,
+} from "./task.ts";
 
 type Missing = readonly ["missing", string];
 type Invalid = readonly ["invalid", number];
@@ -277,4 +286,126 @@ Deno.test("run_except handles deep chains without growing the JavaScript stack",
   const handled = run_except(effect);
 
   assert_equals((await run_task(handled)).value(), Right(20_000).value());
+});
+
+Deno.test("protected Except scopes keep outcomes local to repeated executions", async () => {
+  let calls = 0;
+  const exits: EffectExit[] = [];
+  const scope = Program(function* () {
+    const current = yield* from_fn(() => Promise.resolve(++calls));
+    if (current === 1) return yield* fail("first execution");
+    return 42;
+  });
+  const handled = run_except(Effect.ensuring(scope, (exit) => {
+    exits.push(exit);
+  }));
+  assert_equals((await run_task(handled)).value(), ["Left", "first execution"]);
+  assert_equals((await run_task(handled)).value(), ["Right", 42]);
+  assert_equals(exits, [{ status: "failed", error: "first execution" }, {
+    status: "succeeded",
+  }]);
+});
+
+Deno.test("protected Except scopes keep concurrent outcomes separate", async () => {
+  let calls = 0;
+  const exits: EffectExit[] = [];
+  const scope = Program(function* () {
+    const current = yield* from_fn(() => Promise.resolve(++calls));
+    if (current === 1) return yield* fail("first execution");
+    return 42;
+  });
+  const handled = run_except(Effect.ensuring(scope, async (exit) => {
+    await Promise.resolve();
+    exits.push(exit);
+  }));
+  const results = await Promise.all([run_task(handled), run_task(handled)]);
+  assert_equals(results.map((value) => value.value()), [[
+    "Left",
+    "first execution",
+  ], ["Right", 42]]);
+  assert_equals(exits.map((exit) => exit.status).sort(), [
+    "failed",
+    "succeeded",
+  ]);
+});
+
+Deno.test("nested protected Except scopes finalize from inner to outer on every run", async () => {
+  let calls = 0;
+  const exits: string[] = [];
+  const program = Program(function* () {
+    const current = yield* from_fn(() => Promise.resolve(++calls));
+    if (current === 1) return yield* fail("nested failure");
+    return 42;
+  });
+  const protected_program = Effect.ensuring(
+    Effect.ensuring(program, (exit) => {
+      exits.push("inner:" + exit.status);
+    }),
+    (exit) => {
+      exits.push("outer:" + exit.status);
+    },
+  );
+  const handled = run_except(protected_program);
+  assert_equals((await run_task(handled)).value(), ["Left", "nested failure"]);
+  assert_equals((await run_task(handled)).value(), ["Right", 42]);
+  assert_equals(exits, [
+    "inner:failed",
+    "outer:failed",
+    "inner:succeeded",
+    "outer:succeeded",
+  ]);
+});
+
+Deno.test("protected Except execution preserves prepared Reader, State, and Writer handlers", async () => {
+  const config = reader<"except-runtime-config", number>();
+  const count = state<"except-runtime-count", number>();
+  const audit = writer_cell<"except-runtime-audit", AsArray, string>(
+    ArrayT<string>([]),
+  );
+  let calls = 0;
+  const exits: EffectExit[] = [];
+  const program = Program(function* () {
+    const base = yield* config.ask();
+    yield* count.modify((value) => value + base);
+    yield* audit.tell(ArrayT(["before task"]));
+    const current = yield* from_fn(() => Promise.resolve(++calls));
+    if (current === 1) return yield* fail("first execution");
+    const final = yield* count.get();
+    yield* audit.tell(ArrayT(["after task"]));
+    return final;
+  });
+  const prepared = run_writer(
+    audit,
+    run_state(count, run_reader(config, program, 2), 0),
+    ArrayT<string>([]),
+  );
+  const handled = run_except(Effect.ensuring(prepared, (exit) => {
+    exits.push(exit);
+  }));
+  assert_equals((await run_task(handled)).value(), ["Left", "first execution"]);
+  const [tag, output] = (await run_task(handled)).value();
+  assert_equals(tag, "Right");
+  if (tag === "Right") {
+    const [[item, final], log] = output;
+    assert_equals([item, final], [2, 2]);
+    assert_equals(log.value(), ["before task", "after task"]);
+  }
+  assert_equals(exits, [{ status: "failed", error: "first execution" }, {
+    status: "succeeded",
+  }]);
+});
+
+Deno.test("Except protected scopes preserve cancellation before pure handled failure completes", async () => {
+  const controller = new AbortController();
+  controller.abort("cancel handled completion");
+  const exits: EffectExit[] = [];
+  const handled = run_except(Effect.ensuring(fail("typed failure"), (exit) => {
+    exits.push(exit);
+  }));
+  const result = await run_task_exit(handled, { signal: controller.signal });
+  assert_equals(result.status, "cancelled");
+  assert_equals(exits, [{
+    status: "cancelled",
+    reason: "cancel handled completion",
+  }]);
 });

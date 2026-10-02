@@ -216,26 +216,31 @@ function handle_protected_fails<error, item>(
   scope: Ensuring[1],
   resume: (value: unknown) => Effect<unknown, item>,
 ): Effect<unknown, EitherValue<error, item>> {
-  // A failure inside the scope must still be caught, so the nested effect is
-  // handled too. That turns the failure into a value before the terminal runner
-  // interprets the scope, and an `EffectExit` carries no value, so the error
-  // travels beside the effect for the finalizer to see it.
-  let failure: readonly [error] | undefined;
-
+  // Prepare allocates outcome state when the runner enters the scope. Reusing
+  // the handled effect, including concurrent runs, never shares that state.
   const protect: Ensuring = ["effect.ensuring", {
-    effect: map(handle_fails<error, unknown>(scope.effect), (outcome) => {
-      const [branch, payload] = outcome.value();
+    effect: scope.effect,
+    finalize: scope.finalize,
+    prepare() {
+      let original = scope;
+      while (original.prepare !== undefined) original = original.prepare();
+      const entered = original;
+      let failure: readonly [error] | undefined;
 
-      if (branch === "Left") {
-        failure = [payload];
-      }
-
-      return outcome;
-    }),
-    finalize: (exit) =>
-      scope.finalize(
-        failure === undefined ? exit : { status: "failed", error: failure[0] },
-      ),
+      return {
+        effect: map(handle_fails<error, unknown>(entered.effect), (outcome) => {
+          const [branch, payload] = outcome.value();
+          if (branch === "Left") failure = [payload];
+          return outcome;
+        }),
+        finalize: (exit) =>
+          entered.finalize(
+            exit.status === "succeeded" && failure !== undefined
+              ? { status: "failed", error: failure[0] }
+              : exit,
+          ),
+      };
+    },
   }];
 
   return suspend(protect, (value) => {

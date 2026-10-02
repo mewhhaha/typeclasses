@@ -3,6 +3,7 @@ import {
   type Data,
   data,
   type type_data,
+  type type_element,
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
@@ -23,7 +24,9 @@ export interface AsDataView
     Monoid<AsDataView>,
     Foldable<AsDataView> {
   /** Higher-kinded slot exposed as a byte when folding. */
-  readonly [type_item]: unknown;
+  readonly [type_item]: number;
+  /** Bytes remain numbers for every operation on this dictionary. */
+  readonly [type_element]: number;
   /** Raw `DataView` representation for this dictionary. */
   readonly [type_data]: DataViewT;
 }
@@ -86,12 +89,12 @@ Foldable.instance(DataViewT)({
   fold<item, output>(
     this: Data<AsDataView, item>,
     initial: output,
-    fn: (state: output, item: item) => output,
+    fn: (state: output, item: number) => output,
   ) {
     let state = initial;
 
     for (const byte of to_view_bytes(this.value())) {
-      state = fn(state, byte as unknown as item);
+      state = fn(state, byte);
     }
 
     return state;

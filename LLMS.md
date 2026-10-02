@@ -167,7 +167,12 @@ For generic code, state the capability in the type and call the exported
 typeclass operation:
 
 ```ts
-import { type Data, Foldable, Functor } from "@mewhhaha/typeclasses";
+import {
+  type Data,
+  Foldable,
+  Functor,
+  type type_element,
+} from "@mewhhaha/typeclasses";
 
 function label<dictionary extends Functor<dictionary>>(
   value: Data<dictionary, number>,
@@ -175,7 +180,11 @@ function label<dictionary extends Functor<dictionary>>(
   return Functor.map(value, (number) => `value:${number}`);
 }
 
-function total<dictionary extends Foldable<dictionary>>(
+function total<
+  dictionary extends Foldable<dictionary> & {
+    readonly [type_element]?: number;
+  },
+>(
   values: Data<dictionary, number>,
 ): number {
   return Foldable.fold(values, 0, (sum, value) => sum + value);
@@ -199,23 +208,25 @@ const profile = Applicative.lift(
 );
 ```
 
-For `Task`, independent applicative inputs start together:
+`Task` application is sequential, matching its Monad. Use `parallel(task)` to
+select the applicative-only `ParallelTask` dictionary for concurrent inputs:
 
 ```ts
 import { Applicative } from "@mewhhaha/typeclasses/typeclasses";
-import { from_fn } from "@mewhhaha/typeclasses/task";
+import { from_fn, parallel } from "@mewhhaha/typeclasses/task";
 
 const dashboard = Applicative.lift(
   (account, alerts) => ({ account, alerts }),
-  from_fn(() => load_account(account_id)),
-  from_fn(() => count_alerts(account_id)),
+  parallel(from_fn(() => load_account(account_id))),
+  parallel(from_fn(() => count_alerts(account_id))),
 );
 
 const value = await dashboard.run();
 ```
 
-Do not rewrite independent tasks as sequential `yield*` statements. Conversely,
-do not use `Applicative.lift` when a later operation needs an earlier result.
+Use `sequential(dashboard)` when its result needs monadic binding or error
+recovery. Use `Do` when a later operation needs an earlier result. Construction
+and dictionary conversion do not start work.
 
 ## Dependent values: use bind or Do
 
@@ -400,8 +411,8 @@ const value = await profile.run();
 ```
 
 Construction does not start either task. The team request starts only after the
-account request succeeds. If both requests are independent, use
-`Applicative.lift` so they start together.
+account request succeeds. To start independent requests together, use
+`Applicative.lift` with `parallel(task)` inputs.
 
 ### Reader, State, Writer, STM, and parsers
 
@@ -673,10 +684,10 @@ Keep `.map(...)` and `Applicative.lift(...)` callbacks synchronous. Use
 `Task` item cannot itself be `PromiseLike`.
 
 Pass an `AbortSignal` to `.run(signal)` or `run_task(effect, { signal })`.
-Cancellation propagates through Task composition and applicative failures abort
-their siblings. A task created with `from_promise` can stop waiting but cannot
-undo the already started operation. Use `run_task_exit` to observe cancellation
-without catching an exception.
+Cancellation propagates through Task composition and `ParallelTask` failures
+abort their siblings. A task created with `from_promise` can stop waiting but
+cannot undo the already started operation. Use `run_task_exit` to observe
+cancellation without catching an exception.
 
 ## Programs and capabilities
 
@@ -740,13 +751,13 @@ const request = reader<"request", RequestContext>();
 const counter = state<"counter", number>();
 const last_route = state<"last_route", string>();
 
-const audit = writer_cell<"audit", AsArray, string>();
-const metrics = writer_cell<"metrics", AsArray, number>();
+const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
+const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
 ```
 
-The literal key gives each cell its type and runtime identity, even when two
-cells contain the same value type. Use the cell's own operations inside a mixed
-effect program:
+The literal key distinguishes cell types, even when two cells contain the same
+value type. Each declaration also receives its own runtime identity. Use the
+cell's own operations inside a mixed effect program:
 
 ```ts
 type AppCells =
@@ -1300,21 +1311,21 @@ when atomicity must include persistent storage.
 
 Use these translations when moving imperative TypeScript into this library:
 
-| Existing pattern                                              | Preferred representation                      |
-| ------------------------------------------------------------- | --------------------------------------------- |
-| `value \| null \| undefined` where absence is enough          | `Maybe` and `from_nullable`                   |
-| `{ ok: boolean, value?, error? }`                             | `Either<error, item>`                         |
-| Throwing for an expected parse or domain outcome              | Return `Either`                               |
-| Returning only the first of several independent field errors  | `Validation` and `Applicative.lift`           |
-| Eager `Promise` construction                                  | `Task` with `from_fn`                         |
-| `Promise.all` over a fixed set of independent typed tasks     | `Applicative.lift`                            |
-| Dependent `await` statements                                  | `Task` with `Do`                              |
-| Catching promise rejection into a typed program error         | `attempt` and `Fails`                         |
-| Passing configuration through every function                  | `Reader`, or a Reader capability in `Program` |
-| Mutating an accumulator across pure steps                     | `State`                                       |
-| Returning a value plus accumulated output                     | `Writer`                                      |
-| Reimplementing one fold for arrays, maps, and optional values | A generic `Foldable` function                 |
-| Nested Reader/State/Writer/Task transformer types             | A `Program` capability union                  |
+| Existing pattern                                              | Preferred representation                        |
+| ------------------------------------------------------------- | ----------------------------------------------- |
+| `value \| null \| undefined` where absence is enough          | `Maybe` and `from_nullable`                     |
+| `{ ok: boolean, value?, error? }`                             | `Either<error, item>`                           |
+| Throwing for an expected parse or domain outcome              | Return `Either`                                 |
+| Returning only the first of several independent field errors  | `Validation` and `Applicative.lift`             |
+| Eager `Promise` construction                                  | `Task` with `from_fn`                           |
+| `Promise.all` over a fixed set of independent typed tasks     | `Applicative.lift` with `parallel(task)` inputs |
+| Dependent `await` statements                                  | `Task` with `Do`                                |
+| Catching promise rejection into a typed program error         | `attempt` and `Fails`                           |
+| Passing configuration through every function                  | `Reader`, or a Reader capability in `Program`   |
+| Mutating an accumulator across pure steps                     | `State`                                         |
+| Returning a value plus accumulated output                     | `Writer`                                        |
+| Reimplementing one fold for arrays, maps, and optional values | A generic `Foldable` function                   |
+| Nested Reader/State/Writer/Task transformer types             | A `Program` capability union                    |
 
 Convert at a trust boundary once. Past that point, accept the precise wrapped
 type and do not repeat null checks or runtime parsing that its constructor
@@ -1540,6 +1551,10 @@ similar raw shape. In particular:
 - Keep the raw type, `As...` interface, `Data` alias, callable dictionary, and
   instances together.
 - Express the raw representation once through `type_item` and `type_data`.
+- For fixed byte or entry elements, declare `type_element` as their actual type.
+  Import these phantom symbols as types. `DataItem<dictionary, item>` preserves
+  fixed elements in generic folds; constrain numeric folds to dictionaries with
+  an optional `[type_element]?: number` field.
 - Construct the dictionary with `data<As...>()`.
 - Install only lawful typeclass instances.
 - Put reusable typeclass machinery in `src/typeclass.ts` and application-level

@@ -1,7 +1,7 @@
 import { from_array } from "../src/list.ts";
 import { Just, type Maybe, Nothing } from "../src/maybe.ts";
 import { type Either, from_number, Left, Right } from "../src/either.ts";
-import { from_fn } from "../src/task.ts";
+import { from_fn, parallel } from "../src/task.ts";
 import {
   add_values,
   keep_positive,
@@ -71,8 +71,8 @@ export async function run_basic_examples() {
   );
   const parallel_task = Applicative.lift(
     (user, score) => user + ":" + score.toString(),
-    from_fn(() => Promise.resolve("ada")),
-    from_fn(() => Promise.resolve(42)),
+    parallel(from_fn(() => Promise.resolve("ada"))),
+    parallel(from_fn(() => Promise.resolve(42))),
   );
   console.log("maybe", doubled_maybe.show());
   console.log("maybe switch", switched_maybe);

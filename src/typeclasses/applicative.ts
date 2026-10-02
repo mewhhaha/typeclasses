@@ -2,6 +2,7 @@ import {
   call_typeclass_method,
   type Data,
   type Dictionary,
+  kind,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -160,6 +161,12 @@ function applicative_lift<
   const lift = instance[applicative_lift_method];
 
   if (lift !== undefined) {
+    for (const current of remaining_values) {
+      if (current[kind] !== first[kind]) {
+        throw new TypeError("lift requires values from the same dictionary");
+      }
+    }
+
     return call_typeclass_method(lift, first, apply, remaining_values);
   }
 

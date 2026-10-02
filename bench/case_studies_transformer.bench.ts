@@ -1,4 +1,5 @@
 import { transform_do_program_source } from "../tools/transform_do_program.ts";
+import { assert_equals } from "../src/assert.ts";
 
 type CaseStudyName =
   | "http_router"
@@ -7,7 +8,10 @@ type CaseStudyName =
   | "parallel_analyzer"
   | "programming_language_parser";
 
-type TransformStats = Record<CaseStudyName, number>;
+type TransformStats = Record<
+  CaseStudyName,
+  { rewrites: number; preserved: number }
+>;
 
 type ModuleSet = {
   readonly label: string;
@@ -32,10 +36,14 @@ type ModuleSet = {
 
 const source_root = new URL("../", import.meta.url);
 const transformed_root = new URL(
-  "file:///tmp/typeclasses-case-study-transform-bench/",
+  "file://" +
+    await Deno.makeTempDir({
+      prefix: "typeclasses-case-study-transform-bench-",
+    }) + "/",
 );
 const original = await load_modules(source_root, "without transformer");
 const transformed = await prepare_transformed_modules();
+await Deno.remove(transformed_root, { recursive: true });
 
 let _sink = 0;
 
@@ -103,6 +111,11 @@ async function run_agent_harness_dry(modules: ModuleSet): Promise<number> {
 }
 
 function run_parallel_analyzer_dry(modules: ModuleSet): number {
+  const { report, logs } = observe_parallel_analyzer(modules);
+  return report.files + report.parsed + report.failed + logs.length;
+}
+
+function observe_parallel_analyzer(modules: ModuleSet) {
   const files = modules.parallel_mod.sample_sources(32);
   const effect = modules.writer.run_writer(
     run_analyze_sources_locally(
@@ -124,7 +137,7 @@ function run_parallel_analyzer_dry(modules: ModuleSet): number {
     modules.effects.run,
   );
 
-  return report.files + report.parsed + report.failed + logs.value().length;
+  return { report, logs: logs.value() };
 }
 
 function run_parser_dry(modules: ModuleSet): number {
@@ -138,6 +151,40 @@ function run_parser_dry(modules: ModuleSet): number {
   );
 
   return parsed[0].length + broken[0].length;
+}
+
+async function observe_case_studies(modules: ModuleSet) {
+  const http = [];
+  for (const input of http_requests) {
+    const response = modules.http_router.route_http(
+      new Request(input.url, { method: input.method }),
+    );
+    http.push({
+      status: response.status,
+      headers: [...response.headers],
+      body: await response.text(),
+    });
+  }
+  const cli = [];
+  for (const argv of cli_commands) {
+    cli.push(await modules.io_application.run_cli(argv, true));
+  }
+  return {
+    http,
+    cli,
+    agent: await modules.agent_harness.run_agent_harness(),
+    parallel: observe_parallel_analyzer(modules),
+    parser: [
+      modules.parser_language.parse_program(
+        modules.parser_language.sample_program,
+        "sample.typeclasses",
+      ),
+      modules.parser_language.parse_program(
+        modules.parser_language.broken_program,
+        "broken.typeclasses",
+      ),
+    ],
+  };
 }
 
 function run_analyze_sources_locally(
@@ -183,15 +230,18 @@ async function prepare_transformed_modules(): Promise<ModuleSet> {
   );
 
   const stats = empty_stats();
-  await copy_tree(
-    new URL("case_studies/", source_root),
-    new URL("case_studies/", transformed_root),
-    {
-      transform: true,
-      stats,
-      prefix: "case_studies/",
-    },
-  );
+  for (const study of Object.keys(stats) as CaseStudyName[]) {
+    const path = `case_studies/${study}/`;
+    await copy_tree(
+      new URL(path, source_root),
+      new URL(path, transformed_root),
+      {
+        transform: true,
+        stats,
+        prefix: path,
+      },
+    );
+  }
 
   return await load_modules(transformed_root, "with transformer", stats);
 }
@@ -293,6 +343,7 @@ async function copy_tree(
     }
 
     if (entry.isFile && entry.name.endsWith(".ts")) {
+      if (entry.name.endsWith(".test.ts")) continue;
       await copy_ts_file(source_path, destination_path, relative_path, options);
       continue;
     }
@@ -317,8 +368,24 @@ async function copy_ts_file(
 
   if (options.transform) {
     const result = transform_do_program_source(source_code, relative_path);
-    code = result.code;
-    add_transformed_count(options.stats, relative_path, result.transformed);
+    // Use the plugin's explicit preserve policy for unsupported files. Report
+    // every fallback, and include its count in the measured benchmark label.
+    if (result.diagnostics.length > 0) {
+      for (const diagnostic of result.diagnostics) {
+        console.warn(
+          `Preserved benchmark source ${diagnostic.file_name}:${diagnostic.line}:${diagnostic.column}: ${diagnostic.message}`,
+        );
+      }
+      add_transformed_count(options.stats, relative_path, 0, 1);
+    } else {
+      code = result.code;
+      add_transformed_count(
+        options.stats,
+        relative_path,
+        result.transformed,
+        0,
+      );
+    }
   }
 
   await Deno.writeTextFile(destination, code);
@@ -342,16 +409,17 @@ function bench_name(study: CaseStudyName, modules: ModuleSet): string {
   }
 
   return "case study/" + study + " dry run (with transformer, rewrites=" +
-    modules.stats[study].toString() + ")";
+    modules.stats[study].rewrites.toString() + ", preserved files=" +
+    modules.stats[study].preserved.toString() + ")";
 }
 
 function empty_stats(): TransformStats {
   return {
-    http_router: 0,
-    io_application: 0,
-    agent_harness: 0,
-    parallel_analyzer: 0,
-    programming_language_parser: 0,
+    http_router: { rewrites: 0, preserved: 0 },
+    io_application: { rewrites: 0, preserved: 0 },
+    agent_harness: { rewrites: 0, preserved: 0 },
+    parallel_analyzer: { rewrites: 0, preserved: 0 },
+    programming_language_parser: { rewrites: 0, preserved: 0 },
   };
 }
 
@@ -359,6 +427,7 @@ function add_transformed_count(
   stats: TransformStats,
   relative_path: string,
   count: number,
+  preserved: number,
 ) {
   const study = case_study_from_path(relative_path);
 
@@ -366,7 +435,8 @@ function add_transformed_count(
     return;
   }
 
-  stats[study] += count;
+  stats[study].rewrites += count;
+  stats[study].preserved += preserved;
 }
 
 function case_study_from_path(path: string): CaseStudyName | undefined {
@@ -415,3 +485,20 @@ const cli_commands = [
   ["write", "out.txt", "preview only"],
   ["unknown"],
 ];
+
+const observed = await observe_case_studies(original);
+assert_equals(
+  await observe_case_studies(original),
+  observed,
+  "original case studies changed on repeated execution",
+);
+assert_equals(
+  await observe_case_studies(transformed),
+  observed,
+  "transformed case studies differ in values, failures, or logs and writes",
+);
+assert_equals(
+  await observe_case_studies(transformed),
+  observed,
+  "transformed case studies changed on repeated execution",
+);

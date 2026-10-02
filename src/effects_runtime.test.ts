@@ -179,3 +179,57 @@ async function rejection_from(promise: Promise<unknown>): Promise<Error> {
   );
   return caught as Error;
 }
+
+Deno.test("Program consumes deep pure yields before and after a suspension", async () => {
+  const program = Program(function* () {
+    let total = 0;
+    for (let index = 0; index < 25_000; index += 1) {
+      total += yield* Effect.pure(1);
+    }
+    total += yield* succeed(1);
+    for (let index = 0; index < 25_000; index += 1) {
+      total += yield* Effect.pure(1);
+    }
+    return total;
+  });
+  assert_equals(await run_task(program), 50_001);
+  assert_equals(await run_task(program), 50_001);
+});
+
+Deno.test("suspended bind suffixes stay ordered and reusable across nested chunks", async () => {
+  let effect: Effect<Uses<AsTask>, number> = Effect.lift(succeed(0));
+  for (let index = 0; index < 50_000; index += 1) {
+    effect = Effect.bind(effect, (value) => {
+      const nested = Effect.bind(
+        Effect.lift(succeed(value)),
+        (item) => Effect.map(Effect.lift(succeed(item)), (item) => item + 1),
+      );
+      return Effect.map(nested, (item) => item + 1);
+    });
+  }
+  assert_equals(await run_task(effect), 100_000);
+  assert_equals(await run_task(effect), 100_000);
+});
+
+Deno.test("pending nested continuation queues concatenate without copying their prefix", () => {
+  const Tick = Effect.operation<number>()(["test.queue_tick"]);
+  let effect: Effect<typeof Tick, number> = Effect.send(Tick);
+  for (let index = 0; index < 50_000; index += 1) {
+    const previous = effect;
+    const wrapped = Effect.map(
+      Effect.bind(Effect.send(Tick), () => previous),
+      (value) => value + 1,
+    );
+    if (wrapped[0] !== "impure") throw new Error("expected a suspended tick");
+    effect = wrapped[2](0);
+  }
+  const execute = () =>
+    run(Effect.handle_operation(
+      effect,
+      (operation): operation is typeof Tick =>
+        has_tag(operation, "test.queue_tick"),
+      () => Effect.pure(0),
+    ));
+  assert_equals(execute(), 50_000);
+  assert_equals(execute(), 50_000);
+});

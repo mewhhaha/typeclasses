@@ -6,6 +6,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { append_item } from "./internal.ts";
+import { traverse_items } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
 import {
@@ -114,7 +115,7 @@ Ord.instance(ArrayT)({
 Functor.instance(ArrayT)({
   map(fn) {
     const array = this.value();
-    return ArrayT(array.map(fn));
+    return ArrayT(array.map((value) => fn(value)));
   },
 });
 
@@ -257,30 +258,9 @@ Foldable.instance(ArrayT)({
 
 Traversable.instance(ArrayT)({
   traverse(applicative, fn) {
-    const array = this.value();
-
-    if (array.length === 0) {
-      return Applicative.pure(applicative, ArrayT([]));
-    }
-
-    let index = array.length - 1;
-    let out = Functor.map(fn(array[index]), array_single);
-
-    for (index -= 1; index >= 0; index -= 1) {
-      out = Applicative.ap(Functor.map(fn(array[index]), array_prepend), out);
-    }
-
-    return out;
+    return Functor.map(traverse_items(this.value(), applicative, fn), ArrayT);
   },
 });
-
-function array_single<item>(item: item): ArrayValue<item> {
-  return ArrayT([item]);
-}
-
-function array_prepend<item>(head: item) {
-  return (tail: ArrayValue<item>) => ArrayT([head, ...tail.value()]);
-}
 
 function lift_array_two<result>(
   fn: (...values: unknown[]) => result,

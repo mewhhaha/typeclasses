@@ -63,6 +63,8 @@ export type Ensuring =
     {
       readonly effect: Effect<unknown, unknown>;
       readonly finalize: EffectFinalizer;
+      /** @ignore Creates a fresh scope for each terminal execution. */
+      readonly prepare?: () => Ensuring[1];
     },
   ];
 
@@ -186,13 +188,30 @@ type ProgramPath = {
   readonly value: unknown;
 };
 
+type EffectResume = (value: unknown) => Effect<unknown, unknown>;
+
 type EffectFrame = {
   readonly previous: EffectFrame | undefined;
-  readonly resume: (value: unknown) => Effect<unknown, unknown>;
+  readonly resume: EffectResume;
 };
+
+// A suspended continuation shares its unconsumed array instead of copying its
+// frames after every operation. Separate chunks preserve nested bind ordering.
+type EffectQueue =
+  | {
+    readonly tag: "chunk";
+    readonly resumes: readonly EffectResume[];
+    readonly index: number;
+  }
+  | {
+    readonly tag: "concat";
+    readonly left: EffectQueue;
+    readonly right: EffectQueue;
+  };
 
 const effect_resume = Symbol("Effect.resume");
 const effect_frames = Symbol("Effect.frames");
+const effect_queue = Symbol("Effect.queue");
 
 const EffectPrototype: EffectBase<unknown, unknown> = {
   [Symbol.iterator]: effect_iterator,
@@ -235,6 +254,7 @@ type ImpureEffectTarget = {
   2: (value: unknown) => Effect<unknown, unknown>;
   [effect_resume]: (value: unknown) => Effect<unknown, unknown>;
   [effect_frames]: EffectFrame | undefined;
+  [effect_queue]: EffectQueue | undefined;
 };
 
 type MutableEffectInterpreterTarget = {
@@ -303,12 +323,14 @@ function ImpureEffect(
   operation: unknown,
   resume: (value: unknown) => Effect<unknown, unknown>,
   frames: EffectFrame | undefined = undefined,
+  queue: EffectQueue | undefined = undefined,
 ) {
   this[0] = "impure";
   this[1] = operation;
-  this[2] = (value) => resume_effect(resume, frames, value);
+  this[2] = (value) => resume_effect(resume, frames, queue, value);
   this[effect_resume] = resume;
   this[effect_frames] = frames;
+  this[effect_queue] = queue;
 }
 
 ImpureEffect.prototype = EffectPrototype;
@@ -318,6 +340,7 @@ const NewImpureEffect = ImpureEffect as unknown as {
     operation: requirements,
     resume: (value: unknown) => Effect<requirements, item>,
     frames?: EffectFrame,
+    queue?: EffectQueue,
   ): Effect<requirements, item>;
 };
 
@@ -917,10 +940,21 @@ function program<yielded, item>(
     current: yielded,
     iterator: Generator<yielded, item, unknown>,
   ): Effect<EffectRequirements<yielded>, item> {
-    let calls = 0;
+    // Pure yields need no suspended continuation. Consume them here rather
+    // than recursively entering bind's immediate pure fast path.
+    let effect = as_effect<EffectRequirements<yielded>, unknown>(current);
+    while (effect[0] === "pure") {
+      path = append_program_path(path, effect[1]);
+      const next = iterator.next(effect[1]);
+      if (next.done) return pure(next.value);
+      effect = as_effect<EffectRequirements<yielded>, unknown>(next.value);
+    }
 
-    return bind_from(
-      current as Effect<EffectRequirements<yielded>, unknown>,
+    let calls = 0;
+    const suspended_path = path;
+
+    return bind(
+      effect,
       (value) => {
         if (calls === 0) {
           calls += 1;
@@ -930,12 +964,12 @@ function program<yielded, item>(
             return pure(next.value);
           }
 
-          const next_path = append_program_path(path, value);
+          const next_path = append_program_path(suspended_path, value);
           return step(next_path, next.value, iterator);
         }
 
         calls += 1;
-        const next_path = append_program_path(path, value);
+        const next_path = append_program_path(suspended_path, value);
         const state = run_with(next_path);
 
         if (state.next.done) {
@@ -1010,53 +1044,99 @@ function append_effect_frame<requirements, item>(
       value: unknown,
     ) => Effect<requirements, unknown>,
     frames,
+    target[effect_queue],
   );
 }
 
 function resume_effect(
-  resume: (value: unknown) => Effect<unknown, unknown>,
+  resume: EffectResume,
   frames: EffectFrame | undefined,
+  queue: EffectQueue | undefined,
   value: unknown,
 ): Effect<unknown, unknown> {
   let current = resume(value);
+  let pending = append_effect_queue(queue, queue_from_frames(frames));
 
-  if (frames === undefined) {
-    return current;
-  }
-
-  const ordered = effect_frames_in_order(frames);
-
-  for (let index = 0; index < ordered.length; index += 1) {
+  while (pending !== undefined) {
     if (current[0] === "impure") {
-      return append_effect_frames(current, ordered, index);
+      const target = current as unknown as ImpureEffectTarget;
+      const own = append_effect_queue(
+        target[effect_queue],
+        queue_from_frames(target[effect_frames]),
+      );
+      return new NewImpureEffect(
+        current[1],
+        target[effect_resume],
+        undefined,
+        append_effect_queue(own, pending),
+      );
     }
 
-    current = ordered[index](current[1]);
+    const [next, rest] = shift_effect_queue(pending);
+    pending = rest;
+    current = next(current[1]);
   }
 
   return current;
 }
 
-function append_effect_frames(
-  effect: Impure<unknown, unknown>,
-  ordered: readonly ((value: unknown) => Effect<unknown, unknown>)[],
-  start: number,
-): Effect<unknown, unknown> {
-  const target = effect as ImpureEffectTarget;
-  let frames = target[effect_frames];
+function queue_from_frames(
+  frames: EffectFrame | undefined,
+): EffectQueue | undefined {
+  return frames === undefined ? undefined : {
+    tag: "chunk",
+    resumes: effect_frames_in_order(frames),
+    index: 0,
+  };
+}
 
-  for (let index = start; index < ordered.length; index += 1) {
-    frames = {
-      previous: frames,
-      resume: ordered[index],
-    };
+function append_effect_queue(
+  first: EffectQueue | undefined,
+  rest: EffectQueue | undefined,
+): EffectQueue | undefined {
+  if (first === undefined) return rest;
+  if (rest === undefined) return first;
+  return { tag: "concat", left: first, right: rest };
+}
+
+function shift_effect_queue(
+  queue: EffectQueue,
+): readonly [EffectResume, EffectQueue | undefined] {
+  let current = queue;
+  while (true) {
+    switch (current.tag) {
+      case "chunk":
+        return [current.resumes[current.index], remaining_chunk(current)];
+      case "concat": {
+        const left = current.left;
+        switch (left.tag) {
+          case "chunk":
+            return [
+              left.resumes[left.index],
+              append_effect_queue(remaining_chunk(left), current.right),
+            ];
+          case "concat":
+            // Rotate once toward the first chunk. The returned suffix retains
+            // this order, so later takes do not walk the consumed prefix again.
+            current = {
+              tag: "concat",
+              left: left.left,
+              right: { tag: "concat", left: left.right, right: current.right },
+            };
+            break;
+        }
+        break;
+      }
+    }
   }
+}
 
-  return new NewImpureEffect(
-    effect[1],
-    target[effect_resume],
-    frames,
-  );
+function remaining_chunk(
+  chunk: Extract<EffectQueue, { tag: "chunk" }>,
+): EffectQueue | undefined {
+  return chunk.index + 1 === chunk.resumes.length
+    ? undefined
+    : { ...chunk, index: chunk.index + 1 };
 }
 
 function effect_frames_in_order(

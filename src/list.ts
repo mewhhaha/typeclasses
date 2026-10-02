@@ -9,6 +9,7 @@ import {
   type UnionDictionary,
 } from "./typeclass.ts";
 import { append_item } from "./internal.ts";
+import { traverse_items } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
 import {
@@ -317,20 +318,10 @@ Foldable.instance(List)({
 
 Traversable.instance(List)({
   traverse(applicative, fn) {
-    const items = to_array(this);
-
-    if (items.length === 0) {
-      return Applicative.pure(applicative, Nil());
-    }
-
-    let index = items.length - 1;
-    let out = Functor.map(fn(items[index]), list_single);
-
-    for (index -= 1; index >= 0; index -= 1) {
-      out = Applicative.ap(Functor.map(fn(items[index]), list_prepend), out);
-    }
-
-    return out;
+    return Functor.map(
+      traverse_items(to_array(this), applicative, fn),
+      from_array,
+    );
   },
 });
 
@@ -366,14 +357,6 @@ function list_append<item>(left: List<item>, right: List<item>): List<item> {
   }
 
   return out;
-}
-
-function list_single<item>(item: item): ListValue<item> {
-  return Cons(item, list_nil());
-}
-
-function list_prepend<item>(head: item) {
-  return (tail: ListValue<item>) => Cons(head, tail.value());
 }
 
 function lift_list_one<output>(

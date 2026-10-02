@@ -6,8 +6,8 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
+import { traverse_items } from "./traversal.ts";
 import {
-  Applicative,
   compare_unknown,
   Eq,
   Foldable,
@@ -135,7 +135,7 @@ Ord.instance(RecordT)({
 Functor.instance(RecordT)({
   map(fn) {
     const record = this.value();
-    const out: Record<string, ReturnType<typeof fn>> = {};
+    const out: Record<string, ReturnType<typeof fn>> = Object.create(null);
 
     for (const [key, value] of Object.entries(record)) {
       out[key] = fn(value);
@@ -173,37 +173,14 @@ Foldable.instance(RecordT)({
 
 Traversable.instance(RecordT)({
   traverse(applicative, fn) {
-    const record = this.value();
-    const entries = Object.entries(record);
-
-    if (entries.length === 0) {
-      return Applicative.pure(applicative, RecordT({}));
-    }
-
-    let index = entries.length - 1;
-    const [key, item] = entries[index];
-    let out = Functor.map(fn(item), record_single(key));
-
-    for (index -= 1; index >= 0; index -= 1) {
-      const [key, value] = entries[index];
-      out = Applicative.ap(Functor.map(fn(value), record_prepend(key)), out);
-    }
-
-    return out;
+    const entries = traverse_items(
+      Object.entries(this.value()),
+      applicative,
+      ([key, value]) => Functor.map(fn(value), (item) => [key, item] as const),
+    );
+    return Functor.map(entries, (items) => RecordT(Object.fromEntries(items)));
   },
 });
-
-function record_single<item>(key: string) {
-  return (value: item): RecordValue<item> => RecordT({ [key]: value });
-}
-
-function record_prepend<item>(key: string) {
-  return (value: item) => {
-    return (tail: RecordValue<item>) => {
-      return RecordT({ [key]: value, ...tail.value() });
-    };
-  };
-}
 
 function compare_entry_keys(
   left: readonly [string, unknown],

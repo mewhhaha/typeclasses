@@ -26,8 +26,8 @@ const deployment = reader<"deployment", DeploymentConfig>();
 const request_metadata = reader<"request_metadata", RequestMetadata>();
 const request_count = state<"request_count", number>();
 const last_route = state<"last_route", string>();
-const audit = writer_cell<"audit", AsArray, string>();
-const metrics = writer_cell<"metrics", AsArray, number>();
+const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
+const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
 
 type KeyedCells =
   | Uses<typeof deployment>
