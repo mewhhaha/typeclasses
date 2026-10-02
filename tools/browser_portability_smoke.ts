@@ -27,6 +27,11 @@ let report_result!: (value: URLSearchParams) => void;
 const reported = new Promise<URLSearchParams>((resolve) => {
   report_result = resolve;
 });
+let report_ready!: () => void;
+const ready = new Promise<void>((resolve) => {
+  report_ready = resolve;
+});
+let page_requested = false;
 const html = `<!doctype html><script>
 function report_browser_error(error) {
   fetch("/result?error=" + encodeURIComponent(String(error))).catch(() => {});
@@ -41,9 +46,17 @@ const server = Deno.serve({
 }, (request) => {
   const url = new URL(request.url);
 
-  if (url.pathname === "/result") {
-    report_result(url.searchParams);
-    return new Response("recorded");
+  switch (url.pathname) {
+    case "/result":
+      report_ready();
+      report_result(url.searchParams);
+      return new Response("recorded");
+    case "/":
+      if (request.method === "GET") {
+        page_requested = true;
+        report_ready();
+      }
+      break;
   }
 
   return new Response(html, { headers: { "content-type": "text/html" } });
@@ -59,6 +72,9 @@ let browser_status: Deno.CommandStatus | undefined;
 const exited = child.status.then((status) => {
   browser_status = status;
   return status;
+});
+const exit_failure = exited.then(() => {
+  throw new Error("Browser exited before reporting a result");
 });
 const stderr_reader = child.stderr.getReader();
 let stderr_tail = "";
@@ -82,14 +98,26 @@ let timeout: ReturnType<typeof setTimeout> | undefined;
 
 try {
   try {
-    const report = await Promise.race([
-      reported,
-      exited.then(() => {
-        throw new Error("Browser exited before reporting a result");
-      }),
+    await Promise.race([
+      ready,
+      exit_failure,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new Error("Browser portability smoke test timed out"));
+          reject(
+            new Error("Browser startup timed out before requesting the page"),
+          );
+        }, 45_000);
+      }),
+    ]);
+    clearTimeout(timeout);
+    const report = await Promise.race([
+      reported,
+      exit_failure,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(
+            new Error("Browser portability result timed out after startup"),
+          );
         }, 15_000);
       }),
     ]);
@@ -136,7 +164,7 @@ try {
   throw new Error(
     `${
       error instanceof Error ? error.message : String(error)
-    }\nBrowser: ${browser.path}\nExit: ${
+    }\nBrowser: ${browser.path}\nPage requested: ${page_requested}\nExit: ${
       browser_status === undefined
         ? "unavailable"
         : `code=${browser_status.code.toString()}, signal=${
@@ -170,12 +198,18 @@ async function browser_command(
   url: string,
   profile: string,
 ): Promise<{ readonly path: string; readonly command: Deno.Command }> {
+  const chromium_setup_args = [
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--password-store=basic",
+  ];
   const candidates = [
     {
       path: "/usr/bin/google-chrome-stable",
       args: [
         "--headless=new",
         "--no-sandbox",
+        ...chromium_setup_args,
         `--user-data-dir=${profile}`,
         url,
       ],
@@ -185,13 +219,20 @@ async function browser_command(
       args: [
         "--headless=new",
         "--no-sandbox",
+        ...chromium_setup_args,
         `--user-data-dir=${profile}`,
         url,
       ],
     },
     {
       path: "/usr/bin/chromium",
-      args: ["--headless", "--no-sandbox", `--user-data-dir=${profile}`, url],
+      args: [
+        "--headless",
+        "--no-sandbox",
+        ...chromium_setup_args,
+        `--user-data-dir=${profile}`,
+        url,
+      ],
     },
     {
       path: "/usr/bin/firefox",
