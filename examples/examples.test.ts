@@ -1,5 +1,6 @@
 import { assert_equals, assert_true } from "../src/assert.ts";
 import { price_order } from "./composable_functions.ts";
+import { run_consumer_ergonomics_scenario } from "./consumer_ergonomics.ts";
 import { choose_coordinates, resolve_endpoint } from "./do_contexts.ts";
 import { run_instrumented_effect_scenario } from "./instrumented_effects.ts";
 import { run_keyed_cell_scenario } from "./keyed_cells.ts";
@@ -14,6 +15,33 @@ import {
 } from "./task_workflow.ts";
 import { decode_registration_request } from "./validated_request.ts";
 import { analyze_log_shard } from "./worker_pool_job.ts";
+
+Deno.test("consumer APIs infer contexts and preserve deferred execution", async () => {
+  assert_equals(await run_consumer_ergonomics_scenario(), {
+    fluent: ["Just", 42],
+    generic: ["Just", 42],
+    function_first: ["Just", 42],
+    either: ["Right", 42],
+    validation: ["valid", 42],
+    traversed: ["Just", [2, 3]],
+    profile: ["Just", {
+      id: 42,
+      name: "Ada",
+      email: "ada@example.test",
+      enabled: true,
+      rank: 1,
+      tags: ["math"],
+    }],
+    reader: "app:ready",
+    state: [7, 8],
+    audit: ["ready", ["ready"]],
+    before_run: [],
+    after_skip: [],
+    sequential_sum: 42,
+    parallel_sum: 42,
+    events: ["notify", "left", "right"],
+  });
+});
 
 Deno.test("Maybe Do stops endpoint decoding when a field is absent", () => {
   assert_equals(

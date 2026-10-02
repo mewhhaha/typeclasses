@@ -71,14 +71,14 @@ export type OrdTypeclass =
   }>
   & {
     derive<dictionary extends Ord<dictionary>>(
-      dictionary: dictionary,
+      dictionary: Ord<dictionary>,
     ): (minimal: MinimalOrd<dictionary>) => void;
   };
 
 /** Operations for ordering values through Ord dictionaries. */
 export const Ord: OrdTypeclass = typeclass(ord_typeclass, {
   derive<dictionary extends Ord<dictionary>>(
-    dictionary: dictionary,
+    dictionary: Ord<dictionary>,
   ): (minimal: MinimalOrd<dictionary>) => void {
     return (minimal) => {
       Ord.instance(dictionary)({

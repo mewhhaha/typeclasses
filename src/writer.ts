@@ -171,15 +171,16 @@ export type WriterCellValue<
  *
  * A cell has its own runtime kind and its own type identity, so it is drained
  * by its own `run_writer` and is invisible to every other cell and to the
- * anonymous `tell`. Name the cell, then give its output Monoid and log type:
+ * anonymous `tell`. Give a literal key and the empty output to infer its types:
  *
  * ```ts
- * const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
- * const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
+ * const audit = writer_cell("audit", ArrayT<string>([]));
+ * const metrics = writer_cell("metrics", ArrayT<number>([]));
  * ```
  *
- * The key distinguishes cells accumulating into the same Monoid. It exists only
- * in the type, so **declare each key exactly once**: two declarations sharing a
+ * The explicit `writer_cell<"audit", AsArray, string>(empty)` form is also
+ * supported. The key distinguishes cells accumulating into the same Monoid. It
+ * selects the type identity, so **declare each key exactly once**: declarations sharing a
  * key are one cell to the compiler and two at runtime, and the second one's
  * lifts survive a handler the types said would discharge them. A key that is
  * not a literal carries no identity at all and is rejected outright.
@@ -189,9 +190,30 @@ export function writer_cell<
   output extends MonoidDictionary<output>,
   log,
 >(empty: Data<output, log>): [NominalKey<key>] extends [never] ? WidenedCellKey
+  : AsWriterCell<key, output, log>;
+/** Infers a Writer cell's key, output Monoid, and log type from its arguments. */
+export function writer_cell<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+>(
+  key: key,
+  empty: Data<output, log>,
+): [NominalKey<key>] extends [never] ? WidenedCellKey
+  : AsWriterCell<key, output, log>;
+export function writer_cell<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+>(
+  key_or_empty: key | Data<output, log>,
+  empty?: Data<output, log>,
+): [NominalKey<key>] extends [never] ? WidenedCellKey
   : AsWriterCell<key, output, log> {
-  return make_writer_cell<key, output, log>(empty) as [NominalKey<key>] extends
-    [never] ? WidenedCellKey
+  const initial = empty ?? key_or_empty as Data<output, log>;
+  return make_writer_cell<key, output, log>(
+    initial,
+  ) as [NominalKey<key>] extends [never] ? WidenedCellKey
     : AsWriterCell<key, output, log>;
 }
 

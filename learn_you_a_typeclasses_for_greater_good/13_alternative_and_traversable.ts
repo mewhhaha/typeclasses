@@ -1,6 +1,6 @@
 import { ArrayT, to_array } from "../src/array.ts";
 import { assert_equals } from "../src/assert.ts";
-import { Left, Right } from "../src/either.ts";
+import { Either, Left, Right } from "../src/either.ts";
 import { Just, Nothing } from "../src/maybe.ts";
 import { Alternative, Traversable } from "../src/typeclasses.ts";
 
@@ -12,7 +12,7 @@ export function lesson_13_alternative_and_traversable() {
   );
   const parsed = Traversable.traverse(
     ArrayT(["1", "2", "x"]),
-    Right(undefined),
+    Either.with_left<string>(),
     parse_int,
   );
 

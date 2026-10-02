@@ -168,14 +168,12 @@ import {
   type WrappedData,
 } from "./typeclass.ts";
 
-Deno.test("Typeclass definitions inherit shared prototype helpers", () => {
+Deno.test("Typeclass definitions share a prototype and bind their helpers", () => {
   assert_equals(Object.getPrototypeOf(Show), TypeclassDefinition);
   assert_equals(Object.getPrototypeOf(Functor), TypeclassDefinition);
-  assert_true(!Object.hasOwn(Show, "instance"), "Show inherits installer");
-  assert_true(
-    !Object.hasOwn(Functor, "instance_for"),
-    "Functor inherits implementation accessor",
-  );
+  const { instance_for } = Show;
+  const value = Just(42);
+  assert_equals(instance_for(value), Show.instance_for(value));
 });
 
 Deno.test("Show and Eq typeclasses dispatch through typeclass helpers", () => {

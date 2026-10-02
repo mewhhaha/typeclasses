@@ -70,7 +70,7 @@ export type ApplicativeTypeclass =
   }>
   & {
     derive<dictionary extends Applicative<dictionary>>(
-      dictionary: dictionary,
+      dictionary: Applicative<dictionary>,
     ): (minimal: MinimalApplicative<dictionary>) => void;
   };
 
@@ -79,7 +79,7 @@ export const Applicative: ApplicativeTypeclass = typeclass(
   applicative_typeclass,
   {
     derive<dictionary extends Applicative<dictionary>>(
-      dictionary: dictionary,
+      dictionary: Applicative<dictionary>,
     ): (minimal: MinimalApplicative<dictionary>) => void {
       return (minimal) => {
         Functor.instance(dictionary)({

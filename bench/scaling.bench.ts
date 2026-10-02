@@ -4,6 +4,8 @@ import { Identity } from "../src/identity.ts";
 import { from_iterable, to_array } from "../src/iterable.ts";
 import { MapT } from "../src/map.ts";
 import { RecordT } from "../src/record.ts";
+import { traverse_ } from "../src/prelude.ts";
+import { State } from "../src/state.ts";
 import { Traversable } from "../src/typeclasses.ts";
 
 const Tick = Effect.operation<number>()(["benchmark.tick"]);
@@ -16,6 +18,8 @@ for (const size of [1_000, 2_000, 4_000, 8_000, 16_000]) {
   const map = MapT(new Map(items.map((item) => [String(item), item])));
   const record = RecordT(Object.fromEntries(map.value()));
   const chain = make_chain(size);
+  const counter = State.with_state<number>();
+  const count_one = () => counter((state) => [undefined, state + 1]);
 
   // These run even under test:benchmarks' non-matching filter.
   check_length(
@@ -39,6 +43,7 @@ for (const size of [1_000, 2_000, 4_000, 8_000, 16_000]) {
   check_length(execute(chain), size + 1);
   check_length(execute(chain), size + 1);
   check_length(run(pure_program(size)), size);
+  check_length(traverse_(counter, count_one, array).run(0)[1], size);
 
   Deno.bench({
     name: "ArrayT traverse/" + size,
@@ -68,6 +73,13 @@ for (const size of [1_000, 2_000, 4_000, 8_000, 16_000]) {
     group: "RecordT traverse scaling",
     fn() {
       _sink = Traversable.traverse(record, Identity, Identity);
+    },
+  });
+  Deno.bench({
+    name: "State discarded traversal/" + size,
+    group: "discarded traversal scaling",
+    fn() {
+      _sink = traverse_(counter, count_one, array).run(0);
     },
   });
   Deno.bench({

@@ -2,7 +2,6 @@ import {
   type As,
   type Data,
   data,
-  type Dictionary,
   type type_data,
   type type_item,
 } from "./typeclass.ts";
@@ -119,6 +118,12 @@ export type TaskRequirements =
   | Lift<AsParallelTask, unknown>
   | Ensuring;
 
+/** The item produced by a Task runner input, including unions of inputs. */
+export type RunTaskItem<value> = value extends
+  Effect<TaskRequirements, infer item> ? item
+  : value extends TaskValue<infer item> | ParallelTaskValue<infer item> ? item
+  : never;
+
 /** Creates a Task that succeeds with a non-thenable value. */
 export function succeed<item>(value: item & TaskItem<item>): TaskValue<item> {
   return succeed_task(value, "Task.succeed");
@@ -191,18 +196,28 @@ export function handle_operation_task<
   );
 }
 
-/** Runs an effect containing sequential or parallel Task lifts and cleanup scopes. */
+/** Runs a Task value or an effect containing only Task lifts and cleanup scopes. */
 export async function run_task<
-  requirements extends TaskRequirements,
-  item,
+  requirements extends TaskRequirements = TaskRequirements,
+  item = unknown,
+  value extends
+    | TaskValue<unknown>
+    | ParallelTaskValue<unknown>
+    | Effect<TaskRequirements, unknown> =
+      | Effect<requirements, item>
+      | TaskValue<item>
+      | ParallelTaskValue<item>,
 >(
-  effect: Effect<requirements, item>,
+  value: value,
   options: RunTaskOptions = {},
-): Promise<item> {
-  let current = effect as Effect<
-    TaskRequirements,
-    unknown
-  >;
+): Promise<RunTaskItem<value>> {
+  let current =
+    (is_task_value(value)
+      ? Effect.lift<AsTask | AsParallelTask, unknown>(value)
+      : value) as Effect<
+        TaskRequirements,
+        unknown
+      >;
 
   while (true) {
     switch (current[0]) {
@@ -210,7 +225,7 @@ export async function run_task<
         if (options.signal?.aborted) {
           throw task_abort_error("run_task", options.signal);
         }
-        return current[1] as item;
+        return current[1] as RunTaskItem<value>;
       case "impure": {
         const operation = current[1] as readonly [string, unknown];
 
@@ -268,16 +283,23 @@ export async function run_task<
   }
 }
 
-/** Runs a Task effect and returns its success, failure, or cancellation. */
+/** Observes a Task value or an effect containing only Task lifts and cleanup scopes. */
 export async function run_task_exit<
-  requirements extends TaskRequirements,
-  item,
+  requirements extends TaskRequirements = TaskRequirements,
+  item = unknown,
+  value extends
+    | TaskValue<unknown>
+    | ParallelTaskValue<unknown>
+    | Effect<TaskRequirements, unknown> =
+      | Effect<requirements, item>
+      | TaskValue<item>
+      | ParallelTaskValue<item>,
 >(
-  effect: Effect<requirements, item>,
+  value: value,
   options: RunTaskOptions = {},
-): Promise<TaskExit<item>> {
+): Promise<TaskExit<RunTaskItem<value>>> {
   try {
-    return { status: "succeeded", value: await run_task(effect, options) };
+    return { status: "succeeded", value: await run_task(value, options) };
   } catch (error) {
     if (is_task_cancellation(error)) {
       return {
@@ -291,7 +313,9 @@ export async function run_task_exit<
   }
 }
 
-function is_task_value(value: unknown): value is Dictionary {
+function is_task_value(
+  value: unknown,
+): value is TaskValue<unknown> | ParallelTaskValue<unknown> {
   return is_kind_of(value, Task) || is_kind_of(value, ParallelTask);
 }
 

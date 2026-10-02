@@ -69,8 +69,22 @@ export interface AsEither<left = AnyLeft>
 }
 
 /** A wrapped Either value with instances attached. */
-export type EitherValue<left, right> = [left] extends [never]
-  ? WrappedData<AsEither<AnyLeft>, Either<never, right>, right>
+export type EitherValue<left, right> = [left] extends [never] ? (
+    & {
+      map<next>(
+        this: EitherValue<never, right>,
+        fn: (value: right) => next,
+      ): EitherValue<never, next>;
+      bind<result extends EitherValue<AnyLeft, unknown>>(
+        this: EitherValue<never, right>,
+        fn: (value: right) => result,
+      ): EitherValue<
+        EitherLeft<ReturnType<result["value"]>>,
+        EitherRight<ReturnType<result["value"]>>
+      >;
+    }
+    & WrappedData<AsEither<AnyLeft>, Either<never, right>, right>
+  )
   : Data<AsEither<left>, right>;
 
 /** An Either dictionary specialized to one left type. */
@@ -93,11 +107,13 @@ export type EitherConstructor =
     <left, right>(value: Either<left, right>): EitherValue<left, right>;
     /** View the shared dictionary at a particular left type. */
     with_left<left>(): EitherDictionary<left>;
+    /** Construct or recognize a left branch. */
+    readonly Left: LeftConstructor;
+    /** Construct or recognize a right branch. */
+    readonly Right: RightConstructor;
   }
   & {
-    readonly [key in keyof UnionDictionary<AsEither<unknown>>]: UnionDictionary<
-      AsEither<unknown>
-    >[key];
+    readonly [key in keyof AsEither<unknown>]: AsEither<unknown>[key];
   };
 
 /** A type guard that recognizes raw left branches. */
@@ -119,7 +135,9 @@ export type RightGuard = {
 /** Construct a wrapped left branch. */
 export type LeftConstructor = {
   /** Wrap an error value in the left branch. */
-  <left = string, right = never>(value: left): EitherValue<left, right>;
+  <left = string, right = never>(
+    value: left,
+  ): EitherValue<left, NoInfer<right>>;
   /** Test whether a raw value is a left branch. */
   readonly is: LeftGuard;
 };
@@ -144,13 +162,9 @@ Object.defineProperty(Either, "with_left", {
 });
 
 /** Construct a wrapped right value. */
-export const Right: RightConstructor = Object.assign(construct_right, {
-  is: is_right,
-});
+export const Right: RightConstructor = Either.Right;
 /** Construct a wrapped left value. */
-export const Left: LeftConstructor = Object.assign(construct_left, {
-  is: is_left,
-});
+export const Left: LeftConstructor = Either.Left;
 
 function either_with_left<left>(): EitherDictionary<left> {
   return Either as unknown as EitherDictionary<left>;
@@ -186,28 +200,6 @@ export function is_right<left, right>(
   }
 
   return value.length === 2 && value[0] === "Right";
-}
-
-function construct_left<left = string, right = never>(
-  value: left,
-): EitherValue<left, right> {
-  return Either<left, right>([
-    "Left",
-    value,
-  ]);
-}
-
-function construct_right<right>(value: right): EitherValue<never, right>;
-function construct_right<left, right>(
-  value: right,
-): EitherValue<left, right>;
-function construct_right<left, right>(
-  value: right,
-): EitherValue<left, right> {
-  return Either<left, right>([
-    "Right",
-    value,
-  ]) as EitherValue<left, right>;
 }
 
 /** Accept a finite number or return a descriptive left value. */
@@ -448,8 +440,11 @@ MonadRec.instance(Either)({
 });
 
 MonadError.instance(Either)({
-  throw_error(error) {
-    return Left(error);
+  throw_error<item>(
+    this: AsEither<unknown>,
+    error: unknown,
+  ): Data<AsEither<unknown>, item> {
+    return Left<unknown, item>(error);
   },
 
   catch_error(handler) {
@@ -478,14 +473,18 @@ Foldable.instance(Either)({
 });
 
 Traversable.instance(Either)({
-  traverse(applicative, fn) {
+  traverse<applicative extends Applicative<applicative>, from, to>(
+    this: Data<AsEither<unknown>, from>,
+    applicative: applicative,
+    fn: (value: from) => Data<applicative, to>,
+  ): Data<applicative, Data<AsEither<unknown>, to>> {
     const [tag, payload] = this.value();
 
     switch (tag) {
       case "Left":
-        return Applicative.pure(applicative, Left(payload));
+        return Applicative.pure(applicative, Left<unknown, to>(payload));
       case "Right":
-        return Functor.map(fn(payload), (value) => Right(value));
+        return Functor.map(fn(payload), (value) => Right<unknown, to>(value));
     }
   },
 });

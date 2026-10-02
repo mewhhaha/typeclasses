@@ -49,7 +49,7 @@ export type MonadTypeclass =
   }>
   & {
     derive<dictionary extends Monad<dictionary>>(
-      dictionary: dictionary,
+      dictionary: Monad<dictionary>,
     ): (minimal: MinimalMonad<dictionary>) => void;
   };
 
@@ -83,7 +83,7 @@ type DoErrorMethods<dictionary extends Dictionary> = {
 /** Operations for sequencing values through Monad dictionaries. */
 export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
   derive<dictionary extends Monad<dictionary>>(
-    dictionary: dictionary,
+    dictionary: Monad<dictionary>,
   ): (minimal: MinimalMonad<dictionary>) => void {
     return (minimal) => {
       Monad.instance(dictionary)({
