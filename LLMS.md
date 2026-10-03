@@ -1610,6 +1610,20 @@ install the implementation on the public callable dictionary. See
 `examples/custom_typeclass.ts` and the custom instance example in `README.md`
 before writing new typeclass machinery.
 
+## Array processing
+
+Array processing: `iterable.from_array(items)` creates a live array view without
+copying; `iterable.from_iterable(items)` creates a replayable snapshot. Use
+fluent `.map`, `.filter`, `.take`, and `.fold` for lazy bounded processing.
+`take` accepts nonnegative safe integers and closes upstream on early exit.
+`ArrayT.map` stays immutable. `array.map_in_place(items, fn)` preserves the
+element type; `array.map_into(source, destination, fn)` reuses and resizes an
+output array. Both return `void`, preserve holes, and expose partial writes if
+the callback throws. The source transformer fuses supported direct `IterableT`
+map chains; it does not change ordinary array maps into mutations. Proxy
+libraries such as Immer are optional application-level choices for nested state
+updates.
+
 ## Source map
 
 Read these files when a pattern is unclear:

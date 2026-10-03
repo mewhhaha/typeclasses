@@ -6,6 +6,7 @@ import {
 } from "./transform_do_program.ts";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
+import { might_contain_iterable_maps } from "./transform_iterable_maps.ts";
 
 /** Configuration shared by the esbuild, Rollup, Vite, and Rolldown adapters. */
 export type TransformPluginOptions = TransformConfig & {
@@ -152,6 +153,7 @@ function is_typescript_file(id: string): boolean {
 }
 
 function might_contain_target(code: string): boolean {
+  if (might_contain_iterable_maps(code)) return true;
   // Imported aliases need not retain either public name at the call site, so
   // include the import declaration itself in this cheap pre-parse filter.
   if (code.includes("\\u")) return true;

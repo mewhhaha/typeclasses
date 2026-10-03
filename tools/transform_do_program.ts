@@ -1,5 +1,9 @@
 import ts from "typescript";
 import { basename, dirname, resolve } from "node:path";
+import {
+  create_iterable_map_fusion,
+  might_contain_iterable_maps,
+} from "./transform_iterable_maps.ts";
 
 const is_generated_identifier = (ts as unknown as {
   isGeneratedIdentifier?: (node: ts.Node) => boolean;
@@ -134,7 +138,7 @@ type FusedTerminalProgram = {
 
 class UnsupportedGenerator extends Error {}
 
-/** Lower supported Do and Program generators in one TypeScript source file. */
+/** Lower supported generators, effect runners, and lazy iterable map chains. */
 export function transform_do_program_source(
   source: string,
   file_name = "input.ts",
@@ -155,10 +159,14 @@ export function transform_do_program_source(
   );
   const diagnostics: TransformDiagnostic[] = [];
   const imports = collect_imports(source_file, config);
+  const iterable_maps = create_iterable_map_fusion(
+    source_file,
+    config.library_specifiers,
+  );
 
   if (
     !has_imported_transform_target(imports) &&
-    !might_diagnose_unanchored
+    !might_diagnose_unanchored && !iterable_maps.enabled
   ) {
     return unchanged_transform_result(source);
   }
@@ -220,6 +228,13 @@ export function transform_do_program_source(
         }
 
         if (ts.isCallExpression(node)) {
+          if (iterable_maps.enabled) {
+            const fused = iterable_maps.fuse(node, factory);
+            if (fused !== undefined) {
+              transformed += 1;
+              return ts.visitEachChild(fused, visit, context);
+            }
+          }
           if (might_transform_generator && might_transform_terminal) {
             const fused = transform_terminal_program_run(
               node,
@@ -346,7 +361,7 @@ export function transform_do_program_source(
 
       const visited = ts.visitEachChild(source_file, visit, context);
 
-      return needs_program_helpers || terminal_imports.length > 0
+      const updated = needs_program_helpers || terminal_imports.length > 0
         ? update_imports(
           visited,
           factory,
@@ -356,6 +371,7 @@ export function transform_do_program_source(
           terminal_imports,
         )
         : visited;
+      return iterable_maps.add_helper(updated, factory);
     };
   };
 
@@ -480,6 +496,7 @@ function print_transformed_source(
 }
 
 function might_contain_transform_target(source: string): boolean {
+  if (might_contain_iterable_maps(source)) return true;
   if (source.includes("\\u")) {
     return true;
   }

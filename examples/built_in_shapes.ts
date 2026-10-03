@@ -1,4 +1,4 @@
-import { ArrayT } from "../src/array.ts";
+import { ArrayT, map_in_place, map_into } from "../src/array.ts";
 import { from_bytes as array_buffer_from_bytes } from "../src/array_buffer.ts";
 import {
   from_factory as async_iterable_from_factory,
@@ -12,6 +12,7 @@ import {
   to_entries as form_data_to_entries,
 } from "../src/form_data.ts";
 import {
+  from_array as iterable_from_array,
   from_factory as iterable_from_factory,
   to_array as iterable_to_array,
 } from "../src/iterable.ts";
@@ -65,6 +66,16 @@ export async function run_builtin_shape_examples() {
       yield value * 10;
     });
   });
+  const source_items = [1, 2, 3, 4, 5];
+  const bounded_iterable = iterable_from_array(source_items)
+    .filter((value) => value % 2 !== 0)
+    .map((value) => value + 1)
+    .map((value) => value * 10)
+    .take(2);
+  const updated_items = [1, 2, 3];
+  map_in_place(updated_items, (value) => value * 2);
+  const output_buffer: string[] = [];
+  map_into(updated_items, output_buffer, (value) => value.toString());
   const replayable_async_iterable = async_iterable_from_factory(
     async function* () {
       yield "a";
@@ -117,6 +128,11 @@ export async function run_builtin_shape_examples() {
     "iterable monad",
     Deno.inspect(iterable_to_array(replayable_iterable)),
   );
+  console.log(
+    "bounded iterable fold",
+    bounded_iterable.fold(0, (sum, item) => sum + item),
+  );
+  console.log("array buffer updates", Deno.inspect(output_buffer));
   console.log(
     "async iterable functor",
     Deno.inspect(await async_iterable_to_array(replayable_async_iterable)),

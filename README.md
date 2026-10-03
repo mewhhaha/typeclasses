@@ -310,6 +310,10 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+- In `0.13.0`, `iterable.from_array` supplies a live array view, with lazy
+  `filter` and `take` helpers. `array.map_in_place` and `array.map_into` make
+  buffer updates explicit. The source plugin fuses supported direct lazy map
+  chains; `ArrayT.map` keeps its immutable behavior.
 - In `0.12.0`, `Either.Left<error, item>` and `Validation.Invalid<error, item>`
   use the same generic argument order as their standalone aliases. A single
   explicit argument selects the error type. Use both arguments to select a
@@ -1016,6 +1020,27 @@ control flow retain the general lowering.
 The intrinsic tier assumes the built-in dictionaries' `kind` and iterator
 behavior have not been monkey-patched. Code that intentionally changes those
 runtime identities should not use the source transform for those calls.
+
+The transformer also combines adjacent lazy `IterableT` maps into one mapper:
+
+```ts
+import { from_array } from "@mewhhaha/typeclasses/iterable";
+
+const pipeline = from_array([1, 2, 3])
+  .map((value) => value + 1)
+  .map((value) => value * 10);
+```
+
+This removes intermediate iterable wrappers and generator layers while retaining
+lazy per-item callback order, replay, exceptions, and upstream iterator cleanup.
+Callbacks remain in their original lexical scope and are created once when the
+pipeline is built. The optimization recognizes direct calls to the built-in
+iterable constructors and helpers, including import aliases and namespaces, and
+known fluent operations such as `filter` and `take`. It assumes those built-in
+operations have not been replaced. Only unary arrow callbacks with expression
+bodies and simple parameters are fused. Named intermediate values, opaque
+callbacks, explicit map type arguments, and optional chains retain their
+existing behavior. Skipped map optimizations do not produce diagnostics.
 
 Supported generator control flow includes `if`, non-fallthrough `switch`,
 classic `for`, `while`, `do/while`, and `for...of` over literal primitive
@@ -2274,6 +2299,59 @@ const pipeline = values
 
 iterable.to_array(pipeline); // ["value:20", "value:30", "value:40"]
 ```
+
+For ordinary arrays, `iterable.from_array(items)` supplies a live view without
+copying. Later source mutations are visible on subsequent reads. Use
+`from_iterable(items)` when you want a snapshot. Lazy `filter` supports type
+guards; `take` bounds consumption without reading ahead and closes upstream on
+early exit. Both are available as fluent methods and standalone helpers:
+
+```ts
+import { iterable } from "@mewhhaha/typeclasses";
+
+const items = [1, 2, 3, 4, 5];
+const pipeline = iterable.from_array(items)
+  .filter((value) => value % 2 !== 0)
+  .map((value) => value * 10)
+  .take(2);
+
+pipeline.fold(0, (sum, value) => sum + value); // 40, without an output array
+iterable.to_array(pipeline); // [10, 30]
+```
+
+`take` requires a nonnegative safe integer; `take(0)` never opens the source.
+Collection `traverse` still materializes its input and result. Use lazy mapping,
+filtering, and folding for streaming work. Generator layers have execution
+overhead, so benchmark throughput separately from allocation. The source plugin
+can fuse supported lazy map chains as described under
+[Build-Time Transform](#build-time-transform).
+
+`ArrayT.map` keeps its immutable behavior. For explicit updates of ordinary
+JavaScript arrays, the array namespace provides two small utilities:
+
+```ts
+import { array } from "@mewhhaha/typeclasses";
+
+const items = [1, 2, 3];
+array.map_in_place(items, (value) => value * 2); // items is now [2, 4, 6]
+
+const output: string[] = [];
+array.map_into(items, output, (value) => value.toString()); // ["2", "4", "6"]
+// Reuse output on subsequent calls instead of allocating a new output array.
+```
+
+Both functions return `void`, visit indices within the initial source length,
+and skip holes. `map_in_place` keeps the element type and array identity, so
+aliases see the writes. `map_into` resizes the destination and deletes stale
+entries at source holes; passing the same array as source and destination
+performs in-place mapping. A thrown callback leaves completed writes in place.
+The source plugin does not turn ordinary array maps into mutations.
+
+For nested application state, an external library such as
+[Immer](https://immerjs.github.io/immer/produce/) can offer convenient draft
+updates while preserving previous state and sharing unchanged objects. Changed
+array containers still require copying. This is an application-level suggestion;
+the core library does not depend on a proxy update library.
 
 `ReadableStream` has similar constraints plus cancellation and backpressure. The
 pragmatic shape is usually:

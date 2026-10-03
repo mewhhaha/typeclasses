@@ -64,6 +64,44 @@ export function to_array<item>(array: ArrayValue<item>): item[] {
   return [...array.value()];
 }
 
+/**
+ * Replace existing array elements in place, preserving their type and skipping
+ * holes. Aliases observe updates. A thrown callback leaves partial updates.
+ * The initial length determines the visited index range.
+ */
+export function map_in_place<item>(
+  items: item[],
+  fn: (item: NoInfer<item>, index: number) => NoInfer<item>,
+): void {
+  const length = items.length;
+
+  for (let index = 0; index < length; index += 1) {
+    if (index in items) items[index] = fn(items[index], index);
+  }
+}
+
+/**
+ * Map into an existing output array, resizing it to the source length and
+ * removing stale entries at source holes. A thrown callback leaves partial
+ * updates. Passing the source as destination performs in-place mapping.
+ */
+export function map_into<from, to>(
+  source: readonly from[],
+  destination: to[],
+  fn: (item: NoInfer<from>, index: number) => NoInfer<to>,
+): void {
+  const length = source.length;
+  destination.length = length;
+
+  for (let index = 0; index < length; index += 1) {
+    if (index in source) {
+      destination[index] = fn(source[index], index);
+    } else {
+      delete destination[index];
+    }
+  }
+}
+
 Show.instance(ArrayT)({
   show() {
     const array = this.value();

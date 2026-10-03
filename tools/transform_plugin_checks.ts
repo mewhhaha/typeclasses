@@ -7,6 +7,56 @@ import {
   typeclasses_rollup_plugin,
 } from "./transform_plugin.ts";
 
+Deno.test("transform adapters fuse known lazy iterable maps without generator targets", async () => {
+  const source = `
+import { from_array } from "../src/iterable.ts";
+const pipeline = from_array([1, 2]).map(n => n + 1).map(n => n * 2);
+`;
+  const rollup = typeclasses_rollup_plugin().transform.call(
+    { warn() {} },
+    source,
+    "pipeline.ts",
+  );
+  const rolldown = typeclasses_rolldown_plugin().transform.handler.call(
+    { warn() {} },
+    source,
+    "pipeline.ts",
+  );
+  for (const result of [rollup, rolldown]) {
+    assert_true(
+      result !== null,
+      "iterable-only sources must reach the transform",
+    );
+    assert_equals(result?.code.match(/\.map\(/g)?.length, 1);
+    assert_equals(result?.map?.sourcesContent?.[0], source);
+  }
+  let load:
+    | ((args: { path: string }) => Promise<
+      {
+        contents: string;
+        loader: "ts" | "tsx";
+      } | undefined
+    >)
+    | undefined;
+  typeclasses_esbuild_plugin().setup({
+    onLoad(_options, callback) {
+      load = callback;
+    },
+  });
+  const path = await Deno.makeTempFile({ suffix: ".ts" });
+  try {
+    await Deno.writeTextFile(path, source);
+    const result = await load?.({ path });
+    assert_equals(result?.contents.match(/\.map\(/g)?.length, 1);
+    assert_true(
+      result?.contents.includes("sourceMappingURL") === true,
+      "esbuild must retain the inline source map",
+    );
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("transform plugin lowers TypeScript through bundler-shaped adapters", () => {
   const source = `
 import { Do } from "../src/typeclasses.ts";

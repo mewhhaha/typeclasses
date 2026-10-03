@@ -42,6 +42,18 @@ export interface AsIterable
   readonly [type_item]: unknown;
   /** Iterable factory at the selected value type. */
   readonly [type_data]: IterableT<this[typeof type_item]>;
+  /** Lazily keep matching items, preserving type-guard narrowing. */
+  filter<item, narrowed extends item>(
+    this: IterableValue<item>,
+    predicate: (item: item) => item is narrowed,
+  ): IterableValue<narrowed>;
+  /** Lazily keep matching items. */
+  filter<item>(
+    this: IterableValue<item>,
+    predicate: (item: item) => boolean,
+  ): IterableValue<item>;
+  /** Yield at most count items, closing the upstream iterator on early exit. */
+  take<item>(this: IterableValue<item>, count: number): IterableValue<item>;
 }
 
 /** @ignore */
@@ -57,6 +69,13 @@ export function from_factory<item>(
   return IterableT(factory);
 }
 
+/** Wrap a live array view without copying; later source mutations are visible. */
+export function from_array<item>(
+  items: readonly item[],
+): IterableValue<item> {
+  return IterableT(() => items);
+}
+
 /** Snapshot an iterable so the wrapped value can be traversed repeatedly. */
 export function from_iterable<item>(
   iterable: Iterable<item>,
@@ -69,6 +88,77 @@ export function from_iterable<item>(
 export function to_array<item>(iterable: IterableValue<item>): item[] {
   return [...iterable.value()()];
 }
+
+/** Lazily keep matching items, preserving type-guard narrowing. */
+export function filter<item, narrowed extends item>(
+  iterable: IterableValue<item>,
+  predicate: (item: NoInfer<item>) => item is narrowed,
+): IterableValue<narrowed>;
+/** Lazily keep matching items. */
+export function filter<item>(
+  iterable: IterableValue<item>,
+  predicate: (item: NoInfer<item>) => boolean,
+): IterableValue<item>;
+export function filter<item>(
+  iterable: IterableValue<item>,
+  predicate: (item: item) => boolean,
+): IterableValue<item> {
+  const source = iterable.value();
+
+  return IterableT(function* () {
+    for (const item of source()) {
+      if (predicate(item)) yield item;
+    }
+  });
+}
+
+/**
+ * Yield at most count items without reading ahead, closing upstream on early
+ * exit. Count must be a nonnegative safe integer; zero never opens the source.
+ */
+export function take<item>(
+  iterable: IterableValue<item>,
+  count: number,
+): IterableValue<item> {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new RangeError("take count must be a nonnegative safe integer");
+  }
+  const source = iterable.value();
+
+  return IterableT(function* () {
+    if (count === 0) return;
+    let remaining = count;
+
+    for (const item of source()) {
+      yield item;
+      remaining -= 1;
+      if (remaining === 0) return;
+    }
+  });
+}
+
+function filter_method<item, narrowed extends item>(
+  this: IterableValue<item>,
+  predicate: (item: item) => item is narrowed,
+): IterableValue<narrowed>;
+function filter_method<item>(
+  this: IterableValue<item>,
+  predicate: (item: item) => boolean,
+): IterableValue<item>;
+function filter_method<item>(
+  this: IterableValue<item>,
+  predicate: (item: item) => boolean,
+): IterableValue<item> {
+  return filter(this, predicate);
+}
+
+IterableT.filter = filter_method;
+IterableT.take = function <item>(
+  this: IterableValue<item>,
+  count: number,
+): IterableValue<item> {
+  return take(this, count);
+};
 
 Show.instance(IterableT)({
   show() {
