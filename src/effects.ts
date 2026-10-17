@@ -25,12 +25,20 @@ export type TaggedOperation<tag extends string = string> =
   | readonly [tag, unknown];
 
 /** Gives a tagged tuple an operation output type without changing its value. */
-export function operation<item>(): <
-  const tagged extends TaggedOperation,
->(
-  tagged: tagged,
-) => tagged & Operation<item> {
-  return (tagged) => tagged;
+export function operation<item>(): {
+  <const tagged extends TaggedOperation>(
+    tagged: tagged,
+  ): tagged & Operation<item>;
+  <const tag extends string>(
+    tag: tag,
+  ): <payload>(payload: payload) => readonly [tag, payload] & Operation<item>;
+} {
+  return ((value: string | TaggedOperation) => {
+    if (typeof value === "string") {
+      return (payload: unknown) => [value, payload];
+    }
+    return value;
+  }) as ReturnType<typeof operation<item>>;
 }
 
 /** An operation that lifts a dictionary value into an effect program. */
@@ -135,7 +143,12 @@ export type EffectRequirements<value> = value extends Effect<
 /** @ignore */
 export type ScopedYield<requirements, yielded> =
   Exclude<EffectRequirements<yielded>, requirements> extends never ? yielded
-    : never;
+    : {
+      readonly "Program.scope is missing these requirements": Exclude<
+        EffectRequirements<yielded>,
+        requirements
+      >;
+    };
 
 /** Constructs generator programs restricted to the declared requirements. */
 export type ProgramScope<requirements> = {
@@ -184,6 +197,7 @@ export type LiftHandler<
 };
 
 type ProgramPath = {
+  readonly length: number;
   readonly previous: ProgramPath | undefined;
   readonly value: unknown;
 };
@@ -397,6 +411,19 @@ export function send<operation extends TaggedOperation & Operation<unknown>>(
 }
 
 /** Suspends an operation with an explicit continuation. */
+export function suspend<
+  operation extends Operation<unknown>,
+  requirements,
+  item,
+>(
+  operation: operation,
+  resume: (value: OperationOutput<operation>) => Effect<requirements, item>,
+): Effect<operation | requirements, item>;
+/** Suspends an untyped requirement; prefer Operation for a typed continuation. */
+export function suspend<requirements, item>(
+  operation: requirements,
+  resume: (value: unknown) => Effect<requirements, item>,
+): Effect<requirements, item>;
 export function suspend<requirements, item>(
   operation: requirements,
   resume: (value: unknown) => Effect<requirements, item>,
@@ -1072,6 +1099,19 @@ function resume_effect(
       );
     }
 
+    if (pending.tag === "chunk") {
+      const chunk = pending;
+      let index = chunk.index;
+      while (index < chunk.resumes.length && current[0] === "pure") {
+        current = chunk.resumes[index](current[1]);
+        index += 1;
+      }
+      pending = undefined;
+      if (index < chunk.resumes.length) {
+        pending = { tag: "chunk", resumes: chunk.resumes, index };
+      }
+      continue;
+    }
     const [next, rest] = shift_effect_queue(pending);
     pending = rest;
     current = next(current[1]);
@@ -1210,6 +1250,7 @@ function append_program_path(
   return {
     previous,
     value,
+    length: (previous?.length ?? 0) + 1,
   };
 }
 
@@ -1218,7 +1259,7 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
     return [];
   }
 
-  const values = new Array<unknown>(program_path_length(path));
+  const values = new Array<unknown>(path.length);
   let index = values.length - 1;
 
   for (
@@ -1231,20 +1272,6 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
   }
 
   return values;
-}
-
-function program_path_length(path: ProgramPath): number {
-  let length = 0;
-
-  for (
-    let node: ProgramPath | undefined = path;
-    node !== undefined;
-    node = node.previous
-  ) {
-    length += 1;
-  }
-
-  return length;
 }
 
 function* effect_iterator<requirements, item>(

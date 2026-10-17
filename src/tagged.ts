@@ -34,6 +34,11 @@ export function match<value extends MatchValue, output>(
   value: value,
   cases: MatchCases<value, output>,
 ): output {
-  const tagged = (is_data(value) ? value.value() : value) as TaggedValue;
-  return match_tagged(tagged, cases as TaggedMatchCases<TaggedValue, output>);
+  if (is_data(value)) {
+    return value.match(cases as TaggedMatchCases<TaggedValue, output>);
+  }
+  return match_tagged(
+    value as TaggedValue,
+    cases as TaggedMatchCases<TaggedValue, output>,
+  );
 }

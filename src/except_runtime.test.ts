@@ -357,9 +357,12 @@ Deno.test("nested protected Except scopes finalize from inner to outer on every 
 });
 
 Deno.test("protected Except execution preserves prepared Reader, State, and Writer handlers", async () => {
-  const config = reader<"except-runtime-config", number>();
-  const count = state<"except-runtime-count", number>();
+  const config = reader<"except-runtime-config", number>(
+    "except-runtime-config",
+  );
+  const count = state<"except-runtime-count", number>("except-runtime-count");
   const audit = writer_cell<"except-runtime-audit", AsArray, string>(
+    "except-runtime-audit",
     ArrayT<string>([]),
   );
   let calls = 0;

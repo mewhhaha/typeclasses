@@ -3,6 +3,8 @@ import {
   type As,
   type Data,
   data,
+  is_data,
+  kind,
   type type_data,
   type type_item,
   union,
@@ -34,7 +36,7 @@ import { loop_done, loop_rec, type LoopStep } from "./loop.ts";
 export declare const either_identity: unique symbol;
 
 /** A raw result containing either a left error or a right success value. */
-export type Either<left, right> =
+export type RawEither<left, right> =
   | Left<left>
   | Right<right>;
 
@@ -65,7 +67,7 @@ export interface AsEither<left = AnyLeft>
   /** The right value supplied when applying this data type. */
   readonly [type_item]: unknown;
   /** The raw Either shape produced for the selected right value. */
-  readonly [type_data]: Either<left, this[typeof type_item]>;
+  readonly [type_data]: RawEither<left, this[typeof type_item]>;
 }
 
 /** A wrapped Either value with instances attached. */
@@ -83,7 +85,7 @@ export type EitherValue<left, right> = [left] extends [never] ? (
         EitherRight<ReturnType<result["value"]>>
       >;
     }
-    & WrappedData<AsEither<AnyLeft>, Either<never, right>, right>
+    & WrappedData<AsEither<AnyLeft>, RawEither<never, right>, right>
   )
   : Data<AsEither<left>, right>;
 
@@ -100,11 +102,11 @@ export type EitherRight<value> = value extends Right<infer right> ? right
 export type EitherConstructor =
   & {
     /** Infer both branches while wrapping a raw Either value. */
-    <value extends Either<AnyLeft, AnyLeft>>(
+    <value extends RawEither<AnyLeft, AnyLeft>>(
       value: value,
     ): EitherValue<EitherLeft<value>, EitherRight<value>>;
     /** Wrap a raw Either value with explicit branch types. */
-    <left, right>(value: Either<left, right>): EitherValue<left, right>;
+    <left, right>(value: RawEither<left, right>): EitherValue<left, right>;
     /** View the shared dictionary at a particular left type. */
     with_left<left>(): EitherDictionary<left>;
     /** Construct or recognize a left branch. */
@@ -118,18 +120,34 @@ export type EitherConstructor =
 
 /** A type guard that recognizes raw left branches. */
 export type LeftGuard = {
+  <value extends EitherValue<AnyLeft, unknown>>(
+    value: value,
+  ): value is { value(): Left<EitherLeft<ReturnType<value["value"]>>> } & value;
   /** Narrow a known Either to its left branch. */
-  <left, right>(value: Either<left, right>): value is Left<left>;
+  <left, right>(value: RawEither<left, right>): value is Left<left>;
   /** Recognize a left branch at an untrusted boundary. */
-  (value: unknown): value is Left<unknown>;
+  (
+    value: unknown,
+  ): value is
+    | Left<unknown>
+    | WrappedData<AsEither<unknown>, Left<unknown>, unknown>;
 };
 
 /** A type guard that recognizes raw right branches. */
 export type RightGuard = {
+  <value extends EitherValue<AnyLeft, unknown>>(
+    value: value,
+  ): value is
+    & { value(): Right<EitherRight<ReturnType<value["value"]>>> }
+    & value;
   /** Narrow a known Either to its right branch. */
-  <left, right>(value: Either<left, right>): value is Right<right>;
+  <left, right>(value: RawEither<left, right>): value is Right<right>;
   /** Recognize a right branch at an untrusted boundary. */
-  (value: unknown): value is Right<unknown>;
+  (
+    value: unknown,
+  ): value is
+    | Right<unknown>
+    | WrappedData<AsEither<unknown>, Right<unknown>, unknown>;
 };
 
 /** Construct a wrapped left branch. */
@@ -155,7 +173,7 @@ export type RightConstructor = {
 /** The shared Either dictionary with left and right constructors. */
 export const Either = data<AsEither<unknown>>(
   union(["Left", $slot], ["Right", $slot]),
-) as EitherConstructor;
+) as unknown as EitherConstructor;
 
 Object.defineProperty(Either, "with_left", {
   value: either_with_left,
@@ -171,32 +189,58 @@ function either_with_left<left>(): EitherDictionary<left> {
 }
 
 /** Narrow a raw Either value to its left branch. */
+export function is_left<value extends EitherValue<AnyLeft, unknown>>(
+  value: value,
+): value is { value(): Left<EitherLeft<ReturnType<value["value"]>>> } & value;
+/** Test a raw Either for its Left variant. */
 export function is_left<left, right>(
-  value: Either<left, right>,
+  value: RawEither<left, right>,
 ): value is Left<left>;
 /** Test whether an unknown value is a raw left branch. */
-export function is_left(value: unknown): value is Left<unknown>;
+export function is_left(
+  value: unknown,
+): value is
+  | Left<unknown>
+  | WrappedData<AsEither<unknown>, Left<unknown>, unknown>;
 export function is_left<left, right>(
-  value: Either<left, right> | unknown,
-): value is Left<left> {
+  value: RawEither<left, right> | unknown,
+): value is
+  | Left<left>
+  | WrappedData<AsEither<unknown>, Left<unknown>, unknown> {
   if (!Array.isArray(value)) {
-    return false;
+    if (!is_data(value)) return false;
+    if ((value as unknown as AsEither)[kind] !== Either[kind]) return false;
+    value = value.value();
+    if (!Array.isArray(value)) return false;
   }
 
   return value.length === 2 && value[0] === "Left";
 }
 
 /** Narrow a raw Either value to its right branch. */
+export function is_right<value extends EitherValue<AnyLeft, unknown>>(
+  value: value,
+): value is { value(): Right<EitherRight<ReturnType<value["value"]>>> } & value;
+/** Test a raw Either for its Right variant. */
 export function is_right<left, right>(
-  value: Either<left, right>,
+  value: RawEither<left, right>,
 ): value is Right<right>;
 /** Test whether an unknown value is a raw right branch. */
-export function is_right(value: unknown): value is Right<unknown>;
+export function is_right(
+  value: unknown,
+): value is
+  | Right<unknown>
+  | WrappedData<AsEither<unknown>, Right<unknown>, unknown>;
 export function is_right<left, right>(
-  value: Either<left, right> | unknown,
-): value is Right<right> {
+  value: RawEither<left, right> | unknown,
+): value is
+  | Right<right>
+  | WrappedData<AsEither<unknown>, Right<unknown>, unknown> {
   if (!Array.isArray(value)) {
-    return false;
+    if (!is_data(value)) return false;
+    if ((value as unknown as AsEither)[kind] !== Either[kind]) return false;
+    value = value.value();
+    if (!Array.isArray(value)) return false;
   }
 
   return value.length === 2 && value[0] === "Right";
@@ -492,8 +536,8 @@ Traversable.instance(Either)({
 function lift_right<result>(
   fn: (...values: unknown[]) => result,
   first: unknown,
-  rest: readonly WrappedData<AsEither, Either<unknown, unknown>, unknown>[],
-): WrappedData<AsEither, Either<unknown, result>, result> {
+  rest: readonly WrappedData<AsEither, RawEither<unknown, unknown>, unknown>[],
+): WrappedData<AsEither, RawEither<unknown, result>, result> {
   switch (rest.length) {
     case 0:
       return Right(fn(first));
@@ -524,4 +568,40 @@ function lift_right<result>(
   }
 
   return Right(fn(...values));
+}
+
+/** The public fluent Either value. */
+export type Either<left, right> = EitherValue<left, right>;
+
+/** Chain results while explicitly allowing the error type to grow. */
+export function bind_widen<
+  left,
+  item,
+  result extends EitherValue<AnyLeft, unknown>,
+>(
+  value: EitherValue<left, item>,
+  fn: (item: item) => result,
+): EitherValue<
+  left | EitherLeft<ReturnType<result["value"]>>,
+  EitherRight<ReturnType<result["value"]>>
+> {
+  const raw = value.value();
+  type Output = EitherValue<
+    left | EitherLeft<ReturnType<result["value"]>>,
+    EitherRight<ReturnType<result["value"]>>
+  >;
+  switch (raw[0]) {
+    case "Left":
+      return Left(raw[1]) as Output;
+    case "Right":
+      return fn(raw[1] as item) as Output;
+  }
+}
+
+/** Recover a result with a lazy fallback while retaining the successful type. */
+export function recover_or_else<error, item, fallback>(
+  value: Either<error, item>,
+  fallback: (error: error) => fallback,
+): item | fallback {
+  return either(fallback, (item): item | fallback => item, value);
 }

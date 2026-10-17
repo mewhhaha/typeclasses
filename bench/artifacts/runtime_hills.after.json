@@ -1,0 +1,771 @@
+{
+  "captured_at": "2026-10-17T21:27:29.474Z",
+  "commit": "908d00c716f385594b1a303f37ca84f6f5548e1d",
+  "command": [
+    "deno",
+    "bench",
+    "--json",
+    "bench/runtime_hills.bench.ts"
+  ],
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "platform": {
+    "target": "x86_64-unknown-linux-gnu",
+    "arch": "x86_64",
+    "os": "linux",
+    "vendor": "unknown",
+    "env": "gnu",
+    "standalone": false
+  },
+  "cpu": "unavailable",
+  "source_sha256": "89a909b9e7a4c32e8d2d95a79875265643a186df4986a07a51d64ce8e1455bd6",
+  "sources": {
+    "bench/algorithm_contexts.bench.ts": "84215fcea9a01b7e4bae71afc211244dffb077c4ea7ee6f43e04b8790a7a1e0c",
+    "bench/api_hills.bench.ts": "2428ebb5d64b6e56f99290b5e5cf25a4c51c88f09af6fcda0cd06ddde8ed2690",
+    "bench/case_studies_transformer.bench.ts": "0ce59975134c7c021fd0eb19eddebd202daf3a434ee8bffef2c1f314bd00a812",
+    "bench/collection_choices.bench.ts": "697a7ce0d42f0bfd044369b6a65b8e9f3468335930140ca1b2cfc61a3a809a9c",
+    "bench/do_vs_program.bench.ts": "eed3d9fadb8f48b3ea938e230db4aa2c14e986c327f61e2e3b0cf3198b0c98e9",
+    "bench/effect_program_vs_bind.bench.ts": "7530e183c53fa3a43a5e361fe0c84469c248e56e197b353dec2031472a882425",
+    "bench/experiments/hkt/current_contexts.ts": "5aa09666d72a1cde274c92efa2296ae75fc1b70f122500c25f6fd50ec2f4a6c5",
+    "bench/experiments/hkt/lambda_contexts.ts": "cfd61f6ae8056e052c3d81fde56bd5cac34995a4a832491fe9cd47c39752f2ec",
+    "bench/experiments/hkt/lambda.ts": "689c97b20a5990e727dccc9aeb1d64dfb543f7ddfab9ddb9749f2ab58805f998",
+    "bench/experiments/hkt/measure.ts": "d0d44bca79beb4ed8f88a5d747c120a8f0fd880bacabb2ae59edabd1047eab1e",
+    "bench/experiments/hkt/shapes.ts": "e46278b2b60fafb53fb6008849f9738ccfe839e670a6dbc6d840e692e008d9b4",
+    "bench/fixtures/do_vs_program.ts": "0ecf3f759f70d0656d90b75def26231855349eb293757fc378e34d154da52e98",
+    "bench/fixtures/large_chains.ts": "7d8a3e06555324242c88cae134984abcc784d7bf3d6706671986b4dc3fb0ae6f",
+    "bench/generated_modules.ts": "360e310eda70058a2d8d130b96f1206af9be00fd2baa6314dcf202a339270dcd",
+    "bench/iterable_pipeline.bench.ts": "4e131ecb44e12a598291be5246e38b6404ff63eb08718246f6cb946585c02e54",
+    "bench/large_chains_comparison.bench.ts": "0dc271ad722d52bbabe03a4f8ad4da651987ce71e2e564550b849740c8115a4f",
+    "bench/library_comparison.bench.ts": "5e6a4451aba2731ba547e0462c76cfcb9fb6f2d4ed20f897664a0e9eba237c52",
+    "bench/parser_comparison.bench.ts": "941744c93264ee94e2f1b244f9d6ca6698fc5a9e2ccb26f45fbc8e65c041ccd7",
+    "bench/performance_breakdown.bench.ts": "de0e494a8025b18920a2e6fbbf085669202da246670692bb6403bc4952763dd6",
+    "bench/runtime_hills.bench.ts": "1e31620c1eb0cb76aa06a87e9e9903d456fdfb14e4cfbdbbba556a7a9e508681",
+    "bench/scaling.bench.ts": "cae88540905d451850424371f8e5422e2f40ec40ceb57fcee0ee06f1a8392586",
+    "bench/source_transform_cases.ts": "a0faa1df99b98f1560e2227a46452e1447e19289bc022eecd7c7ce19147482ee",
+    "bench/source_transform_comparison.bench.ts": "fa7664a4b8615d3237dd8fce8e260f1fcbdf73208f78b41fc2b0dfca4bc51206",
+    "bench/source_transform.bench.ts": "ef3d004c9ca6ecdd20e9d813f8eeaf7e4c2cbbc9cad89cdc7c1201b661bcd227",
+    "bench/value_construction.bench.ts": "004801f03c1d5e3e40980852a9c1ed12dffce9ef2def9e0110ce18f44181df79",
+    "bench/worker_hills.bench.ts": "1cc419e420da6418e3f76ed0656f18c7b17b9c3cd44e548195d22ad07dd710b2",
+    "case_studies/agent_harness/mod.ts": "526a2ccfa5183f02d3b642054c59fdbabda0e8eb85ba4fc0a92102fe42a56ac3",
+    "case_studies/agent_harness/model.ts": "6f549fe5651538641c8cf11d2904979a0d727af96ba92e6afb4702db09c5f788",
+    "case_studies/agent_harness/program.ts": "9e18264bc2fbc3fd48327c93f3d4f58bf5749f627528a1466d3dd27aeb579d9c",
+    "case_studies/agent_harness/runtime.ts": "4460f11d369d5a1e8cda7dd99740c8c323814e85f023f8e07e379e2ea97a19d6",
+    "case_studies/agent_harness/types.ts": "9a25d4aae3f6db7f8f87daad49206fc92f61dcdc5adf902ce65147209f6f28d5",
+    "case_studies/cloudflare_crud_worker/clock.ts": "adcb5faf99b8a0e5adaa5a373636b0fc03bdc93b55461b5382a947970e3e3236",
+    "case_studies/cloudflare_crud_worker/database.ts": "22fa6979c52dd84ede20a002ec930d6fd1276c506b62ad337991974057f6e58f",
+    "case_studies/cloudflare_crud_worker/mod.ts": "fdc7a93419d26ab3e3d53e66b269831d86de4dbd113c567b200af306764d5f01",
+    "case_studies/cloudflare_crud_worker/program.ts": "73d05efade42aa085b0d49bed0b7f78a2bd9a12e1ba3939dd32832cf0512f0c9",
+    "case_studies/cloudflare_crud_worker/response.ts": "d7d6eb060560515ed3a0276c8065f89cb60e4522d8a55b6ade1c956e6658d89e",
+    "case_studies/cloudflare_crud_worker/router.test.ts": "7612d579756da9d5a420c5f4c6e17617230bb47643b72729b09927ddfb6baa00",
+    "case_studies/cloudflare_crud_worker/router.ts": "da6c7a6d16a973e40c022eacd42ae70141f5b1efa0f795968611a3b9daddb4b0",
+    "case_studies/cloudflare_crud_worker/trace.ts": "e6e48c2f29a161ccec1f3e4d08896349ffa0890a29a0a940d83d2cd66f7b2375",
+    "case_studies/cloudflare_crud_worker/types.ts": "538ff9e7558f28b98ae82845e4ff7d07425464a81c6f4403874799abe24378b2",
+    "case_studies/cloudflare_crud_worker/worker.test.ts": "d37122f1796e3e7f8293494818abaea53f74dbf9e5648c18402455d7a90c427c",
+    "case_studies/cloudflare_crud_worker/worker.ts": "b5f5f6e7caa398b35f98c97f2825ae270bce30a0c1903b48f6138abf7306ee04",
+    "case_studies/http_router/handlers.ts": "e292c77084b08c092f66c5eb0de8d56f06c6689a7ef130ee762087688c4ba62c",
+    "case_studies/http_router/mod.ts": "b406bfedb70134fc5af91b6835a11b910421b5ecf0cd002047629574ac149ecd",
+    "case_studies/http_router/response.ts": "0b9e0857841a6730a64dc82253c245c3aa9bd917d6ff0fe2a850aba0762c2313",
+    "case_studies/http_router/router.ts": "34224211ff976c06e6b1b25fe9e606a157c468ede4a06a93ed6084255d4312b6",
+    "case_studies/io_application/filesystem.ts": "ec0c02df88a5cb7d8217af09910f9525e8c1361ea6b7724b3679967f9dc9c702",
+    "case_studies/io_application/mod.ts": "6f70a82ef44f0ce617cdc9c7e9100bf72889851c65af4c58d3a710c411086079",
+    "case_studies/io_application/program.ts": "489cb1e8287d2907f551d1be3bd37d7c22cbb2ec31d1ba5a12a158a9bb64b7a8",
+    "case_studies/io_application/runtime.ts": "dec2dd4113c3d7ee9efb28a1fe6ade4133f70bb77c8e5ffe731c9d3e7386efe1",
+    "case_studies/io_application/types.ts": "8d8a9e8678f0767fc02244f27e3f0c2f4ad8c70afd30dd44e8fd86b57c6b71b9",
+    "case_studies/main.ts": "e4eadd2a833774c6dc6463d843a0fe283d2b6151544343b91fccb40dc78decc1",
+    "case_studies/parallel_analyzer/analyzer.ts": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+    "case_studies/parallel_analyzer/effects.ts": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+    "case_studies/parallel_analyzer/mod.ts": "346bb1452b897cb75fbf9e7dc3e3a6c1f546a0de5bbbbdcce80e1a51247a8720",
+    "case_studies/parallel_analyzer/program.ts": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+    "case_studies/parallel_analyzer/report.ts": "74e1653fd9027109c09e26adbde961db485966074898b93e5b92eb50a1bd1bf2",
+    "case_studies/parallel_analyzer/types.ts": "3ebce38b6a3db9847132874576b5d6e7a54eb41459d47a726895c67c0f356df8",
+    "case_studies/parallel_analyzer/worker.ts": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+    "case_studies/programming_language_parser/language.ts": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+    "case_studies/programming_language_parser/mod.ts": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+    "case_studies/programming_language_parser/parser.test.ts": "714adf1f46666d7f06096b530833b577ec8ca1594cc854e34b351608b5104440",
+    "case_studies/programming_language_parser/parser.ts": "2703ea710555be7e571ba7f38eb9fafcc6cac3f8cce43e7d8a492cd2b03b8201",
+    "case_studies/programming_language_parser/token.ts": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+    "deno.json": "7f8cfece3e3858262111de72af8c0480bc19e0b98722d5b13942c0ae3925cddd",
+    "deno.lock": "c5efdf43bc71fe22497a35712f1d5c3cc45b2b93bf4abfd3c1fc9902deffe021",
+    "src/api_hills.test.ts": "5e9e21d9b63a2fc40666c821a191097784604808f56ed21638b8e6df5ab134a1",
+    "src/api_soundness.test.ts": "b4db5cb25e64386c4a643c863cec5b207f2790c44f7b9694b332d9f2e06e77e4",
+    "src/array_buffer.ts": "a8801503b2606897032dd5322c2a30c2f19ba75233cbe9b0a8003cfd685bd361",
+    "src/array_updates.test.ts": "4e73b76dd595a3eb20a724a48cc5a54f37296a0fecb5e5491ef134ad72c0c0f2",
+    "src/array.ts": "94a0b9c9d0c23674c327c5c87df36e18860c48a9b80b05e1af481dad56f31469",
+    "src/assert.ts": "66996bf65f4948b9246441b19dd93e3995c9c61a9d2661f0482ab62e7d4af3b9",
+    "src/async_iterable.ts": "10e338144b84f90516611032c53bcbec181e8d0105f578d42a31b77181bfef94",
+    "src/cell.ts": "97ce3f8fcea0d6096b53f951c20cd678a1e5dae137d7af7a156e7c36c101b9b7",
+    "src/collection_hills.test.ts": "f9c83c9d42f4c9d5e084b0dea19621a75df9fa69dc408098aa469cebe7b1f846",
+    "src/collection_runtime.test.ts": "dc06ee4370430f4cba5887ebadac27ef2f0dfc324f9382050850fa383f03c42d",
+    "src/computation.ts": "f7ba74e0b76e7b8f2070956014c977421bc41c40c050ddd712a243ad1fb04f4b",
+    "src/constructor_ergonomics.test.ts": "8a033a725af10cb7255d7a9ddefda031ae97ae5652bcfab8f4067ca05036a873",
+    "src/core_runtime.test.ts": "47a8c5467e7c1c4eb9da9f4138b1cc4547ef32976ee6a1a7f5a1a2211aa3d239",
+    "src/data_value.ts": "b0a04ed7a3b76b3b4bf7020901353674a21478cf58e6514638fb3e11457eb4a2",
+    "src/data_view.ts": "a04c25133119bde1df77657d786b6bdcf798735da99f896f79baf3f43bfbadaa",
+    "src/date.ts": "454db9741db43665cc67d41ffd307c37ebfff7fa82eff8063b3ac9c40343a146",
+    "src/derivation.test.ts": "a5e5f53f1dfb5003e0fb07ecb2da4b36b74cc0a65813745430b160c4b0fc50b8",
+    "src/do_error.test.ts": "ad5c60d21ab2345d3324e2b44450d71ae9debbdf8d00da562ce200cf190e76ee",
+    "src/effects_runtime.test.ts": "5c868b24e2bcb6c121bf227cde9f60928fdc7d5df6fe859d0f135fc578ad70c9",
+    "src/effects.ts": "9d11e1e9c4d630b5ee6cb7f0d72812da2f1ad7e9c8dd0a9f05ed6961cae07218",
+    "src/either.ts": "7720426b29425bb47586e35b9b4a8defb3a17e981fe642c3aeaa858dc80d7c1f",
+    "src/ergonomics.test.ts": "3ef7e1ee43f33fd581487a71be74244b0b70b0a203d90b74782bced5fdce1118",
+    "src/error.ts": "3a568b34958bec0ee9be0d7f5d9c46bcd734ddeb226f4951105c2180b009e659",
+    "src/examples.ts": "1d423c3004d2f563a6935555593317a1456de2e3ac523a5ffaee278312e07fb3",
+    "src/except_runtime.test.ts": "8bb084f068cab0b8d88d380a4091f00c6d08c472ba88dd702a31f9e14e8fd7fa",
+    "src/except.ts": "a59a9fae7bf6f49eee0c96107eaf2341b6537cf6c2cb06ded6704d57fdd0bf25",
+    "src/fixed_parameter_types.test.ts": "c3f71425b8f01f4fe6166c5f123e42791ab28a9911b847daff75cc3e9d820530",
+    "src/fn.ts": "1acd89d4208c19db8d691b34e0cfd43da2ea33eab61d83d40a0b37ad0f8df0bf",
+    "src/form_data.ts": "ec4e47c7ff613d4d928b9407e0b6f8c4fe0f7098ce294f4bcee5c9823497f042",
+    "src/identity.ts": "324b6a8ad86d25c945c637a14e1c7dc47e897532ec4c3544a1b3b21ecd42dc40",
+    "src/inspect.ts": "79acef69a89cdc6e420de6cfa640628c86d2cac52a74c3df171a794253bf989c",
+    "src/instance_coverage.test.ts": "ee15e59abfbfb71c5214492039a2f14d9d12a70474c3675e086884ae45583389",
+    "src/internal.ts": "36d202e4d3e3f82dd8309345559f9a338eca31279e1578baac2f2b824f9882aa",
+    "src/iterable_pipeline.test.ts": "c251b63a3553d6aec96e2768132e6338c2a3e08b1156247877d07f301bc1d361",
+    "src/iterable.ts": "e15a204af31d36bea6cec03f6068d80d7a4042ca9990c1d9c186e61a76c5063e",
+    "src/laws.test.ts": "da8e3b33fac559b1a236c47df0b7e9f5cb50cdf1f1bab52dfe28b93f33e3f3bb",
+    "src/list.ts": "aa196783d1c27ad07897763bacfefd22d79edd7978ba97ceaf21c95f9b01266b",
+    "src/loop.ts": "5cc7b5fbf2f2c7259622b1ebc1916a7694c5524045275637a5ab649e1ba45ce2",
+    "src/map.ts": "c77e04a2f405cacc0559fbb897a6ed206b0580f567e9156442ef8f2ba9a276a8",
+    "src/match.test.ts": "213919900329775a270ef21edaa00a7211016290b16bcd5cce1849963907bd9c",
+    "src/maybe.ts": "a88d0ce573d03453c1ca3a6b227beb089a3869f7f617c53c837a9d77543ebe59",
+    "src/mod.ts": "897401e92c23c88ad3fa11379bacb271b99c0b9146340a6001693c01a3f4f1c3",
+    "src/monad_error_ergonomics.test.ts": "f66c91d8561a342d219f2e1cad2d48c31b4ed3b5d0177fcaaa6ab04a0e3a95d7",
+    "src/monad_rec.test.ts": "f3d1d70a2735c95a03d32bce9a13bf6e024bc1775844c564e59236add1f92662",
+    "src/parallel.test.ts": "9ac7c3b0648a7a2d83b73870f8c60016c26f140c1a13ec6fc47f80593fb1a9d5",
+    "src/parallel.ts": "7aef8034fbe65cfefa2f3cd255f849d5c09b71dbf9ae6ae25e5c24c477b99543",
+    "src/predicate.ts": "245f93c5dd118ab2558c6dfbb7f05657afd2e2dacc26bf841cfd99b8fc008a00",
+    "src/prelude.test.ts": "cd078c112310458b84f3540c3862b4e896a4c5cc4e859d8ee41c5403326d8cb8",
+    "src/prelude.ts": "052e0b017763f96567c56b8cb52a70a7b9f88b637dfa6302ed8ee427439a6eb7",
+    "src/quickcheck.test.ts": "5b998a6541418719753e192a2de3ce733697971987d1df4acb1d3ecd45ce8a33",
+    "src/quickcheck.ts": "ba30526418e3552f84071c86c49a9d1ab3d2d7d86cb6571c447fea1907e6f87a",
+    "src/readable_stream.ts": "256fdcc0559114c00c1b4ef727f3118680513962234eb131176e24a4d6e4f2a0",
+    "src/reader_state_ergonomics.test.ts": "3bcdda8157f675606fb1930d4f85b4ad1ec8c91f06015d3509bb933d1374b778",
+    "src/reader.ts": "25f8ff2acf925c5b81ae460e0500f9d5ec1539d84d20133940d7837d6ed7fd6c",
+    "src/record.ts": "6f32f1525f513dddf25475299ee234b8096199ba125ddac50a32eae17c1e532a",
+    "src/regexp.ts": "ba7e4065ee4e57cfb63ae5b11036e0a5378c707410d58133b911a6c0f2bc0dcb",
+    "src/runtime_hills.test.ts": "98dc35bfc877111f5cdff0c469ffebc2552d49a7eab900e9703c54ad175b4446",
+    "src/set.ts": "e7c610b28e1f0c75b02a0c27a3f58b6ad8c40e37a0a4745fa41d7ffe9acbd49b",
+    "src/state.ts": "09aa98660d628d98cb38694a768fc6755b47c4ff95610e4e4c495f60165b2028",
+    "src/stm_runtime.test.ts": "35ba47c3095e9324db5a07196935a2caa470adb39a7c671500c788f3a2141990",
+    "src/stm.ts": "0b96d816cdb2c058f22c4383c80d993788f31ca0ca97efb6fbbff0c66e08d28d",
+    "src/tagged.ts": "cff135621a518629993e919a566849d816210510c42249ad320717cd4048cadb",
+    "src/task_runtime.test.ts": "6bf5461cba045314eb11251f68e900577cd20111d745c7530432bb69c6cd033b",
+    "src/task.ts": "d51d33f4ae8e5c43c2530b7abd9af5fef72b78ff26a892f2557096fd7693ed11",
+    "src/traversal.ts": "b88132f52c3d61e9ba4c7c7bd51ddadca84e2f9f3cc23cec1fd9a4e451cfda93",
+    "src/tuple.ts": "25e21417899cceaffd93df5d1bd38300548458bd90cde9906d2ef9dafc15ce0c",
+    "src/typeclass_ergonomics.test.ts": "a15e08885b6faf4ee3b541e0aedc15b3e8823cd9307286dcd2ed8eceab828179",
+    "src/typeclass_examples.test.ts": "c4a1b734a62fc507dc751afafd74829d2330f2e657e290ec0eafc653967e1734",
+    "src/typeclass_union_types.test.ts": "6ebe746135d3f34f636c735e1ce3c8c11ac23ac386fbacc6ba3aa86602d9fcbd",
+    "src/typeclass.ts": "dc8a4dfcf2a90296544ff61860a89f3d589d902dcb0630cef7d1f7b8362cf6fa",
+    "src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+    "src/typeclasses/alternative.ts": "2f391adf7de7e80110b591922f85c81d75e005d0e514c774c2d95a54bfb65ab3",
+    "src/typeclasses/applicative.ts": "18d86c73aea928ac525e7f0f7420c71a44abb187c4bfd54a5ceffe55e1e03c3c",
+    "src/typeclasses/arrow.ts": "e1acc934b2f5ca121d7ce353acef09adeb569d0d8378aaf69c183e171a8f49f2",
+    "src/typeclasses/bifunctor.ts": "c0b894a1eb1bc75e3115c4c1ea07123d0131f707787841ce3f36e02e154dd2b4",
+    "src/typeclasses/category.ts": "741924070c55c3098a303637566b29ea54fc03c543412c1713d51eec15741c35",
+    "src/typeclasses/comonad.ts": "6d8ada90b31827ea3714535a949964f92f04adba2a665682dd95f964326c9b9a",
+    "src/typeclasses/contravariant.ts": "815ec2ca91e59b877f48b6774078cc157b75ade8597f6e8a97dd176f0fdd5ae5",
+    "src/typeclasses/eq.ts": "3db3a5baf796bf52817b01fe06eb76641c78af941c03f418e5413812bc1db379",
+    "src/typeclasses/foldable.ts": "b7079dd3c74bbacfd71fe4e593ff2277d72c80c89decb9ef1c8eda8d3e3637ff",
+    "src/typeclasses/functor.ts": "6c3198e5a9f8b404f1c1432c985cbbc3d2a9195428fe8cbd493034f5cfa61b3d",
+    "src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+    "src/typeclasses/monad_error.ts": "82d0a3bda1ecd58393348bee9ff43aeb59003af6521cafdb06e609983f9527a1",
+    "src/typeclasses/monad_rec.ts": "20c921cc60268012e6334f8fd446e23b538ac869f31271e428e48ae19de9cfae",
+    "src/typeclasses/monad.ts": "9236de6ccb2d54b61226a3df61b420c40515e9dfea3a208a2069d17001798d5b",
+    "src/typeclasses/monoid.ts": "c31e064633630d6ad88cda35339350f808374b29774f77873d5719b8f4f0e961",
+    "src/typeclasses/ord.ts": "9f5231489bde35c9e7a03bdabccc4944c2b2de390de0796930f5915f2a7576a9",
+    "src/typeclasses/parse.ts": "e909da107fba471bb0acab7b0ef80c36c158cb106179946eedf49d93e0d66353",
+    "src/typeclasses/profunctor.ts": "35733cf3cb92f2418920b6c9de1f13960477a3280c80bf9bcc43836469c4cfa7",
+    "src/typeclasses/semigroup.ts": "d48acb9a139c55375ffa1ed8b23125b2bd3d10db5b1e24d1c46bebe3d82c97b1",
+    "src/typeclasses/show.ts": "59aeba266e97bdc38e61c19196169e1e533b19973928777a62a9592594cee89e",
+    "src/typeclasses/traversable.ts": "8f1e5d42fe92ca3a1f370b61a7463e96f1ecc2a6743907bfdba36b120cf81edb",
+    "src/typed_array.ts": "7ee6f20a8ed1f7722e4b863d101cc3d80f567b85d2e4c8abfebc6ecae3516e35",
+    "src/url_search_params.ts": "f2df36806af29b481ae4845ddffbc2a1559246e32083dbc27e65b42ed7cd579f",
+    "src/validation.ts": "0f8cc78ad78fc67f428f02f32d874302970a2eca184284965e1cda098e09c763",
+    "src/weak_map.ts": "40a67a6d0b1c33d4c7d9d3a888ee2fb54a1c9ae6fc08b1d511be942d3d923d88",
+    "src/weak_set.ts": "716ddadd0e7272e230b0094ecc5bbdfcd47ac993c4b19949717329724e141f95",
+    "src/writer_runtime.test.ts": "17d671f12e0b1281d1bc9373b9c12941a6a4eb711665e89fcb8afe4cfb0c0836",
+    "src/writer.ts": "5a89f60104a1166aadda28e20ef8350ca18e3d51510d4c271f8ef8d836ecee05",
+    "tools/browser_portability_smoke.ts": "80b0f3be54e67e6f5c08585fff353ebb40c81e3f876c4f15e4c7d58884de455f",
+    "tools/capture_measurement.ts": "dcfd31357d36d89be2f752db6d697d57cc2ead106c895858d3dc6f9899b08103",
+    "tools/check_portability.ts": "e9b838d7521925ba5f5db77be8b0d7e228869f55c17d442a62ba2f2c198ae9de",
+    "tools/fixtures/terminal_program.ts": "5bc33847a69eed3517489b475ba57c7b55eab2d1bc9f3016dc4ac2871bb0350a",
+    "tools/fixtures/unsupported_do_try.ts": "7bf9415b2e4da41517f2c3732d8492eb7d5c06b34a006c0ca43271c0c4b8e9a2",
+    "tools/import_budget.ts": "4488411f1f88a95fe5079139fc4b5d4e73dd1c4df2a6b25575cc47811ee1fb98",
+    "tools/mutation_checks.ts": "b69bcae8b2645ad4a06a4514092312f3771ca1e478c6761cd76c18ec9213fc58",
+    "tools/node_portability_smoke.ts": "1d18993b43a8b7e88179025ecb1092b96f306b05adc0138205dec1f7f3cbb710",
+    "tools/package_entrypoint_smoke.ts": "488cbe5330659edd038f5ff12f936922fd47e0497925c658c5a20743c43151a4",
+    "tools/transform_do_program_checks.ts": "2169664b9da1b5e6c532647e23c0ad49c20be3baf105c57cda733e10e954e581",
+    "tools/transform_do_program.ts": "de59a5fe885da50794008eda9fc8f3d5298afc2442ec46b7ba7c3546e5f1cfc4",
+    "tools/transform_iterable_maps_checks.ts": "9113654028644fcd75bb443f77bdbb3c271bd7a6d33ef0d782bcc5613172d3d5",
+    "tools/transform_iterable_maps.ts": "4030a5fa394b90eaeae181909a2f5da6a424a22f662e762390322df8222df2c7",
+    "tools/transform_optimization_checks.ts": "59393525a2d83a89aa548d9b93a1fcc3f6bf61aaa4be381bf2d9a74fec2f625c",
+    "tools/transform_plugin_checks.ts": "945499e1cc940cba23ee989c7f2350efec8da6a3f3b7aa16e0a35c5a789081bc",
+    "tools/transform_plugin.ts": "dd30d7022e326d58b99667ef0e079eb710f3c6584fd46c2c1ed33fbde8a814a9",
+    "tools/type_budget.ts": "d4bce2d5bcef02f5c319eaa56edfe81722b5a60254c546e6e7e92ceedefc5a47",
+    "tools/workerd_portability_smoke.ts": "1c83555c97c27bffd530e8382a8cb74c8dcc238a663abf2d9dea59742f844bd8"
+  },
+  "changed_files": [],
+  "elapsed_ms": 20329.564694999997,
+  "exit_code": 0,
+  "output": {
+    "version": 1,
+    "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+    "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+    "benches": [
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Program/construct+first100",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 4804,
+              "min": 71747,
+              "max": 2628705,
+              "avg": 104349,
+              "p75": 119447,
+              "p99": 220408,
+              "p995": 396844,
+              "p999": 1009107,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Program/repeated100",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 5316,
+              "min": 69482,
+              "max": 1608216,
+              "avg": 94217,
+              "p75": 109247,
+              "p99": 177678,
+              "p995": 299079,
+              "p999": 427863,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Program/multiresume-prefix100",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 5406,
+              "min": 69642,
+              "max": 540637,
+              "avg": 92636,
+              "p75": 112945,
+              "p99": 164313,
+              "p995": 232391,
+              "p999": 417734,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Effect/reused-map-queue1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 2950,
+              "min": 143583,
+              "max": 1741069,
+              "avg": 170038,
+              "p75": 163411,
+              "p99": 349123,
+              "p995": 391263,
+              "p999": 941620,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Task/completed-Program1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 463,
+              "min": 776675,
+              "max": 4108156,
+              "avg": 1105334,
+              "p75": 1263571,
+              "p99": 3191204,
+              "p995": 3611442,
+              "p999": 4108156,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Task/bounded8x1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 372,
+              "min": 808957,
+              "max": 8628847,
+              "avg": 1381175,
+              "p75": 1316792,
+              "p99": 7172499,
+              "p995": 8351349,
+              "p999": 8628847,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Reader/reused-bind1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 6198,
+              "min": 62408,
+              "max": 2746168,
+              "avg": 80783,
+              "p75": 87736,
+              "p99": 136629,
+              "p995": 299940,
+              "p999": 383469,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "State/reused-bind1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 4806,
+              "min": 84270,
+              "max": 612925,
+              "avg": 104265,
+              "p75": 117303,
+              "p99": 152239,
+              "p995": 336128,
+              "p999": 415019,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Writer/terminal-array1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 495,
+              "min": 754153,
+              "max": 3064433,
+              "avg": 1028055,
+              "p75": 1257499,
+              "p99": 1611983,
+              "p995": 1851398,
+              "p999": 3064433,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Reader/reused-bind10000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 133,
+              "min": 1173260,
+              "max": 6661207,
+              "avg": 4037601,
+              "p75": 4848152,
+              "p99": 6394371,
+              "p995": 6661207,
+              "p999": 6661207,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "State/reused-bind10000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 110,
+              "min": 3351189,
+              "max": 11269104,
+              "avg": 4979410,
+              "p75": 5245778,
+              "p99": 8493118,
+              "p995": 11269104,
+              "p999": 11269104,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Writer/terminal-array10000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 62,
+              "min": 7487618,
+              "max": 14543025,
+              "avg": 9603980,
+              "p75": 10554355,
+              "p99": 14543025,
+              "p995": 14543025,
+              "p999": 14543025,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Reader/reused-bind100000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 31,
+              "min": 18945110,
+              "max": 32626407,
+              "avg": 23922277,
+              "p75": 25942667,
+              "p99": 32626407,
+              "p995": 32626407,
+              "p999": 32626407,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "State/reused-bind100000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 31,
+              "min": 19374986,
+              "max": 31351985,
+              "avg": 23574050,
+              "p75": 24650862,
+              "p99": 31351985,
+              "p995": 31351985,
+              "p999": 31351985,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Writer/terminal-array100000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 15,
+              "min": 83404207,
+              "max": 132054703,
+              "avg": 103878492,
+              "p75": 113461963,
+              "p99": 132054703,
+              "p995": 132054703,
+              "p999": 132054703,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "STM/full-transaction-one-edit10",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 15284,
+              "min": 25839,
+              "max": 701453,
+              "avg": 32738,
+              "p75": 36299,
+              "p99": 47049,
+              "p995": 54613,
+              "p999": 119938,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "STM/isolated-one-edit-branch10",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 28,
+              "min": 2477.584,
+              "max": 3729.4418,
+              "avg": 2774.6909964285724,
+              "p75": 2730.4074,
+              "p99": 3729.4418,
+              "p995": 3729.4418,
+              "p999": 3729.4418,
+              "highPrecision": false,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "STM/full-transaction-one-edit1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 202,
+              "min": 2300742,
+              "max": 3903357,
+              "avg": 2604578,
+              "p75": 2692968,
+              "p99": 3768732,
+              "p995": 3775163,
+              "p999": 3903357,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "STM/isolated-one-edit-branch1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 28,
+              "min": 2658.2363,
+              "max": 3664.0035,
+              "avg": 2951.6632464285713,
+              "p75": 2972.6308,
+              "p99": 3664.0035,
+              "p995": 3664.0035,
+              "p999": 3664.0035,
+              "highPrecision": false,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Writer/direct-eager-array1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 362,
+              "min": 1025940,
+              "max": 2556537,
+              "avg": 1419552,
+              "p75": 1593387,
+              "p99": 2173690,
+              "p995": 2438093,
+              "p999": 2556537,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": null,
+        "name": "Writer/direct-eager-array10000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 16,
+              "min": 94141049,
+              "max": 108919592,
+              "avg": 101844199,
+              "p75": 104522627,
+              "p99": 108919592,
+              "p995": 108919592,
+              "p999": 108919592,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": "Do linear",
+        "name": "Do/general100",
+        "baseline": true,
+        "results": [
+          {
+            "ok": {
+              "n": 60645,
+              "min": 5811,
+              "max": 940457,
+              "avg": 8247,
+              "p75": 7764,
+              "p99": 15620,
+              "p995": 21060,
+              "p999": 301383,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": "Do linear",
+        "name": "Do/once100",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 62974,
+              "min": 5421,
+              "max": 516551,
+              "avg": 7942,
+              "p75": 8667,
+              "p99": 15430,
+              "p995": 18906,
+              "p999": 292666,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": "STM owned reads",
+        "name": "STM/clone-read1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 3197,
+              "min": 128864,
+              "max": 1079983,
+              "avg": 157161,
+              "p75": 154984,
+              "p99": 260905,
+              "p995": 319728,
+              "p999": 768530,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/runtime_hills.bench.ts",
+        "group": "STM owned reads",
+        "name": "STM/immutable-read1000",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 352,
+              "min": 114.3282,
+              "max": 251.6852,
+              "avg": 147.39642840909096,
+              "p75": 169.4901,
+              "p99": 237.1536,
+              "p995": 251.2144,
+              "p999": 251.6852,
+              "highPrecision": false,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "stderr": "Check bench/runtime_hills.bench.ts\n"
+}

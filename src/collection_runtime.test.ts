@@ -232,7 +232,9 @@ Deno.test("iterable equality closes an acquired cursor when the other factory th
 
 Deno.test("balanced traversal preserves Reader, State, and Writer execution order", () => {
   const input = ArrayT([1, 2, 3]);
-  const reads = reader<"collection-runtime-reader", number[]>();
+  const reads = reader<"collection-runtime-reader", number[]>(
+    "collection-runtime-reader",
+  );
   const read = Traversable.traverse(
     input,
     reads,
@@ -246,7 +248,9 @@ Deno.test("balanced traversal preserves Reader, State, and Writer execution orde
   assert_equals(read.run(calls).value(), [2, 3, 4]);
   assert_equals(calls, [1, 2, 3]);
 
-  const counter = state<"collection-runtime-state", number>();
+  const counter = state<"collection-runtime-state", number>(
+    "collection-runtime-state",
+  );
   const counted = Traversable.traverse(
     input,
     counter,

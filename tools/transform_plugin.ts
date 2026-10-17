@@ -1,7 +1,8 @@
 import {
-  transform_do_program_source,
+  create_transform_cache,
   type TransformConfig,
   type TransformDiagnostic,
+  type TransformReport,
   type TransformSourceMap,
 } from "./transform_do_program.ts";
 import { Buffer } from "node:buffer";
@@ -10,6 +11,10 @@ import { might_contain_iterable_maps } from "./transform_iterable_maps.ts";
 
 /** Configuration shared by the esbuild, Rollup, Vite, and Rolldown adapters. */
 export type TransformPluginOptions = TransformConfig & {
+  /** Maximum retained transforms per plugin; zero disables caching. */
+  readonly cache_capacity?: number;
+  /** Receive explanation reports, including cache hits, when explain is enabled. */
+  readonly on_report?: (reports: readonly TransformReport[]) => void;
   /** Action taken when a recognized expression cannot be transformed. */
   readonly on_unsupported?: "error" | "warn" | "preserve";
 };
@@ -71,13 +76,15 @@ export type RolldownTransformPlugin = {
 export function typeclasses_esbuild_plugin(
   options: TransformPluginOptions = {},
 ): EsbuildTransformPlugin {
+  const cache = create_transform_cache(options.cache_capacity);
   return {
     name: "typeclasses-transform",
     setup(build: EsbuildBuild) {
       build.onLoad({ filter: /\.tsx?$/ }, async ({ path }) => {
         const code = await readFile(path, "utf8");
         if (!might_contain_target(code)) return undefined;
-        const result = transform_do_program_source(code, path, options);
+        const result = cache.transform(code, path, options);
+        options.on_report?.(result.reports);
         if (report_diagnostics(result.diagnostics, options)) {
           return {
             contents: code,
@@ -97,10 +104,11 @@ export function typeclasses_esbuild_plugin(
 export function typeclasses_rollup_plugin(
   options: TransformPluginOptions = {},
 ): RollupTransformPlugin {
+  const cache = create_transform_cache(options.cache_capacity);
   return {
     name: "typeclasses-transform",
     transform(this: RollupContext, code: string, id: string) {
-      return transform_rollup_source(this, code, id, options);
+      return transform_rollup_source(this, code, id, options, cache);
     },
   };
 }
@@ -109,12 +117,13 @@ export function typeclasses_rollup_plugin(
 export function typeclasses_rolldown_plugin(
   options: TransformPluginOptions = {},
 ): RolldownTransformPlugin {
+  const cache = create_transform_cache(options.cache_capacity);
   return {
     name: "typeclasses-transform",
     transform: {
       filter: { id: /\.tsx?(?:\?.*)?$/ },
       handler(this: RollupContext, code: string, id: string) {
-        return transform_rollup_source(this, code, id, options);
+        return transform_rollup_source(this, code, id, options, cache);
       },
     },
   };
@@ -125,9 +134,11 @@ function transform_rollup_source(
   code: string,
   id: string,
   options: TransformPluginOptions,
+  cache: ReturnType<typeof create_transform_cache>,
 ): TransformHookResult {
   if (!is_typescript_file(id) || !might_contain_target(code)) return null;
-  const result = transform_do_program_source(code, id, options);
+  const result = cache.transform(code, id, options);
+  options.on_report?.(result.reports);
   const policy = options.on_unsupported ?? "error";
 
   if (result.diagnostics.length > 0 && policy === "preserve") {

@@ -1,0 +1,11 @@
+--- a/tools/transform_do_program.ts
++++ b/tools/transform_do_program.ts
+@@ -5255,7 +5255,7 @@
+ }
+ 
+ /** Compiler and transform revision included in every cache key. */
+-export const transform_cache_version = "2:" + ts.version;
++export const transform_cache_version: string = "2:" + ts.version;
+ 
+ /** A bounded transform cache with observable hit, miss and retention counts. */
+ export type TransformCache = {

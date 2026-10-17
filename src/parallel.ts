@@ -19,6 +19,8 @@ export type ParallelMap<input, output> =
       readonly inputs: readonly input[];
       /** The requested maximum worker count. */
       readonly workers: number | undefined;
+      /** Inputs sent in each worker message. */
+      readonly batch_size: number | undefined;
       /** Cancels the map request when aborted. */
       readonly signal: AbortSignal | undefined;
     },
@@ -29,6 +31,8 @@ export type Parallel = ParallelMap<unknown, unknown>;
 
 /** Options for creating or temporarily using workers. */
 export type ParallelOptions = {
+  /** Inputs sent in each worker message; defaults to one. */
+  readonly batch_size?: number;
   /** The maximum number of workers to create. */
   readonly workers?: number;
   /** Cancels worker creation or active work when aborted. */
@@ -36,7 +40,11 @@ export type ParallelOptions = {
 };
 
 /** Options for one map submitted to an existing worker pool. */
-export type WorkerMapOptions = {
+export type WorkerMapOptions<input = unknown> = {
+  /** Inputs sent in each worker message; defaults to one. */
+  readonly batch_size?: number;
+  /** Explicitly transfers ownership of these input buffers to the worker. */
+  readonly transfer?: (input: input, index: number) => Transferable[];
   /** Cancels this map request when aborted. */
   readonly signal?: AbortSignal;
 };
@@ -58,7 +66,7 @@ export type WorkerPool<input, output> = {
   /** Maps inputs through the pool and preserves their order. */
   map(
     inputs: readonly input[],
-    options?: WorkerMapOptions,
+    options?: WorkerMapOptions<input>,
   ): Promise<readonly output[]>;
   /** Aborts active work and terminates every worker. */
   close(): void;
@@ -89,11 +97,6 @@ type WorkerReply<output> =
     },
   ];
 
-type WorkerScope<input, output> = {
-  onmessage: ((event: MessageEvent<WorkerJob<input>>) => void) | null;
-  postMessage(message: WorkerReply<output>): void;
-};
-
 let worker_batch = 0;
 
 /** @ignore */
@@ -113,6 +116,7 @@ export function parallel_map<input, output>(
       worker: worker_href(worker),
       inputs,
       workers: options.workers,
+      batch_size: options.batch_size,
       signal: options.signal,
     },
   ]);
@@ -122,7 +126,7 @@ export function parallel_map<input, output>(
 export function worker_map<input, output>(
   worker: string | URL,
   inputs: readonly input[],
-  options: ParallelOptions = {},
+  options: ParallelOptions & WorkerMapOptions<input> = {},
 ): Data<AsTask, readonly output[]> {
   return from_fn((signal) =>
     run_worker_map<input, output>(worker, inputs, {
@@ -149,6 +153,7 @@ export function run_parallel<requirements, item>(
       Effect.lift(
         worker_map(map.worker, map.inputs, {
           workers: map.workers,
+          batch_size: map.batch_size,
           signal: map.signal,
         }),
       ),
@@ -177,11 +182,15 @@ export function run_parallel_with_pool<requirements, item>(
     const [, map] = effect[1] as ParallelMap<unknown, unknown>;
     let task = worker_map(map.worker, map.inputs, {
       workers: map.workers,
+      batch_size: map.batch_size,
       signal: map.signal,
     });
 
     if (map.worker === pool.worker) {
-      task = worker_pool_map(pool, map.inputs, { signal: map.signal });
+      task = worker_pool_map(pool, map.inputs, {
+        signal: map.signal,
+        batch_size: map.batch_size,
+      });
     }
 
     return Effect.bind(
@@ -217,98 +226,217 @@ export function create_worker_pool<input, output>(
     );
   }
 
+  type Request = {
+    readonly batch: number;
+    readonly inputs: readonly input[];
+    readonly options: WorkerMapOptions<input>;
+    readonly results: output[];
+    readonly resolve: (value: readonly output[]) => void;
+    readonly reject: (error: unknown) => void;
+    readonly abort: () => void;
+    next: number;
+    completed: number;
+    settled: boolean;
+  };
+  type Assignment = {
+    readonly request: Request;
+    readonly ids: readonly number[];
+  };
+  const requests: Request[] = [];
+  const assignments = new Map<Worker, Assignment>();
   let closed_reason: Error | undefined;
-  let previous = Promise.resolve();
-  let active: AbortController | undefined;
-
-  const close_from_signal = () => {
+  let cursor = 0;
+  function settle(request: Request, error?: { readonly cause: unknown }): void {
+    if (request.settled) return;
+    request.settled = true;
+    request.options.signal?.removeEventListener("abort", request.abort);
+    const index = requests.indexOf(request);
+    if (index >= 0) requests.splice(index, 1);
+    if (error !== undefined) request.reject(error.cause);
+    else request.resolve(request.results);
+  }
+  function close_with(reason: Error): void {
+    if (closed_reason !== undefined) return;
+    closed_reason = reason;
+    for (const request of [...requests]) settle(request, { cause: reason });
+    close_workers(workers);
+    options.signal?.removeEventListener("abort", close_from_signal);
+  }
+  function close(): void {
+    close_with(new Error(`Worker pool for ${worker_href_value} is closed`));
+  }
+  const close_from_signal = () =>
     close_with(
       worker_abort_error(worker_href_value, undefined, options.signal),
     );
-  };
-
-  if (options.signal !== undefined) {
-    options.signal.addEventListener("abort", close_from_signal, { once: true });
-
-    if (options.signal.aborted) {
-      close_from_signal();
-    }
-  }
-
-  function close() {
-    close_with(new Error(`Worker pool for ${worker_href_value} is closed`));
-  }
-
-  function close_with(reason: Error) {
-    if (closed_reason !== undefined) {
-      return;
-    }
-
-    closed_reason = reason;
-    active?.abort(reason);
-    close_workers(workers);
-
-    if (options.signal !== undefined) {
-      options.signal.removeEventListener("abort", close_from_signal);
-    }
-  }
-
-  return {
-    worker: worker_href_value,
-
-    map(inputs, map_options = {}) {
-      if (closed_reason !== undefined) {
-        return Promise.reject(closed_reason);
-      }
-
-      const batch = next_worker_batch();
-      const run = previous.then(async () => {
-        if (closed_reason !== undefined) {
-          throw closed_reason;
-        }
-
-        if (map_options.signal?.aborted) {
-          throw worker_abort_error(
-            worker_href_value,
-            batch,
-            map_options.signal,
-          );
-        }
-
-        const controller = new AbortController();
-        active = controller;
-
-        try {
-          return await run_worker_map_with_workers<input, output>(
-            workers,
-            inputs,
-            {
-              worker: worker_href_value,
-              batch,
-              signals: compact_signals(controller.signal, map_options.signal),
-            },
-          );
-        } catch (cause) {
-          const failure = error_with_context(
-            `Worker pool for ${worker_href_value} failed in batch ${batch}`,
-            cause,
-          );
-          close_with(failure);
-          throw failure;
-        } finally {
-          if (active === controller) {
-            active = undefined;
+  function dispatch(): void {
+    if (closed_reason !== undefined) return;
+    let reschedule = true;
+    while (reschedule) {
+      reschedule = false;
+      for (const worker of workers) {
+        if (assignments.has(worker)) continue;
+        let request: Request | undefined;
+        for (let count = 0; count < requests.length; count += 1) {
+          cursor %= requests.length;
+          const candidate = requests[cursor++];
+          if (candidate.next < candidate.inputs.length) {
+            request = candidate;
+            break;
           }
         }
+        if (request === undefined) continue;
+        const size = request.options.batch_size ?? options.batch_size ?? 1;
+        const ids: number[] = [];
+        const jobs: WorkerJob<input>[1][] = [];
+        const transfer: Transferable[] = [];
+        while (jobs.length < size && request.next < request.inputs.length) {
+          const id = request.next++;
+          ids.push(id);
+          jobs.push({ batch: request.batch, id, input: request.inputs[id] });
+        }
+        try {
+          for (const id of ids) {
+            transfer.push(
+              ...(request.options.transfer?.(request.inputs[id], id) ?? []),
+            );
+          }
+          assignments.set(worker, { request, ids });
+          if (size === 1) worker.postMessage(["job", jobs[0]], transfer);
+          else worker.postMessage(["jobs", jobs], transfer);
+        } catch (cause) {
+          reschedule = true;
+          assignments.delete(worker);
+          settle(request, {
+            cause: error_with_context(
+              `Could not send input ${
+                ids[0]
+              } to ${worker_href_value} in batch ${request.batch}`,
+              cause,
+            ),
+          });
+        }
+      }
+    }
+  }
+
+  for (const worker of workers) {
+    worker.onmessage = (event) => {
+      const assignment = assignments.get(worker);
+      try {
+        if (assignment === undefined) {
+          throw new Error("Reply without an active assignment");
+        }
+        let replies: unknown[] = [event.data];
+        if (Array.isArray(event.data) && event.data[0] === "results") {
+          replies = event.data[1];
+        }
+        if (
+          !Array.isArray(replies) || replies.length !== assignment.ids.length
+        ) throw new Error("Wrong worker reply count");
+        const parsed = replies.map((reply) =>
+          parse_worker_reply<output>(reply)
+        );
+        for (let index = 0; index < parsed.length; index += 1) {
+          const [tag, payload] = parsed[index];
+          const { request, ids } = assignment;
+          if (payload.batch !== request.batch || payload.id !== ids[index]) {
+            throw new Error("Worker reply does not match its assignment");
+          }
+          if (request.settled) continue;
+          switch (tag) {
+            case "done":
+              request.results[payload.id] = payload.output;
+              request.completed += 1;
+              if (request.completed === request.inputs.length) settle(request);
+              break;
+            case "failed":
+              settle(request, {
+                cause: worker_error(payload.error, {
+                  worker: worker_href_value,
+                  batch: request.batch,
+                }, payload.id),
+              });
+              break;
+          }
+        }
+        assignments.delete(worker);
+        dispatch();
+      } catch (cause) {
+        close_with(
+          error_with_context(
+            `Worker pool for ${worker_href_value} failed in batch ${assignment?.request.batch}: invalid reply`,
+            cause,
+          ),
+        );
+      }
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      close_with(
+        error_with_context(
+          `Worker pool for ${worker_href_value} failed in batch ${
+            assignments.get(worker)?.request.batch
+          }: ${event.message}`,
+          event.error,
+        ),
+      );
+    };
+    worker.onmessageerror = () =>
+      close_with(
+        new Error(
+          `Worker pool for ${worker_href_value} failed: message could not be deserialized`,
+        ),
+      );
+  }
+  options.signal?.addEventListener("abort", close_from_signal, { once: true });
+  if (options.signal?.aborted) close_from_signal();
+  return {
+    worker: worker_href_value,
+    map(inputs, map_options = {}) {
+      if (closed_reason !== undefined) return Promise.reject(closed_reason);
+      const size = map_options.batch_size ?? options.batch_size ?? 1;
+      if (!Number.isInteger(size) || size < 1) {
+        return Promise.reject(
+          new RangeError("Worker batch_size must be a positive integer"),
+        );
+      }
+      if (map_options.signal?.aborted) {
+        return Promise.reject(
+          worker_abort_error(worker_href_value, undefined, map_options.signal),
+        );
+      }
+      if (inputs.length === 0) return Promise.resolve([]);
+      return new Promise<readonly output[]>((resolve, reject) => {
+        const request: Request = {
+          batch: next_worker_batch(),
+          inputs,
+          options: map_options,
+          results: new Array(inputs.length),
+          resolve,
+          reject,
+          next: 0,
+          completed: 0,
+          settled: false,
+          abort() {
+            settle(request, {
+              cause: worker_abort_error(
+                worker_href_value,
+                request.batch,
+                map_options.signal,
+              ),
+            });
+            dispatch();
+          },
+        };
+        requests.push(request);
+        map_options.signal?.addEventListener("abort", request.abort, {
+          once: true,
+        });
+        dispatch();
       });
-
-      previous = run.then(ignore_value, ignore_value);
-
-      return run;
     },
-
     close,
-
     [Symbol.dispose]: close,
   };
 }
@@ -328,10 +456,13 @@ export async function with_worker_pool<input, output, item>(
 export function worker_pool_map<input, output>(
   pool: WorkerPool<input, output>,
   inputs: readonly input[],
-  options: WorkerMapOptions = {},
+  options: WorkerMapOptions<input> = {},
 ): Data<AsTask, readonly output[]> {
   return from_fn((signal) =>
-    pool.map(inputs, { signal: combine_signals(options.signal, signal) })
+    pool.map(inputs, {
+      ...options,
+      signal: combine_signals(options.signal, signal),
+    })
   );
 }
 
@@ -339,244 +470,59 @@ export function worker_pool_map<input, output>(
 export async function run_worker_map<input, output>(
   worker: string | URL,
   inputs: readonly input[],
-  options: ParallelOptions = {},
+  options: ParallelOptions & WorkerMapOptions<input> = {},
 ): Promise<readonly output[]> {
-  const worker_href_value = worker_href(worker);
-
   if (options.signal?.aborted) {
-    throw worker_abort_error(worker_href_value, undefined, options.signal);
+    throw worker_abort_error(worker_href(worker), undefined, options.signal);
   }
-
-  if (inputs.length === 0) {
-    return [];
-  }
-
-  const worker_count = normalize_worker_count(options.workers, inputs.length);
-  using cleanup = new DisposableStack();
-  const workers = Array.from({ length: worker_count }, () => {
-    const current_worker = new Worker(worker_href_value, { type: "module" });
-    cleanup.defer(() => current_worker.terminate());
-
-    return current_worker;
+  if (inputs.length === 0) return [];
+  using pool = create_worker_pool<input, output>(worker, {
+    ...options,
+    workers: normalize_worker_count(options.workers, inputs.length),
   });
-
-  return await run_worker_map_with_workers(workers, inputs, {
-    worker: worker_href_value,
-    batch: next_worker_batch(),
-    signals: options.signal === undefined ? [] : [options.signal],
-  });
+  return await pool.map(inputs, options);
 }
 
-type WorkerRun = {
-  readonly worker: string;
-  readonly batch: number;
-  readonly signals: readonly AbortSignal[];
-};
+type WorkerRun = { readonly worker: string; readonly batch: number };
 
-async function run_worker_map_with_workers<input, output>(
-  workers: readonly Worker[],
-  inputs: readonly input[],
-  run: WorkerRun,
-): Promise<readonly output[]> {
-  if (inputs.length === 0) {
-    return [];
-  }
-
-  if (workers.length === 0) {
-    throw new Error("Worker map needs at least one worker");
-  }
-
-  const active_workers = workers.slice(0, inputs.length);
-
-  return await new Promise<readonly output[]>((resolve, reject) => {
-    const results = new Array<output>(inputs.length);
-    const assignments = new Map<Worker, number>();
-    let next = 0;
-    let completed = 0;
-    let settled = false;
-
-    const abort = () => {
-      const signal = run.signals.find((candidate) => candidate.aborted);
-      fail(worker_abort_error(run.worker, run.batch, signal));
-    };
-
-    if (run.signals.some((signal) => signal.aborted)) {
-      abort();
-      return;
-    }
-
-    for (const signal of run.signals) {
-      signal.addEventListener("abort", abort, { once: true });
-    }
-
-    function finish() {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clear_listeners();
-      resolve(results);
-    }
-
-    function fail(error: unknown) {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clear_listeners();
-      reject(error_with_context(
-        `Worker map for ${run.worker} failed in batch ${run.batch}`,
-        error,
-      ));
-    }
-
-    function clear_listeners() {
-      for (const signal of run.signals) {
-        signal.removeEventListener("abort", abort);
-      }
-
-      for (const worker of active_workers) {
-        worker.onmessage = null;
-        worker.onerror = null;
-      }
-    }
-
-    function send_next(worker: Worker) {
-      if (settled) {
-        return;
-      }
-
-      if (next >= inputs.length) {
-        return;
-      }
-
-      const id = next;
-      next += 1;
-      assignments.set(worker, id);
-
-      try {
-        worker.postMessage(
-          ["job", { batch: run.batch, id, input: inputs[id] }] as WorkerJob<
-            input
-          >,
-        );
-      } catch (cause) {
-        fail(error_with_context(
-          `Could not send input ${id} to ${run.worker} in batch ${run.batch}`,
-          cause,
-        ));
-      }
-    }
-
-    for (
-      let worker_index = 0;
-      worker_index < active_workers.length;
-      worker_index += 1
-    ) {
-      const worker = active_workers[worker_index];
-
-      worker.onmessage = (event: MessageEvent<WorkerReply<output>>) => {
-        if (settled) {
-          return;
-        }
-
-        try {
-          const [tag, payload] = parse_worker_reply<output>(event.data);
-          const expected = assignments.get(worker);
-
-          if (payload.batch !== run.batch) {
-            throw new Error(
-              `Worker ${worker_index} replied for batch ${payload.batch}; expected ${run.batch}`,
-            );
-          }
-
-          if (expected === undefined) {
-            throw new Error(
-              `Worker ${worker_index} replied for input ${payload.id} without an active assignment`,
-            );
-          }
-
-          if (payload.id !== expected) {
-            throw new Error(
-              `Worker ${worker_index} replied for input ${payload.id}; expected ${expected}`,
-            );
-          }
-
-          assignments.delete(worker);
-
-          switch (tag) {
-            case "done":
-              results[payload.id] = payload.output;
-              completed += 1;
-
-              if (completed === inputs.length) {
-                finish();
-                return;
-              }
-
-              send_next(worker);
-              return;
-            case "failed":
-              fail(worker_error(payload.error, run, payload.id));
-              return;
-          }
-        } catch (cause) {
-          fail(error_with_context(
-            `Worker ${worker_index} sent an invalid reply for ${run.worker} in batch ${run.batch}`,
-            cause,
-          ));
-        }
-      };
-
-      worker.onerror = (event) => {
-        event.preventDefault();
-        const input = assignments.get(worker);
-        fail(
-          new Error(
-            `Worker ${worker_index} failed for ${run.worker} in batch ${run.batch}` +
-              (input === undefined ? "" : ` while running input ${input}`) +
-              `: ${event.message}`,
-            { cause: event.error },
-          ),
-        );
-      };
-
-      send_next(worker);
-    }
-  });
-}
-
-/** Installs the message protocol used by the parallel map runners. */
+/** Installs the worker protocol, optionally transferring output buffers. */
 export function serve_worker<input, output>(
   handler: (input: input) => output | Promise<output>,
-) {
-  const scope = self as unknown as WorkerScope<input, output>;
-
+  options: { readonly transfer?: (output: output) => Transferable[] } = {},
+): void {
+  const scope = self as unknown as {
+    onmessage:
+      | ((
+        event: MessageEvent<
+          readonly [string, WorkerJob<input>[1] | WorkerJob<input>[1][]]
+        >,
+      ) => void)
+      | null;
+    postMessage(message: unknown, transfer: Transferable[]): void;
+  };
   scope.onmessage = async (event) => {
     const [tag, payload] = event.data;
-
-    switch (tag) {
-      case "job":
-        try {
-          const output = await handler(payload.input);
-          scope.postMessage([
-            "done",
-            { batch: payload.batch, id: payload.id, output },
-          ]);
-        } catch (error) {
-          scope.postMessage([
-            "failed",
-            {
-              batch: payload.batch,
-              id: payload.id,
-              error: serialize_error(error),
-            },
-          ]);
-        }
-        return;
+    let jobs: WorkerJob<input>[1][];
+    if (tag === "jobs") jobs = payload as WorkerJob<input>[1][];
+    else if (tag === "job") jobs = [payload as WorkerJob<input>[1]];
+    else throw new TypeError("Unknown worker request");
+    const replies: WorkerReply<output>[] = [];
+    const transfers: Transferable[] = [];
+    for (const job of jobs) {
+      try {
+        const output = await handler(job.input);
+        transfers.push(...(options.transfer?.(output) ?? []));
+        replies.push(["done", { batch: job.batch, id: job.id, output }]);
+      } catch (error) {
+        replies.push(["failed", {
+          batch: job.batch,
+          id: job.id,
+          error: serialize_error(error),
+        }]);
+      }
     }
+    if (tag === "job") scope.postMessage(replies[0], transfers);
+    else scope.postMessage(["results", replies], transfers);
   };
 }
 
@@ -759,17 +705,6 @@ function next_worker_batch(): number {
   return batch;
 }
 
-function compact_signals(
-  first: AbortSignal,
-  second: AbortSignal | undefined,
-): readonly AbortSignal[] {
-  if (second === undefined) {
-    return [first];
-  }
-
-  return [first, second];
-}
-
 function combine_signals(
   first: AbortSignal | undefined,
   second: AbortSignal | undefined,
@@ -831,5 +766,3 @@ function serialize_error(error: unknown): WorkerFailure {
     stack: undefined,
   };
 }
-
-function ignore_value() {}

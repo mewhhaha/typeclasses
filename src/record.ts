@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -53,7 +54,7 @@ export const RecordT: AsRecord = data<AsRecord>(
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
 ): RecordValue<item> {
-  return RecordT(Object.fromEntries(entries));
+  return as_data(RecordT, Object.fromEntries(entries));
 }
 
 /** Copy a wrapped record into a mutable plain object. */
@@ -148,13 +149,13 @@ Functor.instance(RecordT)({
 Semigroup.instance(RecordT)({
   concat(right) {
     const left = this.value();
-    return RecordT({ ...left, ...right.value() });
+    return as_data(RecordT, { ...left, ...right.value() });
   },
 });
 
 Monoid.instance(RecordT)({
   empty() {
-    return RecordT({});
+    return as_data(RecordT, {});
   },
 });
 
@@ -178,7 +179,10 @@ Traversable.instance(RecordT)({
       applicative,
       ([key, value]) => Functor.map(fn(value), (item) => [key, item] as const),
     );
-    return Functor.map(entries, (items) => RecordT(Object.fromEntries(items)));
+    return Functor.map(
+      entries,
+      (items) => as_data(RecordT, Object.fromEntries(items)),
+    );
   },
 });
 
@@ -195,4 +199,17 @@ function compare_entry_keys(
   }
 
   return 0;
+}
+
+/** Snapshot own enumerable properties; later source mutations are invisible. */
+export function from_snapshot<item>(
+  source: Readonly<Record<string, item>>,
+): RecordValue<item> {
+  return RecordT(source);
+}
+/** Wrap a live record by reference; later source mutations remain visible. */
+export function from_record_view<item>(
+  source: Readonly<Record<string, item>>,
+): RecordValue<item> {
+  return as_data(RecordT, source);
 }

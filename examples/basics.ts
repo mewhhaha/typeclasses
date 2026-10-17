@@ -1,6 +1,8 @@
+import type { RawEither } from "../src/either.ts";
+import type { RawMaybe } from "../src/maybe.ts";
 import { from_array } from "../src/list.ts";
-import { Just, type Maybe, Nothing } from "../src/maybe.ts";
-import { type Either, from_number, Left, Right } from "../src/either.ts";
+import { Just, Nothing } from "../src/maybe.ts";
+import { from_number, Left, Right } from "../src/either.ts";
 import { from_fn, parallel } from "../src/task.ts";
 import {
   add_values,
@@ -95,7 +97,7 @@ export async function run_basic_examples() {
   console.log("lift parallel task", await parallel_task.run());
 }
 
-function describe_maybe(value: Maybe<number>) {
+function describe_maybe(value: RawMaybe<number>) {
   if (Nothing.is(value)) {
     return "Nothing";
   }
@@ -103,7 +105,7 @@ function describe_maybe(value: Maybe<number>) {
   return "just:" + value[1].toString();
 }
 
-function describe_either(value: Either<unknown, number>) {
+function describe_either(value: RawEither<unknown, number>) {
   if (Left.is(value)) {
     return "left:" + String(value[1]);
   }

@@ -4,7 +4,8 @@ import { Miniflare } from "miniflare";
 const result = await build({
   stdin: {
     contents: `
-import { Effect, from_fn, Just, run_task } from "./src/mod.ts";
+import { Effect, Just } from "./src/mod.ts";
+import { from_fn, run_task } from "./src/task.ts";
 
 export default {
   async fetch() {

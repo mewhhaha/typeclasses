@@ -84,14 +84,20 @@ function reader_and_state() {
   });
 }
 
-const counter = state<"counter", number>();
-const cursor = state<"cursor", string>();
+const counter = state<"counter", number>("counter");
+const cursor = state<"cursor", string>("cursor");
 
-const config_cell = reader<"config", Config>();
-const database_cell = reader<"database", Database>();
+const config_cell = reader<"config", Config>("config");
+const database_cell = reader<"database", Database>("database");
 
-const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
-const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
+const audit = writer_cell<"audit", AsArray, string>(
+  "audit",
+  ArrayT<string>([]),
+);
+const metrics = writer_cell<"metrics", AsArray, number>(
+  "metrics",
+  ArrayT<number>([]),
+);
 
 type TwoEnvironments = Uses<typeof config_cell> | Uses<typeof database_cell>;
 
@@ -616,11 +622,14 @@ function check_state_cell_types(): void {
   // that way would share one type over distinct runtime symbols — the compiler
   // believing two cells were one. Rejected at the declaration instead.
   // @ts-expect-error `string` is not a key
-  state<string, number>().get();
+  state<string, number>("wide").get();
   // @ts-expect-error `symbol` is not a key
-  state<symbol, number>().get();
+  state<symbol, number>(Symbol()).get();
   // @ts-expect-error `PropertyKey` is not a key
-  state<PropertyKey, number>().get();
+  state<PropertyKey, number>("wide").get();
+
+  // @ts-expect-error a union key could discharge the wrong runtime cell
+  state<"one" | "two", number>("one");
 
   // @ts-expect-error distinct keys give distinct cells
   expect_type<ReturnType<typeof counter.get>>(cursor.get());
@@ -650,7 +659,7 @@ function check_reader_cell_types(): void {
   run_reader_terminal(config_cell, two_environment_cells(), { url: "a" });
 
   // @ts-expect-error `string` is not a key
-  reader<string, Config>().ask();
+  reader<string, Config>("wide").ask();
 }
 
 function check_writer_cell_types(): void {

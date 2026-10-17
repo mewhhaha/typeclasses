@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/http_router dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1068,
+            "min": 273811.0,
+            "max": 9318958.0,
+            "avg": 472475.0,
+            "p75": 462209.0,
+            "p99": 1713306.0,
+            "p995": 5317474.0,
+            "p999": 7482438.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/io_application dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 11398,
+            "min": 23023.0,
+            "max": 6847772.0,
+            "avg": 43894.0,
+            "p75": 46087.0,
+            "p99": 87286.0,
+            "p995": 108526.0,
+            "p999": 4390402.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/agent_harness dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 10762,
+            "min": 26791.0,
+            "max": 7627413.0,
+            "avg": 46998.0,
+            "p75": 34265.0,
+            "p99": 86465.0,
+            "p995": 102054.0,
+            "p999": 5821772.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/parallel_analyzer dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 19,
+            "min": 51631298.0,
+            "max": 139643235.0,
+            "avg": 73597657.0,
+            "p75": 80515853.0,
+            "p99": 139643235.0,
+            "p995": 139643235.0,
+            "p999": 139643235.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/programming_language_parser dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 150,
+            "min": 2118555.0,
+            "max": 16753023.0,
+            "avg": 3709850.0,
+            "p75": 3590522.0,
+            "p99": 13740199.0,
+            "p995": 16753023.0,
+            "p999": 16753023.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/http_router dry run (with transformer, rewrites=10, preserved files=0)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 743,
+            "min": 284822.0,
+            "max": 16032515.0,
+            "avg": 680157.0,
+            "p75": 504859.0,
+            "p99": 8094751.0,
+            "p995": 11000082.0,
+            "p999": 16032515.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/io_application dry run (with transformer, rewrites=1, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 9239,
+            "min": 20218.0,
+            "max": 18751181.0,
+            "avg": 54155.0,
+            "p75": 45606.0,
+            "p99": 174191.0,
+            "p995": 841059.0,
+            "p999": 3117654.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/agent_harness dry run (with transformer, rewrites=1, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 13969,
+            "min": 24466.0,
+            "max": 1269302.0,
+            "avg": 35814.0,
+            "p75": 41068.0,
+            "p99": 78910.0,
+            "p995": 120559.0,
+            "p999": 780253.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 17,
+            "min": 58487516.0,
+            "max": 82081539.0,
+            "avg": 69958248.0,
+            "p75": 75038416.0,
+            "p99": 82081539.0,
+            "p995": 82081539.0,
+            "p999": 82081539.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///tmp/typeclasses-hills-baseline-908d00c/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/programming_language_parser dry run (with transformer, rewrites=0, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 276,
+            "min": 1728003.0,
+            "max": 3502806.0,
+            "avg": 1886635.0,
+            "p75": 1797555.0,
+            "p99": 3420119.0,
+            "p995": 3428615.0,
+            "p999": 3502806.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

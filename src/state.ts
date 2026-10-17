@@ -1,3 +1,4 @@
+import { bind_computation, map_computation } from "./computation.ts";
 import {
   type As,
   type Data,
@@ -22,7 +23,6 @@ import {
   cell_dictionary,
   type CellIdentity,
   type NominalKey,
-  type WidenedCellKey,
   type WithoutCell,
 } from "./cell.ts";
 import {
@@ -136,35 +136,17 @@ export type CellValue<key extends PropertyKey, state, item> = WrappedData<
   item
 >;
 
-/**
- * Declares a keyed state cell.
- *
- * A cell has its own runtime kind and its own type identity, so it is handled
- * by its own `run_state` and is invisible to every other cell and to the
- * anonymous `get`/`put` operations. Name the cell, then give its state type:
- *
- * ```ts
- * const counter = state<"counter", number>();
- * const cursor = state<"cursor", string>();
- * ```
- *
- * The key distinguishes cells that hold the same state type; without it,
- * `state<"counter", number>` and a second number cell would be one type. It
- * exists only in the type, so **declare each key exactly once**: two
- * declarations sharing a key are one cell to the compiler and two at runtime,
- * and the second one's lifts survive a handler the types said would discharge
- * them, throwing at the terminal `run`. A key that is not a literal carries no
- * identity at all and is rejected outright.
- */
-export function state<key extends PropertyKey, state>(): [
-  NominalKey<key>,
-] extends [never] ? WidenedCellKey : AsCell<key, state> {
-  return make_state_cell() as [NominalKey<key>] extends [never] ? WidenedCellKey
-    : AsCell<key, state>;
+/** Declare a State cell addressed by a runtime key within the State family. */
+export function state<key extends PropertyKey, state>(
+  key: key & NominalKey<key>,
+): AsCell<key, state> {
+  return make_state_cell<key, state>(key);
 }
 
-function make_state_cell<key extends PropertyKey, state>(): AsCell<key, state> {
-  const dictionary = cell_dictionary<AsCell<key, state>>();
+function make_state_cell<key extends PropertyKey, state>(
+  key: key,
+): AsCell<key, state> {
+  const dictionary = cell_dictionary<AsCell<key, state>>(State, key);
 
   Object.defineProperties(dictionary, {
     get: {
@@ -194,10 +176,12 @@ function make_state_cell<key extends PropertyKey, state>(): AsCell<key, state> {
     map(fn) {
       const stateful = this.value();
 
-      return wrap((current: state) => {
-        const [value, next] = stateful(current);
-        return [fn(value), next] as const;
-      });
+      return wrap(
+        map_computation(
+          stateful,
+          ([value, next]) => [fn(value), next] as const,
+        ),
+      );
     },
   });
 
@@ -242,10 +226,12 @@ function make_state_cell<key extends PropertyKey, state>(): AsCell<key, state> {
     bind(fn) {
       const stateful = this.value();
 
-      return wrap((current: state) => {
-        const [value, next] = stateful(current);
-        return fn(value).value()(next);
-      });
+      return wrap(
+        bind_computation(
+          stateful,
+          ([value, next]) => [fn(value).value(), next],
+        ),
+      );
     },
   });
 
@@ -522,10 +508,12 @@ Show.instance(State)({
 
 Functor.instance(State)({
   map(fn) {
-    return State((state: unknown) => {
-      const [value, next] = this.value()(state);
-      return [fn(value), next];
-    });
+    return State(
+      map_computation(
+        this.value(),
+        ([value, next]) => [fn(value), next] as const,
+      ),
+    );
   },
 });
 
@@ -565,9 +553,11 @@ Applicative.instance(State)({
 
 Monad.instance(State)({
   bind(fn) {
-    return State((state: unknown) => {
-      const [value, next] = this.value()(state);
-      return fn(value).value()(next);
-    });
+    return State(
+      bind_computation(
+        this.value(),
+        ([value, next]) => [fn(value).value(), next],
+      ),
+    );
   },
 });

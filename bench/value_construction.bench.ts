@@ -1,4 +1,4 @@
-import { Just, Maybe, type Maybe as MaybeContext } from "../src/maybe.ts";
+import { Just, Maybe, type RawMaybe as MaybeContext } from "../src/maybe.ts";
 import { as_data, as_data_cached, type WrappedData } from "../src/typeclass.ts";
 
 // Each benchmark iteration performs this many constructions or read cycles.

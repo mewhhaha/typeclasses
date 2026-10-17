@@ -1,0 +1,1371 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown raw tuple just construction",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 41837,
+            "min": 11191.0,
+            "max": 212523.0,
+            "avg": 11954.0,
+            "p75": 11512.0,
+            "p99": 21410.0,
+            "p995": 22172.0,
+            "p999": 68219.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses just construction",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 24634,
+            "min": 16872.0,
+            "max": 7968420.0,
+            "avg": 20311.0,
+            "p75": 18285.0,
+            "p99": 37571.0,
+            "p995": 41770.0,
+            "p999": 85062.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses direct Maybe construction",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 3516,
+            "min": 116831.0,
+            "max": 675562.0,
+            "avg": 142709.0,
+            "p75": 142219.0,
+            "p99": 244154.0,
+            "p995": 256256.0,
+            "p999": 332952.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses nothing reuse",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 9234,
+            "min": 40136.0,
+            "max": 311100.0,
+            "avg": 54234.0,
+            "p75": 62319.0,
+            "p99": 86864.0,
+            "p995": 92345.0,
+            "p999": 194930.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown raw tuple value read",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 2610,
+            "min": 144214.0,
+            "max": 1745802.0,
+            "avg": 192138.0,
+            "p75": 160705.0,
+            "p99": 952537.0,
+            "p995": 1579007.0,
+            "p999": 1720685.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses value() read",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1166,
+            "min": 232401.0,
+            "max": 1981330.0,
+            "avg": 430979.0,
+            "p75": 466586.0,
+            "p99": 1611278.0,
+            "p995": 1645893.0,
+            "p999": 1885789.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown raw tuple map chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 476,
+            "min": 830987.0,
+            "max": 2396417.0,
+            "avg": 1075791.0,
+            "p75": 1094808.0,
+            "p99": 2017328.0,
+            "p995": 2048468.0,
+            "p999": 2396417.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses fluent map chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 606,
+            "min": 722380.0,
+            "max": 2694323.0,
+            "avg": 839978.0,
+            "p75": 833592.0,
+            "p99": 1478746.0,
+            "p995": 2532536.0,
+            "p999": 2694323.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses cached map.call chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 603,
+            "min": 668979.0,
+            "max": 2229641.0,
+            "avg": 843743.0,
+            "p75": 853329.0,
+            "p99": 1491510.0,
+            "p995": 1545383.0,
+            "p999": 2229641.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses Functor.map chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 178,
+            "min": 2102851.0,
+            "max": 5518863.0,
+            "avg": 2950688.0,
+            "p75": 3609880.0,
+            "p99": 4488307.0,
+            "p995": 5518863.0,
+            "p999": 5518863.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown raw tuple bind chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 403,
+            "min": 851205.0,
+            "max": 5070662.0,
+            "avg": 1269394.0,
+            "p75": 1592411.0,
+            "p99": 2101407.0,
+            "p995": 2412498.0,
+            "p999": 5070662.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses fluent bind chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 559,
+            "min": 767437.0,
+            "max": 2562002.0,
+            "avg": 910537.0,
+            "p75": 930706.0,
+            "p99": 1440273.0,
+            "p995": 2235962.0,
+            "p999": 2562002.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses cached bind.call chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 484,
+            "min": 768098.0,
+            "max": 2612708.0,
+            "avg": 1053996.0,
+            "p75": 1268036.0,
+            "p99": 1914302.0,
+            "p995": 2427707.0,
+            "p999": 2612708.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses Monad.bind chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 390,
+            "min": 938381.0,
+            "max": 3893898.0,
+            "avg": 1310004.0,
+            "p75": 1558668.0,
+            "p99": 3220270.0,
+            "p995": 3388539.0,
+            "p999": 3893898.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses manual bind do-shape",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 425,
+            "min": 775471.0,
+            "max": 4795591.0,
+            "avg": 1206193.0,
+            "p75": 1432898.0,
+            "p99": 2961500.0,
+            "p995": 3291186.0,
+            "p999": 4795591.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses Do generator",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 32,
+            "min": 17089028.0,
+            "max": 27968392.0,
+            "avg": 22220244.0,
+            "p75": 24358002.0,
+            "p99": 27968392.0,
+            "p995": 27968392.0,
+            "p999": 27968392.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown monomorphic Maybe bind call site",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 501,
+            "min": 787464.0,
+            "max": 2810583.0,
+            "avg": 1019438.0,
+            "p75": 1109786.0,
+            "p99": 2320684.0,
+            "p995": 2437475.0,
+            "p999": 2810583.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown monomorphic Either bind call site",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 570,
+            "min": 627581.0,
+            "max": 1859579.0,
+            "avg": 893693.0,
+            "p75": 975672.0,
+            "p99": 1498764.0,
+            "p995": 1774837.0,
+            "p999": 1859579.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown mixed Maybe/Either bind call site",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 240,
+            "min": 1701749.0,
+            "max": 5017282.0,
+            "avg": 2166617.0,
+            "p75": 2197389.0,
+            "p99": 3633285.0,
+            "p995": 4943872.0,
+            "p999": 5017282.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline Array.map materializes each step",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 143,
+            "min": 3034909.0,
+            "max": 6205946.0,
+            "avg": 3776563.0,
+            "p75": 4075634.0,
+            "p99": 5914132.0,
+            "p995": 6205946.0,
+            "p999": 6205946.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline native generator maps lazy",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 59,
+            "min": 9133151.0,
+            "max": 16133544.0,
+            "avg": 10374246.0,
+            "p75": 9907271.0,
+            "p99": 16133544.0,
+            "p995": 16133544.0,
+            "p999": 16133544.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline IterableT maps lazy, final array",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 58,
+            "min": 8732380.0,
+            "max": 16134617.0,
+            "avg": 10363333.0,
+            "p75": 9851465.0,
+            "p99": 16134617.0,
+            "p995": 16134617.0,
+            "p999": 16134617.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline IterableT maps lazy, folded",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 66,
+            "min": 8435177.0,
+            "max": 15282319.0,
+            "avg": 9016586.0,
+            "p75": 9042459.0,
+            "p99": 15282319.0,
+            "p995": 15282319.0,
+            "p999": 15282319.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline manual fused loop",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 287,
+            "min": 1666021.0,
+            "max": 4947388.0,
+            "avg": 1804657.0,
+            "p75": 1716707.0,
+            "p99": 3286476.0,
+            "p995": 3351350.0,
+            "p999": 4947388.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline Array.map materializes all, first 100",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 167,
+            "min": 2974494.0,
+            "max": 4573559.0,
+            "avg": 3198111.0,
+            "p75": 3162341.0,
+            "p99": 4528654.0,
+            "p995": 4573559.0,
+            "p999": 4573559.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline native generator maps lazy, first 100",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 22627,
+            "min": 16942.0,
+            "max": 361345.0,
+            "avg": 22107.0,
+            "p75": 24917.0,
+            "p99": 36600.0,
+            "p995": 40517.0,
+            "p999": 89410.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/iterable_pipeline.bench.ts",
+      "group": null,
+      "name": "iterable pipeline IterableT maps lazy, first 100",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 19410,
+            "min": 20830.0,
+            "max": 1959609.0,
+            "avg": 25774.0,
+            "p75": 23394.0,
+            "p99": 39364.0,
+            "p995": 43392.0,
+            "p999": 615398.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "ArrayT traverse scaling",
+      "name": "ArrayT traverse/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 2859,
+            "min": 159442.0,
+            "max": 519425.0,
+            "avg": 175709.0,
+            "p75": 173599.0,
+            "p99": 388316.0,
+            "p995": 420768.0,
+            "p999": 453190.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "ArrayT traverse scaling",
+      "name": "ArrayT traverse/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1201,
+            "min": 323063.0,
+            "max": 8095672.0,
+            "avg": 419758.0,
+            "p75": 409106.0,
+            "p99": 703184.0,
+            "p995": 809667.0,
+            "p999": 1656864.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "ArrayT traverse scaling",
+      "name": "ArrayT traverse/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 608,
+            "min": 723493.0,
+            "max": 2119011.0,
+            "avg": 837533.0,
+            "p75": 809957.0,
+            "p99": 1403253.0,
+            "p995": 1690939.0,
+            "p999": 2119011.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "ArrayT traverse scaling",
+      "name": "ArrayT traverse/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 287,
+            "min": 1472785.0,
+            "max": 3582538.0,
+            "avg": 1838179.0,
+            "p75": 1977132.0,
+            "p99": 3187920.0,
+            "p995": 3208338.0,
+            "p999": 3582538.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "ArrayT traverse scaling",
+      "name": "ArrayT traverse/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 122,
+            "min": 3155778.0,
+            "max": 7061500.0,
+            "avg": 4476511.0,
+            "p75": 5090981.0,
+            "p99": 6930942.0,
+            "p995": 7061500.0,
+            "p999": 7061500.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "IterableT traverse scaling",
+      "name": "IterableT traverse/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 2636,
+            "min": 159022.0,
+            "max": 1449921.0,
+            "avg": 190399.0,
+            "p75": 182807.0,
+            "p99": 380522.0,
+            "p995": 407303.0,
+            "p999": 493576.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "IterableT traverse scaling",
+      "name": "IterableT traverse/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1330,
+            "min": 326099.0,
+            "max": 893425.0,
+            "avg": 378707.0,
+            "p75": 376103.0,
+            "p99": 700018.0,
+            "p995": 765002.0,
+            "p999": 874079.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "IterableT traverse scaling",
+      "name": "IterableT traverse/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 622,
+            "min": 661886.0,
+            "max": 9253430.0,
+            "avg": 816977.0,
+            "p75": 822191.0,
+            "p99": 1498945.0,
+            "p995": 1663567.0,
+            "p999": 9253430.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "IterableT traverse scaling",
+      "name": "IterableT traverse/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 294,
+            "min": 1336175.0,
+            "max": 3922905.0,
+            "avg": 1754769.0,
+            "p75": 1912439.0,
+            "p99": 3209129.0,
+            "p995": 3493089.0,
+            "p999": 3922905.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "IterableT traverse scaling",
+      "name": "IterableT traverse/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 152,
+            "min": 3004662.0,
+            "max": 21054624.0,
+            "avg": 3663127.0,
+            "p75": 3618437.0,
+            "p99": 6076772.0,
+            "p995": 21054624.0,
+            "p999": 21054624.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "MapT traverse scaling",
+      "name": "MapT traverse/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1384,
+            "min": 290301.0,
+            "max": 10974055.0,
+            "avg": 363722.0,
+            "p75": 354222.0,
+            "p99": 730016.0,
+            "p995": 804206.0,
+            "p999": 2551121.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "MapT traverse scaling",
+      "name": "MapT traverse/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 722,
+            "min": 606691.0,
+            "max": 1385881.0,
+            "avg": 704647.0,
+            "p75": 707032.0,
+            "p99": 1233260.0,
+            "p995": 1298313.0,
+            "p999": 1385881.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "MapT traverse scaling",
+      "name": "MapT traverse/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 369,
+            "min": 1225275.0,
+            "max": 12459985.0,
+            "avg": 1391762.0,
+            "p75": 1330395.0,
+            "p99": 2117098.0,
+            "p995": 2862011.0,
+            "p999": 12459985.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "MapT traverse scaling",
+      "name": "MapT traverse/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 181,
+            "min": 2576439.0,
+            "max": 4570112.0,
+            "avg": 2941029.0,
+            "p75": 3037955.0,
+            "p99": 4247159.0,
+            "p995": 4570112.0,
+            "p999": 4570112.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "MapT traverse scaling",
+      "name": "MapT traverse/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 71,
+            "min": 5775199.0,
+            "max": 29048665.0,
+            "avg": 9019602.0,
+            "p75": 10454740.0,
+            "p99": 29048665.0,
+            "p995": 29048665.0,
+            "p999": 29048665.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "RecordT traverse scaling",
+      "name": "RecordT traverse/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 775,
+            "min": 374932.0,
+            "max": 1787933.0,
+            "avg": 653859.0,
+            "p75": 683718.0,
+            "p99": 1071363.0,
+            "p995": 1304125.0,
+            "p999": 1787933.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "RecordT traverse scaling",
+      "name": "RecordT traverse/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 547,
+            "min": 648311.0,
+            "max": 2516836.0,
+            "avg": 935502.0,
+            "p75": 1166654.0,
+            "p99": 1674418.0,
+            "p995": 1879307.0,
+            "p999": 2516836.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "RecordT traverse scaling",
+      "name": "RecordT traverse/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 303,
+            "min": 1262225.0,
+            "max": 7854566.0,
+            "avg": 1710889.0,
+            "p75": 1956553.0,
+            "p99": 3323337.0,
+            "p995": 4859782.0,
+            "p999": 7854566.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "RecordT traverse scaling",
+      "name": "RecordT traverse/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 175,
+            "min": 2617798.0,
+            "max": 5750312.0,
+            "avg": 3113374.0,
+            "p75": 3282670.0,
+            "p99": 5076143.0,
+            "p995": 5750312.0,
+            "p999": 5750312.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "RecordT traverse scaling",
+      "name": "RecordT traverse/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 78,
+            "min": 5810546.0,
+            "max": 16554936.0,
+            "avg": 7372755.0,
+            "p75": 7837133.0,
+            "p99": 16554936.0,
+            "p995": 16554936.0,
+            "p999": 16554936.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "discarded traversal scaling",
+      "name": "State discarded traversal/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1717,
+            "min": 200791.0,
+            "max": 950634.0,
+            "avg": 292898.0,
+            "p75": 336068.0,
+            "p99": 785972.0,
+            "p995": 852669.0,
+            "p999": 933983.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "discarded traversal scaling",
+      "name": "State discarded traversal/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 999,
+            "min": 399428.0,
+            "max": 1294957.0,
+            "avg": 505395.0,
+            "p75": 525417.0,
+            "p99": 1113554.0,
+            "p995": 1214615.0,
+            "p999": 1294957.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "discarded traversal scaling",
+      "name": "State discarded traversal/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 475,
+            "min": 827690.0,
+            "max": 2777791.0,
+            "avg": 1072844.0,
+            "p75": 1151935.0,
+            "p99": 2483102.0,
+            "p995": 2664336.0,
+            "p999": 2777791.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "discarded traversal scaling",
+      "name": "State discarded traversal/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 211,
+            "min": 1707340.0,
+            "max": 5380150.0,
+            "avg": 2484523.0,
+            "p75": 3042604.0,
+            "p99": 4828944.0,
+            "p995": 4994939.0,
+            "p999": 5380150.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "discarded traversal scaling",
+      "name": "State discarded traversal/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 88,
+            "min": 4234706.0,
+            "max": 12164575.0,
+            "avg": 6537756.0,
+            "p75": 7740620.0,
+            "p99": 12164575.0,
+            "p995": 12164575.0,
+            "p999": 12164575.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "impure Effect bind scaling",
+      "name": "impure Effect bind/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 544,
+            "min": 781042.0,
+            "max": 5612471.0,
+            "avg": 935019.0,
+            "p75": 876824.0,
+            "p99": 1831746.0,
+            "p995": 3542403.0,
+            "p999": 5612471.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "impure Effect bind scaling",
+      "name": "impure Effect bind/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 299,
+            "min": 1579277.0,
+            "max": 2571540.0,
+            "avg": 1733916.0,
+            "p75": 1743168.0,
+            "p99": 2492089.0,
+            "p995": 2522026.0,
+            "p999": 2571540.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "impure Effect bind scaling",
+      "name": "impure Effect bind/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 103,
+            "min": 3300644.0,
+            "max": 13407243.0,
+            "avg": 5567284.0,
+            "p75": 5942227.0,
+            "p99": 11564436.0,
+            "p995": 13407243.0,
+            "p999": 13407243.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "impure Effect bind scaling",
+      "name": "impure Effect bind/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 43,
+            "min": 9977895.0,
+            "max": 39340768.0,
+            "avg": 15015617.0,
+            "p75": 16109021.0,
+            "p99": 39340768.0,
+            "p995": 39340768.0,
+            "p999": 39340768.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "impure Effect bind scaling",
+      "name": "impure Effect bind/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 30,
+            "min": 13967697.0,
+            "max": 41333339.0,
+            "avg": 21946115.0,
+            "p75": 28356383.0,
+            "p99": 41333339.0,
+            "p995": 41333339.0,
+            "p999": 41333339.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "pure Program scaling",
+      "name": "pure Program yields/1000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1901,
+            "min": 227552.0,
+            "max": 803354.0,
+            "avg": 264297.0,
+            "p75": 258370.0,
+            "p99": 492985.0,
+            "p995": 560354.0,
+            "p999": 683387.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "pure Program scaling",
+      "name": "pure Program yields/2000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 949,
+            "min": 451166.0,
+            "max": 1216508.0,
+            "avg": 532749.0,
+            "p75": 541648.0,
+            "p99": 894528.0,
+            "p995": 992413.0,
+            "p999": 1216508.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "pure Program scaling",
+      "name": "pure Program yields/4000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 509,
+            "min": 902072.0,
+            "max": 1752485.0,
+            "avg": 1010383.0,
+            "p75": 961114.0,
+            "p99": 1576462.0,
+            "p995": 1589256.0,
+            "p999": 1752485.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "pure Program scaling",
+      "name": "pure Program yields/8000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 271,
+            "min": 1806368.0,
+            "max": 3115542.0,
+            "avg": 1914641.0,
+            "p75": 1882593.0,
+            "p99": 2521906.0,
+            "p995": 2628939.0,
+            "p999": 3115542.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/scaling.bench.ts",
+      "group": "pure Program scaling",
+      "name": "pure Program yields/16000",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 140,
+            "min": 3652241.0,
+            "max": 5149973.0,
+            "avg": 3845513.0,
+            "p75": 3903998.0,
+            "p99": 4939815.0,
+            "p995": 5149973.0,
+            "p999": 5149973.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

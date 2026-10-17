@@ -277,7 +277,7 @@ export function match_tagged<value extends TaggedValue, result>(
   value: value,
   cases: TaggedMatchCases<value, result>,
 ): result {
-  const [tag, ...payload] = value;
+  const tag = value[0];
   const handler =
     (cases as Record<PropertyKey, (...payload: unknown[]) => result>)[tag];
 
@@ -285,7 +285,16 @@ export function match_tagged<value extends TaggedValue, result>(
     throw new TypeError("No match handler for tag " + String(tag));
   }
 
-  return handler(...payload);
+  switch (value.length) {
+    case 1:
+      return handler();
+    case 2:
+      return handler(value[1]);
+    case 3:
+      return handler(value[1], value[2]);
+    default:
+      return handler(...value.slice(1));
+  }
 }
 
 function data_value_of<value>(

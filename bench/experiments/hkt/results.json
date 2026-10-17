@@ -1,0 +1,63 @@
+{
+  "compiler": "5.9.3",
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "workloads_per_context": 128,
+  "map_calls": 1152,
+  "workload_sha256": "d2550cf38f9e84bb934a280751d4a2ef39064f7873cd07f4da3e16b4db880027",
+  "order": "A B B A A B",
+  "samples": [
+    {
+      "model": "current",
+      "check_ms": 1527.611079,
+      "types": 19468,
+      "instantiations": 84493,
+      "source_files": 7,
+      "source_sha256": "0412efb2702de5178a6f57bddd9c699767f8a7f83239baf3ebf94ed404180a92"
+    },
+    {
+      "model": "lambda",
+      "check_ms": 647.4159770000001,
+      "types": 2609,
+      "instantiations": 6326,
+      "source_files": 4,
+      "source_sha256": "aa219330d2b26b55a2f272e84b1b79186570658a313f2e31dfb8f28ab388f1b9"
+    },
+    {
+      "model": "lambda",
+      "check_ms": 588.010295,
+      "types": 2609,
+      "instantiations": 6326,
+      "source_files": 4,
+      "source_sha256": "aa219330d2b26b55a2f272e84b1b79186570658a313f2e31dfb8f28ab388f1b9"
+    },
+    {
+      "model": "current",
+      "check_ms": 1144.4161860000004,
+      "types": 19468,
+      "instantiations": 84493,
+      "source_files": 7,
+      "source_sha256": "0412efb2702de5178a6f57bddd9c699767f8a7f83239baf3ebf94ed404180a92"
+    },
+    {
+      "model": "current",
+      "check_ms": 1065.232102,
+      "types": 19468,
+      "instantiations": 84493,
+      "source_files": 7,
+      "source_sha256": "0412efb2702de5178a6f57bddd9c699767f8a7f83239baf3ebf94ed404180a92"
+    },
+    {
+      "model": "lambda",
+      "check_ms": 466.55244200000016,
+      "types": 2609,
+      "instantiations": 6326,
+      "source_files": 4,
+      "source_sha256": "aa219330d2b26b55a2f272e84b1b79186570658a313f2e31dfb8f28ab388f1b9"
+    }
+  ],
+  "scope": "Functor-only third-party contexts; declarations only. Lambda omits runtime dictionaries, tagged matching, Do, broad dictionary members and callable construction implementation. Timing includes program creation and full diagnostics; source imports differ and this is not an isolated encoding-only cost claim."
+}

@@ -1,11 +1,6 @@
+import type { RawMaybe } from "../src/maybe.ts";
 import { from_array, to_array } from "../src/list.ts";
-import {
-  from_nullable,
-  Just,
-  type Maybe,
-  type MaybeValue,
-  Nothing,
-} from "../src/maybe.ts";
+import { from_nullable, Just, type MaybeValue, Nothing } from "../src/maybe.ts";
 import { Do } from "../src/typeclasses.ts";
 
 export type Endpoint = {
@@ -19,8 +14,8 @@ export type Coordinate = {
 };
 
 export type DoContextScenario = {
-  readonly endpoint: Maybe<Endpoint>;
-  readonly missing_endpoint: Maybe<Endpoint>;
+  readonly endpoint: RawMaybe<Endpoint>;
+  readonly missing_endpoint: RawMaybe<Endpoint>;
   readonly coordinates: readonly Coordinate[];
 };
 

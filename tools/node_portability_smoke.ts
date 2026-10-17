@@ -1,4 +1,5 @@
-import { Effect, Just, Nothing, Ord, Program, worker_map } from "../src/mod.ts";
+import { Effect, Just, Nothing, Ord, Program } from "../src/mod.ts";
+import { worker_map } from "../src/parallel.ts";
 import { Right } from "../src/either.ts";
 import { done, loop, rec } from "../src/loop.ts";
 import { fmap } from "../src/prelude.ts";
@@ -87,5 +88,5 @@ if (
   typeof Effect.pure !== "function" || typeof Program !== "function" ||
   typeof worker_map !== "function"
 ) {
-  throw new Error("root package entrypoint is incomplete under this runtime");
+  throw new Error("package entrypoints are incomplete under this runtime");
 }

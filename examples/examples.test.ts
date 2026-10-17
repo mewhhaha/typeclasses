@@ -15,6 +15,11 @@ import {
 } from "./task_workflow.ts";
 import { decode_registration_request } from "./validated_request.ts";
 import { analyze_log_shard } from "./worker_pool_job.ts";
+import { schema_unions_example } from "./schema_unions.ts";
+
+Deno.test("single-source union schemas infer constructors and matching", () => {
+  assert_equals(schema_unions_example(), ["42", "ready", "counter=2"]);
+});
 
 Deno.test("consumer APIs infer contexts and preserve deferred execution", async () => {
   assert_equals(await run_consumer_ergonomics_scenario(), {

@@ -20,8 +20,10 @@ export declare const stm_identity: unique symbol;
 export const tvar_brand: unique symbol = Symbol("TVar.brand");
 const tvar_id = Symbol("TVar.id");
 const tvar_value = Symbol("TVar.value");
+const tvar_immutable = Symbol("TVar.immutable");
 let next_tvar_id = 0;
 let transaction_depth = 0;
+const immutable_values = new WeakSet<object>();
 
 /** A transactional reference whose item type is invariant. */
 export type TVar<item> = {
@@ -31,10 +33,12 @@ export type TVar<item> = {
 type TVarBox<item> = TVar<item> & {
   readonly [tvar_id]: number;
   [tvar_value]: item;
+  readonly [tvar_immutable]?: boolean;
 };
 
 /** @ignore */
 export type StmJournal = {
+  readonly parent?: StmJournal;
   readonly reads: Map<TVar<unknown>, unknown>;
   readonly writes: Map<TVar<unknown>, unknown>;
 };
@@ -139,11 +143,15 @@ export function or_else<item>(
   return Stm((journal) => {
     // The branch gets its own values before it can mutate them. Restoring map
     // entries afterward cannot restore references held by the enclosing program.
-    const branch = snapshot_journal(journal);
+    const branch: StmJournal = {
+      parent: journal,
+      reads: new Map(),
+      writes: new Map(),
+    };
 
     try {
       const value = run_stm(left, branch);
-      restore_journal(journal, branch);
+      merge_journal(journal, branch);
       return value;
     } catch (error) {
       if (!(error instanceof StmRetry)) {
@@ -247,8 +255,9 @@ function read_journal<item>(
     return journal.reads.get(key) as item;
   }
 
-  const value = isolate_value(
-    read_current(variable),
+  const value = isolate_tvar(
+    variable,
+    lookup_journal(journal.parent, key, read_current(variable)) as item,
     `value read from TVar ${read_tvar_id(variable)}`,
   );
   journal.reads.set(key, value);
@@ -263,7 +272,11 @@ function write_journal<item>(
 ): void {
   journal.writes.set(
     variable as TVar<unknown>,
-    isolate_value(value, `value written to TVar ${read_tvar_id(variable)}`),
+    isolate_tvar(
+      variable,
+      value,
+      `value written to TVar ${read_tvar_id(variable)}`,
+    ),
   );
 }
 
@@ -275,27 +288,26 @@ function commit_journal(journal: StmJournal): void {
   }
 }
 
-function restore_journal(
-  journal: StmJournal,
-  snapshot: StmJournal,
-): void {
-  journal.reads.clear();
-  journal.writes.clear();
-
-  for (const [variable, value] of snapshot.reads) {
-    journal.reads.set(variable, value);
+function lookup_journal(
+  journal: StmJournal | undefined,
+  variable: TVar<unknown>,
+  fallback: unknown,
+): unknown {
+  for (let current = journal; current !== undefined; current = current.parent) {
+    if (current.writes.has(variable)) return current.writes.get(variable);
+    if (current.reads.has(variable)) return current.reads.get(variable);
   }
-
-  for (const [variable, value] of snapshot.writes) {
-    journal.writes.set(variable, value);
-  }
+  return fallback;
 }
 
-function snapshot_journal(journal: StmJournal): StmJournal {
-  return {
-    reads: snapshot_tvar_values(journal.reads, "read snapshot"),
-    writes: snapshot_tvar_values(journal.writes, "write snapshot"),
-  };
+function merge_journal(journal: StmJournal, branch: StmJournal): void {
+  for (const [variable, value] of branch.reads) {
+    if (journal.writes.has(variable)) journal.writes.set(variable, value);
+    else journal.reads.set(variable, value);
+  }
+  for (const [variable, value] of branch.writes) {
+    journal.writes.set(variable, value);
+  }
 }
 
 function snapshot_tvar_values(
@@ -307,7 +319,11 @@ function snapshot_tvar_values(
   for (const [variable, value] of values) {
     snapshot.set(
       variable,
-      isolate_value(value, `${operation} for TVar ${read_tvar_id(variable)}`),
+      isolate_tvar(
+        variable,
+        value,
+        `${operation} for TVar ${read_tvar_id(variable)}`,
+      ),
     );
   }
 
@@ -409,4 +425,81 @@ function contains_shared_memory(
   }
 
   return false;
+}
+
+/** Creates a reference whose isolated plain records and arrays are deeply frozen.
+ * Mutable built-ins, accessors, functions and symbol properties are rejected.
+ */
+export function new_immutable_tvar<item>(value: item): TVar<item> {
+  validate_immutable(value, new WeakSet());
+  const variable = new_tvar(value) as TVarBox<item>;
+  Object.defineProperty(variable, tvar_immutable, { value: true });
+  freeze_immutable(variable[tvar_value], new WeakSet());
+  return variable;
+}
+
+function isolate_tvar<item>(
+  variable: TVar<item>,
+  value: item,
+  operation: string,
+): item {
+  if ((variable as TVarBox<item>)[tvar_immutable]) {
+    if (typeof value !== "object" || value === null) {
+      if (typeof value !== "function") return value;
+    } else if (immutable_values.has(value)) return value;
+    validate_immutable(value, new WeakSet());
+    if (is_deeply_frozen(value, new WeakSet())) return value;
+    const isolated = isolate_value(value, operation);
+    freeze_immutable(isolated, new WeakSet());
+    return isolated;
+  }
+  return isolate_value(value, operation);
+}
+
+function validate_immutable(value: unknown, seen: WeakSet<object>): void {
+  if (typeof value === "function") {
+    throw new StmError("Immutable TVars require plain data");
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) return;
+  seen.add(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    !Array.isArray(value) && prototype !== Object.prototype &&
+    prototype !== null
+  ) {
+    throw new StmError("Immutable TVars require plain records and arrays");
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "symbol") {
+      throw new StmError("Immutable TVars reject symbol properties");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (!("value" in descriptor)) {
+      throw new StmError("Immutable TVars reject accessors");
+    }
+    if (!descriptor.enumerable && !(Array.isArray(value) && key === "length")) {
+      throw new StmError("Immutable TVars reject non-enumerable properties");
+    }
+    validate_immutable(descriptor.value, seen);
+  }
+}
+
+function freeze_immutable(value: unknown, seen: WeakSet<object>): void {
+  if (typeof value !== "object" || value === null || seen.has(value)) return;
+  seen.add(value);
+  for (const child of Object.values(value)) freeze_immutable(child, seen);
+  Object.freeze(value);
+  immutable_values.add(value);
+}
+
+function is_deeply_frozen(value: unknown, seen: WeakSet<object>): boolean {
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return true;
+  }
+  if (!Object.isFrozen(value)) return false;
+  seen.add(value);
+  for (const child of Object.values(value)) {
+    if (!is_deeply_frozen(child, seen)) return false;
+  }
+  return true;
 }

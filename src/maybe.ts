@@ -33,7 +33,7 @@ import { loop_done, loop_rec } from "./loop.ts";
 export declare const maybe_identity: unique symbol;
 
 /** An optional value represented by a Just or Nothing tagged tuple. */
-export type Maybe<item> =
+export type RawMaybe<item> =
   | Just<item>
   | Nothing;
 
@@ -56,7 +56,7 @@ export interface AsMaybe
   /** Higher-kinded slot for the optional item type. */
   readonly [type_item]: unknown;
   /** Maybe representation at the selected item type. */
-  readonly [type_data]: Maybe<this[typeof type_item]>;
+  readonly [type_data]: RawMaybe<this[typeof type_item]>;
 }
 
 /** A Maybe tuple wrapped with the Maybe dictionary's fluent methods. */
@@ -442,4 +442,18 @@ function nothing_value<item>(): MaybeValue<item> {
 
 function is_Nothing_value(value: unknown): value is MaybeValue<never> {
   return value === nothing_singleton;
+}
+
+/** The public fluent Maybe value. */
+export type Maybe<item> = MaybeValue<item>;
+
+/** Return the present value, evaluating the fallback only for Nothing. */
+export function get_or_else<item, fallback>(
+  value: Maybe<item>,
+  fallback: () => fallback,
+): item | fallback {
+  return value.match<item | fallback>({
+    Just: (item) => item,
+    Nothing: fallback,
+  });
 }

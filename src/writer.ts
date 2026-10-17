@@ -1,3 +1,4 @@
+import { array_concat_method, ArrayT } from "./array.ts";
 import {
   type As,
   type Data,
@@ -18,12 +19,11 @@ import {
   type Lift,
   type TaggedOperation,
 } from "./effects.ts";
-import { configured_dictionary } from "./internal.ts";
+import { configured_dictionary, is_kind_of } from "./internal.ts";
 import {
   cell_dictionary,
   type CellIdentity,
   type NominalKey,
-  type WidenedCellKey,
   type WithoutCell,
 } from "./cell.ts";
 import { inspect } from "./inspect.ts";
@@ -94,6 +94,7 @@ export const Writer = data<
   AsWriter<Dictionary, unknown>
 >() as unknown as WriterConstructor;
 const writer_kind = Writer[kind];
+const canonical_array_concat = array_concat_method;
 
 Object.defineProperty(Writer, "with", {
   value: configured_writer,
@@ -166,63 +167,27 @@ export type WriterCellValue<
   item
 >;
 
-/**
- * Declares a keyed Writer cell.
- *
- * A cell has its own runtime kind and its own type identity, so it is drained
- * by its own `run_writer` and is invisible to every other cell and to the
- * anonymous `tell`. Give a literal key and the empty output to infer its types:
- *
- * ```ts
- * const audit = writer_cell("audit", ArrayT<string>([]));
- * const metrics = writer_cell("metrics", ArrayT<number>([]));
- * ```
- *
- * The explicit `writer_cell<"audit", AsArray, string>(empty)` form is also
- * supported. The key distinguishes cells accumulating into the same Monoid. It
- * selects the type identity, so **declare each key exactly once**: declarations sharing a
- * key are one cell to the compiler and two at runtime, and the second one's
- * lifts survive a handler the types said would discharge them. A key that is
- * not a literal carries no identity at all and is rejected outright.
- */
+/** Declare a Writer cell using a runtime key and its empty output. */
 export function writer_cell<
-  key extends PropertyKey,
-  output extends MonoidDictionary<output>,
-  log,
->(empty: Data<output, log>): [NominalKey<key>] extends [never] ? WidenedCellKey
-  : AsWriterCell<key, output, log>;
-/** Infers a Writer cell's key, output Monoid, and log type from its arguments. */
-export function writer_cell<
-  key extends PropertyKey,
+  const key extends PropertyKey,
   output extends MonoidDictionary<output>,
   log,
 >(
-  key: key,
+  key: key & NominalKey<key>,
   empty: Data<output, log>,
-): [NominalKey<key>] extends [never] ? WidenedCellKey
-  : AsWriterCell<key, output, log>;
-export function writer_cell<
-  key extends PropertyKey,
-  output extends MonoidDictionary<output>,
-  log,
->(
-  key_or_empty: key | Data<output, log>,
-  empty?: Data<output, log>,
-): [NominalKey<key>] extends [never] ? WidenedCellKey
-  : AsWriterCell<key, output, log> {
-  const initial = empty ?? key_or_empty as Data<output, log>;
-  return make_writer_cell<key, output, log>(
-    initial,
-  ) as [NominalKey<key>] extends [never] ? WidenedCellKey
-    : AsWriterCell<key, output, log>;
+): AsWriterCell<key, output, log> {
+  return make_writer_cell<key, output, log>(key, empty);
 }
 
 function make_writer_cell<
   key extends PropertyKey,
   output extends Dictionary,
   log,
->(empty: Data<output, log>): AsWriterCell<key, output, log> {
-  const dictionary = cell_dictionary<AsWriterCell<key, output, log>>();
+>(key: key, empty: Data<output, log>): AsWriterCell<key, output, log> {
+  const dictionary = cell_dictionary<AsWriterCell<key, output, log>>(
+    Writer,
+    key,
+  );
 
   Object.defineProperties(dictionary, {
     tell: {
@@ -540,6 +505,8 @@ function run_writer_terminal_kind(
     unknown
   >;
   let current_output = empty;
+  let bufferable = has_canonical_array_concat(empty);
+  let buffered_output: unknown[] | undefined;
 
   while (true) {
     if (!is_effect(current)) {
@@ -547,6 +514,11 @@ function run_writer_terminal_kind(
     }
 
     if (current[0] === "pure") {
+      if (buffered_output !== undefined) {
+        current_output = ArrayT(
+          buffered_output,
+        ) as unknown as typeof current_output;
+      }
       return [current[1] as item, current_output];
     }
 
@@ -563,7 +535,31 @@ function run_writer_terminal_kind(
     }
 
     const [value, next_output] = operation[1].value();
-    current_output = concat_output(current_output, next_output);
+    if (
+      bufferable &&
+      (buffered_output !== undefined ||
+        has_canonical_array_concat(current_output)) &&
+      Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
+        canonical_array_concat &&
+      is_kind_of(next_output, ArrayT)
+    ) {
+      if (buffered_output === undefined) {
+        buffered_output = [...current_output.value() as Iterable<unknown>];
+      }
+      append_array_log(
+        buffered_output,
+        next_output.value() as Iterable<unknown>,
+      );
+    } else {
+      if (buffered_output !== undefined) {
+        current_output = ArrayT(
+          buffered_output,
+        ) as unknown as typeof current_output;
+        buffered_output = undefined;
+      }
+      bufferable = false;
+      current_output = concat_output(current_output, next_output);
+    }
     current = current[2](value) as Effect<
       Lift<AsWriter<output, log>, unknown>,
       unknown
@@ -738,4 +734,25 @@ function configured_writer<
   ): WriterValue<output, log, item> {
     return dictionary([value, output] as const);
   }
+}
+
+function has_canonical_array_concat(
+  output: Data<Dictionary, unknown>,
+): boolean {
+  if (!is_kind_of(output, ArrayT)) return false;
+  for (
+    let current: object | null = output;
+    current !== null;
+    current = Object.getPrototypeOf(current)
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, "concat");
+    if (descriptor !== undefined) {
+      return descriptor.value === canonical_array_concat;
+    }
+  }
+  return false;
+}
+
+function append_array_log(buffer: unknown[], values: Iterable<unknown>): void {
+  for (const value of values) buffer.push(value);
 }

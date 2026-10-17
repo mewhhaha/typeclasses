@@ -1,0 +1,13 @@
+╭ Warning
+│
+│  Ignored build scripts for packages:
+│  npm:workerd@1.20260730.1
+│
+│  Lifecycle scripts are only supported when using a `node_modules` directory.
+│  Enable it in your deno config file:
+│  "nodeModulesDir": "auto"
+╰─
+Preserved benchmark source case_studies/io_application/program.ts:22:26: Skipped program: observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.
+Preserved benchmark source case_studies/agent_harness/program.ts:48:30: Skipped program: observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.
+Preserved benchmark source case_studies/parallel_analyzer/program.ts:34:18: Skipped program: observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.
+Preserved benchmark source case_studies/programming_language_parser/language.ts:892:11: Skipped do: observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.

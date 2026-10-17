@@ -23,6 +23,8 @@ export type TransformResult = {
   readonly diagnostics: readonly TransformDiagnostic[];
   readonly map: TransformSourceMap | null;
   readonly transformed: number;
+  /** Per-site decisions, including optimization barriers; empty unless explain is enabled. */
+  readonly reports: readonly TransformReport[];
 };
 
 /** A version 3 source map from rewritten TypeScript back to its input. */
@@ -36,8 +38,21 @@ export type TransformSourceMap = {
   readonly mappings: string;
 };
 
+/** One optimization decision at an original source location. */
+export type TransformReport = TransformDiagnostic & {
+  readonly outcome: "transformed" | "preserved";
+  readonly optimization:
+    | "generator"
+    | "terminal"
+    | "terminal-body"
+    | "iterable-map"
+    | "loop";
+};
+
 /** Module specifiers the transformer should recognize as library entrypoints. */
 export type TransformConfig = {
+  /** Collect optimization decisions without treating missed opportunities as errors. */
+  readonly explain?: boolean;
   /** Additional module specifiers which export this package's public API. */
   readonly library_specifiers?: readonly string[];
   /** Additional module specifiers which export all terminal lift runners. */
@@ -83,6 +98,15 @@ type TransformState = {
   readonly effect_helper_shadowed: boolean;
   /** The explicit dictionary supplied to `Do(dictionary, generator)`. */
   readonly dictionary?: ts.Expression;
+  readonly loop_runtime?: ts.Identifier;
+  readonly recursive_dictionaries?: ReadonlySet<string>;
+  readonly used_loop_runtime?: () => void;
+  readonly report?: (
+    node: ts.Node,
+    optimization: TransformReport["optimization"],
+    outcome: TransformReport["outcome"],
+    message: string,
+  ) => void;
 };
 
 type TransformBlock = {
@@ -134,6 +158,7 @@ type FusedTerminalKind = "reader" | "state" | "writer";
 type FusedTerminalProgram = {
   readonly expression: ts.Expression;
   readonly needs_program_helpers: boolean;
+  readonly direct: boolean;
 };
 
 class UnsupportedGenerator extends Error {}
@@ -158,15 +183,38 @@ export function transform_do_program_source(
     script_kind(file_name),
   );
   const diagnostics: TransformDiagnostic[] = [];
+  const reports: TransformReport[] = [];
+  function report(
+    node: ts.Node,
+    optimization: TransformReport["optimization"],
+    outcome: TransformReport["outcome"],
+    message: string,
+  ) {
+    if (!config.explain) return;
+    const position = source_file.getLineAndCharacterOfPosition(
+      node.getStart(source_file),
+    );
+    reports.push({
+      file_name,
+      line: position.line + 1,
+      column: position.character + 1,
+      optimization,
+      outcome,
+      message,
+    });
+  }
   const imports = collect_imports(source_file, config);
-  const iterable_maps = create_iterable_map_fusion(
-    source_file,
-    config.library_specifiers,
-  );
+  let iterable_maps: ReturnType<typeof create_iterable_map_fusion> | undefined;
+  if (might_contain_iterable_maps(source)) {
+    iterable_maps = create_iterable_map_fusion(
+      source_file,
+      config.library_specifiers,
+    );
+  }
 
   if (
     !has_imported_transform_target(imports) &&
-    !might_diagnose_unanchored && !iterable_maps.enabled
+    !might_diagnose_unanchored && !iterable_maps?.enabled
   ) {
     return unchanged_transform_result(source);
   }
@@ -184,11 +232,30 @@ export function transform_do_program_source(
   const might_transform_terminal = imports.terminal_functions.size > 0 ||
     imports.terminal_namespaces.size > 0;
   const terminal_imports: TerminalImportRequest[] = [];
+  let named_programs = new Map<string, ts.CallExpression>();
+  if (might_transform_generator && might_transform_terminal) {
+    named_programs = collect_named_terminal_programs(
+      source_file,
+      imports,
+      program_scopes,
+    );
+  }
+  const fused_named_programs = new Set<string>();
   let transformed = 0;
   let needs_program_helpers = false;
+  let loop_support: ReturnType<typeof collect_loop_support> = {
+    dictionaries: new Set<string>(),
+    specifier: undefined,
+  };
+  if (imports.do_names.size > 0 && /\bfor\b/.test(source)) {
+    loop_support = collect_loop_support(source_file);
+  }
+  let loop_runtime: ts.Identifier;
+  let used_loop_runtime = false;
 
   const transformer: ts.TransformerFactory<ts.SourceFile> = (context) => {
     const factory = context.factory;
+    loop_runtime = factory.createUniqueName("loop_runtime");
     const diagnostic_state: TransformState = {
       kind: "do",
       factory,
@@ -200,6 +267,12 @@ export function transform_do_program_source(
     return (source_file) => {
       const visit: ts.Visitor = (node) => {
         if (ts.isVariableStatement(node)) {
+          if (node.declarationList.declarations.length === 1) {
+            const name = node.declarationList.declarations[0].name;
+            if (ts.isIdentifier(name) && named_programs.has(name.text)) {
+              return node;
+            }
+          }
           const visited = ts.visitEachChild(node, visit, context);
 
           if (ts.isVariableStatement(visited)) {
@@ -228,12 +301,30 @@ export function transform_do_program_source(
         }
 
         if (ts.isCallExpression(node)) {
-          if (iterable_maps.enabled) {
+          if (iterable_maps?.enabled) {
             const fused = iterable_maps.fuse(node, factory);
             if (fused !== undefined) {
               transformed += 1;
+              report(
+                node,
+                "iterable-map",
+                "transformed",
+                "Composed adjacent lazy maps; callback evaluation and item order are retained.",
+              );
               return ts.visitEachChild(fused, visit, context);
             }
+          }
+          if (
+            config.explain && ts.isPropertyAccessExpression(node.expression) &&
+            node.expression.name.text === "map" &&
+            ts.isCallExpression(node.expression.expression)
+          ) {
+            report(
+              node,
+              "iterable-map",
+              "preserved",
+              "Map chain needs a known immutable iterable root and stable unary callbacks; optional calls and explicit type arguments are barriers.",
+            );
           }
           if (might_transform_generator && might_transform_terminal) {
             const fused = transform_terminal_program_run(
@@ -242,10 +333,27 @@ export function transform_do_program_source(
               imports,
               program_scopes,
               terminal_imports,
+              named_programs,
+              fused_named_programs,
             );
 
             if (fused !== undefined) {
               transformed += 1;
+              let explanation =
+                "Specialized terminal dispatch; unsupported primitives preserve the effect spine.";
+              if (fused.direct) {
+                explanation =
+                  "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed.";
+              }
+              report(node, "terminal", "transformed", explanation);
+              if (!fused.direct) {
+                report(
+                  node,
+                  "terminal-body",
+                  "preserved",
+                  "The body contains noncanonical operations or lacks explicit input types, so dynamic terminal dispatch is retained.",
+                );
+              }
               needs_program_helpers ||= fused.needs_program_helpers;
               return fused.expression;
             }
@@ -256,6 +364,7 @@ export function transform_do_program_source(
             : undefined;
 
           if (kind !== undefined) {
+            const diagnostic_start = diagnostics.length;
             const transformed_node = transform_call(
               node,
               {
@@ -264,11 +373,23 @@ export function transform_do_program_source(
                 source_file,
                 diagnostics,
                 effect_helper_shadowed: imports.effect_helper_shadowed,
+                report,
+                loop_runtime,
+                recursive_dictionaries: loop_support.dictionaries,
+                used_loop_runtime: () => {
+                  used_loop_runtime = true;
+                },
               },
             );
 
             if (transformed_node !== undefined) {
               transformed += 1;
+              report(
+                node,
+                "generator",
+                "transformed",
+                "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics.",
+              );
 
               if (kind === "program") {
                 needs_program_helpers = true;
@@ -276,6 +397,13 @@ export function transform_do_program_source(
 
               return transformed_node;
             }
+            report(
+              node,
+              "generator",
+              "preserved",
+              diagnostics.slice(diagnostic_start).map((item) => item.message)
+                .join(" "),
+            );
           }
 
           const visited = ts.visitEachChild(node, visit, context);
@@ -290,6 +418,12 @@ export function transform_do_program_source(
 
             if (terminal !== undefined) {
               transformed += 1;
+              report(
+                node,
+                "terminal",
+                "transformed",
+                "Eliminated the outer effect runner; keyed calls retain the original cell and runtime identity checks.",
+              );
               return terminal;
             }
           }
@@ -346,6 +480,18 @@ export function transform_do_program_source(
             }
           }
 
+          if (
+            config.explain && might_transform_terminal &&
+            read_terminal_function_target(node.expression, imports)
+                ?.imported === "run"
+          ) {
+            report(
+              node,
+              "terminal",
+              "preserved",
+              "Direct fusion requires an immediate primitive body or a nonescaping same-scope const whose first yield is zero-argument ask/get; keyed identities remain checked by terminal runners. Eager prefixes, escaping values, explicit keyed type arguments and captured lexical scopes are barriers.",
+            );
+          }
           if (might_diagnose_unanchored) {
             add_unanchored_target_diagnostic(
               visited,
@@ -359,7 +505,18 @@ export function transform_do_program_source(
         return ts.visitEachChild(node, visit, context);
       };
 
-      const visited = ts.visitEachChild(source_file, visit, context);
+      const visited_source = ts.visitEachChild(source_file, visit, context);
+      const visited = factory.updateSourceFile(
+        visited_source,
+        visited_source.statements.filter((statement) => {
+          if (
+            !ts.isVariableStatement(statement) ||
+            statement.declarationList.declarations.length !== 1
+          ) return true;
+          const name = statement.declarationList.declarations[0].name;
+          return !ts.isIdentifier(name) || !fused_named_programs.has(name.text);
+        }),
+      );
 
       const updated = needs_program_helpers || terminal_imports.length > 0
         ? update_imports(
@@ -371,7 +528,22 @@ export function transform_do_program_source(
           terminal_imports,
         )
         : visited;
-      return iterable_maps.add_helper(updated, factory);
+      let with_loops = updated;
+      if (used_loop_runtime && loop_support.specifier !== undefined) {
+        with_loops = factory.updateSourceFile(updated, [
+          factory.createImportDeclaration(
+            undefined,
+            factory.createImportClause(
+              false,
+              undefined,
+              factory.createNamespaceImport(loop_runtime),
+            ),
+            factory.createStringLiteral(loop_support.specifier),
+          ),
+          ...updated.statements,
+        ]);
+      }
+      return iterable_maps?.add_helper(with_loops, factory) ?? with_loops;
     };
   };
 
@@ -384,6 +556,7 @@ export function transform_do_program_source(
         diagnostics,
         map: null,
         transformed,
+        reports,
       };
     }
 
@@ -395,6 +568,7 @@ export function transform_do_program_source(
       diagnostics,
       map: printed.map,
       transformed,
+      reports,
     };
   } finally {
     result.dispose();
@@ -412,6 +586,7 @@ function unchanged_transform_result(source: string): TransformResult {
     diagnostics: [],
     map: null,
     transformed: 0,
+    reports: [],
   };
 }
 
@@ -526,13 +701,15 @@ function might_contain_unanchored_target(source: string): boolean {
 async function run_cli(args: readonly string[]) {
   const write = args.includes("--write");
   const check = args.includes("--check");
+  const explain = args.includes("--explain");
   const files = args.filter((arg) =>
-    arg !== "--" && arg !== "--write" && arg !== "--check"
+    arg !== "--" && arg !== "--write" && arg !== "--check" &&
+    arg !== "--explain"
   );
 
   if (files.length === 0) {
     console.error(
-      "usage: deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts [--write] [--check] <file...>",
+      "usage: deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts [--write] [--check] [--explain] <file...>",
     );
     Deno.exit(2);
   }
@@ -541,7 +718,8 @@ async function run_cli(args: readonly string[]) {
 
   for (const file of files) {
     const source = await Deno.readTextFile(file);
-    const result = transform_do_program_source(source, file);
+    const result = transform_do_program_source(source, file, { explain });
+    for (const report of result.reports) console.error(JSON.stringify(report));
 
     for (const diagnostic of result.diagnostics) {
       console.error(format_diagnostic(diagnostic));
@@ -1604,6 +1782,29 @@ function transform_for(
   options: TransformOptions,
 ): TransformBlock {
   const loop = read_for_loop(statement, state);
+  const stack_safe = transform_simple_recursive_for(
+    statement,
+    loop,
+    rest,
+    current_context,
+    state,
+    options,
+  );
+  if (stack_safe !== undefined) {
+    state.report?.(
+      statement,
+      "loop",
+      "transformed",
+      "Explicit unshadowed built-in dictionary supports MonadRec; the counted loop has one discarded yield and no inner control flow.",
+    );
+    return stack_safe;
+  }
+  state.report?.(
+    statement,
+    "loop",
+    "preserved",
+    "Stack-safe specialization requires an explicit known MonadRec dictionary and a single discarded yield. Arbitrary dictionaries may branch or lack MonadRec; captured mutable locals and break/return values need a separate state-machine proof.",
+  );
   const loop_name = state.factory.createUniqueName("loop");
   const exit = transform_statements(rest, current_context, state, options);
   const exit_expression = block_to_expression(exit.block, state.factory);
@@ -1666,6 +1867,12 @@ function transform_while(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
+  state.report?.(
+    statement,
+    "loop",
+    "preserved",
+    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
+  );
   const loop_name = state.factory.createUniqueName("loop");
   const exit = transform_statements(rest, current_context, state, options);
   const exit_expression = block_to_expression(exit.block, state.factory);
@@ -1704,6 +1911,12 @@ function transform_do_while(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
+  state.report?.(
+    statement,
+    "loop",
+    "preserved",
+    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
+  );
   const loop_name = state.factory.createUniqueName("loop");
   const exit = transform_statements(rest, current_context, state, options);
   const exit_expression = block_to_expression(exit.block, state.factory);
@@ -1738,6 +1951,12 @@ function transform_for_of(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
+  state.report?.(
+    statement,
+    "loop",
+    "preserved",
+    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
+  );
   if (
     statement.awaitModifier !== undefined ||
     !ts.isVariableDeclarationList(statement.initializer)
@@ -3477,6 +3696,8 @@ function transform_terminal_program_run(
   imports: ImportedBindings,
   program_scopes: ReadonlySet<string>,
   requests: TerminalImportRequest[],
+  named_programs: ReadonlyMap<string, ts.CallExpression>,
+  fused_named_programs: Set<string>,
 ): FusedTerminalProgram | undefined {
   if (
     node.questionDotToken !== undefined || node.typeArguments !== undefined ||
@@ -3507,7 +3728,11 @@ function transform_terminal_program_run(
   }
   const terminal_kind = fused_terminal_kind(handler.imported);
 
-  const program = unwrap_parentheses(handled.arguments[0]);
+  const program_argument = unwrap_parentheses(handled.arguments[0]);
+  let program = program_argument;
+  if (ts.isIdentifier(program_argument)) {
+    program = named_programs.get(program_argument.text) ?? program_argument;
+  }
 
   if (
     !ts.isCallExpression(program) || program.questionDotToken !== undefined ||
@@ -3560,9 +3785,13 @@ function transform_terminal_program_run(
         handled.arguments,
       ),
       needs_program_helpers: false,
+      direct: false,
     };
   }
 
+  if (ts.isIdentifier(program_argument)) {
+    fused_named_programs.add(program_argument.text);
+  }
   return {
     expression: emit_fused_terminal_program(
       body,
@@ -3572,6 +3801,7 @@ function transform_terminal_program_run(
       imports,
     ),
     needs_program_helpers: false,
+    direct: true,
   };
 }
 
@@ -4284,7 +4514,7 @@ function transform_terminal_lift_run(
 
   if (
     !ts.isCallExpression(handled) || handled.questionDotToken !== undefined ||
-    handled.arguments.length !== 2
+    (handled.arguments.length !== 2 && handled.arguments.length !== 3)
   ) {
     return undefined;
   }
@@ -4295,6 +4525,9 @@ function transform_terminal_lift_run(
     return undefined;
   }
 
+  if (handled.arguments.length === 3 && handled.typeArguments !== undefined) {
+    return undefined;
+  }
   const terminal_name = terminal_runner_name(handler.imported);
   const type_arguments = terminal_type_arguments(
     handler.imported,
@@ -5019,4 +5252,334 @@ function format_diagnostic(diagnostic: TransformDiagnostic): string {
 
 if (import.meta.main) {
   await run_cli(Deno.args);
+}
+
+/** Compiler and transform revision included in every cache key. */
+export const transform_cache_version: string = "2:" + ts.version;
+
+/** A bounded transform cache with observable hit, miss and retention counts. */
+export type TransformCache = {
+  transform(
+    source: string,
+    file_name?: string,
+    config?: TransformConfig,
+  ): TransformResult;
+  clear(): void;
+  stats(): {
+    hits: number;
+    misses: number;
+    size: number;
+    capacity: number;
+    bytes: number;
+    max_bytes: number;
+  };
+};
+
+/** A bounded LRU cache. Source text and all semantic config are part of the key. */
+export function create_transform_cache(
+  capacity = 32,
+  max_bytes = 4 * 1024 * 1024,
+): TransformCache {
+  if (!Number.isSafeInteger(capacity) || capacity < 0) {
+    throw new RangeError(
+      "transform cache capacity must be a nonnegative integer",
+    );
+  }
+  if (!Number.isSafeInteger(max_bytes) || max_bytes < 0) {
+    throw new RangeError(
+      "transform cache byte limit must be a nonnegative integer",
+    );
+  }
+  const entries = new Map<string, { result: TransformResult; bytes: number }>();
+  let bytes = 0;
+  let hits = 0;
+  let misses = 0;
+  return {
+    transform(
+      source: string,
+      file_name = "input.ts",
+      config: TransformConfig = {},
+    ): TransformResult {
+      const key = JSON.stringify([
+        transform_cache_version,
+        source,
+        file_name,
+        config.library_specifiers ?? [],
+        config.terminal_library_specifiers ?? [],
+        config.explain ?? false,
+      ]);
+      const cached = entries.get(key);
+      if (cached !== undefined) {
+        hits += 1;
+        entries.delete(key);
+        entries.set(key, cached);
+        return structuredClone(cached.result);
+      }
+      misses += 1;
+      const result = transform_do_program_source(source, file_name, config);
+      const entry_bytes = 2 * (key.length + JSON.stringify(result).length);
+      if (capacity > 0 && entry_bytes <= max_bytes) {
+        while (entries.size >= capacity || bytes + entry_bytes > max_bytes) {
+          const oldest = entries.keys().next().value!;
+          bytes -= entries.get(oldest)!.bytes;
+          entries.delete(oldest);
+        }
+        entries.set(key, {
+          result: structuredClone(result),
+          bytes: entry_bytes,
+        });
+        bytes += entry_bytes;
+      }
+      return result;
+    },
+    clear() {
+      entries.clear();
+      bytes = 0;
+    },
+    stats() {
+      return { hits, misses, size: entries.size, capacity, bytes, max_bytes };
+    },
+  };
+}
+
+// Only explicit, unshadowed built-in dictionaries are evidence for MonadRec.
+function collect_loop_support(source: ts.SourceFile) {
+  const dictionaries = new Set<string>();
+  let specifier: string | undefined;
+  for (const statement of source.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) continue;
+    const module = statement.moduleSpecifier.text;
+    const bindings = statement.importClause?.namedBindings;
+    if (
+      statement.importClause?.isTypeOnly || bindings === undefined ||
+      !ts.isNamedImports(bindings)
+    ) continue;
+    if (/^(?:\.\.?\/)+src\/(?:mod|typeclasses)\.ts$/.test(module)) {
+      specifier = module.replace(/(?:typeclasses|mod)\.ts$/, "loop.ts");
+    }
+    if (
+      /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/.test(
+        module,
+      )
+    ) specifier = module + "/loop";
+    let kind = module.match(
+      /^(?:\.\.?\/)+src\/(maybe|either|identity|task|mod)(?:\.ts)?$/,
+    )?.[1] ??
+      module.match(
+        /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?\/(maybe|either|identity|task)$/,
+      )?.[1];
+    if (
+      /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/.test(
+        module,
+      )
+    ) kind = "mod";
+    if (kind === undefined) continue;
+    for (const element of bindings.elements) {
+      const imported = (element.propertyName ?? element.name).text;
+      if (
+        !element.isTypeOnly &&
+        ["Maybe", "Either", "Identity", "Task"].includes(imported) &&
+        (kind === "mod" || kind === imported.toLowerCase())
+      ) dictionaries.add(element.name.text);
+    }
+  }
+  const shadowed = collect_non_import_value_bindings(source, dictionaries);
+  for (const name of shadowed.keys()) dictionaries.delete(name);
+  if (specifier === undefined) dictionaries.clear();
+  return { dictionaries, specifier };
+}
+
+function transform_simple_recursive_for(
+  statement: ts.ForStatement,
+  loop: ReturnType<typeof read_for_loop>,
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+): TransformBlock | undefined {
+  if (
+    state.kind !== "do" || state.dictionary === undefined ||
+    !ts.isIdentifier(state.dictionary) ||
+    !state.recursive_dictionaries?.has(state.dictionary.text) ||
+    state.loop_runtime === undefined
+  ) return undefined;
+  const statements = unwrap_statement(statement.statement);
+  if (statements.length !== 1) return undefined;
+  const yielded = read_yield_statement(statements[0]);
+  if (
+    yielded === undefined || yielded.kind !== "bind" ||
+    yielded.name !== undefined
+  ) return undefined;
+  const f = state.factory;
+  const runtime = state.loop_runtime;
+  const call = (receiver: ts.Expression, name: string, args: ts.Expression[]) =>
+    f.createCallExpression(
+      f.createPropertyAccessExpression(receiver, name),
+      undefined,
+      args,
+    );
+  const arrow = (
+    body: ts.ConciseBody,
+    parameters: ts.ParameterDeclaration[] = [],
+  ) =>
+    f.createArrowFunction(
+      undefined,
+      undefined,
+      parameters,
+      undefined,
+      undefined,
+      body,
+    );
+  const step = arrow(
+    f.createBlock([
+      f.createIfStatement(
+        loop.condition,
+        f.createReturnStatement(
+          call(yielded.expression, "map", [
+            arrow(call(runtime, "rec", [loop.next])),
+          ]),
+        ),
+      ),
+      f.createReturnStatement(
+        call(state.dictionary, "pure", [
+          call(runtime, "done", [f.createVoidZero()]),
+        ]),
+      ),
+    ], true),
+    [f.createParameterDeclaration(
+      undefined,
+      undefined,
+      loop.variable,
+      undefined,
+      loop.type ?? f.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
+    )],
+  );
+  const recursion = call(state.dictionary, "tail_rec_m", [
+    loop.initializer,
+    step,
+  ]);
+  const exit = transform_statements(rest, current_context, state, options);
+  state.used_loop_runtime?.();
+  return {
+    block: f.createBlock([
+      f.createReturnStatement(call(recursion, "bind", [arrow(exit.block)])),
+    ], true),
+    yielded: true,
+  };
+}
+
+// Named programs may move only when construction stops immediately at a
+// zero-argument primitive. Every use must be a same-scope terminal run.
+function collect_named_terminal_programs(
+  source: ts.SourceFile,
+  imports: ImportedBindings,
+  scopes: ReadonlySet<string>,
+) {
+  const candidates = new Map<string, ts.CallExpression>();
+  const declarations = new Map<string, ts.Identifier>();
+  const allowed = new Set<ts.Identifier>();
+  for (const statement of source.statements) {
+    if (
+      !ts.isVariableStatement(statement) || statement.modifiers !== undefined ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+      statement.declarationList.declarations.length !== 1
+    ) continue;
+    const declaration = statement.declarationList.declarations[0];
+    if (
+      !ts.isIdentifier(declaration.name) || declaration.type !== undefined ||
+      declaration.initializer === undefined
+    ) continue;
+    const program = unwrap_parentheses(declaration.initializer);
+    if (
+      !ts.isCallExpression(program) ||
+      transform_kind(program, scopes, imports) !== "program" ||
+      program.arguments.length !== 1
+    ) continue;
+    const run = program.arguments[0];
+    if (
+      !ts.isFunctionExpression(run) || run.asteriskToken === undefined ||
+      run.name !== undefined || run.parameters.length !== 0 ||
+      run.typeParameters !== undefined || run.type !== undefined ||
+      run.modifiers !== undefined ||
+      contains_fusion_lexical_hazard(run.body)
+    ) continue;
+    const body = read_fused_program_body(run.body);
+    const first = body?.parts[0];
+    if (body === undefined || first?.kind !== "yield") continue;
+    const primitive = read_fused_primitive(first.expression, imports);
+    if (
+      primitive === undefined ||
+      (primitive.name !== "ask" && primitive.name !== "get")
+    ) continue;
+    const kind = primitive_terminal_kind(primitive.name);
+    if (
+      fused_terminal_input_type(body, kind, imports) === undefined ||
+      !body.parts.every((part) =>
+        part.kind !== "yield" ||
+        primitive_terminal_kind(
+            read_fused_primitive(part.expression, imports)?.name ?? "tell",
+          ) === kind
+      )
+    ) continue;
+    candidates.set(declaration.name.text, program);
+    declarations.set(declaration.name.text, declaration.name);
+  }
+  if (candidates.size === 0) return candidates;
+  const used = new Set<string>();
+  for (const statement of source.statements) {
+    let expression: ts.Expression | undefined;
+    if (ts.isExpressionStatement(statement)) expression = statement.expression;
+    if (
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.length === 1
+    ) expression = statement.declarationList.declarations[0].initializer;
+    if (
+      expression === undefined || !ts.isCallExpression(expression) ||
+      read_terminal_function_target(expression.expression, imports)
+          ?.imported !== "run" ||
+      expression.arguments.length !== 1
+    ) continue;
+    const handled = expression.arguments[0];
+    if (
+      !ts.isCallExpression(handled) || handled.arguments.length !== 2 ||
+      handled.typeArguments !== undefined ||
+      handled.questionDotToken !== undefined ||
+      contains_fusion_lexical_hazard(handled.arguments[1]) ||
+      contains_await_or_yield(handled.arguments[1])
+    ) continue;
+    const handler = read_terminal_function_target(handled.expression, imports);
+    const name = handled.arguments[0];
+    if (
+      handler === undefined || handler.imported === "run" ||
+      !ts.isIdentifier(name)
+    ) continue;
+    const candidate = candidates.get(name.text);
+    if (candidate === undefined || candidate.end >= name.pos) continue;
+    const run = candidate.arguments[0] as ts.FunctionExpression;
+    const first = read_fused_program_body(run.body)!
+      .parts[0] as FusedProgramYield;
+    if (
+      fused_terminal_kind(handler.imported) !==
+        primitive_terminal_kind(
+          read_fused_primitive(first.expression, imports)!.name,
+        )
+    ) continue;
+    allowed.add(name);
+    used.add(name.text);
+  }
+  function validate(node: ts.Node) {
+    if (
+      ts.isIdentifier(node) && candidates.has(node.text) &&
+      declarations.get(node.text) !== node && !allowed.has(node)
+    ) candidates.delete(node.text);
+    ts.forEachChild(node, validate);
+  }
+  validate(source);
+  for (const name of candidates.keys()) {
+    if (!used.has(name)) candidates.delete(name);
+  }
+  return candidates;
 }

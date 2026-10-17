@@ -1,0 +1,10 @@
+{
+  "command": [
+    "deno",
+    "test"
+  ],
+  "exit_code": 0,
+  "summary": "300 passed, 0 failed, 1 intentional ignored",
+  "output_sha256": "8e578ff5396371c091dda0128a161dda88727fcf3636ed617ebe892bdf61cf56",
+  "source_sha256": "354a494cbfbcd0e08976917392ee5bee08c1793b662176b0ce6ae7e9f4fa7c07"
+}

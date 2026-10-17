@@ -43,7 +43,7 @@ for (const size of [1_000, 2_000, 4_000, 8_000, 16_000]) {
   check_length(execute(chain), size + 1);
   check_length(execute(chain), size + 1);
   check_length(run(pure_program(size)), size);
-  check_length(traverse_(counter, count_one, array).run(0)[1], size);
+  check_length(traverse_(count_one, counter, array).run(0)[1], size);
 
   Deno.bench({
     name: "ArrayT traverse/" + size,
@@ -79,7 +79,7 @@ for (const size of [1_000, 2_000, 4_000, 8_000, 16_000]) {
     name: "State discarded traversal/" + size,
     group: "discarded traversal scaling",
     fn() {
-      _sink = traverse_(counter, count_one, array).run(0);
+      _sink = traverse_(count_one, counter, array).run(0);
     },
   });
   Deno.bench({

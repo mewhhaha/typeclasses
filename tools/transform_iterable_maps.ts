@@ -60,6 +60,30 @@ export function create_iterable_map_fusion(
     }
   }
 
+  const immutable = new Map<string, ts.VariableDeclaration>();
+  const callbacks = new Map<string, ts.FunctionLikeDeclaration>();
+  const binding_counts = new Map<string, number>();
+  for (const statement of source.statements) {
+    if (
+      ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          declaration.initializer === undefined
+        ) continue;
+        immutable.set(declaration.name.text, declaration);
+        const initial = unwrap(declaration.initializer);
+        if (ts.isArrowFunction(initial) || ts.isFunctionExpression(initial)) {
+          callbacks.set(declaration.name.text, initial);
+        }
+      }
+    }
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      callbacks.set(statement.name.text, statement);
+    }
+  }
   const candidates = new Set([
     ...functions,
     ...namespaces,
@@ -69,6 +93,7 @@ export function create_iterable_map_fusion(
   function remove_binding(name: ts.BindingName | ts.Identifier | undefined) {
     if (name === undefined) return;
     if (ts.isIdentifier(name)) {
+      binding_counts.set(name.text, (binding_counts.get(name.text) ?? 0) + 1);
       functions.delete(name.text);
       namespaces.delete(name.text);
       roots.delete(name.text);
@@ -93,9 +118,40 @@ export function create_iterable_map_fusion(
     ts.forEachChild(node, visit_bindings);
   }
   if (candidates.size > 0) ts.forEachChild(source, visit_bindings);
+  for (const name of immutable.keys()) {
+    if (binding_counts.get(name) !== 1) immutable.delete(name);
+  }
+  for (const name of callbacks.keys()) {
+    if (binding_counts.get(name) !== 1) callbacks.delete(name);
+  }
 
-  function known_iterable(expression: ts.Expression): boolean {
+  function mapper(expression: ts.Expression): boolean {
     const node = unwrap(expression);
+    if (ts.isIdentifier(node)) {
+      const callback = callbacks.get(node.text);
+      if (
+        callback === undefined ||
+        callback.pos >= node.pos && !ts.isFunctionDeclaration(callback)
+      ) return false;
+      return unary_mapper(callback);
+    }
+    return simple_mapper(node);
+  }
+
+  function known_iterable(
+    expression: ts.Expression,
+    seen = new Set<string>(),
+  ): boolean {
+    const node = unwrap(expression);
+    if (ts.isIdentifier(node)) {
+      const declaration = immutable.get(node.text);
+      if (
+        declaration?.initializer === undefined || declaration.end >= node.pos ||
+        seen.has(node.text)
+      ) return false;
+      seen.add(node.text);
+      return known_iterable(declaration.initializer, seen);
+    }
     if (!ts.isCallExpression(node) || node.questionDotToken !== undefined) {
       return false;
     }
@@ -142,7 +198,7 @@ export function create_iterable_map_fusion(
           !ts.isPropertyAccessExpression(call.expression) ||
           call.expression.questionDotToken !== undefined ||
           call.expression.name.text !== "map" ||
-          !simple_mapper(call.arguments[0])
+          !mapper(call.arguments[0])
         ) break;
         maps.push(call);
         current = call.expression.expression;
@@ -184,10 +240,16 @@ function unwrap(expression: ts.Expression): ts.Expression {
 
 function simple_mapper(expression: ts.Expression): boolean {
   const node = unwrap(expression);
+  if (!ts.isArrowFunction(node)) return false;
+  return unary_mapper(node);
+}
+
+function unary_mapper(node: ts.FunctionLikeDeclaration): boolean {
   if (
-    !ts.isArrowFunction(node) || ts.isBlock(node.body) ||
     node.typeParameters !== undefined || node.modifiers !== undefined ||
-    node.parameters.length !== 1
+    node.parameters.length !== 1 ||
+    (ts.isFunctionExpression(node) && node.asteriskToken !== undefined) ||
+    (ts.isFunctionDeclaration(node) && node.asteriskToken !== undefined)
   ) return false;
   const parameter = node.parameters[0];
   return ts.isIdentifier(parameter.name) &&

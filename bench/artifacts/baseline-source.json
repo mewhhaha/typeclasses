@@ -1,0 +1,8 @@
+{
+  "commit": "908d00c716f385594b1a303f37ca84f6f5548e1d",
+  "runtime": "Deno 2.9.7",
+  "v8": "15.0.245.2-rusty",
+  "typescript": "6.0.3",
+  "cpu": "AMD Ryzen 7 3800X",
+  "note": "Runtime baseline and repeat captured before any implementation changes. Check task was warm-cache. One host; no cross-runtime claim."
+}

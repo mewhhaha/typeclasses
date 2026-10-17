@@ -1,0 +1,25 @@
+{
+  "compiler": "5.9.3",
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "workload_sha256": "78e1bf17f51d012d185520b84844754f7725667f6c7231ad8b791440da2cef98",
+  "source_sha256": "affb448694cece70635c8302986541750f0250746a7277182549401bd72cd883",
+  "check_ms": 3237.998547,
+  "types": 154113,
+  "instantiations": 429161,
+  "memory": {
+    "rss": 651747328,
+    "heapTotal": 462065664,
+    "heapUsed": 392866728,
+    "external": 2827100
+  },
+  "editor_initial_ms": 587.9473879999996,
+  "completion_p50_ms": 0.887145999999575,
+  "completion_p95_ms": 1.7241859999999178,
+  "completion_entries": 18,
+  "hover_characters": 35,
+  "hover": "const mapped: Data<AsMaybe, number>"
+}

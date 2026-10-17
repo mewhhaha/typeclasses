@@ -5,8 +5,8 @@ const package_manifest = JSON.parse(
   readonly exports?: Readonly<Record<string, string>>;
 };
 const expected_entrypoints: Readonly<Record<string, readonly string[]>> = {
-  ".": ["Effect", "Just", "Program", "worker_map"],
-  "./prelude": ["fmap", "lift_A2", "sequence"],
+  ".": ["Effect", "Functor", "Just", "Program"],
+  "./prelude": ["fmap", "lift", "sequence"],
   "./typeclass": ["data", "typeclass"],
   "./typeclasses": ["Applicative", "Functor", "Monad"],
   "./maybe": ["Just", "Maybe", "Nothing"],

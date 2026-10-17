@@ -108,7 +108,7 @@ Deno.test("configured dictionary views retain branch types and guards", () => {
   const bad = Result.Left<number>("missing");
   expect_type<EitherValue<string, number>>(good);
   expect_type<EitherValue<string, number>>(bad);
-  assert_equals(Result.Right, Right);
+  assert_equals(Object.is(Result.Right, Right), true);
   assert_equals(Object.is(Result.Left, Left), true);
 
   const semigroup: ValidationSemigroup<readonly string[]> = {
@@ -131,7 +131,7 @@ Deno.test("configured dictionary views retain branch types and guards", () => {
   assert_equals(invalid[kind], Validation[kind]);
   assert_equals(Errors.Invalid.is, Invalid.is);
   assert_equals(Errors.Valid.is, Valid.is);
-  assert_equals(ErrorView.Invalid.is, Invalid.is);
+  assert_equals(Object.is(ErrorView.Invalid.is, Invalid.is), true);
   assert_equals(Errors.Invalid.is(["invalid", ["missing"], {}]), false);
   assert_equals(Errors.Invalid.is(invalid.value()), true);
 });

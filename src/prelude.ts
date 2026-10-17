@@ -23,7 +23,6 @@ import {
   type Ord as OrdDictionary,
   type Ordering,
   Semigroup,
-  type Semigroup as SemigroupDictionary,
   Show,
   type Show as ShowDictionary,
   Traversable,
@@ -97,92 +96,6 @@ export function ap<
 
 /** Lift a function with any positive number of contextual arguments. */
 export const lift: typeof Applicative.lift = Applicative.lift;
-
-/** Lift a unary function into an applicative. */
-export function lift_A<
-  dictionary extends ApplicativeDictionary<dictionary>,
-  first,
-  result,
->(
-  fn: (first: first) => result,
-  first: Data<dictionary, first>,
-): Data<dictionary, result> {
-  return Applicative.lift(fn, first);
-}
-
-/** Lift a binary function into an applicative. */
-export function lift_A2<
-  dictionary extends ApplicativeDictionary<dictionary>,
-  first,
-  second,
-  result,
->(
-  fn: (first: first, second: second) => result,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-): Data<dictionary, result> {
-  return Applicative.lift(fn, first, second);
-}
-
-/** Lift a ternary function into an applicative. */
-export function lift_A3<
-  dictionary extends ApplicativeDictionary<dictionary>,
-  first,
-  second,
-  third,
-  result,
->(
-  fn: (first: first, second: second, third: third) => result,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-): Data<dictionary, result> {
-  return Applicative.lift(fn, first, second, third);
-}
-
-/** Lift a four-argument function into an applicative. */
-export function lift_A4<
-  dictionary extends ApplicativeDictionary<dictionary>,
-  first,
-  second,
-  third,
-  fourth,
-  result,
->(
-  fn: (first: first, second: second, third: third, fourth: fourth) => result,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-  fourth: Data<dictionary, fourth>,
-): Data<dictionary, result> {
-  return Applicative.lift(fn, first, second, third, fourth);
-}
-
-/** Lift a five-argument function into an applicative. */
-export function lift_A5<
-  dictionary extends ApplicativeDictionary<dictionary>,
-  first,
-  second,
-  third,
-  fourth,
-  fifth,
-  result,
->(
-  fn: (
-    first: first,
-    second: second,
-    third: third,
-    fourth: fourth,
-    fifth: fifth,
-  ) => result,
-  first: Data<dictionary, first>,
-  second: Data<dictionary, second>,
-  third: Data<dictionary, third>,
-  fourth: Data<dictionary, fourth>,
-  fifth: Data<dictionary, fifth>,
-): Data<dictionary, result> {
-  return Applicative.lift(fn, first, second, third, fourth, fifth);
-}
 
 /** Chain a context-dependent computation. */
 export function bind<
@@ -399,20 +312,12 @@ export function elem<
     const expected = item_or_dictionary as item;
     const value = value_or_item as Data<dictionary, item>;
 
-    return Foldable.fold(
-      value,
-      false,
-      (found, current) => found || Object.is(expected, current),
-    );
+    return Foldable.some(value, (current) => Object.is(expected, current));
   }
 
   const expected = value_or_item as Data<item_dictionary, item>;
 
-  return Foldable.fold(
-    contextual_value,
-    false,
-    (found, current) => found || Eq.eq(expected, current),
-  );
+  return Foldable.some(contextual_value, (current) => Eq.eq(expected, current));
 }
 
 /** Traverse a structure with an applicative-producing function. */
@@ -439,8 +344,8 @@ export function traverse_<
   applicative extends ApplicativeDictionary<applicative>,
   item,
 >(
-  applicative: ApplicativeDictionary<applicative>,
   fn: (value: DataItem<dictionary, item>) => Data<applicative, unknown>,
+  applicative: ApplicativeDictionary<applicative>,
   value: Data<dictionary, item>,
 ): Data<applicative, undefined> {
   // Merge equally sized groups as a binary carry. Callbacks still run in the
@@ -468,7 +373,8 @@ export function traverse_<
   for (let level = pending.length - 1; level >= 0; level -= 1) {
     const action = pending[level];
     if (action !== undefined) {
-      result = result === undefined ? action : ap_second(result, action);
+      if (result === undefined) result = action;
+      else result = ap_second(result, action);
     }
   }
 
@@ -565,26 +471,7 @@ export function max<dictionary extends OrdDictionary<dictionary>, item>(
 }
 
 /** Append two values through their Semigroup instance. */
-export function append<
-  dictionary extends SemigroupDictionary<dictionary>,
-  item,
->(
-  left: Data<dictionary, item>,
-  right: Data<dictionary, item>,
-): Data<dictionary, item> {
-  return Semigroup.concat(left, right);
-}
-
-/** Alias for append, matching the library's Semigroup method name. */
-export function concat<
-  dictionary extends SemigroupDictionary<dictionary>,
-  item,
->(
-  left: Data<dictionary, item>,
-  right: Data<dictionary, item>,
-): Data<dictionary, item> {
-  return Semigroup.concat(left, right);
-}
+export const concat: typeof Semigroup.concat = Semigroup.concat;
 
 /** Choose between two alternatives. */
 export function alt<
@@ -596,3 +483,12 @@ export function alt<
 ): Data<dictionary, item> {
   return Alternative.alt(left, right);
 }
+
+/** Stop reducing as soon as the callback returns a Done step. */
+export const fold_while: typeof Foldable.fold_while = Foldable.fold_while;
+/** Test whether any item satisfies the predicate, stopping on the first match. */
+export const some: typeof Foldable.some = Foldable.some;
+/** Find the first matching item, stopping the traversal immediately. */
+export const find: typeof Foldable.find = Foldable.find;
+/** Explicit monadic traversal that admits later callbacks after success. */
+export { traverse_sequential } from "./traversal.ts";

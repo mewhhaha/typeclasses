@@ -366,3 +366,28 @@ Deno.test({
     }
   },
 });
+
+Deno.test("plugin explanation callbacks receive fresh reports across cached transforms", () => {
+  const reports: string[][] = [];
+  const plugin = typeclasses_rollup_plugin({
+    explain: true,
+    cache_capacity: 1,
+    on_report(items) {
+      reports.push(items.map((item) => item.message));
+      if (items.length > 0) {
+        (items[0] as { message: string }).message = "caller mutation";
+      }
+    },
+  });
+  const source =
+    'import { Do } from "../src/typeclasses.ts"; const p = Do(Maybe, function* () { return 1; });';
+  const first = plugin.transform.call({ warn() {} }, source, "cached.ts");
+  const second = plugin.transform.call({ warn() {} }, source, "cached.ts");
+  assert_equals(first, second);
+  assert_equals(reports.length, 2);
+  assert_equals(reports[0], reports[1]);
+  assert_true(
+    reports[0][0].includes("dictionary continuations"),
+    "adapter must expose source decisions on cache hits",
+  );
+});

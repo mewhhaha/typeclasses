@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -50,7 +51,7 @@ export const MapT: AsMap = data<AsMap>(
 export function from_entries<item>(
   entries: Iterable<readonly [string, item]>,
 ): MapValue<item> {
-  return MapT(new Map(entries));
+  return as_data(MapT, new Map(entries));
 }
 
 /** Build a wrapped map from an object's own enumerable entries. */
@@ -111,7 +112,7 @@ Functor.instance(MapT)({
       out.set(key, fn(value));
     }
 
-    return MapT(out);
+    return as_data(MapT, out);
   },
 });
 
@@ -124,13 +125,13 @@ Semigroup.instance(MapT)({
       out.set(key, value);
     }
 
-    return MapT(out);
+    return as_data(MapT, out);
   },
 });
 
 Monoid.instance(MapT)({
   empty() {
-    return MapT(new Map());
+    return as_data(MapT, new Map());
   },
 });
 
@@ -150,10 +151,23 @@ Foldable.instance(MapT)({
 Traversable.instance(MapT)({
   traverse(applicative, fn) {
     const entries = traverse_items(
-      [...this.value()],
+      this.value(),
       applicative,
       ([key, value]) => Functor.map(fn(value), (item) => [key, item] as const),
     );
-    return Functor.map(entries, (items) => MapT(new Map(items)));
+    return Functor.map(entries, (items) => as_data(MapT, new Map(items)));
   },
 });
+
+/** Snapshot a map; later source mutations are invisible. */
+export function from_snapshot<item>(
+  source: ReadonlyMap<string, item>,
+): MapValue<item> {
+  return MapT(source);
+}
+/** Wrap a live map by reference; later source mutations remain visible. */
+export function from_map_view<item>(
+  source: ReadonlyMap<string, item>,
+): MapValue<item> {
+  return as_data(MapT, source);
+}

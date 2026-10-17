@@ -1,3 +1,4 @@
+import { traverse_items } from "../traversal.ts";
 import {
   call_typeclass_method,
   type Data,
@@ -63,6 +64,7 @@ export type ApplicativeTypeclass =
       item: item,
     ): Data<dictionary, item>;
     lift: typeof applicative_lift;
+    collect: typeof collect;
     ap<dictionary extends Applicative<dictionary>, from, to>(
       value: Data<dictionary, (value: NoInfer<from>) => to>,
       item: Data<dictionary, from>,
@@ -113,6 +115,7 @@ export const Applicative: ApplicativeTypeclass = typeclass(
     },
 
     lift: applicative_lift,
+    collect,
 
     ap<
       dictionary extends Applicative<dictionary>,
@@ -216,5 +219,48 @@ function applicative_lift<
 
   return Functor.map(combined, (items) => {
     return apply(...items);
+  });
+}
+
+/** Collect a tuple or record using an explicit context, including empty shapes. */
+export function collect<
+  dictionary extends Applicative<dictionary>,
+  const shape extends readonly unknown[] | Readonly<Record<string, unknown>>,
+>(
+  dictionary: Applicative<dictionary>,
+  values: {
+    readonly [key in keyof shape]: Data<NoInfer<dictionary>, shape[key]>;
+  },
+): Data<dictionary, shape> {
+  const selected = dictionary as dictionary;
+  const keys = Reflect.ownKeys(values).filter((key) =>
+    Object.prototype.propertyIsEnumerable.call(values, key)
+  );
+  const tuple = Array.isArray(values);
+  let length = 0;
+  if (tuple) length = values.length;
+  return traverse_items(keys, selected, (key) => {
+    const value =
+      (values as Record<PropertyKey, Data<dictionary, unknown>>)[key];
+    if (value[kind] !== selected[kind]) {
+      throw new TypeError(
+        "collect requires values from the selected dictionary",
+      );
+    }
+    return value.map((item) => [key, item] as const);
+  }).map((entries) => {
+    if (tuple) {
+      const out: unknown[] = new Array(length);
+      for (const [key, value] of entries) {
+        Object.defineProperty(out, key, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+      return out as unknown as shape;
+    }
+    return Object.fromEntries(entries) as shape;
   });
 }

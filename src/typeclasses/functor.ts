@@ -1,5 +1,4 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
   type Typeclass,
@@ -42,10 +41,10 @@ export const Functor: FunctorTypeclass = typeclass(functor_typeclass, {
     value: Data<dictionary, from>,
     fn: (value: from) => to,
   ): Data<dictionary, to> {
-    return call_typeclass_method(
-      this.instance_for(value).map<from, to>,
-      value,
-      fn,
-    );
+    // The normal path needs one dictionary lookup and one call. Keep the
+    // descriptive missing-instance error on the cold path.
+    let implementation = value[functor_typeclass];
+    if (implementation === undefined) implementation = this.instance_for(value);
+    return (implementation.map<from, to>).call(value, fn);
   },
 });

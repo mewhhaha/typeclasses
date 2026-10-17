@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "no target",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 36,
+            "min": 1628.6549,
+            "max": 2574.5023,
+            "avg": 1946.1123527777777,
+            "p75": 2037.2705,
+            "p99": 2574.5023,
+            "p995": 2574.5023,
+            "p999": 2574.5023,
+            "highPrecision": false,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "100 yields",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 54,
+            "min": 7648414.0,
+            "max": 17512900.0,
+            "avg": 10845266.0,
+            "p75": 12092720.0,
+            "p99": 17512900.0,
+            "p995": 17512900.0,
+            "p999": 17512900.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "named terminal",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1363,
+            "min": 232011.0,
+            "max": 4015431.0,
+            "avg": 369903.0,
+            "p75": 404118.0,
+            "p99": 807885.0,
+            "p995": 2049875.0,
+            "p999": 3788679.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "named iterable",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 4693,
+            "min": 63771.0,
+            "max": 9850890.0,
+            "avg": 106713.0,
+            "p75": 108456.0,
+            "p99": 214809.0,
+            "p995": 298837.0,
+            "p999": 7003799.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "counted loop",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1665,
+            "min": 209918.0,
+            "max": 5567640.0,
+            "avg": 302456.0,
+            "p75": 315519.0,
+            "p99": 666717.0,
+            "p995": 1339305.0,
+            "p999": 3411292.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

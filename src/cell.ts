@@ -1,4 +1,10 @@
-import { data, type Dictionary, type type_identity } from "./typeclass.ts";
+import {
+  data,
+  type Dictionary,
+  type IsUnion,
+  kind,
+  type type_identity,
+} from "./typeclass.ts";
 import type { Lift } from "./effects.ts";
 
 /**
@@ -28,10 +34,11 @@ export type WithoutCell<requirements, identity, key extends PropertyKey> =
     : requirements
     : requirements;
 
-/** Rejects a key that widened to `string`, `number`, or `symbol`. */
+/** Rejects widened keys and unions that could address different runtime cells. */
 export type NominalKey<key extends PropertyKey> = string extends key ? never
   : number extends key ? never
   : symbol extends key ? never
+  : true extends IsUnion<key> ? never
   : key;
 
 /** @ignore */
@@ -40,18 +47,32 @@ export type WidenedCellKey = {
     "a cell key must be a literal, or a symbol declared as a const";
 };
 
-/**
- * Create a dictionary with a runtime kind of its own.
- *
- * The key lives only in the type, so there is nothing to derive a kind from and
- * each call mints a fresh one. Runtime identity is therefore finer than type
- * identity: declaring the same key twice yields one cell to the compiler and
- * two at runtime, and the second cell's lifts survive a handler the types said
- * would discharge them, throwing at the terminal `run`. One declaration per key
- * is a convention this cannot check.
- *
- * @ignore
- */
-export function cell_dictionary<dictionary extends Dictionary>(): dictionary {
-  return data<dictionary>();
+const cell_kinds = new WeakMap<object, Map<PropertyKey, symbol>>();
+
+/** @ignore Create a dictionary addressed by a real key within a family. */
+export function cell_dictionary<dictionary extends Dictionary>(
+  family: object,
+  key: PropertyKey,
+): dictionary {
+  if (
+    typeof key !== "string" && typeof key !== "number" &&
+    typeof key !== "symbol"
+  ) {
+    throw new TypeError(
+      "A cell requires a runtime string, number, or symbol key",
+    );
+  }
+  let keys = cell_kinds.get(family);
+  if (keys === undefined) {
+    keys = new Map();
+    cell_kinds.set(family, keys);
+  }
+  let identity = keys.get(key);
+  if (identity === undefined) {
+    identity = Symbol(String(key));
+    keys.set(key, identity);
+  }
+  const dictionary = data<dictionary>();
+  dictionary[kind] = identity;
+  return dictionary;
 }

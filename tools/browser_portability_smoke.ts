@@ -3,7 +3,8 @@ import { build } from "esbuild";
 const result = await build({
   stdin: {
     contents: `
-import { Effect, from_fn, Just, run_task } from "./src/mod.ts";
+import { Effect, Just } from "./src/mod.ts";
+import { from_fn, run_task } from "./src/task.ts";
 
 run_task(Effect.lift(from_fn(async () => Just(20).map((value) => value + 22).value()[1])))
   .then((value) => fetch("/result?value=" + encodeURIComponent(String(value))))

@@ -1,10 +1,6 @@
-import {
-  type AsEither,
-  type Either,
-  Either as EitherT,
-  Left,
-  Right,
-} from "./either.ts";
+import type { RawValidation } from "./validation.ts";
+import type { RawEither } from "./either.ts";
+import { type AsEither, Either as EitherT, Left, Right } from "./either.ts";
 import { type AsFn, Fn, fn } from "./fn.ts";
 import type { Data } from "./typeclass.ts";
 import { Category, Do } from "./typeclasses.ts";
@@ -13,7 +9,6 @@ import {
   type AsValidation,
   Invalid,
   Valid,
-  type Validation,
   Validation as ValidationT,
 } from "./validation.ts";
 
@@ -31,7 +26,7 @@ Deno.test("fixed context parameters survive typeclass operations", () => {
     ["missing"],
     { concat: (first, second) => [...first, ...second] },
   ).ap(Valid(41));
-  const valid_raw: Validation<readonly string[], number> = ["valid", 41];
+  const valid_raw: RawValidation<readonly string[], number> = ["valid", 41];
   const valid = ValidationT(valid_raw).map((value) => value + 1);
   const StringEither = EitherT.with_left<string>();
   // deno-lint-ignore require-yield -- verifies fixed-parameter pure through Do
@@ -95,12 +90,12 @@ Deno.test("fixed context parameters survive typeclass operations", () => {
   expect_type<Data<AsFn<string>, string>>(identity_fn);
   expect_type<Data<AsFn<number>, number>>(arrow_fn);
 
-  expect_type<Either<string, boolean>>(left.value());
-  expect_type<Either<string, number>>(right.value());
+  expect_type<RawEither<string, boolean>>(left.value());
+  expect_type<RawEither<string, number>>(right.value());
   expect_type<readonly [string, number]>(pair.value());
-  expect_type<Validation<readonly string[], number>>(invalid.value());
-  expect_type<Validation<readonly string[], number>>(valid.value());
-  expect_type<Either<number, boolean>>(bimapped_either.value());
+  expect_type<RawValidation<readonly string[], number>>(invalid.value());
+  expect_type<RawValidation<readonly string[], number>>(valid.value());
+  expect_type<RawEither<number, boolean>>(bimapped_either.value());
   expect_type<readonly [number, number]>(bimapped_pair.value());
   expect_type<string>(named_length.run({ name: "Ada" }));
   expect_type<number>(composed.run("Ada"));

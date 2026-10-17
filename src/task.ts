@@ -36,6 +36,8 @@ export declare const task_identity: unique symbol;
 export declare const parallel_task_identity: unique symbol;
 
 const task_cancellation = Symbol("Task cancellation");
+const protected_promises = new WeakMap<Promise<unknown>, AbortSignal>();
+const completed_tasks = new WeakMap<Task<unknown>, unknown>();
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
 export type TaskItem<item> = Extract<item, PromiseLike<unknown>> extends never
@@ -211,13 +213,19 @@ export async function run_task<
   value: value,
   options: RunTaskOptions = {},
 ): Promise<RunTaskItem<value>> {
-  let current =
-    (is_task_value(value)
-      ? Effect.lift<AsTask | AsParallelTask, unknown>(value)
-      : value) as Effect<
-        TaskRequirements,
-        unknown
-      >;
+  if (is_task_value(value)) {
+    const task = value.value();
+    if (options.signal?.aborted) {
+      throw task_abort_error("run_task", options.signal);
+    }
+    if (completed_tasks.has(task)) {
+      return completed_tasks.get(task) as RunTaskItem<value>;
+    }
+    return await start_task(task, options.signal, "run_task") as RunTaskItem<
+      value
+    >;
+  }
+  let current = value as Effect<TaskRequirements, unknown>;
 
   while (true) {
     switch (current[0]) {
@@ -231,9 +239,14 @@ export async function run_task<
 
         if (operation[0] === "lift" && is_task_value(operation[1])) {
           const lifted = current[1] as unknown as Lift<AsTask, unknown>;
-          current = current[2](
-            await start_task(lifted[1].value(), options.signal, "run_task"),
-          ) as Effect<
+          const task = lifted[1].value();
+          if (options.signal?.aborted) {
+            throw task_abort_error("run_task", options.signal);
+          }
+          let value: unknown;
+          if (completed_tasks.has(task)) value = completed_tasks.get(task);
+          else value = await start_task(task, options.signal, "run_task");
+          current = current[2](value) as Effect<
             TaskRequirements,
             unknown
           >;
@@ -328,9 +341,12 @@ Show.instance(Task)({
 Functor.instance(Task)({
   map(fn) {
     return Task((signal) => {
-      return start_task(this.value(), signal, "Task.map").then((value) => {
-        return task_item(fn(value), "Task.map");
-      });
+      return continue_task(
+        this.value(),
+        signal,
+        "Task.map",
+        (value) => task_item(fn(value), "Task.map"),
+      );
     });
   },
 });
@@ -371,10 +387,11 @@ Show.instance(ParallelTask)({
 Functor.instance(ParallelTask)({
   map(fn) {
     return ParallelTask((signal) => {
-      return start_task(this.value(), signal, "ParallelTask.map").then(
-        (value) => {
-          return task_item(fn(value), "ParallelTask.map");
-        },
+      return continue_task(
+        this.value(),
+        signal,
+        "ParallelTask.map",
+        (value) => task_item(fn(value), "ParallelTask.map"),
       );
     });
   },
@@ -428,9 +445,12 @@ Applicative.instance(ParallelTask)({
 Monad.instance(Task)({
   bind(fn) {
     return Task((signal) => {
-      return start_task(this.value(), signal, "Task.bind").then((value) => {
-        return start_task(fn(value).value(), signal, "Task.bind");
-      });
+      return continue_task(
+        this.value(),
+        signal,
+        "Task.bind",
+        (value) => start_task(fn(value).value(), signal, "Task.bind"),
+      );
     });
   },
 });
@@ -441,11 +461,13 @@ MonadRec.instance(Task)({
       let state = initial;
 
       while (true) {
-        const [tag, value] = await start_task(
-          step(state).value(),
-          signal,
-          "Task.tail_rec_m",
-        );
+        const task = step(state).value();
+        if (signal?.aborted) throw task_abort_error("Task.tail_rec_m", signal);
+        let instruction: Awaited<ReturnType<typeof task>>;
+        if (completed_tasks.has(task)) {
+          instruction = completed_tasks.get(task) as typeof instruction;
+        } else instruction = await start_task(task, signal, "Task.tail_rec_m");
+        const [tag, value] = instruction;
 
         switch (tag) {
           case loop_done:
@@ -505,11 +527,14 @@ function start_task<item>(
 
 function succeed_task<item>(value: item, operation: string): TaskValue<item> {
   const resolved = task_item(value, operation);
-  return Task((signal) =>
-    signal?.aborted
-      ? Promise.reject(task_abort_error(operation, signal))
-      : Promise.resolve(resolved)
-  );
+  const task: Task<item> = (signal) => {
+    if (signal?.aborted) {
+      return Promise.reject(task_abort_error(operation, signal));
+    }
+    return Promise.resolve(resolved);
+  };
+  completed_tasks.set(task as Task<unknown>, resolved);
+  return Task(task);
 }
 
 function run_concurrently(
@@ -569,7 +594,7 @@ function await_with_signal<item>(
   signal: AbortSignal | undefined,
   operation: string,
 ): Promise<item> {
-  if (signal === undefined) {
+  if (signal === undefined || protected_promises.get(pending) === signal) {
     return pending;
   }
 
@@ -578,7 +603,7 @@ function await_with_signal<item>(
     return Promise.reject(task_abort_error(operation, signal));
   }
 
-  return new Promise((resolve, reject) => {
+  const protected_pending = new Promise<item>((resolve, reject) => {
     const abort = () => reject(task_abort_error(operation, signal));
     signal.addEventListener("abort", abort, { once: true });
 
@@ -593,6 +618,8 @@ function await_with_signal<item>(
       },
     );
   });
+  protected_promises.set(protected_pending, signal);
+  return protected_pending;
 }
 
 function task_abort_error(operation: string, signal: AbortSignal): Error {
@@ -661,3 +688,84 @@ async function finalize_cancelled_effect(
 }
 
 function ignore_failure(_error: unknown): void {}
+
+/** Lazily traverses inputs with bounded concurrency, preserving input order.
+ * Failure or cancellation stops admission and signals active siblings.
+ */
+export function traverse_task<input, output>(
+  inputs: Iterable<input>,
+  concurrency: number,
+  fn: (input: input, index: number) => TaskValue<output>,
+  options: RunTaskOptions = {},
+): TaskValue<readonly output[]> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError(
+      "Task traversal concurrency must be a positive integer",
+    );
+  }
+  return from_fn(async (parent_signal) => {
+    const signals: AbortSignal[] = [];
+    if (parent_signal !== undefined) signals.push(parent_signal);
+    if (options.signal !== undefined) signals.push(options.signal);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([...signals, controller.signal]);
+    if (signal.aborted) throw task_abort_error("Task.traverse", signal);
+    const iterator = inputs[Symbol.iterator]();
+    const results: output[] = [];
+    let next_index = 0;
+    let exhausted = false;
+    let failed = false;
+    let failure: unknown;
+    async function worker(): Promise<void> {
+      while (!signal.aborted && !failed && !exhausted) {
+        try {
+          const next = iterator.next();
+          if (next.done) {
+            exhausted = true;
+            return;
+          }
+          const index = next_index++;
+          results[index] = await start_task(
+            fn(next.value, index).value(),
+            signal,
+            "Task.traverse",
+          );
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            failure = error;
+            controller.abort(error);
+          }
+          return;
+        }
+      }
+    }
+    try {
+      const workers: Promise<void>[] = [];
+      for (
+        let index = 0;
+        index < concurrency && !exhausted && !failed;
+        index += 1
+      ) workers.push(worker());
+      await Promise.all(workers);
+      if (failed) throw failure;
+      if (signal.aborted) throw task_abort_error("Task.traverse", signal);
+      return results;
+    } finally {
+      if (!exhausted) iterator.return?.();
+    }
+  });
+}
+
+function continue_task<item, result>(
+  task: Task<item>,
+  signal: AbortSignal | undefined,
+  operation: string,
+  fn: (value: TaskItem<item>) => result,
+): Promise<Awaited<result>> {
+  const continued = start_task(task, signal, operation).then(fn);
+  // The source and any dependent Task already observe this signal. Its
+  // rejection flows through this promise without a second abort listener.
+  if (signal !== undefined) protected_promises.set(continued, signal);
+  return continued as Promise<Awaited<result>>;
+}

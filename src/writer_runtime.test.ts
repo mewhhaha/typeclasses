@@ -11,6 +11,7 @@ import {
 
 Deno.test("Writer cells capture an empty log for pure and yield-free Do", () => {
   const audit = writer_cell<"writer-runtime-audit", AsArray, string>(
+    "writer-runtime-audit",
     ArrayT<string>([]),
   );
   const [value, empty] = audit.pure(42).value();
@@ -50,8 +51,8 @@ Deno.test("Writer cells infer the literal key and output types from their argume
 
   const sibling = writer_cell("writer-inferred-audit", ArrayT<string>([]));
   assert_true(
-    audit[kind] !== sibling[kind],
-    "every declaration has its own kind",
+    audit[kind] === sibling[kind],
+    "the same runtime key addresses the same cell",
   );
   assert_equals(
     run_writer_terminal(

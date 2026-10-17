@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses fluent map chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 705,
+            "min": 656236.0,
+            "max": 1463056.0,
+            "avg": 720142.0,
+            "p75": 728903.0,
+            "p99": 1087434.0,
+            "p995": 1405057.0,
+            "p999": 1463056.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses Functor.map chain",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 254,
+            "min": 1950963.0,
+            "max": 3460738.0,
+            "avg": 2055679.0,
+            "p75": 2065219.0,
+            "p99": 3393220.0,
+            "p995": 3402297.0,
+            "p999": 3460738.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses manual bind do-shape",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 677,
+            "min": 641087.0,
+            "max": 2010646.0,
+            "avg": 748937.0,
+            "p75": 735326.0,
+            "p99": 1423812.0,
+            "p995": 1525906.0,
+            "p999": 2010646.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+      "group": null,
+      "name": "breakdown typeclasses Do generator",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 37,
+            "min": 16151784.0,
+            "max": 24284799.0,
+            "avg": 19055902.0,
+            "p75": 19926247.0,
+            "p99": 24284799.0,
+            "p995": 24284799.0,
+            "p999": 24284799.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

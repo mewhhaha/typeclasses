@@ -1,3 +1,5 @@
+import type { RawValidation } from "./validation.ts";
+import type { RawEither } from "./either.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import {
   add_values,
@@ -49,9 +51,9 @@ import {
   Just,
   type Just as MaybeJustRaw,
   Maybe,
-  type Maybe as MaybeRaw,
   Nothing,
   type Nothing as MaybeNothingRaw,
+  type RawMaybe as MaybeRaw,
 } from "./maybe.ts";
 import { predicate } from "./predicate.ts";
 import {
@@ -73,10 +75,10 @@ import {
 import { from_regexp } from "./regexp.ts";
 import {
   Either,
-  type Either as EitherRaw,
   from_number as either_from_number,
   Left as EitherLeft,
   type Left as EitherLeftRaw,
+  type RawEither as EitherRaw,
   Right as EitherRight,
   type Right as EitherRightRaw,
 } from "./either.ts";
@@ -135,7 +137,6 @@ import {
   InvalidMessages as ValidationInvalidMessages,
   Valid as ValidationValid,
   type Valid as ValidationValidRaw,
-  type Validation,
 } from "./validation.ts";
 import { from_entries as weak_map_from_entries } from "./weak_map.ts";
 import { from_iterable as weak_set_from_iterable } from "./weak_set.ts";
@@ -927,8 +928,8 @@ Deno.test("State monad threads state through Do", () => {
 });
 
 Deno.test("State cells give each slot its own handler", () => {
-  const total = state<"total", number>();
-  const label = state<"label", string>();
+  const total = state<"total", number>("total");
+  const label = state<"label", string>("label");
 
   const program = Program.scope<Uses<typeof total> | Uses<typeof label>>()(
     function* () {
@@ -959,7 +960,7 @@ Deno.test("State cells give each slot its own handler", () => {
 });
 
 Deno.test("a State cell is a Monad in its own right", () => {
-  const slot = state<"slot", number>();
+  const slot = state<"slot", number>("slot");
 
   const doubled = Do(function* () {
     const before = yield* slot.get();
@@ -1708,7 +1709,7 @@ function describe_either_branch(value: EitherRaw<string, number>): string {
 }
 
 function describe_validation_branch(
-  value: Validation<readonly string[], number>,
+  value: RawValidation<readonly string[], number>,
 ): string {
   if (ValidationInvalid.is(value)) {
     const invalid: ValidationInvalidRaw<readonly string[]> = value;
@@ -1779,7 +1780,7 @@ function require_true(value: boolean, message: string) {
 }
 
 function expect_either_right<item, error>(
-  result: Either<error, item>,
+  result: RawEither<error, item>,
   message: string,
 ): item {
   if (!EitherRight.is(result)) {
@@ -1790,7 +1791,7 @@ function expect_either_right<item, error>(
 }
 
 function expect_validation_invalid<error, item>(
-  validation: Validation<error, item>,
+  validation: RawValidation<error, item>,
   message: string,
 ): error {
   if (!ValidationInvalid.is(validation)) {

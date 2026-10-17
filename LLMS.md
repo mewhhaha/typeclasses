@@ -41,13 +41,15 @@ rather than generating Effect APIs with similar names.
 
 ## Imports
 
-Applications can use the root entry point:
+The root entry point contains core data types, typeclasses, `Effect`/`Program`,
+and the `array`, `iterable`, `map`, and `set` namespaces:
 
 ```ts
 import { Applicative, Do, Left, Maybe, Right } from "@mewhhaha/typeclasses";
 ```
 
-Prefer a stable focused entry point when a module has a clear domain:
+Task, STM, worker pools, Except, Reader, State, Writer, and other JavaScript
+wrappers use stable focused entry points:
 
 ```ts
 import { Left, Right } from "@mewhhaha/typeclasses/either";
@@ -211,8 +213,8 @@ spellings arbitrarily within one short pipeline.
 Typeclass operations retain their dispatcher when detached, so
 `const { map } = Functor; map(Just(41), value => value + 1)` is valid. The
 prelude's `lift(fn, first, ...rest)` has the same positional inference and
-variadic input support as `Applicative.lift`; the `lift_A`–`lift_A5` aliases
-remain available. Import data constructors from their own entry points:
+variadic input support as `Applicative.lift`. Import data constructors from
+their own entry points:
 
 ```ts
 import { Just } from "@mewhhaha/typeclasses/maybe";
@@ -782,22 +784,24 @@ import { reader, run_reader } from "@mewhhaha/typeclasses/reader";
 import { run_state, state } from "@mewhhaha/typeclasses/state";
 import { run_writer, writer_cell } from "@mewhhaha/typeclasses/writer";
 
-const config = reader<"config", Config>();
-const request = reader<"request", RequestContext>();
+const config = reader<"config", Config>("config");
+const request = reader<"request", RequestContext>("request");
 
-const counter = state<"counter", number>();
-const last_route = state<"last_route", string>();
+const counter = state<"counter", number>("counter");
+const last_route = state<"last_route", string>("last_route");
 
 const audit = writer_cell("audit", ArrayT<string>([]));
 const metrics = writer_cell("metrics", ArrayT<number>([]));
 ```
 
 The Writer factory infers its key, monoid, and log item from the arguments. The
-explicit `writer_cell<key, output, log>(emptyOutput)` form remains supported.
+explicit `writer_cell<key, output, log>(key, emptyOutput)` form remains
+supported.
 
 The literal key distinguishes cell types, even when two cells contain the same
-value type. Each declaration also receives its own runtime identity. Use the
-cell's own operations inside a mixed effect program:
+value type. Reusing a key within one family reuses its runtime identity. Use a
+unique const symbol for a private cell. Use the cell's own operations inside a
+mixed effect program:
 
 ```ts
 type AppCells =
@@ -841,11 +845,10 @@ const [[[[endpoint, count], route], audit_log], metric_log] = Effect.interpret(
   .run(run);
 ```
 
-Declare each key exactly once and keep the cell at module scope. Calling
-`state<"counter", number>()` twice creates two runtime cells that share one
-compile-time identity, so a handler can appear to remove both while one remains
-unhandled. Widened keys such as `state<string, number>()` are rejected because
-they do not identify one cell.
+Keep cells at module scope when they are shared. Calling
+`state<"counter", number>("counter")` twice addresses the same cell. Widened
+keys are rejected because they do not identify one cell. Use one value type
+consistently for each shared key; use unique const symbols for private cells.
 
 Prefer one `Reader<AppEnvironment>` or `State<AppState>` record when the values
 form one cohesive unit and are always provided or updated together. Use cells

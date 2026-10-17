@@ -152,10 +152,8 @@ Deno.test("iterable fusion leaves unknown dictionaries, shadowed imports, and un
     'import * as i from "../src/iterable.ts";\nfunction f(i) { return i.from_array([1]).map(n => n + 1).map(n => n * 2); }',
     'import type { from_array } from "../src/iterable.ts";\nconst result = from_array([1]).map(n => n + 1).map(n => n * 2);',
     'import { from_array } from "../src/iterable.ts";\nconst result = from_array([1]).map(fn).map(n => n * 2);',
-    'import { from_array } from "../src/iterable.ts";\nconst result = from_array([1]).map(n => { return n + 1; }).map(n => n * 2);',
     'import { from_array } from "../src/iterable.ts";\nconst result = from_array([1]).map<number>(n => n + 1).map(n => n * 2);',
     'import { from_array } from "../src/iterable.ts";\nconst result = from_array([1])?.map(n => n + 1).map(n => n * 2);',
-    'import { from_array } from "../src/iterable.ts";\nconst value = from_array([1]);\nconst result = value.map(n => n + 1).map(n => n * 2);',
   ];
   for (const source of sources) {
     const transformed = transform_do_program_source(source);
@@ -201,4 +199,21 @@ export { strings, choices, functions, annotated };
       await Deno.remove(path);
     }
   }
+});
+
+Deno.test("iterable fusion accepts named unary functions and immutable intermediate roots", async () => {
+  const source = `
+import { from_array, to_array } from "../src/iterable.ts";
+const events: number[] = [];
+const offset = 3;
+function first(n: number) { events.push(n); return n + offset; }
+const second = (n: number) => { events.push(n); return n * 2; };
+const base = from_array([1, 2]).map(n => n + 1);
+const pipeline = base.map(first).map(second);
+export default { initial: [...events], first: to_array(pipeline), second: to_array(pipeline), events };
+`;
+  const result = transform_do_program_source(source);
+  assert_equals(result.transformed, 1);
+  assert_equals(result.code.match(/\.map\(/g)?.length, 2);
+  assert_equals(await evaluate(result.code), await evaluate(source));
 });

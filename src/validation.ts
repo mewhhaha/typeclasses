@@ -3,6 +3,8 @@ import {
   type As,
   type Data,
   data,
+  is_data,
+  kind,
   type type_data,
   type type_item,
   union,
@@ -27,7 +29,7 @@ import {
 export declare const validation_identity: unique symbol;
 
 /** An accumulating validation represented by a valid or invalid tagged tuple. */
-export type Validation<error, item> =
+export type RawValidation<error, item> =
   | Valid<item>
   | Invalid<error>;
 
@@ -77,7 +79,7 @@ export interface AsValidation<error = AnyError>
   /** Higher-kinded slot for the successful value type. */
   readonly [type_item]: unknown;
   /** Validation representation at the selected successful value type. */
-  readonly [type_data]: Validation<error, this[typeof type_item]>;
+  readonly [type_data]: RawValidation<error, this[typeof type_item]>;
 }
 
 /** A Validation tuple wrapped with fluent typeclass methods. */
@@ -109,11 +111,11 @@ type ValidationItem<value> = value extends Valid<infer item> ? item : never;
 /** @ignore */
 export type ValidationConstructor =
   & {
-    <value extends Validation<AnyError, AnyError>>(
+    <value extends RawValidation<AnyError, AnyError>>(
       value: value,
     ): ValidationValue<ValidationError<value>, ValidationItem<value>>;
     <error, item>(
-      value: Validation<error, item>,
+      value: RawValidation<error, item>,
     ): ValidationValue<error, item>;
     with_error<error>(): ValidationDictionary<error>;
     with_semigroup<error>(
@@ -128,14 +130,28 @@ export type ValidationConstructor =
 
 /** Runtime predicate for correctly shaped valid tuples. */
 export type ValidGuard = {
-  <error, item>(value: Validation<error, item>): value is Valid<item>;
-  (value: unknown): value is Valid<unknown>;
+  <error, item>(
+    value: ValidationValue<error, item>,
+  ): value is { value(): Valid<item> } & ValidationValue<error, item>;
+  <error, item>(value: RawValidation<error, item>): value is Valid<item>;
+  (
+    value: unknown,
+  ): value is
+    | Valid<unknown>
+    | WrappedData<AsValidation<unknown>, Valid<unknown>, unknown>;
 };
 
 /** Runtime predicate for invalid tuples with a usable semigroup. */
 export type InvalidGuard = {
-  <error, item>(value: Validation<error, item>): value is Invalid<error>;
-  (value: unknown): value is Invalid<unknown>;
+  <error, item>(
+    value: ValidationValue<error, item>,
+  ): value is { value(): Invalid<error> } & ValidationValue<error, item>;
+  <error, item>(value: RawValidation<error, item>): value is Invalid<error>;
+  (
+    value: unknown,
+  ): value is
+    | Invalid<unknown>
+    | WrappedData<AsValidation<unknown>, Invalid<unknown>, unknown>;
 };
 
 /** Constructor and guard for successful Validation values. */
@@ -156,7 +172,7 @@ export type InvalidConstructor = {
 /** Callable Validation dictionary with configurable error accumulation. */
 export const Validation = data<AsValidation<unknown>>(
   union(["valid", $slot], ["invalid", $slot, $slot]),
-) as ValidationConstructor;
+) as unknown as ValidationConstructor;
 
 Object.defineProperty(Validation, "with_error", {
   value: validation_with_error,
@@ -249,14 +265,28 @@ export function map_error<error, next_error, item>(
 }
 
 function is_invalid<error, item>(
-  value: Validation<error, item>,
-): value is Invalid<error>;
-function is_invalid(value: unknown): value is Invalid<unknown>;
+  value: ValidationValue<error, item>,
+): value is { value(): Invalid<error> } & ValidationValue<error, item>;
 function is_invalid<error, item>(
-  value: Validation<error, item> | unknown,
-): value is Invalid<error> {
+  value: RawValidation<error, item>,
+): value is Invalid<error>;
+function is_invalid(
+  value: unknown,
+): value is
+  | Invalid<unknown>
+  | WrappedData<AsValidation<unknown>, Invalid<unknown>, unknown>;
+function is_invalid<error, item>(
+  value: RawValidation<error, item> | unknown,
+): value is
+  | Invalid<error>
+  | WrappedData<AsValidation<unknown>, Invalid<unknown>, unknown> {
   if (!Array.isArray(value)) {
-    return false;
+    if (!is_data(value)) return false;
+    if (
+      (value as unknown as AsValidation<unknown>)[kind] !== Validation[kind]
+    ) return false;
+    value = value.value();
+    if (!Array.isArray(value)) return false;
   }
 
   const [tag, , semigroup] = value;
@@ -583,3 +613,6 @@ function compare_errors(left: unknown, right: unknown) {
 
   return compare_unknown(left, right);
 }
+
+/** The public fluent Validation value. */
+export type Validation<error, item> = ValidationValue<error, item>;

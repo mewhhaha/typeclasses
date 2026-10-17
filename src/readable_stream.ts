@@ -39,27 +39,37 @@ export function from_readable_stream<item>(
   return ReadableStreamT(stream);
 }
 
-/** Adapt a wrapped stream to an async iterable that releases its reader. */
+/**
+ * Adapt a one-shot stream. Early iterator exit cancels by default. Set
+ * preventCancel to release the reader while preserving unread chunks.
+ */
 export function to_async_iterable<item>(
   stream: ReadableStreamValue<item>,
+  options: { readonly preventCancel?: boolean } = {},
 ): Data<AsAsyncIterable, item> {
   const source = stream.value();
+  const prevent_cancel = options.preventCancel === true;
 
   return AsyncIterableT(async function* () {
     const reader = source.getReader();
-
+    let done = false;
     try {
       while (true) {
         const next = await reader.read();
 
         if (next.done === true) {
+          done = true;
           return;
         }
 
         yield next.value;
       }
     } finally {
-      reader.releaseLock();
+      try {
+        if (!done && !prevent_cancel) await reader.cancel();
+      } finally {
+        reader.releaseLock();
+      }
     }
   });
 }

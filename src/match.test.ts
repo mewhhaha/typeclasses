@@ -1,3 +1,4 @@
+import type { RawValidation } from "./validation.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import { Left, Right } from "./either.ts";
 import { Fn } from "./fn.ts";
@@ -5,10 +6,7 @@ import { from_array } from "./list.ts";
 import { Just, Nothing } from "./maybe.ts";
 import { match } from "./tagged.ts";
 import { InvalidMessages } from "./validation.ts";
-import {
-  type Validation,
-  Validation as ValidationDictionary,
-} from "./validation.ts";
+import { Validation as ValidationDictionary } from "./validation.ts";
 
 Deno.test("fluent match handles all built-in tagged wrappers", () => {
   assert_equals(
@@ -40,7 +38,7 @@ Deno.test("fluent match handles all built-in tagged wrappers", () => {
     "error: missing",
   );
   const validation = ValidationDictionary.with_error<string>()(
-    ["valid", 2] as Validation<string, number>,
+    ["valid", 2] as RawValidation<string, number>,
   );
 
   assert_equals(

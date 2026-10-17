@@ -5,7 +5,6 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import { append_item } from "./internal.ts";
 import { traverse_items } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import {
@@ -13,6 +12,7 @@ import {
   Applicative,
   applicative_lift_method,
   Eq,
+  fold_while_method,
   Foldable,
   Functor,
   Monad,
@@ -103,12 +103,9 @@ export function filter<item>(
   iterable: IterableValue<item>,
   predicate: (item: item) => boolean,
 ): IterableValue<item> {
-  const source = iterable.value();
-
-  return IterableT(function* () {
-    for (const item of source()) {
-      if (predicate(item)) yield item;
-    }
+  return pipeline(iterable, {
+    tag: "filter",
+    fn: predicate as (item: unknown) => boolean,
   });
 }
 
@@ -123,18 +120,7 @@ export function take<item>(
   if (!Number.isSafeInteger(count) || count < 0) {
     throw new RangeError("take count must be a nonnegative safe integer");
   }
-  const source = iterable.value();
-
-  return IterableT(function* () {
-    if (count === 0) return;
-    let remaining = count;
-
-    for (const item of source()) {
-      yield item;
-      remaining -= 1;
-      if (remaining === 0) return;
-    }
-  });
+  return pipeline(iterable, { tag: "take", count });
 }
 
 function filter_method<item, narrowed extends item>(
@@ -162,7 +148,9 @@ IterableT.take = function <item>(
 
 Show.instance(IterableT)({
   show() {
-    return inspect([...this.value()()]);
+    const items = preview(this, 100);
+    if (items.length === 100) return inspect(items) + " (preview limit 100)";
+    return inspect(items);
   },
 });
 
@@ -202,13 +190,7 @@ Eq.instance(IterableT)({
 
 Functor.instance(IterableT)({
   map(fn) {
-    const source = this.value();
-
-    return IterableT(function* () {
-      for (const item of source()) {
-        yield fn(item);
-      }
-    });
+    return pipeline(this, { tag: "map", fn: fn as (item: unknown) => unknown });
   },
 });
 
@@ -305,6 +287,16 @@ Monad.instance(IterableT)({
 });
 
 Foldable.instance(IterableT)({
+  [fold_while_method](initial, fn) {
+    let state = initial;
+    for (const item of this.value()()) {
+      const [tag, next] = fn(state, item);
+      state = next;
+      if (tag === "Done") return state;
+    }
+    return state;
+  },
+
   fold(initial, fn) {
     let state = initial;
 
@@ -319,7 +311,7 @@ Foldable.instance(IterableT)({
 Traversable.instance(IterableT)({
   traverse(applicative, fn) {
     return Functor.map(
-      traverse_items([...this.value()()], applicative, fn),
+      traverse_items(this.value()(), applicative, fn),
       (items) => IterableT(() => items),
     );
   },
@@ -375,7 +367,7 @@ function* iterate_iterable_product<output>(
   fn: (...values: unknown[]) => output,
   sources: readonly IterableT<unknown>[],
   index: number,
-  values: readonly unknown[],
+  values: unknown[],
 ): Generator<output> {
   if (index >= sources.length) {
     yield fn(...values);
@@ -383,11 +375,91 @@ function* iterate_iterable_product<output>(
   }
 
   for (const item of sources[index]()) {
+    values[index] = item;
     yield* iterate_iterable_product(
       fn,
       sources,
       index + 1,
-      append_item(values, item),
+      values,
     );
   }
 }
+
+type Stage =
+  | { readonly tag: "map"; readonly fn: (item: unknown) => unknown }
+  | { readonly tag: "filter"; readonly fn: (item: unknown) => boolean }
+  | { readonly tag: "take"; readonly count: number };
+type Stages = { readonly stage: Stage; readonly previous?: Stages };
+type Pipeline = {
+  readonly source: IterableT<unknown>;
+  readonly stages: Stages;
+};
+const pipelines = new WeakMap<IterableT<unknown>, Pipeline>();
+
+// One generator owns the source. Plans share immutable links; counters belong
+// to each traversal, so replay and interleaved consumers remain independent.
+function pipeline<from, to = from>(
+  value: IterableValue<from>,
+  stage: Stage,
+): IterableValue<to> {
+  const current = value.value();
+  const previous = pipelines.get(current);
+  let source: IterableT<unknown> = current;
+  let stages: Stages = { stage };
+  if (previous !== undefined) {
+    source = previous.source;
+    stages = { stage, previous: previous.stages };
+  }
+  const factory = function* (): Generator<to> {
+    const ordered: Stage[] = [];
+    let link: Stages | undefined = stages;
+    while (link !== undefined) {
+      ordered.push(link.stage);
+      link = link.previous;
+    }
+    ordered.reverse();
+    const remaining = ordered.map((stage) => {
+      if (stage.tag === "take") return stage.count;
+      return Infinity;
+    });
+    if (remaining.includes(0)) return;
+    for (const input of source()) {
+      let item = input;
+      let keep = true;
+      let stop = false;
+      for (let index = 0; index < ordered.length; index += 1) {
+        const operation = ordered[index];
+        switch (operation.tag) {
+          case "map":
+            item = operation.fn(item);
+            break;
+          case "filter":
+            keep = operation.fn(item);
+            break;
+          case "take":
+            remaining[index] -= 1;
+            if (remaining[index] === 0) stop = true;
+            break;
+        }
+        if (!keep) break;
+      }
+      if (keep) yield item as to;
+      if (stop) return;
+    }
+  };
+  pipelines.set(factory, { source, stages });
+  return IterableT(factory);
+}
+
+/** Collect at most limit items; closes the source without reading ahead. */
+export function preview<item>(
+  iterable: IterableValue<item>,
+  limit = 100,
+): item[] {
+  return to_array(take(iterable, limit));
+}
+
+/** Explicit live array view; mutations are visible on the next traversal. */
+export const from_array_view = from_array;
+/** Explicit finite snapshot; consumes the source immediately. */
+export const from_snapshot = from_iterable;

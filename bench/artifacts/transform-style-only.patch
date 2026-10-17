@@ -1,0 +1,77 @@
+--- a/tools/transform_do_program.ts
++++ b/tools/transform_do_program.ts
+@@ -232,15 +232,24 @@
+   const might_transform_terminal = imports.terminal_functions.size > 0 ||
+     imports.terminal_namespaces.size > 0;
+   const terminal_imports: TerminalImportRequest[] = [];
+-  const named_programs = might_transform_generator && might_transform_terminal
+-    ? collect_named_terminal_programs(source_file, imports, program_scopes)
+-    : new Map<string, ts.CallExpression>();
++  let named_programs = new Map<string, ts.CallExpression>();
++  if (might_transform_generator && might_transform_terminal) {
++    named_programs = collect_named_terminal_programs(
++      source_file,
++      imports,
++      program_scopes,
++    );
++  }
+   const fused_named_programs = new Set<string>();
+   let transformed = 0;
+   let needs_program_helpers = false;
+-  const loop_support = imports.do_names.size > 0 && /\bfor\b/.test(source)
+-    ? collect_loop_support(source_file)
+-    : { dictionaries: new Set<string>(), specifier: undefined };
++  let loop_support: ReturnType<typeof collect_loop_support> = {
++    dictionaries: new Set<string>(),
++    specifier: undefined,
++  };
++  if (imports.do_names.size > 0 && /\bfor\b/.test(source)) {
++    loop_support = collect_loop_support(source_file);
++  }
+   let loop_runtime: ts.Identifier;
+   let used_loop_runtime = false;
+ 
+@@ -519,21 +528,21 @@
+           terminal_imports,
+         )
+         : visited;
+-      const with_loops =
+-        used_loop_runtime && loop_support.specifier !== undefined
+-          ? factory.updateSourceFile(updated, [
+-            factory.createImportDeclaration(
++      let with_loops = updated;
++      if (used_loop_runtime && loop_support.specifier !== undefined) {
++        with_loops = factory.updateSourceFile(updated, [
++          factory.createImportDeclaration(
++            undefined,
++            factory.createImportClause(
++              false,
+               undefined,
+-              factory.createImportClause(
+-                false,
+-                undefined,
+-                factory.createNamespaceImport(loop_runtime),
+-              ),
+-              factory.createStringLiteral(loop_support.specifier),
++              factory.createNamespaceImport(loop_runtime),
+             ),
+-            ...updated.statements,
+-          ])
+-          : updated;
++            factory.createStringLiteral(loop_support.specifier),
++          ),
++          ...updated.statements,
++        ]);
++      }
+       return iterable_maps?.add_helper(with_loops, factory) ?? with_loops;
+     };
+   };
+@@ -5246,7 +5255,7 @@
+ }
+ 
+ /** Compiler and transform revision included in every cache key. */
+-export const transform_cache_version = "2:" + ts.version;
++export const transform_cache_version: string = "2:" + ts.version;
+ 
+ /** A bounded transform cache with observable hit, miss and retention counts. */
+ export type TransformCache = {

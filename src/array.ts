@@ -5,7 +5,6 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import { append_item } from "./internal.ts";
 import { traverse_items } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
@@ -54,7 +53,7 @@ type ArrayValue<item> = Data<AsArray, item>;
 /** Callable immutable-array dictionary with fluent typeclass methods. */
 export const ArrayT: AsArray = data<AsArray>();
 
-/** Wrap a defensive copy of an immutable array. */
+/** Snapshot an array. All positions, including holes, become explicit values. */
 export function from_array<item>(items: readonly item[]): ArrayValue<item> {
   return ArrayT([...items]);
 }
@@ -153,7 +152,11 @@ Ord.instance(ArrayT)({
 Functor.instance(ArrayT)({
   map(fn) {
     const array = this.value();
-    return ArrayT(array.map((value) => fn(value)));
+    const out = new Array<ReturnType<typeof fn>>(array.length);
+    for (let index = 0; index < array.length; index += 1) {
+      out[index] = fn(array[index]);
+    }
+    return ArrayT(out);
   },
 });
 
@@ -168,7 +171,7 @@ Applicative.instance(ArrayT)({
 
     switch (rest.length) {
       case 0:
-        return ArrayT(first.map((value) => fn(value)));
+        return Functor.map(this, fn);
       case 1:
         return lift_array_two(fn, first, rest[0].value());
       case 2:
@@ -204,6 +207,9 @@ Semigroup.instance(ArrayT)({
     return ArrayT([...left, ...right.value()]);
   },
 });
+
+/** @ignore Canonical implementation identity for specialized accumulators. */
+export const array_concat_method: AsArray["concat"] = ArrayT.concat;
 
 Monoid.instance(ArrayT)({
   empty: empty_array,
@@ -354,20 +360,29 @@ function lift_array_many<result>(
   first: readonly unknown[],
   rest: readonly ArrayValue<unknown>[],
 ): ArrayValue<result> {
-  let rows = first.map((value) => [value] as unknown[]);
+  const sources = [first, ...rest.map((value) => value.value())];
+  const values: unknown[] = [];
+  const out: result[] = [];
+  visit(0);
+  return ArrayT(out);
 
-  for (const current of rest) {
-    const source = current.value();
-    const next: unknown[][] = [];
-
-    for (const row of rows) {
-      for (const item of source) {
-        next.push(append_item(row, item));
-      }
+  function visit(index: number): void {
+    if (index === sources.length) {
+      out.push(fn(...values));
+      return;
     }
-
-    rows = next;
+    for (const item of sources[index]) {
+      values[index] = item;
+      visit(index + 1);
+    }
   }
+}
 
-  return ArrayT(rows.map((row) => fn(...row)));
+/** Explicit shallow snapshot; later source mutations are invisible. */
+export const from_snapshot = from_array;
+/** Wrap an array by reference; later mutations remain visible. */
+export function from_array_view<item>(
+  items: readonly item[],
+): ArrayValue<item> {
+  return ArrayT(items);
 }

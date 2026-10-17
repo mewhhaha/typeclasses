@@ -22,12 +22,20 @@ export type KeyedCellScenario = {
   readonly metrics: readonly number[];
 };
 
-const deployment = reader<"deployment", DeploymentConfig>();
-const request_metadata = reader<"request_metadata", RequestMetadata>();
-const request_count = state<"request_count", number>();
-const last_route = state<"last_route", string>();
-const audit = writer_cell<"audit", AsArray, string>(ArrayT<string>([]));
-const metrics = writer_cell<"metrics", AsArray, number>(ArrayT<number>([]));
+const deployment = reader<"deployment", DeploymentConfig>("deployment");
+const request_metadata = reader<"request_metadata", RequestMetadata>(
+  "request_metadata",
+);
+const request_count = state<"request_count", number>("request_count");
+const last_route = state<"last_route", string>("last_route");
+const audit = writer_cell<"audit", AsArray, string>(
+  "audit",
+  ArrayT<string>([]),
+);
+const metrics = writer_cell<"metrics", AsArray, number>(
+  "metrics",
+  ArrayT<number>([]),
+);
 
 type KeyedCells =
   | Uses<typeof deployment>

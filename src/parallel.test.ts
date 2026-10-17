@@ -1,5 +1,9 @@
 import { assert_equals, assert_true } from "./assert.ts";
-import { create_worker_pool, run_worker_map } from "./parallel.ts";
+import {
+  create_worker_pool,
+  run_worker_map,
+  serve_worker,
+} from "./parallel.ts";
 
 const worker_source = `
 self.onmessage = async (event) => {
@@ -54,7 +58,7 @@ Deno.test("worker maps preserve input order across concurrent jobs", async () =>
   assert_equals(result, ["first", "second", "third"]);
 });
 
-Deno.test("a failed pool batch cannot leak replies into another batch", async () => {
+Deno.test("a job failure leaves its pool reusable without stale replies", async () => {
   using script = worker_script(worker_source);
   using pool = create_worker_pool<WorkerInput, string>(script.url, {
     workers: 2,
@@ -64,18 +68,15 @@ Deno.test("a failed pool batch cannot leak replies into another batch", async ()
     { kind: "fail", delay: 0, value: "boom" },
     { kind: "done", delay: 50, value: "stale" },
   ]));
-  const next_error = await settles_within(rejection_from(pool.map([
+  const next_result = await settles_within(pool.map([
     { kind: "done", delay: 0, value: "new" },
-  ])));
+  ]));
 
   assert_true(
     first_error.message.includes("boom"),
     "the failed input is present in the first batch error",
   );
-  assert_true(
-    next_error.message.includes("failed in batch"),
-    "the failed pool rejects later batches instead of accepting stale replies",
-  );
+  assert_equals(next_result, ["new"]);
 });
 
 Deno.test("a later structured-clone error rejects instead of hanging", async () => {
@@ -204,3 +205,70 @@ async function settles_within<value>(promise: Promise<value>): Promise<value> {
     clearTimeout(timer);
   }
 }
+
+Deno.test("pool callers multiplex while a previous request is still active", async () => {
+  using script = worker_script(worker_source);
+  using pool = create_worker_pool<WorkerInput, string>(script.url, {
+    workers: 2,
+  });
+  let long_finished = false;
+  const long = pool.map([{ kind: "done", delay: 100, value: "long" }]).then(
+    (value) => {
+      long_finished = true;
+      return value;
+    },
+  );
+  assert_equals(await pool.map([{ kind: "done", delay: 0, value: "short" }]), [
+    "short",
+  ]);
+  assert_equals(long_finished, false);
+  assert_equals(await long, ["long"]);
+});
+
+Deno.test("malformed replies make the pool terminal", async () => {
+  using script = worker_script(
+    `self.onmessage = () => self.postMessage(["mystery", {}]);`,
+  );
+  using pool = create_worker_pool<number, number>(script.url, { workers: 1 });
+  const first = await rejection_from(pool.map([1]));
+  const second = await rejection_from(pool.map([2]));
+  assert_true(
+    first.message.includes("invalid reply"),
+    "protocol violation has context",
+  );
+  assert_true(first === second, "pool retains its terminal failure");
+});
+
+Deno.test("batched worker protocol and explicit transfers preserve buffers", async () => {
+  using script = worker_script(`
+const serialize_error = (error) => ({ name: error.name, message: error.message, stack: error.stack });
+(${serve_worker.toString()})((input) => {
+  const bytes = new Uint8Array(input);
+  bytes[0] += 1;
+  return input;
+}, { transfer: (output) => [output] });
+`);
+  using pool = create_worker_pool<ArrayBuffer, ArrayBuffer>(script.url, {
+    workers: 1,
+  });
+  const first = new Uint8Array([1]).buffer;
+  const second = new Uint8Array([2]).buffer;
+  const pending = pool.map([first, second], {
+    batch_size: 2,
+    transfer: (input) => [input],
+  });
+  assert_equals(first.byteLength, 0);
+  assert_equals(second.byteLength, 0);
+  const result = await pending;
+  assert_equals(result.map((buffer) => new Uint8Array(buffer)[0]), [2, 3]);
+});
+
+Deno.test("a clone failure rejects one map while preserving pool health", async () => {
+  using script = worker_script(`self.onmessage = (event) => {
+    const [, job] = event.data;
+    self.postMessage(["done", { batch: job.batch, id: job.id, output: job.input }]);
+  };`);
+  using pool = create_worker_pool<unknown, unknown>(script.url, { workers: 1 });
+  await rejection_from(pool.map([() => 1]));
+  assert_equals(await pool.map([42]), [42]);
+});

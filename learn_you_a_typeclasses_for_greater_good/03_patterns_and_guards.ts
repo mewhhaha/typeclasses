@@ -1,6 +1,8 @@
+import type { RawEither } from "../src/either.ts";
+import type { RawMaybe } from "../src/maybe.ts";
 import { assert_equals } from "../src/assert.ts";
-import { type Either, Left, Right } from "../src/either.ts";
-import { Just, type Maybe, Nothing } from "../src/maybe.ts";
+import { Left, Right } from "../src/either.ts";
+import { Just, Nothing } from "../src/maybe.ts";
 import { match } from "../src/tagged.ts";
 
 export function lesson_03_patterns_and_guards() {
@@ -37,7 +39,7 @@ function parse_user_id(text: string) {
   return Left<string, number>("invalid user id");
 }
 
-function describe_maybe(value: Maybe<number>): string {
+function describe_maybe(value: RawMaybe<number>): string {
   if (Nothing.is(value)) {
     return "missing";
   }
@@ -45,7 +47,7 @@ function describe_maybe(value: Maybe<number>): string {
   return "value " + value[1].toString();
 }
 
-function describe_either(value: Either<string, number>): string {
+function describe_either(value: RawEither<string, number>): string {
   return match(value, {
     Left: (message) => "error " + message,
     Right: (id) => "user " + id.toString(),

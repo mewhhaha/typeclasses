@@ -1,0 +1,111 @@
+{
+  "esbuild": "0.25.12",
+  "workload_sha256": "34268a4a0a8fed9d0bafb3c57e73bf07beefc23986b6110b49dfcd1704cb4c12",
+  "source_sha256": "cee207120c3d58be0373e654cbd3cc8226d3b0280591242948af942a8d885546",
+  "driver_sha256": "5d536294105a0b0d6b95a050747e3b99be9977d442a6f7be718607be2320f6df",
+  "sources": {
+    "$ROOT/src/array.ts": "83d0b3f45aaf4e952a64501af36eaa50cecdc185af57ee9471b1e02e742ffd82",
+    "$ROOT/src/array_buffer.ts": "a8801503b2606897032dd5322c2a30c2f19ba75233cbe9b0a8003cfd685bd361",
+    "$ROOT/src/async_iterable.ts": "9dd7943d07f938035b958161f4ea8b8d8d4f9030ccd0e72f5e4ddaa8ac54c534",
+    "$ROOT/src/cell.ts": "a7998a45251c95b957be7beb7f61d3787cded3c0cc83d1f6bc2fdb5469f0ff06",
+    "$ROOT/src/data_value.ts": "9e5d517291f95f67917e3b2511fa97f428c72f04cfec44f0b33554fa34bda54f",
+    "$ROOT/src/data_view.ts": "a04c25133119bde1df77657d786b6bdcf798735da99f896f79baf3f43bfbadaa",
+    "$ROOT/src/date.ts": "454db9741db43665cc67d41ffd307c37ebfff7fa82eff8063b3ac9c40343a146",
+    "$ROOT/src/effects.ts": "87ae29ed11e31c66d849a3125431843bae648fd4e380250c0e7cd82ae3778d42",
+    "$ROOT/src/either.ts": "e8fd9da2f98b93d8bba79f94cd8512cca6cd7705a91db03ed647dd715395cc07",
+    "$ROOT/src/error.ts": "3a568b34958bec0ee9be0d7f5d9c46bcd734ddeb226f4951105c2180b009e659",
+    "$ROOT/src/examples.ts": "1d423c3004d2f563a6935555593317a1456de2e3ac523a5ffaee278312e07fb3",
+    "$ROOT/src/except.ts": "a59a9fae7bf6f49eee0c96107eaf2341b6537cf6c2cb06ded6704d57fdd0bf25",
+    "$ROOT/src/fn.ts": "1acd89d4208c19db8d691b34e0cfd43da2ea33eab61d83d40a0b37ad0f8df0bf",
+    "$ROOT/src/form_data.ts": "ec4e47c7ff613d4d928b9407e0b6f8c4fe0f7098ce294f4bcee5c9823497f042",
+    "$ROOT/src/identity.ts": "163ef39266bc1aeca30944bbe57b45351ada9f0835abfffe2815154fa27eaff8",
+    "$ROOT/src/inspect.ts": "79acef69a89cdc6e420de6cfa640628c86d2cac52a74c3df171a794253bf989c",
+    "$ROOT/src/internal.ts": "36d202e4d3e3f82dd8309345559f9a338eca31279e1578baac2f2b824f9882aa",
+    "$ROOT/src/iterable.ts": "755c76b2554bd1e5495a4a01d21fba553b94f1bab00f032ad363ee2e78a0acaf",
+    "$ROOT/src/list.ts": "6172048bad8cf8f4fdbd96e3ebe775b53345673950f0d47beae09241dd8f4ba7",
+    "$ROOT/src/loop.ts": "5cc7b5fbf2f2c7259622b1ebc1916a7694c5524045275637a5ab649e1ba45ce2",
+    "$ROOT/src/map.ts": "f953c9278781d289b6ed3396d70f0c38368e5e3da60f78dca796dacdcd419dd9",
+    "$ROOT/src/maybe.ts": "1b55629e0b3f479bccca3fd41418adbd86eead3e04f771b447528691c443c354",
+    "$ROOT/src/mod.ts": "2ebdbafbc62cd8e663f8eb4ceefb3590a95cfb225ffda07e829f686b8cc1cb5a",
+    "$ROOT/src/parallel.ts": "2e7c65c199ec181d7336e1df4c5fcfd4c2ef19e1af17c64f69f96aabb5e06ae7",
+    "$ROOT/src/predicate.ts": "245f93c5dd118ab2558c6dfbb7f05657afd2e2dacc26bf841cfd99b8fc008a00",
+    "$ROOT/src/readable_stream.ts": "5260db42949cd610a85b4db30ff905d5543f7102fae5ac675e74011427c5140a",
+    "$ROOT/src/reader.ts": "c5d37074e6dff87c824cffd0d99856cdf5611c6368ed03c86bb7a518564f9953",
+    "$ROOT/src/record.ts": "1cadbdf7b139cd1f6f90c09a6ad6a10634db527a862be42f91e6757b8fb792f5",
+    "$ROOT/src/regexp.ts": "ba7e4065ee4e57cfb63ae5b11036e0a5378c707410d58133b911a6c0f2bc0dcb",
+    "$ROOT/src/set.ts": "e7c610b28e1f0c75b02a0c27a3f58b6ad8c40e37a0a4745fa41d7ffe9acbd49b",
+    "$ROOT/src/state.ts": "b8552346df9c65efc41428806e8c0056a3c6d6a8de5f160332c149f85859e033",
+    "$ROOT/src/stm.ts": "e1a683aa168c074218f227883a1a233a53b8e750389567cbbdbbc5c7e97abea9",
+    "$ROOT/src/tagged.ts": "973e8279cdbf0b8c554edbfa1f20136af71f1c411c3fb258d74912aa4d0adc08",
+    "$ROOT/src/task.ts": "7d586e3df9dabcdd0e9a57ff957a97d97ee4ef97a01ed55f2408e59fdc2aaa43",
+    "$ROOT/src/traversal.ts": "4b4381d268ce486cf462c37f4e4e08ecebca4def564641ede02115f2201d5465",
+    "$ROOT/src/tuple.ts": "25e21417899cceaffd93df5d1bd38300548458bd90cde9906d2ef9dafc15ce0c",
+    "$ROOT/src/typeclass.ts": "dc3cadc6b0458b07a142cc022de80f180acf080953a23dd691582a0f477408e6",
+    "$ROOT/src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+    "$ROOT/src/typeclasses/alternative.ts": "2f391adf7de7e80110b591922f85c81d75e005d0e514c774c2d95a54bfb65ab3",
+    "$ROOT/src/typeclasses/applicative.ts": "c83e159b649d0ff565d2bb9be922cc4a54658c099cd38b8422b5f602375f9d1f",
+    "$ROOT/src/typeclasses/arrow.ts": "e1acc934b2f5ca121d7ce353acef09adeb569d0d8378aaf69c183e171a8f49f2",
+    "$ROOT/src/typeclasses/bifunctor.ts": "c0b894a1eb1bc75e3115c4c1ea07123d0131f707787841ce3f36e02e154dd2b4",
+    "$ROOT/src/typeclasses/category.ts": "741924070c55c3098a303637566b29ea54fc03c543412c1713d51eec15741c35",
+    "$ROOT/src/typeclasses/comonad.ts": "6d8ada90b31827ea3714535a949964f92f04adba2a665682dd95f964326c9b9a",
+    "$ROOT/src/typeclasses/contravariant.ts": "815ec2ca91e59b877f48b6774078cc157b75ade8597f6e8a97dd176f0fdd5ae5",
+    "$ROOT/src/typeclasses/eq.ts": "3db3a5baf796bf52817b01fe06eb76641c78af941c03f418e5413812bc1db379",
+    "$ROOT/src/typeclasses/foldable.ts": "2eaedc9f17754f99c712d75aba9fdaa552b3ab1465eed1f4f7fcada50638f18f",
+    "$ROOT/src/typeclasses/functor.ts": "34d43e0b07b42b31feeff17cd2faacef1756f4f2f00b23799966a72df98c2b1d",
+    "$ROOT/src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+    "$ROOT/src/typeclasses/monad.ts": "e8713508200d7eb1ac0ecb1faac6ea4756eb641a6b7de60898ada817bfc1d378",
+    "$ROOT/src/typeclasses/monad_error.ts": "82d0a3bda1ecd58393348bee9ff43aeb59003af6521cafdb06e609983f9527a1",
+    "$ROOT/src/typeclasses/monad_rec.ts": "20c921cc60268012e6334f8fd446e23b538ac869f31271e428e48ae19de9cfae",
+    "$ROOT/src/typeclasses/monoid.ts": "c31e064633630d6ad88cda35339350f808374b29774f77873d5719b8f4f0e961",
+    "$ROOT/src/typeclasses/ord.ts": "9f5231489bde35c9e7a03bdabccc4944c2b2de390de0796930f5915f2a7576a9",
+    "$ROOT/src/typeclasses/parse.ts": "e909da107fba471bb0acab7b0ef80c36c158cb106179946eedf49d93e0d66353",
+    "$ROOT/src/typeclasses/profunctor.ts": "35733cf3cb92f2418920b6c9de1f13960477a3280c80bf9bcc43836469c4cfa7",
+    "$ROOT/src/typeclasses/semigroup.ts": "d48acb9a139c55375ffa1ed8b23125b2bd3d10db5b1e24d1c46bebe3d82c97b1",
+    "$ROOT/src/typeclasses/show.ts": "59aeba266e97bdc38e61c19196169e1e533b19973928777a62a9592594cee89e",
+    "$ROOT/src/typeclasses/traversable.ts": "8f1e5d42fe92ca3a1f370b61a7463e96f1ecc2a6743907bfdba36b120cf81edb",
+    "$ROOT/src/typed_array.ts": "7ee6f20a8ed1f7722e4b863d101cc3d80f567b85d2e4c8abfebc6ecae3516e35",
+    "$ROOT/src/url_search_params.ts": "f2df36806af29b481ae4845ddffbc2a1559246e32083dbc27e65b42ed7cd579f",
+    "$ROOT/src/validation.ts": "ffff231d000f4e00ab2991bcbdeac218c5a015aecdf012badc54c6c1769eba48",
+    "$ROOT/src/weak_map.ts": "40a67a6d0b1c33d4c7d9d3a888ee2fb54a1c9ae6fc08b1d511be942d3d923d88",
+    "$ROOT/src/weak_set.ts": "716ddadd0e7272e230b0094ecc5bbdfcd47ac993c4b19949717329724e141f95",
+    "$ROOT/src/writer.ts": "1cf2e38f4e30a98877603f1f3c78a8ca1bfe55a6aba1dcdb274f72f23e637d15"
+  },
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "bundles": {
+    "root_namespace": {
+      "bytes": 77870,
+      "gzip_bytes": 21656,
+      "input_modules": 66
+    },
+    "root_just": {
+      "bytes": 49392,
+      "gzip_bytes": 13040,
+      "input_modules": 66
+    },
+    "maybe_just": {
+      "bytes": 18804,
+      "gzip_bytes": 5596,
+      "input_modules": 30
+    }
+  },
+  "fresh_process_import_ms": {
+    "mod": [
+      13.793793999999998,
+      13.574688,
+      15.565120999999998,
+      14.359078,
+      13.281020000000002
+    ],
+    "maybe": [
+      5.419689999999999,
+      4.953885,
+      5.095173000000001,
+      5.671979,
+      4.84645
+    ]
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "no target",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 36,
+            "min": 1622.892,
+            "max": 2750.8535,
+            "avg": 1939.3301277777775,
+            "p75": 2040.3332,
+            "p99": 2750.8535,
+            "p995": 2750.8535,
+            "p999": 2750.8535,
+            "highPrecision": false,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "100 yields",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 55,
+            "min": 7653795.0,
+            "max": 21160862.0,
+            "avg": 11221868.0,
+            "p75": 13002519.0,
+            "p99": 21160862.0,
+            "p995": 21160862.0,
+            "p999": 21160862.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "named terminal",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1390,
+            "min": 225939.0,
+            "max": 5100292.0,
+            "avg": 361852.0,
+            "p75": 406473.0,
+            "p99": 767619.0,
+            "p995": 2713096.0,
+            "p999": 4639085.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "named iterable",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1478,
+            "min": 237661.0,
+            "max": 6680485.0,
+            "avg": 340466.0,
+            "p75": 367899.0,
+            "p99": 622663.0,
+            "p995": 2946660.0,
+            "p999": 4843003.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "counted loop",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1566,
+            "min": 233924.0,
+            "max": 3582708.0,
+            "avg": 321796.0,
+            "p75": 344184.0,
+            "p99": 689310.0,
+            "p995": 1602635.0,
+            "p999": 3203167.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/source_transform_comparison.bench.ts",
+      "group": null,
+      "name": "100 yields cached",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 26370,
+            "min": 12484.0,
+            "max": 2202235.0,
+            "avg": 18967.0,
+            "p75": 19978.0,
+            "p99": 36810.0,
+            "p995": 61968.0,
+            "p999": 265314.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

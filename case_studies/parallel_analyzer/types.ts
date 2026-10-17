@@ -1,4 +1,4 @@
-import type { Either } from "../../src/either.ts";
+import type { RawEither } from "../../src/either.ts";
 
 export type SourceFile = {
   readonly path: string;
@@ -22,7 +22,7 @@ export type FileDiagnostic = {
   readonly message: string;
 };
 
-export type AnalyzeResult = Either<FileDiagnostic, FileSummary>;
+export type AnalyzeResult = RawEither<FileDiagnostic, FileSummary>;
 
 export type AnalyzerReport = {
   readonly files: number;

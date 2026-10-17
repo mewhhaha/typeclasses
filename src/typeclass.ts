@@ -10,8 +10,8 @@ import {
   data_dictionary as raw_data_dictionary,
   define_data_interop as raw_define_data_interop,
   detach_function_prototype as raw_detach_function_prototype,
+  is_data as raw_is_data,
   mark_data_prototype as raw_mark_data_prototype,
-  match_tagged,
   wrap_data as raw_as_data,
 } from "./data_value.ts";
 import type { TaggedMatchCases, WrappedData } from "./data_value.ts";
@@ -93,7 +93,7 @@ export type Dictionary<
 
 /** A callable dictionary that wraps raw values of a data description. */
 export interface As<type extends DataType, identity>
-  extends Dictionary<type, identity> {
+  extends Dictionary<type, identity>, DataType {
   /** Wrap a raw value and attach this dictionary's operations. */
   <item extends DataItem<this, unknown> = DataItem<this, unknown>>(
     value: AppliedData<type, item>,
@@ -172,6 +172,72 @@ const union_definition = Symbol("Data.union");
 
 /** The type of the union payload placeholder. */
 export type Slot = typeof $slot;
+
+/** @ignore */
+export declare const field_type: unique symbol;
+
+/** A fixed payload type in a declarative union. Use $slot for its generic item. */
+export type Field<value> = { readonly [field_type]: value };
+
+/** Describe a fixed payload without allocating a value of that type. */
+export function field<value>(): Field<value> {
+  return $slot as unknown as Field<value>;
+}
+
+/** A declaration describing the tag and payload positions of a union. */
+export type UnionSchema =
+  readonly (readonly [PropertyKey, ...(Slot | Field<unknown>)[]])[];
+
+/** @ignore */
+export type SchemaPayload<payload extends readonly unknown[], item> = {
+  readonly [index in keyof payload]: payload[index] extends Slot ? item
+    : payload[index] extends Field<infer value> ? value
+    : never;
+};
+
+/** Resolve a declarative union at its generic item type. */
+export type UnionValue<schema extends UnionSchema, item> =
+  schema[number] extends infer variant
+    ? variant extends readonly [infer tag extends PropertyKey, ...infer payload]
+      ? readonly [tag, ...SchemaPayload<payload, item>]
+    : never
+    : never;
+
+/** Dictionary inferred from a union declaration. */
+export interface AsUnion<schema extends UnionSchema, identity>
+  extends As<AsUnion<schema, identity>, identity> {
+  /** The schema resolved at the selected generic item. */
+  readonly [type_data]: UnionValue<schema, this[typeof type_item]>;
+}
+
+/** @ignore */
+export type IsUnion<value, whole = value> = value extends unknown
+  ? [whole] extends [value] ? false : true
+  : never;
+/** @ignore */
+export type UniqueSymbol<identity extends symbol> = symbol extends identity
+  ? never
+  : true extends IsUnion<identity> ? never
+  : identity;
+
+/** Define typed constructors from one schema and an explicit identity token. */
+export function define_union<
+  const identity extends symbol,
+  const schema extends UnionSchema,
+>(
+  identity: identity & UniqueSymbol<identity>,
+  ...variants: schema
+): UnionDictionary<AsUnion<schema, identity>> {
+  const dictionary = tagged_data_from_union<AsUnion<schema, identity>>(
+    union(
+      ...variants as unknown as UnionVariantsShape,
+    ) as unknown as UnionDefinition<
+      TaggedUnionShape<AsUnion<schema, identity>>
+    >,
+  );
+  dictionary[kind] = identity;
+  return dictionary;
+}
 
 /** @ignore */
 export type UnionVariantShape = readonly [PropertyKey, ...readonly Slot[]];
@@ -393,10 +459,20 @@ export type TaggedGuard<
   dictionary extends Dictionary,
   tag extends PropertyKey,
 > = {
+  <item>(value: Data<dictionary, item>): value is {
+    value(): TaggedMember<dictionary, tag, item>;
+  } & Data<dictionary, item>;
   <item>(
     value: ContextData<dictionary, item>,
   ): value is TaggedMember<dictionary, tag, item>;
-  (value: unknown): value is TaggedMember<dictionary, tag, unknown>;
+  (
+    value: unknown,
+  ): value is
+    | TaggedMember<dictionary, tag, unknown>
+    | (
+      & { value(): TaggedMember<dictionary, tag, unknown> }
+      & Data<dictionary, unknown>
+    );
 };
 
 /** @ignore */
@@ -569,6 +645,9 @@ function tagged_variants_from_union(
 
   for (const variant of shape) {
     const tag = variant[0];
+    if (variants.has(tag)) {
+      throw new TypeError("Duplicate union tag " + String(tag));
+    }
     variants.set(tag, variant.length);
   }
 
@@ -626,7 +705,7 @@ function tagged_variant<
   } as TaggedVariant<dictionary, tag>;
 
   Object.defineProperty(construct, "is", {
-    value: tagged_guard(tag, expected_length),
+    value: tagged_guard(dictionary, tag, expected_length),
   });
 
   return construct;
@@ -659,7 +738,13 @@ function install_tagged_variants<dictionary extends Dictionary>(
   }
 
   for (const [tag, length] of variants) {
-    Object.defineProperty(dictionary, tagged_constructor_name(tag), {
+    const name = tagged_constructor_name(tag);
+    if (name in dictionary || name === "__proto__") {
+      throw new TypeError(
+        "Union constructor conflicts with property " + String(name),
+      );
+    }
+    Object.defineProperty(dictionary, name, {
       configurable: true,
       value: tagged_variant(dictionary, tag, length),
     });
@@ -677,14 +762,19 @@ function tagged_constructor_name(tag: PropertyKey): PropertyKey {
 }
 
 function tagged_guard(
+  dictionary: Dictionary,
   tag: PropertyKey,
   expected_length: number,
 ): (value: unknown) => boolean {
   return function is_tagged(value: unknown): boolean {
     if (!Array.isArray(value)) {
-      return false;
+      if (!raw_is_data(value)) return false;
+      if ((value as unknown as Dictionary)[kind] !== dictionary[kind]) {
+        return false;
+      }
+      value = value.value();
+      if (!Array.isArray(value)) return false;
     }
-
     return value.length === expected_length && value[0] === tag;
   };
 }
@@ -730,11 +820,17 @@ function create_tagged_variant_factory<dictionary extends object>(
     function value(): TaggedData {
       return empty_value;
     },
+    function match(cases) {
+      return tagged_handler(cases, tag)();
+    },
   );
   const one_prototype = tagged_data_prototype(
     dictionary,
     function value(this: TaggedOnePayload): TaggedData {
       return [tag, this[tagged_payload]];
+    },
+    function match(this: TaggedOnePayload, cases) {
+      return tagged_handler(cases, tag)(this[tagged_payload]);
     },
   );
   const many_prototype = tagged_data_prototype(
@@ -742,11 +838,20 @@ function create_tagged_variant_factory<dictionary extends object>(
     function value(this: TaggedManyPayload): TaggedData {
       return [tag, ...this[tagged_payload]];
     },
+    function match(this: TaggedManyPayload, cases) {
+      return tagged_handler(cases, tag)(...this[tagged_payload]);
+    },
   );
   const two_prototype = tagged_data_prototype(
     dictionary,
     function value(this: TaggedTwoPayload): TaggedData {
       return [tag, this[tagged_first_payload], this[tagged_second_payload]];
+    },
+    function match(this: TaggedTwoPayload, cases) {
+      return tagged_handler(cases, tag)(
+        this[tagged_first_payload],
+        this[tagged_second_payload],
+      );
     },
   );
 
@@ -860,6 +965,10 @@ function tagged_data_prototype<
 >(
   dictionary: dictionary,
   value: (this: receiver) => TaggedData,
+  match: (
+    this: receiver,
+    cases: TaggedMatchCases<TaggedData, unknown>,
+  ) => unknown,
 ): object {
   const prototype = Object.create(dictionary);
 
@@ -871,7 +980,7 @@ function tagged_data_prototype<
       value: tagged_data_run,
     },
     match: {
-      value: tagged_data_match,
+      value: match,
     },
     [Symbol.iterator]: {
       value: tagged_data_iterator,
@@ -883,11 +992,15 @@ function tagged_data_prototype<
   return prototype;
 }
 
-function tagged_data_match(
-  this: { value(): TaggedData },
+function tagged_handler(
   cases: TaggedMatchCases<TaggedData, unknown>,
-): unknown {
-  return match_tagged(this.value(), cases);
+  tag: PropertyKey,
+): (...payload: unknown[]) => unknown {
+  const handler = cases[tag];
+  if (handler === undefined) {
+    throw new TypeError("No match handler for tag " + String(tag));
+  }
+  return handler as (...payload: unknown[]) => unknown;
 }
 
 function tagged_data_run(this: { value(): unknown }, ...args: unknown[]) {

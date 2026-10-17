@@ -1,0 +1,120 @@
+{
+  "captured_at": "2026-10-17T21:34:54.604873+00:00",
+  "command": [
+    "deno",
+    "bench",
+    "--json",
+    "--filter=/breakdown (raw tuple just construction|typeclasses (just construction|direct Maybe construction))/",
+    "bench/performance_breakdown.bench.ts"
+  ],
+  "runtime": "deno 2.9.7 (stable, release, x86_64-unknown-linux-gnu)\nv8 15.0.245.2-rusty\ntypescript 6.0.3\n",
+  "source_sha256": "5e6bd1752792a10707e35201dd60f77f4e86a6747df5cd5ff89f32ef41490dc6",
+  "sources": {
+    "bench/performance_breakdown.bench.ts": "de0e494a8025b18920a2e6fbbf085669202da246670692bb6403bc4952763dd6",
+    "src/data_value.ts": "ef5256b981bfe0c6136d94b6eeb1cdc1f25358604a11ce50cec5fff65caa7a63",
+    "src/either.ts": "6c1b164829444621352bb265214c353ac43b54170c6eb85911f64f3263f256a6",
+    "src/internal.ts": "36d202e4d3e3f82dd8309345559f9a338eca31279e1578baac2f2b824f9882aa",
+    "src/maybe.ts": "ad7145c816ad1bbb0757c19b0520486452c2d5609b717df64caa342c5cac782f",
+    "src/typeclass.ts": "7d42ed3d38129528b3a5a37fd740927137bcef16bb5556c9fb34ac73e367752b",
+    "src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+    "src/typeclasses/alternative.ts": "2f391adf7de7e80110b591922f85c81d75e005d0e514c774c2d95a54bfb65ab3",
+    "src/typeclasses/applicative.ts": "ba3e14309c23f262a2bf1f4f54d29f3e24e9c417c3b74eff63f2b7d2dab032be",
+    "src/typeclasses/arrow.ts": "e1acc934b2f5ca121d7ce353acef09adeb569d0d8378aaf69c183e171a8f49f2",
+    "src/typeclasses/bifunctor.ts": "c0b894a1eb1bc75e3115c4c1ea07123d0131f707787841ce3f36e02e154dd2b4",
+    "src/typeclasses/category.ts": "741924070c55c3098a303637566b29ea54fc03c543412c1713d51eec15741c35",
+    "src/typeclasses/comonad.ts": "6d8ada90b31827ea3714535a949964f92f04adba2a665682dd95f964326c9b9a",
+    "src/typeclasses/contravariant.ts": "815ec2ca91e59b877f48b6774078cc157b75ade8597f6e8a97dd176f0fdd5ae5",
+    "src/typeclasses/eq.ts": "3db3a5baf796bf52817b01fe06eb76641c78af941c03f418e5413812bc1db379",
+    "src/typeclasses/foldable.ts": "b7079dd3c74bbacfd71fe4e593ff2277d72c80c89decb9ef1c8eda8d3e3637ff",
+    "src/typeclasses/functor.ts": "6c3198e5a9f8b404f1c1432c985cbbc3d2a9195428fe8cbd493034f5cfa61b3d",
+    "src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+    "src/typeclasses/monad.ts": "e8713508200d7eb1ac0ecb1faac6ea4756eb641a6b7de60898ada817bfc1d378",
+    "src/typeclasses/monad_error.ts": "82d0a3bda1ecd58393348bee9ff43aeb59003af6521cafdb06e609983f9527a1",
+    "src/typeclasses/monad_rec.ts": "20c921cc60268012e6334f8fd446e23b538ac869f31271e428e48ae19de9cfae",
+    "src/typeclasses/monoid.ts": "c31e064633630d6ad88cda35339350f808374b29774f77873d5719b8f4f0e961",
+    "src/typeclasses/ord.ts": "9f5231489bde35c9e7a03bdabccc4944c2b2de390de0796930f5915f2a7576a9",
+    "src/typeclasses/parse.ts": "e909da107fba471bb0acab7b0ef80c36c158cb106179946eedf49d93e0d66353",
+    "src/typeclasses/profunctor.ts": "35733cf3cb92f2418920b6c9de1f13960477a3280c80bf9bcc43836469c4cfa7",
+    "src/typeclasses/semigroup.ts": "d48acb9a139c55375ffa1ed8b23125b2bd3d10db5b1e24d1c46bebe3d82c97b1",
+    "src/typeclasses/show.ts": "59aeba266e97bdc38e61c19196169e1e533b19973928777a62a9592594cee89e",
+    "src/typeclasses/traversable.ts": "8f1e5d42fe92ca3a1f370b61a7463e96f1ecc2a6743907bfdba36b120cf81edb",
+    "src/validation.ts": "0f8cc78ad78fc67f428f02f32d874302970a2eca184284965e1cda098e09c763"
+  },
+  "changed_files": [],
+  "elapsed_ms": 2931.165879999753,
+  "exit_code": 0,
+  "output": {
+    "version": 1,
+    "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+    "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+    "benches": [
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+        "group": null,
+        "name": "breakdown raw tuple just construction",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 43808,
+              "min": 10880.0,
+              "max": 47510.0,
+              "avg": 11417.0,
+              "p75": 11192.0,
+              "p99": 19838.0,
+              "p995": 21030.0,
+              "p999": 23314.0,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+        "group": null,
+        "name": "breakdown typeclasses just construction",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 4149,
+              "min": 107384.0,
+              "max": 287346.0,
+              "avg": 120816.0,
+              "p75": 118856.0,
+              "p99": 202605.0,
+              "p995": 213496.0,
+              "p999": 271296.0,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      },
+      {
+        "origin": "file:///home/jacobt/src/typeclasses/bench/performance_breakdown.bench.ts",
+        "group": null,
+        "name": "breakdown typeclasses direct Maybe construction",
+        "baseline": false,
+        "results": [
+          {
+            "ok": {
+              "n": 2161,
+              "min": 205310.0,
+              "max": 498668.0,
+              "avg": 232471.0,
+              "p75": 233514.0,
+              "p99": 402816.0,
+              "p995": 448192.0,
+              "p999": 480223.0,
+              "highPrecision": true,
+              "usedExplicitTimers": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "stderr": "Check bench/performance_breakdown.bench.ts\n"
+}

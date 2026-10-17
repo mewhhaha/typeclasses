@@ -246,11 +246,12 @@ Continue with one of these paths:
 
 ### Package Entry Points
 
-The root entrypoint remains the convenient full library. Stable granular
-entrypoints let applications and build tools import only the domain they need:
+The root entrypoint contains core data types, typeclasses, `Effect`/`Program`,
+and the `array`, `iterable`, `map`, and `set` namespaces. Import optional
+runtimes and other wrappers from their focused entrypoints:
 
-- `@mewhhaha/typeclasses` and `/prelude` for the full fluent and function-first
-  APIs.
+- `@mewhhaha/typeclasses` for the common fluent core; `/prelude` for
+  function-first helpers.
 - `/typeclass` and `/typeclasses` for dictionary machinery and definitions.
 - `/maybe`, `/either`, `/validation`, `/identity`, `/fn`, `/tuple`, `/array`,
   `/predicate`, `/list`, and `/tagged` for data values.
@@ -269,9 +270,8 @@ entrypoints let applications and build tools import only the domain they need:
 Deno can also use explicit `jsr:` specifiers, for example
 `jsr:@mewhhaha/typeclasses/validation`.
 
-JavaScript shape wrappers have both granular entrypoints and root namespaces.
-The namespaces keep conversion helpers such as `from_entries` and `to_array`
-unambiguous. Both of these work:
+The four common collection namespaces keep conversion helpers such as
+`from_entries` and `to_array` unambiguous. Both of these work:
 
 ```ts
 import { array } from "@mewhhaha/typeclasses";
@@ -310,6 +310,32 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+- In `0.14.0`, the API uses `Maybe<T>`, `Either<E, T>`, and `Validation<E, T>`
+  for wrapped values. Use `RawMaybe`, `RawEither`, and `RawValidation` for
+  tuples crossing a `.value()` boundary.
+- Cells now require their key at runtime: `state<"count", number>("count")`.
+  Reusing a key within a family addresses the same cell; a unique const symbol
+  creates a private address.
+- Use `lift` for every arity and `concat` for semigroup combination. The
+  `lift_A` aliases and `append` were removed. Examples are no longer exported
+  from the root library entry point.
+- Both prelude traversal helpers use `(fn, dictionary, value)`; `traverse_` now
+  matches `traverse`.
+- `collect(Maybe, { id: Just(1), name: Just("Ada") })` preserves record and
+  tuple inference. `get_or_else` and `recover_or_else` evaluate their fallback
+  lazily. `bind_widen` explicitly combines Either error types.
+- Keep `Do` for generator notation and branching. A measured `Do_once` prototype
+  stayed under `bench/experiments`: eight-yield Maybe improved 10.7%, while
+  Either slowed 12.3%, missing the half-runtime target. Use
+  `traverse_sequential` when later callbacks must not run after failure.
+- `run_task` executes already-completed pure steps in the same turn. Use an
+  asynchronous Task when a scheduling boundary is required.
+- Lazy iterables provide bounded `preview`, async `filter` and `take`, and
+  ordered `map_concurrent`. `traverse_task` bounds Task admission. Stream
+  iteration cancels on early exit unless `preventCancel` is set.
+- [The 60-hill ledger](./docs/hills.md) records measurements, API changes,
+  rejected experiments, and qualification limits.
+
 - In `0.13.0`, `iterable.from_array` supplies a live array view, with lazy
   `filter` and `take` helpers. `array.map_in_place` and `array.map_into` make
   buffer updates explicit. The source plugin fuses supported direct lazy map
@@ -325,7 +351,7 @@ own adapter or use `Task` for asynchronous work on the main isolate.
   the applicative-only `ParallelTask` dictionary. Use `sequential(result)` when
   the combined task needs to enter a `Do` block or use `MonadError` recovery.
 - Writer cells now require an empty-log witness:
-  `writer_cell<"audit", AsArray, string>(ArrayT<string>([]))`. Their
+  `writer_cell<"audit", AsArray, string>("audit", ArrayT<string>([]))`. Their
   dictionaries support `pure` and yield-free `Do` blocks without a dummy Writer
   value.
 - `await async_iterable.from_async_iterable(source)` snapshots a finite async
@@ -348,11 +374,12 @@ own adapter or use `Task` for asynchronous work on the main isolate.
   removed. Transformer plugins now fail unsupported recognized syntax by
   default; use `on_unsupported: "warn"` or `"preserve"` for an explicit fallback
   policy.
-- Existing root and `/prelude` imports continue to work except for the prelude's
-  `then`, which is now `sequence_right`. Exporting `then` makes the JavaScript
+- Root imports for Task, STM, worker pools, Except, Reader, State, and Writer
+  move to their focused subpaths. Shape namespaces other than `array`,
+  `iterable`, `map`, and `set` also use focused subpaths.
+- The prelude's `then` is now `sequence_right`. Exporting `then` makes the
   module namespace thenable, so dynamic imports try to call it instead of
-  resolving to the module. The granular domain entrypoints are additive and are
-  preferred when an application needs only one part of the library.
+  resolving to the module.
 - Generic type parameters formerly named `out` are now named `output` so Bun and
   esbuild can parse the published TypeScript. Type parameter names are not part
   of call-site syntax, so this requires no application change.
@@ -795,12 +822,12 @@ mempty(ArrayT); // []
 
 The prelude keeps familiar Haskell vocabulary where JavaScript syntax allows it:
 
-| Area                          | Functions                                                                                                                                        |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift`, `lift_A`–`lift_A5`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `sequence_right`, `bind` |
-| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`                              |
-| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                                           |
-| Utility typeclasses           | `show`, `eq`, ordering helpers, `append`, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                                      |
+| Area                          | Functions                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Functor / applicative / monad | `fmap`, `pure`, `ap`, `lift`, `join`, `voided`, `when`, `unless`, `guard`, `ap_first`, `ap_second`, `sequence_right`, `bind` |
+| Folding / traversal           | `foldl`, `fold_map`, `mconcat`, `to_array`, `length`, `sum`, `product`, `elem`, `traverse`, `traverse_`, `sequence`          |
+| Maybe / Either elimination    | `from_maybe`, `maybe`, `to_nullable`, `to_either`, `either`, `from_left`, `from_right`, `hush`, `note`                       |
+| Utility typeclasses           | `show`, `eq`, ordering helpers, `concat`, `mempty`, `alt`, `empty`, `throw_error`                                            |
 
 `voided` is the spelling of Haskell's `void` because `void` is a JavaScript
 operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
@@ -808,8 +835,7 @@ operator. `ap_first` and `ap_second` correspond to `<*` and `*>`.
 exported from JavaScript.
 
 `lift(fn, first, ...rest)` accepts any nonempty number of contextual inputs,
-with each callback parameter inferred from its corresponding input. The
-`lift_A`–`lift_A5` arity-specific spellings remain available. `when` and
+with each callback parameter inferred from its corresponding input. `when` and
 `unless` accept ordinary effects returning `void`, skip inactive actions, and
 return an `undefined` item in either branch.
 
@@ -821,6 +847,28 @@ Configured dictionary factories follow the same convention, including
 `Either.with_left` and `Tuple.with_monoid`.
 
 ## Tagged Values
+
+For a new union, one schema can define both the tuple shape and constructors:
+
+```ts
+import { $slot, define_union, field } from "@mewhhaha/typeclasses/typeclass";
+
+const outcome_id = Symbol("Outcome");
+const Outcome = define_union(outcome_id, ["Ok", $slot], [
+  "Failed",
+  field<string>(),
+]);
+type Outcome<T> = ReturnType<typeof Outcome.Ok<T>>;
+
+const result: Outcome<number> = Outcome.Ok(42);
+result.match({ Ok: (value) => String(value), Failed: (error) => error });
+```
+
+`$slot` is the generic item; `field<T>()` is a fixed payload. The identity must
+be one unique const symbol. Duplicate, colliding, and reserved constructor names
+fail immediately. This helper builds constructors and guards; attach typeclass
+instances explicitly when the data type needs them. See the three
+[schema examples](./examples/schema_unions.ts).
 
 Data constructors use tuple tags. Deconstruct the raw value and switch on the
 tag when you want direct branching:
@@ -1622,8 +1670,8 @@ and a `Database` needs one value satisfying both. When the two are genuinely
 separate, declare a cell for each and answer them independently:
 
 ```ts
-const config = reader<"config", Config>();
-const database = reader<"database", Database>();
+const config = reader<"config", Config>("config");
+const database = reader<"database", Database>("database");
 
 const program = Program.scope<Uses<typeof config> | Uses<typeof database>>()(
   function* () {
@@ -1645,8 +1693,8 @@ run(
 ```
 
 Cells follow the same rules as [State cells](#state-cells): the key names the
-cell, a key that is not a literal is rejected, and each key must be declared
-exactly once.
+cell, widened or union keys are rejected, and repeated keys within one family
+address the same cell. A unique const symbol gives a private cell.
 
 ### State
 
@@ -1691,8 +1739,8 @@ one value cannot be both. When a program needs several independent slots,
 declare a cell for each. A cell has its own handler and its own initial value:
 
 ```ts
-const total = state<"total", number>();
-const label = state<"label", string>();
+const total = state<"total", number>("total");
+const label = state<"label", string>("label");
 
 const program = Program.scope<Uses<typeof total> | Uses<typeof label>>()(
   function* () {
@@ -1714,20 +1762,17 @@ the two compose in either order. The results nest, one pair per handler.
 
 The key names the cell so that two cells holding the same state type stay
 distinct — without it, every `number` cell would be one type. A key that is not
-a literal carries no identity, so `state<string, number>()` is rejected at the
-declaration.
+a literal carries no identity, so widened string, number, and symbol keys are
+rejected at the declaration.
 
-**Declare each key exactly once.** The key exists only in the type, so there is
-nothing to derive a runtime identity from and every `state` call mints a fresh
-one. Two declarations sharing a key are therefore one cell to the compiler and
-two at runtime: a handler the types say discharges both leaves the second one's
-lifts pending, and the terminal `run` throws. This is the one rule the compiler
-cannot check for you.
+The key is also a runtime argument. Reusing a key within the same family
+addresses the same cell. Declare a `const key = Symbol("counter")` and pass it
+with `state<typeof key, number>(key)` when a module needs a private cell. Use
+one value type consistently for each shared key.
 
 Cells are invisible to `get`/`put` and vice versa, so both styles can coexist in
-one program. Note that `run_state(cell, …)` is not rewritten by the source
-transformer, so cell programs use the general `Effect` path rather than a fused
-terminal runner.
+one program. Terminal keyed Reader, State, and Writer handlers can be lowered to
+their terminal runners by the source transformer.
 
 ### Writer
 
@@ -1804,11 +1849,11 @@ const [[value, audit_log], metric_log] = run(
 
 Both `Writer.with` and Writer cells capture an empty output value, so their
 dictionary `pure` works without a wrapped receiver. `Writer.with` shares the
-base dictionary's runtime kind. Each cell mints its own kind for a separate
-handler. Cells follow the same key rules as [State cells](#state-cells).
-`writer_cell(key, emptyOutput)` infers the key, monoid, and log item from its
-arguments. The explicit `writer_cell<key, output, log>(emptyOutput)` spelling
-remains available.
+base dictionary's runtime kind. Each distinct cell key has its own kind for a
+separate handler. Cells follow the same key rules as
+[State cells](#state-cells). `writer_cell(key, emptyOutput)` infers the key,
+monoid, and log item from its arguments. The explicit
+`writer_cell<key, output, log>(key, emptyOutput)` spelling remains available.
 
 ### Effects Instead of Transformers
 
@@ -2405,19 +2450,15 @@ replace matching keys from the left side. They intentionally do not implement
 `Applicative` or `Monad`, because there is no obvious lawful `pure` for an
 arbitrary key space.
 
-The root module exports these built-in-shaped modules under namespaces to avoid
-helper-name collisions:
+The root module exposes four collection namespaces. Other shapes use their
+focused entrypoints:
 
 ```ts
-import {
-  array,
-  async_iterable,
-  map,
-  record,
-  set,
-  typed_array,
-  url_search_params,
-} from "@mewhhaha/typeclasses";
+import { array, iterable, map, set } from "@mewhhaha/typeclasses";
+import * as async_iterable from "@mewhhaha/typeclasses/async_iterable";
+import * as record from "@mewhhaha/typeclasses/record";
+import * as typed_array from "@mewhhaha/typeclasses/typed_array";
+import * as url_search_params from "@mewhhaha/typeclasses/url_search_params";
 ```
 
 Each data type has an open dictionary interface such as `AsMaybe` or `AsList`.

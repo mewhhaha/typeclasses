@@ -1,0 +1,44 @@
+--- /tmp/typeclasses-data-value-before-members.ts	2026-10-17 23:21:51.136471701 +0200
++++ src/data_value.ts	2026-10-17 23:21:51.161275984 +0200
+@@ -40,20 +40,23 @@
+     item,
+     unknown
+   >;
+-  run: DataRunner<value>;
+   value: () => value;
+   /** Render the value through its `Show` instance, or structurally. */
+   toString: () => string;
+   /** Serialize to the raw value, so `JSON.stringify` keeps the tag. */
+   toJSON: () => value;
+-  /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
+-  match<result>(
+-    cases: [value] extends [TaggedValue]
+-      ? TaggedMatchCases<Extract<value, TaggedValue>, result>
+-      : never,
+-  ): result;
+ };
+ 
++type DataMatch<value> = [value] extends [TaggedValue] ? {
++  /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
++  match<result>(cases: TaggedMatchCases<Extract<value, TaggedValue>, result>): result;
++} : {};
++
++type DataRun<value> = [value] extends [(...args: never[]) => unknown] ? {
++  /** Execute the wrapped function. */
++  run: DataRunner<value>;
++} : {};
++
+ type DataRunner<value> = value extends (...args: infer args) => infer result
+   ? (...args: args) => result
+   : never;
+@@ -66,7 +69,9 @@
+ /** A raw value wrapped with its dictionary's methods and eliminators. */
+ export type WrappedData<dictionary, value, item = unknown> =
+   & WrappedDataBase<dictionary, value, item>
+-  & DictionaryMembers<dictionary>;
++  & DictionaryMembers<dictionary>
++  & DataMatch<value>
++  & DataRun<value>;
+ 
+ type WrappedDataTarget<value> = {
+   [data_value]: value;

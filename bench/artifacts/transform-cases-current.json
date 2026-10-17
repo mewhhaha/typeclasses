@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "runtime": "Deno/2.9.7 x86_64-unknown-linux-gnu",
+  "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+  "benches": [
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/http_router dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1286,
+            "min": 260455.0,
+            "max": 9742442.0,
+            "avg": 391104.0,
+            "p75": 375985.0,
+            "p99": 897746.0,
+            "p995": 4152350.0,
+            "p999": 6590673.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/io_application dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 13163,
+            "min": 22433.0,
+            "max": 6538003.0,
+            "avg": 38007.0,
+            "p75": 29005.0,
+            "p99": 64863.0,
+            "p995": 76155.0,
+            "p999": 4820349.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/agent_harness dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 10593,
+            "min": 27211.0,
+            "max": 6925490.0,
+            "avg": 47247.0,
+            "p75": 38684.0,
+            "p99": 61737.0,
+            "p995": 80312.0,
+            "p999": 5908958.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/parallel_analyzer dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 19,
+            "min": 51193005.0,
+            "max": 65755296.0,
+            "avg": 57132650.0,
+            "p75": 61445648.0,
+            "p99": 65755296.0,
+            "p995": 65755296.0,
+            "p999": 65755296.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/programming_language_parser dry run (without transformer)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 278,
+            "min": 1594309.0,
+            "max": 5738204.0,
+            "avg": 1865881.0,
+            "p75": 2033524.0,
+            "p99": 3051779.0,
+            "p995": 3157540.0,
+            "p999": 5738204.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/http_router dry run (with transformer, rewrites=10, preserved files=0)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 1507,
+            "min": 221501.0,
+            "max": 6228576.0,
+            "avg": 335501.0,
+            "p75": 336029.0,
+            "p99": 625719.0,
+            "p995": 4034496.0,
+            "p999": 5139466.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/io_application dry run (with transformer, rewrites=1, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 16497,
+            "min": 19817.0,
+            "max": 2225028.0,
+            "avg": 30331.0,
+            "p75": 33534.0,
+            "p99": 53191.0,
+            "p995": 72548.0,
+            "p999": 850246.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/agent_harness dry run (with transformer, rewrites=1, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 13524,
+            "min": 25078.0,
+            "max": 6425249.0,
+            "avg": 37001.0,
+            "p75": 42741.0,
+            "p99": 71877.0,
+            "p995": 93187.0,
+            "p999": 651899.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 18,
+            "min": 58059734.0,
+            "max": 79102358.0,
+            "avg": 65423534.0,
+            "p75": 68058003.0,
+            "p99": 79102358.0,
+            "p995": 79102358.0,
+            "p999": 79102358.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    },
+    {
+      "origin": "file:///home/jacobt/src/typeclasses/bench/case_studies_transformer.bench.ts",
+      "group": null,
+      "name": "case study/programming_language_parser dry run (with transformer, rewrites=0, preserved files=1)",
+      "baseline": false,
+      "results": [
+        {
+          "ok": {
+            "n": 234,
+            "min": 1723184.0,
+            "max": 4812535.0,
+            "avg": 2253370.0,
+            "p75": 2395191.0,
+            "p99": 4320860.0,
+            "p995": 4489320.0,
+            "p999": 4812535.0,
+            "highPrecision": true,
+            "usedExplicitTimers": false
+          }
+        }
+      ]
+    }
+  ]
+}

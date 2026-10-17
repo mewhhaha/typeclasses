@@ -1,0 +1,77 @@
+{
+  "source_sha256": "fce56b0750c94b0843d8c73964930b26237397642b6e0eb0531445b6afa5bd3c",
+  "initial_gate": "verify-current.json",
+  "initial_gate_stop": "Bun missing from PATH after successful Node check; remaining stages run separately.",
+  "remaining_stages": [
+    {
+      "name": "Bun task via temporary npm tool",
+      "command": "npm exec --yes --package=bun -- deno task test:bun",
+      "exit_code": 0,
+      "output_sha256": "e2d0d0766e062abc2b3db2dd14b375c6da886f50bb9d9bbd924cfacf30622e56",
+      "output_tail": "Task test:bun bun tools/node_portability_smoke.ts\n"
+    },
+    {
+      "name": "Browser",
+      "command": "deno task test:browser",
+      "exit_code": 0,
+      "output_sha256": "828c01feb887c1179ff07cea9fbfe5a1a0aeda21e875038ccf56ef8caa9da2e9",
+      "output_tail": "Task test:browser deno run --allow-env --allow-net=127.0.0.1 --allow-read --allow-run --allow-write=/tmp tools/browser_portability_smoke.ts\n"
+    },
+    {
+      "name": "workerd",
+      "command": "deno task test:workerd",
+      "exit_code": 0,
+      "output_sha256": "8c3417f11cce7de3a8964a5fe3b9609a1982ebffe8cc3d4b9e857610fa555947",
+      "output_tail": "Task test:workerd deno run --allow-env --allow-net=127.0.0.1 --allow-read --allow-run --allow-write=/tmp tools/workerd_portability_smoke.ts\n"
+    },
+    {
+      "name": "Examples",
+      "command": "deno task example",
+      "exit_code": 0,
+      "output_sha256": "81b5d77caa52c6354f61d98df247d6fd479f3c287378cdadcf340f8aa2d0bb34",
+      "output_tail": " 3,\n  characters: 233,\n  checksum: 2893922767\n}\nstm local synchronous admission {\n  admissions: [\n    {\n      status: \"assigned\",\n      request_id: \"request-1\",\n      worker_id: \"primary\",\n      ticket: 1\n    },\n    {\n      status: \"assigned\",\n      request_id: \"request-2\",\n      worker_id: \"overflow\",\n      ticket: 2\n    },\n    {\n      status: \"assigned\",\n      request_id: \"request-3\",\n      worker_id: \"overflow\",\n      ticket: 3\n    },\n    {\n      status: \"rejected\",\n      request_id: \"request-4\",\n      reason: \"all local worker queues are full\"\n    }\n  ],\n  primary_queue: [ { request_id: \"request-1\", ticket: 1 } ],\n  overflow_queue: [\n    { request_id: \"request-2\", ticket: 2 },\n    { request_id: \"request-3\", ticket: 3 }\n  ],\n  last_ticket: 3\n}\neffect reader state writer task [ [ { before: 40, after: 42 }, 42 ], [ \"step:async:40\" ] ]\nhandler-instrumented stock effect {\n  status: { sku: \"sku-42\", quantity: 3, available: true },\n  trace: [ \"stock.lookup.start sku=sku-42\", \"stock.lookup.finish sku=sku-42\" ]\n}\nkeyed Reader, State, and Writer cells {\n  endpoint: \"https://api.example.test/todos/42\",\n  previous_request_count: 7,\n  request_count: 8,\n  last_route: \"/todos/42\",\n  audit: [ \"request request-42\" ],\n  metrics: [ 1 ]\n}\nexhaustive tagged matching {\n  custom_union: [\n    \"profile-42: Ada\",\n    \"profile not found\",\n    \"forbidden: private profile\"\n  ],\n  maybe: \"value 42\",\n  either: [ \"ok: 42\", \"error: invalid port\" ]\n}\ncustom typeclass list size 3\ncustom fluent list size 3\n"
+    },
+    {
+      "name": "Tutorial",
+      "command": "deno task learn",
+      "exit_code": 0,
+      "output_sha256": "b90ccb636a9b4bce2f6fa186b108ff349ef9145dfc11b81ee1e31db78bc0694e",
+      "output_tail": "Task learn deno run learn_you_a_typeclasses_for_greater_good/main.ts\nlearn_you_a_typeclasses ok values and contexts\nlearn_you_a_typeclasses ok typeclasses\nlearn_you_a_typeclasses ok patterns and guards\nlearn_you_a_typeclasses ok lists and laziness\nlearn_you_a_typeclasses ok folds and monoids\nlearn_you_a_typeclasses ok functors\nlearn_you_a_typeclasses ok applicatives\nlearn_you_a_typeclasses ok monads and do\nlearn_you_a_typeclasses ok custom data types\nlearn_you_a_typeclasses ok reader state writer\nlearn_you_a_typeclasses ok tasks\nlearn_you_a_typeclasses ok effect programs\nlearn_you_a_typeclasses ok alternative and traversable\nlearn_you_a_typeclasses ok stm\nlearn_you_a_typeclasses ok loop\n"
+    },
+    {
+      "name": "Case studies",
+      "command": "deno task case-study",
+      "exit_code": 0,
+      "output_sha256": "836f16f0ffca66e93e088b6829024026edcd7ab42dbb05d54110f35d890e8db0",
+      "output_tail": "le\"\n          },\n          property: \"weight\"\n        },\n        right: {\n          kind: \"binary_expression\",\n          operator: \"*\",\n          left: {\n            kind: \"member_expression\",\n            object: {\n              kind: \"index_expression\",\n              object: [Object],\n              index: [Object]\n            },\n            property: \"weight\"\n          },\n          right: { kind: \"literal_expression\", value: 2 }\n        }\n      }\n    },\n    {\n      kind: \"if_statement\",\n      condition: {\n        kind: \"binary_expression\",\n        operator: \"&&\",\n        left: {\n          kind: \"binary_expression\",\n          operator: \">\",\n          left: { kind: \"identifier_expression\", name: \"adjusted\" },\n          right: { kind: \"literal_expression\", value: 10 }\n        },\n        right: {\n          kind: \"member_expression\",\n          object: { kind: \"identifier_expression\", name: \"user\" },\n          property: \"active\"\n        }\n      },\n      then_branch: {\n        kind: \"block_statement\",\n        statements: [\n          {\n            kind: \"return_statement\",\n            value: { kind: \"identifier_expression\", name: \"adjusted\" }\n          }\n        ]\n      },\n      else_branch: {\n        kind: \"block_statement\",\n        statements: [\n          {\n            kind: \"return_statement\",\n            value: { kind: \"identifier_expression\", name: \"total\" }\n          }\n        ]\n      }\n    }\n  ]\n}\nparser error broken.typeclasses:2:40: expected \"!\", \"-\", or postfix expression\n"
+    },
+    {
+      "name": "Plain tests including rejected prototype",
+      "command": "deno test",
+      "exit_code": 0,
+      "output_sha256": "f14fde0537d8262e60d44e75c0e3419267abd7f1fe552ff4a940713a574b6b7d",
+      "output_tail": "e cell is a Monad in its own right ... ok (322\u00b5s)\nWriter monad accumulates logs through Do ... ok (216\u00b5s)\nEffects compose reader state writer and task with handlers ... ok (657\u00b5s)\nTerminal lift runners match composable lift handlers ... ok (1ms)\nEffects allow new capabilities without changing the core ... ok (140\u00b5s)\nStm monad composes transactional reads and writes ... ok (482\u00b5s)\nStm rolls back pending writes when a transaction aborts ... ok (208\u00b5s)\nStm or_else retries with the original transaction journal ... ok (244\u00b5s)\nFoldable reduces values inside different contexts ... ok (141\u00b5s)\nSemigroup and Monoid combine collection contexts ... ok (188\u00b5s)\nAlternative chooses fallback or combines list-like contexts ... ok (157\u00b5s)\nBuilt-in wrappers map and fold over values ... ok (298\u00b5s)\nJavaScript shape wrappers expose conservative typeclasses ... ok (6ms)\nTraversable flips structures through an applicative ... ok (719\u00b5s)\nGeneric helpers work against typeclass interfaces ... ok (126\u00b5s)\nGeneric applicative helper combines contextual values ... ok (134\u00b5s)\nGeneric monad helper lets each context define failure ... ok (110\u00b5s)\nrunning 1 test from ./src/typeclass_union_types.test.ts\nunion definitions use the tagged tuple shape ... ok (1ms)\nrunning 2 tests from ./src/writer_runtime.test.ts\nWriter cells capture an empty log for pure and yield-free Do ... ok (1ms)\nWriter cells infer the literal key and output types from their arguments ... ok (1ms)\n\nok | 300 passed | 0 failed | 1 ignored (3s)\n\n"
+    }
+  ],
+  "summary": {
+    "coverage_suite": {
+      "passed": 298,
+      "failed": 0,
+      "ignored": 1
+    },
+    "transformer_suite": {
+      "passed": 75,
+      "failed": 0
+    },
+    "plain_tests": {
+      "passed": 300,
+      "failed": 0,
+      "ignored": 1
+    },
+    "coverage_percent": {
+      "branches": 87.4,
+      "functions": 79.7,
+      "lines": 78.2
+    }
+  }
+}

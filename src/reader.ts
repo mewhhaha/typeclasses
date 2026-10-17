@@ -1,3 +1,4 @@
+import { bind_computation, map_computation } from "./computation.ts";
 import {
   type As,
   type Data,
@@ -20,7 +21,6 @@ import {
   cell_dictionary,
   type CellIdentity,
   type NominalKey,
-  type WidenedCellKey,
   type WithoutCell,
 } from "./cell.ts";
 import {
@@ -137,36 +137,25 @@ export type ReaderCellValue<key extends PropertyKey, environment, item> =
   >;
 
 /**
- * Declares a keyed Reader cell.
- *
- * A cell has its own runtime kind and its own type identity, so it is answered
- * by its own `run_reader` and is invisible to every other cell and to the
- * anonymous `ask`/`asks` operations. Name the cell, then give its environment:
- *
- * ```ts
- * const config = reader<"config", Config>();
- * const database = reader<"database", Database>();
- * ```
- *
- * The key distinguishes cells that read the same environment type. It exists
- * only in the type, so **declare each key exactly once**: two declarations
- * sharing a key are one cell to the compiler and two at runtime, and the second
- * one's lifts survive a handler the types said would discharge them. A key that
- * is not a literal carries no identity at all and is rejected outright.
+ * Declare a Reader cell using a runtime key. Reusing the key within this family
+ * addresses the same cell. Use a const Symbol for a private identity.
  */
-export function reader<key extends PropertyKey, environment>(): [
-  NominalKey<key>,
-] extends [never] ? WidenedCellKey : AsReaderCell<key, environment> {
-  return make_reader_cell() as [NominalKey<key>] extends [never]
-    ? WidenedCellKey
-    : AsReaderCell<key, environment>;
+export function reader<key extends PropertyKey, environment>(
+  key: key & NominalKey<key>,
+): AsReaderCell<key, environment> {
+  return make_reader_cell<key, environment>(key);
 }
 
-function make_reader_cell<key extends PropertyKey, environment>(): AsReaderCell<
+function make_reader_cell<key extends PropertyKey, environment>(
+  key: key,
+): AsReaderCell<
   key,
   environment
 > {
-  const dictionary = cell_dictionary<AsReaderCell<key, environment>>();
+  const dictionary = cell_dictionary<AsReaderCell<key, environment>>(
+    Reader,
+    key,
+  );
 
   Object.defineProperties(dictionary, {
     ask: {
@@ -187,7 +176,7 @@ function make_reader_cell<key extends PropertyKey, environment>(): AsReaderCell<
     map(fn) {
       const read = this.value();
 
-      return wrap((environment: environment) => fn(read(environment)));
+      return wrap(map_computation(read, fn));
     },
   });
 
@@ -219,8 +208,11 @@ function make_reader_cell<key extends PropertyKey, environment>(): AsReaderCell<
     bind(fn) {
       const read = this.value();
 
-      return wrap((environment: environment) =>
-        fn(read(environment)).value()(environment)
+      return wrap(
+        bind_computation(
+          read,
+          (value, environment) => [fn(value).value(), environment],
+        ),
       );
     },
   });
@@ -461,9 +453,7 @@ Show.instance(Reader)({
 
 Functor.instance(Reader)({
   map(fn) {
-    return Reader((environment: unknown) => {
-      return fn(this.value()(environment));
-    });
+    return Reader(map_computation(this.value(), fn));
   },
 });
 
@@ -497,9 +487,11 @@ Applicative.instance(Reader)({
 
 Monad.instance(Reader)({
   bind(fn) {
-    return Reader((environment: unknown) => {
-      const value = this.value()(environment);
-      return fn(value).value()(environment);
-    });
+    return Reader(
+      bind_computation(
+        this.value(),
+        (value, environment) => [fn(value).value(), environment],
+      ),
+    );
   },
 });

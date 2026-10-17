@@ -25,7 +25,6 @@ import {
   ap,
   ap_first,
   ap_second,
-  append,
   bind,
   compare,
   concat,
@@ -41,11 +40,6 @@ import {
   join,
   length,
   lift,
-  lift_A,
-  lift_A2,
-  lift_A3,
-  lift_A4,
-  lift_A5,
   lt,
   lte,
   max,
@@ -93,22 +87,22 @@ Deno.test("prelude maps, applies, and binds with contextual inference", () => {
 });
 
 Deno.test("prelude lifts functions and folds values", () => {
-  const one: MaybeValue<number> = lift_A((a) => a + 1, Just(1));
-  const two: MaybeValue<number> = lift_A2((a, b) => a + b, Just(1), Just(2));
-  const three: MaybeValue<number> = lift_A3(
+  const one: MaybeValue<number> = lift((a) => a + 1, Just(1));
+  const two: MaybeValue<number> = lift((a, b) => a + b, Just(1), Just(2));
+  const three: MaybeValue<number> = lift(
     (a, b, c) => a + b + c,
     Just(1),
     Just(2),
     Just(3),
   );
-  const four: MaybeValue<number> = lift_A4(
+  const four: MaybeValue<number> = lift(
     (a, b, c, d) => a + b + c + d,
     Just(1),
     Just(2),
     Just(3),
     Just(4),
   );
-  const five: MaybeValue<number> = lift_A5(
+  const five: MaybeValue<number> = lift(
     (a, b, c, d, e) => a + b + c + d + e,
     Just(1),
     Just(2),
@@ -174,7 +168,7 @@ Deno.test("prelude exposes utility, ordering, and choice functions", () => {
   assert_equals(min(Just(1), Just(2)).value(), ["Just", 1] as const);
   assert_equals(max(Just(1), Just(2)).value(), ["Just", 2] as const);
 
-  assert_equals(append(ArrayT([1]), ArrayT([2])).value(), [1, 2]);
+  assert_equals(concat(ArrayT([1]), ArrayT([2])).value(), [1, 2]);
   assert_equals(concat(ArrayT([1]), ArrayT([2])).value(), [1, 2]);
   assert_equals(mempty(ArrayT).value(), []);
   assert_equals(empty(Maybe).value(), ["Nothing"] as const);
@@ -274,22 +268,22 @@ Deno.test("prelude folds and traverses linear and multi-shot contexts", () => {
   );
   assert_equals(
     traverse_(
-      Maybe,
       (value: number) => value > 0 ? Just(value) : Nothing<number>(),
+      Maybe,
       ArrayT([1, 2]),
     ).value(),
     ["Just", undefined] as const,
   );
   assert_equals(
     traverse_(
-      Maybe,
       (value: number) => value > 0 ? Just(value) : Nothing<number>(),
+      Maybe,
       ArrayT([1, 0]),
     ).value(),
     ["Nothing"] as const,
   );
   assert_equals(
-    traverse_(ArrayT, (value: number) => ArrayT([value, value + 10]), Just(1))
+    traverse_((value: number) => ArrayT([value, value + 10]), ArrayT, Just(1))
       .value(),
     [undefined, undefined],
   );
@@ -299,13 +293,17 @@ Deno.test("traverse_ runs large Task sequences in order on every execution", asy
   const items = Array.from({ length: 20_001 }, (_, index) => index);
   const constructed: number[] = [];
   const executed: number[] = [];
-  const action = traverse_(Task, (item: number) => {
-    constructed.push(item);
-    return from_fn(() => {
-      executed.push(item);
-      return Promise.resolve(item);
-    });
-  }, ArrayT(items));
+  const action = traverse_(
+    (item: number) => {
+      constructed.push(item);
+      return from_fn(() => {
+        executed.push(item);
+        return Promise.resolve(item);
+      });
+    },
+    Task,
+    ArrayT(items),
+  );
 
   assert_equals(constructed, items);
   assert_equals(executed, []);
@@ -318,13 +316,13 @@ Deno.test("traverse_ runs large Task sequences in order on every execution", asy
   const failure = new Error("stop traversal");
   let completed = 0;
   const failing = traverse_(
-    Task,
     (item: number) =>
       from_fn(() => {
         if (item === 10_000) return Promise.reject(failure);
         completed += 1;
         return Promise.resolve(item);
       }),
+    Task,
     ArrayT(items),
   );
 
@@ -334,10 +332,12 @@ Deno.test("traverse_ runs large Task sequences in order on every execution", asy
 
 Deno.test("traverse_ preserves Reader, State, and Writer order across uneven groups", () => {
   const items = Array.from({ length: 20_001 }, (_, index) => index);
-  const observations = reader<"prelude-traverse-reader", number[]>();
+  const observations = reader<"prelude-traverse-reader", number[]>(
+    "prelude-traverse-reader",
+  );
   const read = traverse_(
-    observations,
     (item: number) => observations.asks((seen) => seen.push(item)),
+    observations,
     ArrayT(items),
   );
 
@@ -347,14 +347,16 @@ Deno.test("traverse_ preserves Reader, State, and Writer order across uneven gro
     assert_equals(seen, items);
   }
 
-  const position = state<"prelude-traverse-state", number>();
+  const position = state<"prelude-traverse-state", number>(
+    "prelude-traverse-state",
+  );
   const advance = traverse_(
-    position,
     (item: number) =>
       position((current) => {
         assert_equals(current, item);
         return [item, current + 1];
       }),
+    position,
     ArrayT(items),
   );
 
@@ -364,8 +366,8 @@ Deno.test("traverse_ preserves Reader, State, and Writer order across uneven gro
   const entries = ArrayT(items.slice(0, 11));
   const Audit = Writer.with(ArrayT<number>([]));
   const written = traverse_(
-    Audit,
     (item: number) => Audit([item, ArrayT([item])]),
+    Audit,
     entries,
   );
   assert_equals(written.value()[0], undefined);
@@ -376,22 +378,26 @@ Deno.test("traverse_ preserves Reader, State, and Writer order across uneven gro
 Deno.test("traverse_ preserves branching cardinality and empty identities", () => {
   const counts = [2, 3, 2, 3, 2];
   const constructed: number[] = [];
-  const branches = traverse_(ArrayT, (count: number) => {
-    constructed.push(count);
-    return ArrayT(Array.from({ length: count }, (_, index) => index));
-  }, ArrayT(counts));
+  const branches = traverse_(
+    (count: number) => {
+      constructed.push(count);
+      return ArrayT(Array.from({ length: count }, (_, index) => index));
+    },
+    ArrayT,
+    ArrayT(counts),
+  );
 
   assert_equals(constructed, counts);
   assert_equals(branches.value(), Array(72).fill(undefined));
   assert_equals(
-    traverse_(ArrayT, (_item: number) => ArrayT([1, 2]), ArrayT<number>([]))
+    traverse_((_item: number) => ArrayT([1, 2]), ArrayT, ArrayT<number>([]))
       .value(),
     [undefined],
   );
   assert_equals(
     traverse_(
-      ArrayT,
       (count: number) => ArrayT(Array(count).fill(0)),
+      ArrayT,
       ArrayT([
         2,
         0,
