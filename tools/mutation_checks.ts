@@ -31,11 +31,11 @@ const mutations: readonly Mutation[] = [
   {
     name: "TSX parser selection",
     file: "tools/transform_do_program.ts",
-    original: 'path.endsWith(".tsx")',
-    replacement: 'path.endsWith(".tsz")',
+    original: '.toLowerCase().endsWith(".tsx")',
+    replacement: '.toLowerCase().endsWith(".tsz")',
     test: "tools/transform_do_program_checks.ts",
     expected_test: "transformer parses and lowers Do expressions inside TSX",
-    permissions: ["--allow-env"],
+    permissions: ["--allow-env", "--allow-read", "--allow-ffi"],
   },
 ];
 

@@ -1,0 +1,1871 @@
+{
+  "started": "2026-10-18T22:59:47.089Z",
+  "completed": "2026-10-18T23:00:43.433Z",
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "build": {
+    "target": "x86_64-unknown-linux-gnu",
+    "arch": "x86_64",
+    "os": "linux",
+    "vendor": "unknown",
+    "env": "gnu",
+    "standalone": false
+  },
+  "cpu": "unavailable",
+  "hardware_concurrency": 16,
+  "baseline": "/tmp/typeclasses-oxc-baseline",
+  "candidate": "/tmp/typeclasses-oxc-candidate",
+  "lock_path": "/tmp/typeclasses-round3-bench.lock",
+  "driver_sha256": "f705ed85600b9a6aa09ef02b343bc2de5bc837103133f80f8a751e52f7876233",
+  "workload_catalog_sha256": "a0faa1df99b98f1560e2227a46452e1447e19289bc022eecd7c7ce19147482ee",
+  "configurations": {
+    "baseline": {
+      "effect": "npm:effect@3.21.4",
+      "esbuild": "npm:esbuild@0.25.12",
+      "fp-ts/Either": "npm:fp-ts@2.16.11/lib/Either.js",
+      "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
+      "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
+      "fp-ts/StateReaderTaskEither": "npm:fp-ts@2.16.11/lib/StateReaderTaskEither.js",
+      "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
+      "miniflare": "npm:miniflare@4.20260730.0",
+      "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
+      "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
+      "rolldown": "npm:rolldown@1.1.5",
+      "typescript": "npm:typescript@5.9.3",
+      "true-myth/maybe": "npm:true-myth@9.1.0/maybe",
+      "true-myth/result": "npm:true-myth@9.1.0/result"
+    },
+    "candidate": {
+      "effect": "npm:effect@3.21.4",
+      "esbuild": "npm:esbuild@0.25.12",
+      "esrap": "npm:esrap@2.4.0",
+      "fp-ts/Either": "npm:fp-ts@2.16.11/lib/Either.js",
+      "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
+      "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
+      "fp-ts/StateReaderTaskEither": "npm:fp-ts@2.16.11/lib/StateReaderTaskEither.js",
+      "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
+      "miniflare": "npm:miniflare@4.20260730.0",
+      "oxc-parser": "npm:oxc-parser@0.154.0",
+      "oxc-transform": "npm:oxc-transform@0.154.0",
+      "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
+      "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
+      "rolldown": "npm:rolldown@1.1.5",
+      "typescript": "npm:typescript@5.9.3",
+      "true-myth/maybe": "npm:true-myth@9.1.0/maybe",
+      "true-myth/result": "npm:true-myth@9.1.0/result"
+    }
+  },
+  "source_hashes": {
+    "baseline": {
+      "deno.json": "4875ae01a1f0382b3bb8eca6e9deb90de05b4a8fe5ec05fb295de562f326f562",
+      "deno.lock": "d65cbaddb498746c1e3014bff306846853f20a13fd6a047351f33ab2c737d4ac",
+      "src/api_hills.test.ts": "5e9e21d9b63a2fc40666c821a191097784604808f56ed21638b8e6df5ab134a1",
+      "src/api_round2.test.ts": "7e104f70d55497de4608ad6142cdd3ba7bf7877dd006a91d7786fdcb01709518",
+      "src/api_soundness.test.ts": "c2c0d68e574e776b5dfca9557f38f019009c15722e26def382439b92345ae6ae",
+      "src/array.ts": "c9d52b73051aa5de08a8baa9ce6a42fa10927796c2092a35cd775aa780d34397",
+      "src/array_buffer.ts": "08e323ccfcfa794bdbfeca08f43ad6dc4c63a6c51eac93be674ab11bfc702a9f",
+      "src/array_updates.test.ts": "4e73b76dd595a3eb20a724a48cc5a54f37296a0fecb5e5491ef134ad72c0c0f2",
+      "src/assert.ts": "66996bf65f4948b9246441b19dd93e3995c9c61a9d2661f0482ab62e7d4af3b9",
+      "src/async_iterable.ts": "afc15e62d977c907ba52910d3d563d25142c15dcfa78740f7cc8ec7e227371f3",
+      "src/capability_surface.test.ts": "22be946ffaf44b5da15c51e307c23b4173a8261211b4a9457958c632a91645ff",
+      "src/cell.ts": "572f06bfc8b0b01b4e3ec857195d2d4f7d19b6e1de958d88e2835eb2c7539c21",
+      "src/chunk_log.ts": "27ebda848930fbeb611fdf0651b94655ddc9136ad994e8cc1e38f0aa3cd79009",
+      "src/collection_hills.test.ts": "f9c83c9d42f4c9d5e084b0dea19621a75df9fa69dc408098aa469cebe7b1f846",
+      "src/collection_runtime.test.ts": "dd043e16ff78920a816696e5270335db5276919aca05a5da5ed5fb1e97bae36d",
+      "src/computation.ts": "9e4d7b7914f55d48adeff5e364052acbb38f9226a19ead2cc041c0e792c218da",
+      "src/constructor_ergonomics.test.ts": "6e0fb9b495b1c943281d3bf0c46c8c229e59cdb92382e328fd4efaba607bb5c9",
+      "src/core_runtime.test.ts": "ba511dadcfac394064cafe5423e85d3a66580a0a0944b618123d74aaf77750da",
+      "src/data_value.ts": "8ff4003c0302b3b7a43aa06d2abf7939796893e0720b365d841ef04fd11e28d5",
+      "src/data_view.ts": "c77f83ace61df5c3e1679009f7b442b5a032ac5e4c9f495a7766f0727013e9cf",
+      "src/date.ts": "33065b7450f0d275efd22f244c68d705c10fb5e2058bbad33d2a6c752385601a",
+      "src/derivation.test.ts": "f71da4de51a7078cf1e8a4b7d829c4563b7e42ed146c94eb6579650daacbd24e",
+      "src/do_error.test.ts": "e95cf602454eddf92836b8d982aceeec2f6eda9e6dd9569cc3ef9434a026b5d6",
+      "src/effects.ts": "458d68a8bfee1b5fc65d76e213bdc27cf6ff966a38860525a0679aa880a719a0",
+      "src/effects_runtime.test.ts": "5c868b24e2bcb6c121bf227cde9f60928fdc7d5df6fe859d0f135fc578ad70c9",
+      "src/either.ts": "c86526aad46e86391f13a635c5beb41b5925e5ca641e4e0066b5c54e7f88afc8",
+      "src/ergonomics.test.ts": "3ef7e1ee43f33fd581487a71be74244b0b70b0a203d90b74782bced5fdce1118",
+      "src/error.ts": "5e608bc2000611952d085790346cef57e066a62ba8bd462a0bd8844bf227a2f8",
+      "src/examples.ts": "1d423c3004d2f563a6935555593317a1456de2e3ac523a5ffaee278312e07fb3",
+      "src/except.ts": "f3bac2590502a9b3462e42e4b94d514f3c2cb40b466a7ebc5b5922e409b843d9",
+      "src/except_runtime.test.ts": "02d304d040852039eb4f95ecdddcbf60e1b61af8f8dd5cda42a30a7df45e9f41",
+      "src/fixed_parameter_types.test.ts": "a245a2fd5b285493d8bbb94fec5f498308c4b71ac868f0c35938c3f5978d68fa",
+      "src/fn.ts": "98d0b2b2cb4ce40cb511a61d8c1c4e6fa285393614ec3869dfb72ce9f1f739ce",
+      "src/form_data.ts": "996f9f87d812da7acb34e01b9f359a707f1700d4acf46c5bf700a2f516e2a379",
+      "src/handlers.ts": "d4732d135de760ffe24e5c7288742091362667620d912394d8d2c6864102e91a",
+      "src/identity.ts": "a22e78522f84a377e780dbe4fcfa28fdc5cf411ae29d0697ff090190b78418ff",
+      "src/inspect.ts": "79acef69a89cdc6e420de6cfa640628c86d2cac52a74c3df171a794253bf989c",
+      "src/instance_coverage.test.ts": "ee15e59abfbfb71c5214492039a2f14d9d12a70474c3675e086884ae45583389",
+      "src/internal.ts": "c3e2fb5779ebe35af17d45194006862ca6b2fab236844a0c6a41b5b4a673d1a6",
+      "src/iterable.ts": "afeb2d77423889c7aefb92e8ff5b4b7fb1de3e43cd6cf8929a1f44899616f6a2",
+      "src/iterable_pipeline.test.ts": "f7baf7fc21057cd08dfd728eaaa477c3405eb6d05281989510975fa732bce34e",
+      "src/laws.test.ts": "da8e3b33fac559b1a236c47df0b7e9f5cb50cdf1f1bab52dfe28b93f33e3f3bb",
+      "src/list.ts": "9f2eacf4cc354988da41a8e6db4df1125385c2e68f84b699b6f4dcfbb2209451",
+      "src/loop.ts": "90170f82f5f560e20e96337873ef90d1df78660c14e09051bdf76cc39a57eb6b",
+      "src/map.ts": "8d228c5958916e278a3cb3a1ac5feaaf54f929d8a45b533f5f2285a8f862bdde",
+      "src/match.test.ts": "6bb28da632fc79ea67b962249cf08c7a2e341f3442aa699b785625be209db5e8",
+      "src/maybe.ts": "0fc325ac73d9f32cd4c2858ba74710da23da4c259e7bd9aeda9a6c634eefb805",
+      "src/mod.ts": "26e860ba4b1713b9c8cb2295c765bb9c2edbe8cd56da7f40a232615b18d5db33",
+      "src/monad_error_ergonomics.test.ts": "13d09940eaea0f64bf46afa53fbc520d0c7ec166ecc15508bf37dfc098b5ce17",
+      "src/monad_rec.test.ts": "f3d1d70a2735c95a03d32bce9a13bf6e024bc1775844c564e59236add1f92662",
+      "src/parallel.test.ts": "f3f435ccc3c4cf785f769fa0a87bb4fc3ba3d64107c4aeb39e9a53e6fd15f1de",
+      "src/parallel.ts": "0539fc6d923fda10da20fe7294c93d651bb69b82a882c58ead66f2d5d79d15a0",
+      "src/predicate.ts": "a6a9b9b7b7f901cd8a493a38c2abf7d63dc9922def3f40486796899f5cce5e80",
+      "src/prelude.test.ts": "8ff945a54c7a6b97e8ae7efdc5b84fd1227723e3fa0ff9b5b3663454cccd8c47",
+      "src/prelude.ts": "4f549e98a1155b85bfd445c7d1de28f0295fe589890f5a1064d2a90cca9ce5d3",
+      "src/quickcheck.test.ts": "60a28951f7a3ce955a33a8c3a15a38f77e4c88b10f976403fb4790ffd3c33d01",
+      "src/quickcheck.ts": "7c4406a9f2fdceecf6aa6fbd7a61f096f489e66acf5d513a42c276cc337eb201",
+      "src/readable_stream.ts": "5b5e5136c61444aa92cb91cc7f7a56b1e4e02a283230227431bf3e816fe633cd",
+      "src/reader.ts": "d5be8cc136b39c4f8d742b2f7f74c3c35652d4f15ccddd3b1bb5fb0fc9207b65",
+      "src/reader_state_ergonomics.test.ts": "878c257eaab9b2e6b45f17dcfc85c00aa5ea79cb146dc1e4a9771121f9efd489",
+      "src/record.ts": "c5a3437ca8e0d9ddf3d67d59444a342e8cc04d388033633f8b9f39867ee0337b",
+      "src/regexp.ts": "2e9ca785d3c1bde310594766d8c09e2f90d500bc2be6f21d1793ac550a11b836",
+      "src/round2_collections.test.ts": "ce0219220c9d11be0390363ec5eaaef3526efa72c4205a5dd3b3027d9205088e",
+      "src/round3_collections.test.ts": "c2e17426f16e0ff66d5868c8ab1c9a658517d91e44e9367816cdf9c3a3da35fa",
+      "src/runtime_hills.test.ts": "29522419cdf662a13da248ea1c226b2c246b380a97837584ec468b16321f53ca",
+      "src/runtime_round2.test.ts": "074d482bc876d12bca6b0e5d2a4c747c2eca500e99520db6e989f723c1cf502d",
+      "src/runtime_round3.test.ts": "d915afb73c25754c03e924244286a91dd689e3e2c14e5296fd703643699571e8",
+      "src/set.ts": "4824545e0bc6531434d7ffbf39429559dbf08d1e8957ec8f05cd16590cffa80f",
+      "src/state.ts": "f8c37916e8bec7d42ecb5424aedce567b7552b1478d8168137e1a8c088022db2",
+      "src/stm.ts": "49d509051d5cd300e76e0ac33f38a28276fc2cae3745862a65f10e68cf146fdc",
+      "src/stm_runtime.test.ts": "35ba47c3095e9324db5a07196935a2caa470adb39a7c671500c788f3a2141990",
+      "src/tagged.ts": "46ee25a32931719442aeea576bbc323d01ec2bce123436bdd10aa8eac04e1474",
+      "src/task.ts": "0d9e6cbeef8c226fe6afcfbc9df8c7f59db408513f09e36f8b1b46ee86175c98",
+      "src/task_runtime.test.ts": "6bf5461cba045314eb11251f68e900577cd20111d745c7530432bb69c6cd033b",
+      "src/traversal.ts": "3273b08e5d214724ca42b096e6512e0a539c979534e1e5d30f699bc6c18721c6",
+      "src/tuple.ts": "b3d77bbddf8b038f667f04aa4d029a00150bdf746175814a7f8d36283a4128f3",
+      "src/typeclass.ts": "ef45735f3d2b68e5115027837b11780da9355c6313aaca99e01c102792fba974",
+      "src/typeclass_ergonomics.test.ts": "a687b5be1b3bec1c73d69dabf60cec75195d2effaa67a61d1e9ee74c2d7b5376",
+      "src/typeclass_examples.test.ts": "c879e5a796f9e8dfca38454c84818dabf8cab94c41e2137738f7415bfbf6d422",
+      "src/typeclass_union_types.test.ts": "8169edfb1c901c4fc107e35a42e0863f429a6fecc929759e32a46bb151b3b278",
+      "src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+      "src/typeclasses/alternative.ts": "77bc765c8760aa62b0439989b0df7d9dadd71158e2cd714df6f6052246cb4f99",
+      "src/typeclasses/applicative.ts": "373f0f1e0f56cbb982ba854e9d1f6aaf027b27c8d24e8fb6d35cf07fdb44b17d",
+      "src/typeclasses/arrow.ts": "9da0a7581089560ec3dbf302cdb782427cd831d837797cf33338608527fd6b39",
+      "src/typeclasses/bifunctor.ts": "57b6e463605b78539c19a950d6dabde64d55ff81eac3ee1b97b9e175a74dd2fd",
+      "src/typeclasses/category.ts": "923ef4d925847597cbbaa676690863d0faeb3477212dd5b8940ff72c4df0dc4b",
+      "src/typeclasses/comonad.ts": "f248da393afc1db00a7228e6bc61abd2d700c0515a9f9a92cce599c1155bf00c",
+      "src/typeclasses/contravariant.ts": "17cfc8aba50cc0367d2e28a8d3eef2da5028cb0e9ff2043e04b56c0d4307ec66",
+      "src/typeclasses/eq.ts": "4b431b927995bbefa8667f2c893c0fb8441e1945c8b5f6c91c24ad5165c6be45",
+      "src/typeclasses/foldable.ts": "f25f1bd52b66ae8f205a46e2bdb4d32883a412f837c2111e1bae4d8439fe161e",
+      "src/typeclasses/functor.ts": "453e3f2922a2a4ac0428e73264be99919109c32155c044f9a95e056cb142e6c1",
+      "src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+      "src/typeclasses/monad.ts": "2ec0f7a5d04317f68ccc740c7dfa40f4714707edcb005c1292f7ee3a97d4122c",
+      "src/typeclasses/monad_error.ts": "bda801ba2fd8dbe455bb12f52be68f6cdd889ad95261839befdc89cd423af51e",
+      "src/typeclasses/monad_rec.ts": "7535f6aa9bc2e9c9c937b5237e310f4e9c4b0eb2c9f266b4bb966ad0d9b5220d",
+      "src/typeclasses/monoid.ts": "293e816f75d686dfbf5c3269d26a5e44d78e4c5b008accaf8c98d28d1e30d3b4",
+      "src/typeclasses/ord.ts": "066e2d4535c020666a7c41b9fa4321c1b84aef7be6eacca868b48c7a5336f4cf",
+      "src/typeclasses/parse.ts": "d115677470a3a7bedb742597f14403152cf5ebd818a99b601ad1b7c0e0a0f622",
+      "src/typeclasses/profunctor.ts": "1b3df7a45a89a8aef1f15fc5a16beb0af5df389952e32762d392694953ad3683",
+      "src/typeclasses/semigroup.ts": "03cc1107e289fa39fc819aa41328b9cbe85303724b59196e16b8b86ca5bceaf0",
+      "src/typeclasses/show.ts": "d9c9c1bb8550db37e9076b492c86c40c0d3c895039d1d6a5fb3c3e274d46b228",
+      "src/typeclasses/traversable.ts": "6dd885ef6e5796a30f289da1833d1046fe898881af592e5448e02c6a55704a8f",
+      "src/typed_array.ts": "44d0313a0e4451950fa933466dc8beebaa50336c6a325f1222179b5b25ab5d6f",
+      "src/url_search_params.ts": "1f1ce649446a6251224783a63649e8d62c5a9883144c2e1df7d326cb6cd3490c",
+      "src/validation.ts": "296f18455db5cf385ed70f7183f1652c6a20dedc7a249c0c98f12eea8966336a",
+      "src/weak_map.ts": "ee92687fc5082034ec326137be8e5b8fb5a7f81c79e070c097643a6ecb5b4730",
+      "src/weak_set.ts": "9658565e1e757966718abcfa198c4ab2ec906388a695e1d724bd3e728aa742f6",
+      "src/workers_stm_round3.test.ts": "b4039cf52352195df91f61444e5169c56d42d41d9e9281990d5570a26a49771f",
+      "src/wrapped_names.test.ts": "67f9699c4dc6629daf5c6ac9d26f3d69a06cc51f4c9a178b3fbaccd625e63224",
+      "src/writer.ts": "999794781890b7a9568805afe5607c3aaac38812a6d365fb8a5cf784759cc69a",
+      "src/writer_runtime.test.ts": "ed2d22bdaf4cd76c5bf1b5e6e2684e55e2ed912a04a887dc4688c2b3c1f0a940",
+      "tools/allocation_profile.ts": "c84806f69ebc2d634ae274ece7cdc600b5249fbb7cc846663fb7e053496b431f",
+      "tools/browser_portability_smoke.ts": "9aa3f06276a8d952ca3866c3f375f763bc9b47778c15687abd39b7f60eba5940",
+      "tools/bundle_round2_checks.ts": "7d0db14d22001006ff54b2fa43c16dda349be666d4079b452a76909067cc3257",
+      "tools/capture_measurement.ts": "eb1f405d5a27d83e35c1bd53f6ce971262f0991509adf5e5e0e6f36f79d4bc9e",
+      "tools/check_budgets.ts": "4678b1064b6d49a55eb8d6277b3f982e22f35313a95627fbc9199bbff0662c76",
+      "tools/check_portability.ts": "78104a3a5e17324d3dd49237bb09a2ac8abe2f7cf8de9ca7252ffdb40619d136",
+      "tools/check_toolchains.ts": "cfcffd53af7b92a72408f1ae776bb784ea33288263fff73a51baddb50903e360",
+      "tools/dev_watch.test.ts": "d8c03bbb8474c248c008737c5833d1b0c04f0eae5e2a40d336cf1ec65d82d056",
+      "tools/dev_watch.ts": "88b94714532813df9c6816dbe826b33e0c293a4d524a05c4c4cfff3b61a3ce19",
+      "tools/fixtures/terminal_program.ts": "5bc33847a69eed3517489b475ba57c7b55eab2d1bc9f3016dc4ac2871bb0350a",
+      "tools/fixtures/unsupported_do_try.ts": "7bf9415b2e4da41517f2c3732d8492eb7d5c06b34a006c0ca43271c0c4b8e9a2",
+      "tools/import_budget.ts": "5d536294105a0b0d6b95a050747e3b99be9977d442a6f7be718607be2320f6df",
+      "tools/mutation_checks.ts": "c8e519183ffebd00f3a5d59a80fbfde931545a7dab06298e9c8832f639c228de",
+      "tools/node_portability_smoke.ts": "d94d7c99d1d1e182b7ae14ac42c852fe27a1ee927dc19d83bc62856274938bc1",
+      "tools/package_consumer.ts": "63457e2c7fd27cdb1ddbafa0ab28f30d2f3bc0e0d58d6d9b5eeb346a0ae17c31",
+      "tools/package_entrypoint_smoke.ts": "43d493df80cb6dd47d8f83de840907dbed70e2bb767bc1672b98f2531bc16249",
+      "tools/paired_bench.ts": "e2102fb1e8e4150fd731ffeaa763bc6ce3ebf9aa77be73af907779ef43b510c9",
+      "tools/round2_qualification_checks.ts": "b90d87e88c32af9bc8c69a19f78839163b9910009feb1d870b7e9661889994c3",
+      "tools/round3_core_checks.ts": "3f728d1dc8fe9935aaa8dad891bc1aedf3d006996084f0bc39592a8680dcea35",
+      "tools/round3_core_measure.ts": "ce49e24419f0236056d0394cf3a6ce8da092c19858a1cbba08b3950579b43fc2",
+      "tools/round3_diagnostic_retention.ts": "85bd6a2f6e58a94a7205bd39538b1913eaafd5eb244ce3ad4a0ccd7fc7d2959d",
+      "tools/round3_transform_checks.ts": "412564eb432b7dd16ae10a28b4f48b1977fbd01e565e971ab5f628fedccd66ec",
+      "tools/runtime_profile.ts": "acf631a802da0c2574f96bb2fe5f6c3d8954e71aeb33fb4a285c3f9c1f4d58f2",
+      "tools/sync_examples.ts": "127a2ba8d0828f3fd06e06bfd8f1c37d1c114a2dff6d166d371a7f40e2061e79",
+      "tools/transform_bindings.ts": "11ffa3d3487f74b904024ce7bc1253b2d067acd321db880f87bb79e357096e07",
+      "tools/transform_do_program.ts": "29110737117cb904a61ec8405679973946033b634ca5db8ca6b59ea187d516ce",
+      "tools/transform_do_program_checks.ts": "93fc17b6ea51578f690160bbbed3784b7c5cc4df521bd50ebff3672bc911e45c",
+      "tools/transform_iterable_maps.ts": "eea3c21c5180be28e5e29f989b530264bea724a22780588e8b9da2c4fa651093",
+      "tools/transform_iterable_maps_checks.ts": "ed8ae3341ae8ef32dff9b792c4f02f66ad90f8590c905e0ed34cab4405dafc22",
+      "tools/transform_optimization_checks.ts": "076c1d06e5fea386a3cbf52208b56a89725a322de7f284706ab114f286dfd6e2",
+      "tools/transform_plugin.ts": "ab6acca3173980b336c8a41613ee67d11d6673d6fb062a658ebc3248dc44f581",
+      "tools/transform_plugin_checks.ts": "945499e1cc940cba23ee989c7f2350efec8da6a3f3b7aa16e0a35c5a789081bc",
+      "tools/transform_round2_application_probe.ts": "8902a68820a1dab834a506a2213d200fb06745432fd3a1ec57b77918d68aa6ac",
+      "tools/transform_round2_application_sites.ts": "b619e1d88de34b6b1b15d41ecaeb6ec6e8a8fcfc67709aac2da1d90066cfd929",
+      "tools/transform_round2_checks.ts": "83a0ab1589b045decb7a7abae73c1aea47aa81fca7ff0571e3f0bb2efa76e10a",
+      "tools/type_budget.ts": "691aae9b9225b4110587982f520d4fcafb583cfd5a274c10bd3ec31d93357979",
+      "tools/type_variants.ts": "33ed1f374aefb876e91984182277471518d651968c7f46d933cc06672822d8ba",
+      "tools/workerd_portability_smoke.ts": "bfe706cafc67838ca5c8022afd91beffa0200f4b4fa0ab990cc3b17a214fb39b"
+    },
+    "candidate": {
+      "deno.json": "04634fdf27b0e5d6ae985363e4e580fd0095f1a4e494c02ebaa7436f94f7bc31",
+      "deno.lock": "d5c2d4e0e44cee4efbb27c492357ccc326b5c8f6edf9e5561eec6875abf6303f",
+      "src/api_hills.test.ts": "5e9e21d9b63a2fc40666c821a191097784604808f56ed21638b8e6df5ab134a1",
+      "src/api_round2.test.ts": "7e104f70d55497de4608ad6142cdd3ba7bf7877dd006a91d7786fdcb01709518",
+      "src/api_soundness.test.ts": "c2c0d68e574e776b5dfca9557f38f019009c15722e26def382439b92345ae6ae",
+      "src/array.ts": "c9d52b73051aa5de08a8baa9ce6a42fa10927796c2092a35cd775aa780d34397",
+      "src/array_buffer.ts": "08e323ccfcfa794bdbfeca08f43ad6dc4c63a6c51eac93be674ab11bfc702a9f",
+      "src/array_updates.test.ts": "4e73b76dd595a3eb20a724a48cc5a54f37296a0fecb5e5491ef134ad72c0c0f2",
+      "src/assert.ts": "66996bf65f4948b9246441b19dd93e3995c9c61a9d2661f0482ab62e7d4af3b9",
+      "src/async_iterable.ts": "afc15e62d977c907ba52910d3d563d25142c15dcfa78740f7cc8ec7e227371f3",
+      "src/capability_surface.test.ts": "22be946ffaf44b5da15c51e307c23b4173a8261211b4a9457958c632a91645ff",
+      "src/cell.ts": "572f06bfc8b0b01b4e3ec857195d2d4f7d19b6e1de958d88e2835eb2c7539c21",
+      "src/chunk_log.ts": "27ebda848930fbeb611fdf0651b94655ddc9136ad994e8cc1e38f0aa3cd79009",
+      "src/collection_hills.test.ts": "f9c83c9d42f4c9d5e084b0dea19621a75df9fa69dc408098aa469cebe7b1f846",
+      "src/collection_runtime.test.ts": "dd043e16ff78920a816696e5270335db5276919aca05a5da5ed5fb1e97bae36d",
+      "src/computation.ts": "9e4d7b7914f55d48adeff5e364052acbb38f9226a19ead2cc041c0e792c218da",
+      "src/constructor_ergonomics.test.ts": "6e0fb9b495b1c943281d3bf0c46c8c229e59cdb92382e328fd4efaba607bb5c9",
+      "src/core_runtime.test.ts": "ba511dadcfac394064cafe5423e85d3a66580a0a0944b618123d74aaf77750da",
+      "src/data_value.ts": "8ff4003c0302b3b7a43aa06d2abf7939796893e0720b365d841ef04fd11e28d5",
+      "src/data_view.ts": "c77f83ace61df5c3e1679009f7b442b5a032ac5e4c9f495a7766f0727013e9cf",
+      "src/date.ts": "33065b7450f0d275efd22f244c68d705c10fb5e2058bbad33d2a6c752385601a",
+      "src/derivation.test.ts": "f71da4de51a7078cf1e8a4b7d829c4563b7e42ed146c94eb6579650daacbd24e",
+      "src/do_error.test.ts": "e95cf602454eddf92836b8d982aceeec2f6eda9e6dd9569cc3ef9434a026b5d6",
+      "src/effects.ts": "458d68a8bfee1b5fc65d76e213bdc27cf6ff966a38860525a0679aa880a719a0",
+      "src/effects_runtime.test.ts": "5c868b24e2bcb6c121bf227cde9f60928fdc7d5df6fe859d0f135fc578ad70c9",
+      "src/either.ts": "c86526aad46e86391f13a635c5beb41b5925e5ca641e4e0066b5c54e7f88afc8",
+      "src/ergonomics.test.ts": "3ef7e1ee43f33fd581487a71be74244b0b70b0a203d90b74782bced5fdce1118",
+      "src/error.ts": "5e608bc2000611952d085790346cef57e066a62ba8bd462a0bd8844bf227a2f8",
+      "src/examples.ts": "1d423c3004d2f563a6935555593317a1456de2e3ac523a5ffaee278312e07fb3",
+      "src/except.ts": "f3bac2590502a9b3462e42e4b94d514f3c2cb40b466a7ebc5b5922e409b843d9",
+      "src/except_runtime.test.ts": "02d304d040852039eb4f95ecdddcbf60e1b61af8f8dd5cda42a30a7df45e9f41",
+      "src/fixed_parameter_types.test.ts": "a245a2fd5b285493d8bbb94fec5f498308c4b71ac868f0c35938c3f5978d68fa",
+      "src/fn.ts": "98d0b2b2cb4ce40cb511a61d8c1c4e6fa285393614ec3869dfb72ce9f1f739ce",
+      "src/form_data.ts": "996f9f87d812da7acb34e01b9f359a707f1700d4acf46c5bf700a2f516e2a379",
+      "src/handlers.ts": "d4732d135de760ffe24e5c7288742091362667620d912394d8d2c6864102e91a",
+      "src/identity.ts": "a22e78522f84a377e780dbe4fcfa28fdc5cf411ae29d0697ff090190b78418ff",
+      "src/inspect.ts": "79acef69a89cdc6e420de6cfa640628c86d2cac52a74c3df171a794253bf989c",
+      "src/instance_coverage.test.ts": "ee15e59abfbfb71c5214492039a2f14d9d12a70474c3675e086884ae45583389",
+      "src/internal.ts": "c3e2fb5779ebe35af17d45194006862ca6b2fab236844a0c6a41b5b4a673d1a6",
+      "src/iterable.ts": "afeb2d77423889c7aefb92e8ff5b4b7fb1de3e43cd6cf8929a1f44899616f6a2",
+      "src/iterable_pipeline.test.ts": "f7baf7fc21057cd08dfd728eaaa477c3405eb6d05281989510975fa732bce34e",
+      "src/laws.test.ts": "da8e3b33fac559b1a236c47df0b7e9f5cb50cdf1f1bab52dfe28b93f33e3f3bb",
+      "src/list.ts": "9f2eacf4cc354988da41a8e6db4df1125385c2e68f84b699b6f4dcfbb2209451",
+      "src/loop.ts": "90170f82f5f560e20e96337873ef90d1df78660c14e09051bdf76cc39a57eb6b",
+      "src/map.ts": "8d228c5958916e278a3cb3a1ac5feaaf54f929d8a45b533f5f2285a8f862bdde",
+      "src/match.test.ts": "6bb28da632fc79ea67b962249cf08c7a2e341f3442aa699b785625be209db5e8",
+      "src/maybe.ts": "0fc325ac73d9f32cd4c2858ba74710da23da4c259e7bd9aeda9a6c634eefb805",
+      "src/mod.ts": "26e860ba4b1713b9c8cb2295c765bb9c2edbe8cd56da7f40a232615b18d5db33",
+      "src/monad_error_ergonomics.test.ts": "13d09940eaea0f64bf46afa53fbc520d0c7ec166ecc15508bf37dfc098b5ce17",
+      "src/monad_rec.test.ts": "f3d1d70a2735c95a03d32bce9a13bf6e024bc1775844c564e59236add1f92662",
+      "src/parallel.test.ts": "f3f435ccc3c4cf785f769fa0a87bb4fc3ba3d64107c4aeb39e9a53e6fd15f1de",
+      "src/parallel.ts": "0539fc6d923fda10da20fe7294c93d651bb69b82a882c58ead66f2d5d79d15a0",
+      "src/predicate.ts": "a6a9b9b7b7f901cd8a493a38c2abf7d63dc9922def3f40486796899f5cce5e80",
+      "src/prelude.test.ts": "8ff945a54c7a6b97e8ae7efdc5b84fd1227723e3fa0ff9b5b3663454cccd8c47",
+      "src/prelude.ts": "4f549e98a1155b85bfd445c7d1de28f0295fe589890f5a1064d2a90cca9ce5d3",
+      "src/quickcheck.test.ts": "60a28951f7a3ce955a33a8c3a15a38f77e4c88b10f976403fb4790ffd3c33d01",
+      "src/quickcheck.ts": "7c4406a9f2fdceecf6aa6fbd7a61f096f489e66acf5d513a42c276cc337eb201",
+      "src/readable_stream.ts": "5b5e5136c61444aa92cb91cc7f7a56b1e4e02a283230227431bf3e816fe633cd",
+      "src/reader.ts": "d5be8cc136b39c4f8d742b2f7f74c3c35652d4f15ccddd3b1bb5fb0fc9207b65",
+      "src/reader_state_ergonomics.test.ts": "878c257eaab9b2e6b45f17dcfc85c00aa5ea79cb146dc1e4a9771121f9efd489",
+      "src/record.ts": "c5a3437ca8e0d9ddf3d67d59444a342e8cc04d388033633f8b9f39867ee0337b",
+      "src/regexp.ts": "2e9ca785d3c1bde310594766d8c09e2f90d500bc2be6f21d1793ac550a11b836",
+      "src/round2_collections.test.ts": "ce0219220c9d11be0390363ec5eaaef3526efa72c4205a5dd3b3027d9205088e",
+      "src/round3_collections.test.ts": "c2e17426f16e0ff66d5868c8ab1c9a658517d91e44e9367816cdf9c3a3da35fa",
+      "src/runtime_hills.test.ts": "29522419cdf662a13da248ea1c226b2c246b380a97837584ec468b16321f53ca",
+      "src/runtime_round2.test.ts": "074d482bc876d12bca6b0e5d2a4c747c2eca500e99520db6e989f723c1cf502d",
+      "src/runtime_round3.test.ts": "d915afb73c25754c03e924244286a91dd689e3e2c14e5296fd703643699571e8",
+      "src/set.ts": "4824545e0bc6531434d7ffbf39429559dbf08d1e8957ec8f05cd16590cffa80f",
+      "src/state.ts": "f8c37916e8bec7d42ecb5424aedce567b7552b1478d8168137e1a8c088022db2",
+      "src/stm.ts": "49d509051d5cd300e76e0ac33f38a28276fc2cae3745862a65f10e68cf146fdc",
+      "src/stm_runtime.test.ts": "35ba47c3095e9324db5a07196935a2caa470adb39a7c671500c788f3a2141990",
+      "src/tagged.ts": "46ee25a32931719442aeea576bbc323d01ec2bce123436bdd10aa8eac04e1474",
+      "src/task.ts": "0d9e6cbeef8c226fe6afcfbc9df8c7f59db408513f09e36f8b1b46ee86175c98",
+      "src/task_runtime.test.ts": "6bf5461cba045314eb11251f68e900577cd20111d745c7530432bb69c6cd033b",
+      "src/traversal.ts": "3273b08e5d214724ca42b096e6512e0a539c979534e1e5d30f699bc6c18721c6",
+      "src/tuple.ts": "b3d77bbddf8b038f667f04aa4d029a00150bdf746175814a7f8d36283a4128f3",
+      "src/typeclass.ts": "ef45735f3d2b68e5115027837b11780da9355c6313aaca99e01c102792fba974",
+      "src/typeclass_ergonomics.test.ts": "a687b5be1b3bec1c73d69dabf60cec75195d2effaa67a61d1e9ee74c2d7b5376",
+      "src/typeclass_examples.test.ts": "c879e5a796f9e8dfca38454c84818dabf8cab94c41e2137738f7415bfbf6d422",
+      "src/typeclass_union_types.test.ts": "8169edfb1c901c4fc107e35a42e0863f429a6fecc929759e32a46bb151b3b278",
+      "src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+      "src/typeclasses/alternative.ts": "77bc765c8760aa62b0439989b0df7d9dadd71158e2cd714df6f6052246cb4f99",
+      "src/typeclasses/applicative.ts": "373f0f1e0f56cbb982ba854e9d1f6aaf027b27c8d24e8fb6d35cf07fdb44b17d",
+      "src/typeclasses/arrow.ts": "9da0a7581089560ec3dbf302cdb782427cd831d837797cf33338608527fd6b39",
+      "src/typeclasses/bifunctor.ts": "57b6e463605b78539c19a950d6dabde64d55ff81eac3ee1b97b9e175a74dd2fd",
+      "src/typeclasses/category.ts": "923ef4d925847597cbbaa676690863d0faeb3477212dd5b8940ff72c4df0dc4b",
+      "src/typeclasses/comonad.ts": "f248da393afc1db00a7228e6bc61abd2d700c0515a9f9a92cce599c1155bf00c",
+      "src/typeclasses/contravariant.ts": "17cfc8aba50cc0367d2e28a8d3eef2da5028cb0e9ff2043e04b56c0d4307ec66",
+      "src/typeclasses/eq.ts": "4b431b927995bbefa8667f2c893c0fb8441e1945c8b5f6c91c24ad5165c6be45",
+      "src/typeclasses/foldable.ts": "f25f1bd52b66ae8f205a46e2bdb4d32883a412f837c2111e1bae4d8439fe161e",
+      "src/typeclasses/functor.ts": "453e3f2922a2a4ac0428e73264be99919109c32155c044f9a95e056cb142e6c1",
+      "src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+      "src/typeclasses/monad.ts": "2ec0f7a5d04317f68ccc740c7dfa40f4714707edcb005c1292f7ee3a97d4122c",
+      "src/typeclasses/monad_error.ts": "bda801ba2fd8dbe455bb12f52be68f6cdd889ad95261839befdc89cd423af51e",
+      "src/typeclasses/monad_rec.ts": "7535f6aa9bc2e9c9c937b5237e310f4e9c4b0eb2c9f266b4bb966ad0d9b5220d",
+      "src/typeclasses/monoid.ts": "293e816f75d686dfbf5c3269d26a5e44d78e4c5b008accaf8c98d28d1e30d3b4",
+      "src/typeclasses/ord.ts": "066e2d4535c020666a7c41b9fa4321c1b84aef7be6eacca868b48c7a5336f4cf",
+      "src/typeclasses/parse.ts": "d115677470a3a7bedb742597f14403152cf5ebd818a99b601ad1b7c0e0a0f622",
+      "src/typeclasses/profunctor.ts": "1b3df7a45a89a8aef1f15fc5a16beb0af5df389952e32762d392694953ad3683",
+      "src/typeclasses/semigroup.ts": "03cc1107e289fa39fc819aa41328b9cbe85303724b59196e16b8b86ca5bceaf0",
+      "src/typeclasses/show.ts": "d9c9c1bb8550db37e9076b492c86c40c0d3c895039d1d6a5fb3c3e274d46b228",
+      "src/typeclasses/traversable.ts": "6dd885ef6e5796a30f289da1833d1046fe898881af592e5448e02c6a55704a8f",
+      "src/typed_array.ts": "44d0313a0e4451950fa933466dc8beebaa50336c6a325f1222179b5b25ab5d6f",
+      "src/url_search_params.ts": "1f1ce649446a6251224783a63649e8d62c5a9883144c2e1df7d326cb6cd3490c",
+      "src/validation.ts": "296f18455db5cf385ed70f7183f1652c6a20dedc7a249c0c98f12eea8966336a",
+      "src/weak_map.ts": "ee92687fc5082034ec326137be8e5b8fb5a7f81c79e070c097643a6ecb5b4730",
+      "src/weak_set.ts": "9658565e1e757966718abcfa198c4ab2ec906388a695e1d724bd3e728aa742f6",
+      "src/workers_stm_round3.test.ts": "b4039cf52352195df91f61444e5169c56d42d41d9e9281990d5570a26a49771f",
+      "src/wrapped_names.test.ts": "67f9699c4dc6629daf5c6ac9d26f3d69a06cc51f4c9a178b3fbaccd625e63224",
+      "src/writer.ts": "999794781890b7a9568805afe5607c3aaac38812a6d365fb8a5cf784759cc69a",
+      "src/writer_runtime.test.ts": "ed2d22bdaf4cd76c5bf1b5e6e2684e55e2ed912a04a887dc4688c2b3c1f0a940",
+      "tools/allocation_profile.ts": "c84806f69ebc2d634ae274ece7cdc600b5249fbb7cc846663fb7e053496b431f",
+      "tools/browser_portability_smoke.ts": "9aa3f06276a8d952ca3866c3f375f763bc9b47778c15687abd39b7f60eba5940",
+      "tools/bundle_round2_checks.ts": "7d0db14d22001006ff54b2fa43c16dda349be666d4079b452a76909067cc3257",
+      "tools/capture_measurement.ts": "eb1f405d5a27d83e35c1bd53f6ce971262f0991509adf5e5e0e6f36f79d4bc9e",
+      "tools/check_budgets.ts": "4678b1064b6d49a55eb8d6277b3f982e22f35313a95627fbc9199bbff0662c76",
+      "tools/check_portability.ts": "93ba9b1e968ccc9242f1f52cb7e3edb7e7841722c1c7a0da24639ce0bc0f38a8",
+      "tools/check_toolchains.ts": "13f5052ebb0c396238f23f3223cad4e94b7899d53b87c7ede5a299c420496c20",
+      "tools/dev_watch.test.ts": "d8c03bbb8474c248c008737c5833d1b0c04f0eae5e2a40d336cf1ec65d82d056",
+      "tools/dev_watch.ts": "88b94714532813df9c6816dbe826b33e0c293a4d524a05c4c4cfff3b61a3ce19",
+      "tools/fixtures/terminal_program.ts": "5bc33847a69eed3517489b475ba57c7b55eab2d1bc9f3016dc4ac2871bb0350a",
+      "tools/fixtures/unsupported_do_try.ts": "7bf9415b2e4da41517f2c3732d8492eb7d5c06b34a006c0ca43271c0c4b8e9a2",
+      "tools/import_budget.ts": "5d536294105a0b0d6b95a050747e3b99be9977d442a6f7be718607be2320f6df",
+      "tools/mutation_checks.ts": "2abf5798b572a7f2ec6998d90eff9c0dc2bcf12f49c8204fdb2ba58e7ecc5154",
+      "tools/node_portability_smoke.ts": "d94d7c99d1d1e182b7ae14ac42c852fe27a1ee927dc19d83bc62856274938bc1",
+      "tools/oxc_ast_checks.ts": "142d8da70db45792d3fab3cc2ee74c0b1b11ab203fda4085b1bf6c81451199c0",
+      "tools/oxc_generator_checks.ts": "b15b802027bedc73fbc18f831a398454a951871f9238a5a267052d9776c270f4",
+      "tools/oxc_integration_checks.ts": "54c618f446a5a8bf222a6ad1f812479b6e336cfd554c4ad25b9d5fd79351ed46",
+      "tools/oxc_portability_checks.ts": "b8589158c831c68d72be350d504369513ef9f113f9348be08f9801707232ad17",
+      "tools/oxc_terminal_checks.ts": "62d98f6021fb089400fdf26fb2a0a9d4c37faa48d78b250937cda398b14bf8ab",
+      "tools/package_consumer.ts": "4783905fa39aa3f208ce689980bfa1ac1940feca1c96f6b97eb0ca86c5ecd57a",
+      "tools/package_entrypoint_smoke.ts": "43d493df80cb6dd47d8f83de840907dbed70e2bb767bc1672b98f2531bc16249",
+      "tools/paired_bench.ts": "e2102fb1e8e4150fd731ffeaa763bc6ce3ebf9aa77be73af907779ef43b510c9",
+      "tools/round2_qualification_checks.ts": "b90d87e88c32af9bc8c69a19f78839163b9910009feb1d870b7e9661889994c3",
+      "tools/round3_core_checks.ts": "3f728d1dc8fe9935aaa8dad891bc1aedf3d006996084f0bc39592a8680dcea35",
+      "tools/round3_core_measure.ts": "b1ba78c8685839cc1f72ab63a64de91f8d12a8d8bd607631bf7ac4825d2236b5",
+      "tools/round3_diagnostic_retention.ts": "85bd6a2f6e58a94a7205bd39538b1913eaafd5eb244ce3ad4a0ccd7fc7d2959d",
+      "tools/round3_transform_checks.ts": "21116ed310fa99f57971cf4bd582f1f5b8f1d8b121e3ce19d5d6706df0e476e3",
+      "tools/runtime_profile.ts": "acf631a802da0c2574f96bb2fe5f6c3d8954e71aeb33fb4a285c3f9c1f4d58f2",
+      "tools/sync_examples.ts": "127a2ba8d0828f3fd06e06bfd8f1c37d1c114a2dff6d166d371a7f40e2061e79",
+      "tools/transform_ast.ts": "9e404bcccdc0e3bc14ddd1413180ae0169a39844f54717cdc58988f902ec6d6b",
+      "tools/transform_bindings.ts": "eb213dabf105d113543c48f2a7bc4aa3826aa75c82009d56d8690c19d1d61fe0",
+      "tools/transform_context.ts": "578058e67212c7fcfbdf4fa89fb19f2125922bb4090d14898ecda15c61708ebb",
+      "tools/transform_do_program.ts": "29ac2e7fd1defd0dd85b000f4d20452c26e1a07216cff02d20feb27934032624",
+      "tools/transform_do_program_checks.ts": "320889173320ed1a0e0f77fcd93954917406cdf735a68cf97d60ea5e72ab2fb5",
+      "tools/transform_execute.ts": "d5f42a3bb343588dc3e58d0bc529996365f4c7bc91d6b3e878e399651170a369",
+      "tools/transform_generator.ts": "825251e436edfc8ccf358c1b2e879ee60458236b68a6f86cb10402c44aa9c1a6",
+      "tools/transform_imports.ts": "7b65a8fdaa60202ea6b16a373d984dbf81fc3881c6640cb19a86176fc65568d5",
+      "tools/transform_iterable_maps.ts": "bb829ee6b6b21420a7be59cb20a4db8a1e6555da518aeba0b98c3e23ef4c0a7d",
+      "tools/transform_iterable_maps_checks.ts": "264827d47406d2a2e9533469a0218e21074cd981cdfd8446bbeb545bdb36115d",
+      "tools/transform_optimization_checks.ts": "95664e93a7494fca71b6497f75a3dd034057ae3959e5586364230dc098e67d1b",
+      "tools/transform_plugin.ts": "ab6acca3173980b336c8a41613ee67d11d6673d6fb062a658ebc3248dc44f581",
+      "tools/transform_plugin_checks.ts": "945499e1cc940cba23ee989c7f2350efec8da6a3f3b7aa16e0a35c5a789081bc",
+      "tools/transform_round2_application_probe.ts": "8902a68820a1dab834a506a2213d200fb06745432fd3a1ec57b77918d68aa6ac",
+      "tools/transform_round2_application_sites.ts": "b619e1d88de34b6b1b15d41ecaeb6ec6e8a8fcfc67709aac2da1d90066cfd929",
+      "tools/transform_round2_checks.ts": "ff192da54d37548026f9db5536a7ccaa4d6aba687aff4f0bca81ca80f071a8cb",
+      "tools/transform_terminals.ts": "5a348262cc71d4a68e8ad90842ce48e9d98295a9f1ab2852c4bbb0c16af746bb",
+      "tools/type_budget.ts": "691aae9b9225b4110587982f520d4fcafb583cfd5a274c10bd3ec31d93357979",
+      "tools/type_variants.ts": "33ed1f374aefb876e91984182277471518d651968c7f46d933cc06672822d8ba",
+      "tools/workerd_portability_smoke.ts": "bfe706cafc67838ca5c8022afd91beffa0200f4b4fa0ab990cc3b17a214fb39b"
+    }
+  },
+  "changed_inputs": [],
+  "preflight": {
+    "no target / 5000 unique functions": {
+      "source_bytes": 322779,
+      "source_sha256": "ea587efe74143f044b0df3861f1222349a99dc9668bc155d13410a0ef1f45f5f",
+      "source_calls": {
+        ".sqrt": 5000
+      },
+      "baseline": {
+        "transformed": 0,
+        "diagnostics": [],
+        "output_bytes": 322779,
+        "map_bytes": 4,
+        "output_calls": {
+          ".sqrt": 5000
+        }
+      },
+      "candidate": {
+        "transformed": 0,
+        "diagnostics": [],
+        "output_bytes": 322779,
+        "map_bytes": 4,
+        "output_calls": {
+          ".sqrt": 5000
+        }
+      },
+      "execution": [],
+      "decisions": {
+        "baseline": [],
+        "candidate": []
+      }
+    },
+    "unused Do / 5000 unique functions": {
+      "source_bytes": 322823,
+      "source_sha256": "d95bac29f06103c107840d693f65a6a90444015fa13aac2c50623543f9b4ae25",
+      "source_calls": {
+        ".sqrt": 5000
+      },
+      "baseline": {
+        "transformed": 0,
+        "diagnostics": [],
+        "output_bytes": 322823,
+        "map_bytes": 4,
+        "output_calls": {
+          ".sqrt": 5000
+        }
+      },
+      "candidate": {
+        "transformed": 0,
+        "diagnostics": [],
+        "output_bytes": 322823,
+        "map_bytes": 4,
+        "output_calls": {
+          ".sqrt": 5000
+        }
+      },
+      "execution": [],
+      "decisions": {
+        "baseline": [],
+        "candidate": []
+      }
+    },
+    "100 yields": {
+      "source_bytes": 3036,
+      "source_sha256": "4c0290f447013ff91e53d49d98110dc13913b8a95c00a2171f197c9f127f93be",
+      "source_calls": {
+        "Do": 1,
+        "Just": 100,
+        ".value": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 43507,
+        "map_bytes": 7232,
+        "output_calls": {
+          ".bind": 99,
+          "Just": 100,
+          ".map": 1,
+          ".value": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 23709,
+        "map_bytes": 7227,
+        "output_calls": {
+          ".bind": 99,
+          "Just": 100,
+          ".map": 1,
+          ".value": 1
+        }
+      },
+      "expected": 99,
+      "execution": [
+        99,
+        99,
+        99
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "yield100.ts",
+            "line": 1,
+            "column": 95,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "yield100.ts",
+            "line": 1,
+            "column": 95,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    },
+    "1000 independent yields / Maybe": {
+      "source_bytes": 30951,
+      "source_sha256": "adc759df9cff3df46c7119f106200af336efdd441ad058b6cbbe4db1e37527db",
+      "source_calls": {
+        "Do": 1,
+        "Just": 1000,
+        ".value": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 104927,
+        "map_bytes": 71276,
+        "output_calls": {
+          "Just": 1000,
+          ".tail_rec_m": 1,
+          ".map": 1000,
+          ".rec": 999,
+          ".done": 1,
+          ".value": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 103924,
+        "map_bytes": 72279,
+        "output_calls": {
+          "Just": 1000,
+          ".tail_rec_m": 1,
+          ".map": 1000,
+          ".rec": 999,
+          ".done": 1,
+          ".value": 1
+        }
+      },
+      "expected": 999,
+      "execution": [
+        999,
+        999,
+        999
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "yield1000.ts",
+            "line": 1,
+            "column": 125,
+            "optimization": "flatten",
+            "outcome": "transformed",
+            "message": "Flattened independent yields into a MonadRec instruction switch; generator-local captures remain isolated."
+          },
+          {
+            "file_name": "yield1000.ts",
+            "line": 1,
+            "column": 102,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "yield1000.ts",
+            "line": 1,
+            "column": 125,
+            "optimization": "flatten",
+            "outcome": "transformed",
+            "message": "Flattened independent yields into a MonadRec instruction switch; generator-local captures remain isolated."
+          },
+          {
+            "file_name": "yield1000.ts",
+            "line": 1,
+            "column": 102,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    },
+    "named terminal": {
+      "source_bytes": 272,
+      "source_sha256": "aa7d890adad6897fa3ad1d80ffc1dd77ef7d465aaf0a12b5f509d68502d3f3e8",
+      "source_calls": {
+        "Program": 1,
+        "ask": 1,
+        "run": 2,
+        "run_reader": 2
+      },
+      "baseline": {
+        "transformed": 2,
+        "diagnostics": [],
+        "output_bytes": 500,
+        "map_bytes": 747,
+        "output_calls": {
+          "reader_input_1": 1,
+          "reader_input_2": 1
+        }
+      },
+      "candidate": {
+        "transformed": 2,
+        "diagnostics": [],
+        "output_bytes": 493,
+        "map_bytes": 747,
+        "output_calls": {
+          "reader_input_1": 1,
+          "reader_input_2": 1
+        }
+      },
+      "expected": 5,
+      "execution": [
+        5,
+        5,
+        5
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "terminal.ts",
+            "line": 1,
+            "column": 196,
+            "optimization": "terminal",
+            "outcome": "transformed",
+            "message": "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed."
+          },
+          {
+            "file_name": "terminal.ts",
+            "line": 1,
+            "column": 229,
+            "optimization": "terminal",
+            "outcome": "transformed",
+            "message": "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "terminal.ts",
+            "line": 1,
+            "column": 196,
+            "optimization": "terminal",
+            "outcome": "transformed",
+            "message": "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed."
+          },
+          {
+            "file_name": "terminal.ts",
+            "line": 1,
+            "column": 229,
+            "optimization": "terminal",
+            "outcome": "transformed",
+            "message": "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed."
+          }
+        ]
+      }
+    },
+    "named iterable": {
+      "source_bytes": 297,
+      "source_sha256": "314974cf02c8e561153b7124fed1105262d2c7e33964779f015ee08cb31b5144",
+      "source_calls": {
+        "from_array": 1,
+        ".map": 3,
+        ".toString": 1,
+        ".reduce": 1,
+        ".value": 1,
+        "Number": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 523,
+        "map_bytes": 951,
+        "output_calls": {
+          "from_array": 1,
+          ".map": 1,
+          "compose_iterable_maps_1": 2,
+          ".toString": 1,
+          ".reduce": 1,
+          ".value": 1,
+          "Number": 1,
+          "second": 1,
+          "first": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 538,
+        "map_bytes": 966,
+        "output_calls": {
+          "from_array": 1,
+          ".map": 1,
+          "compose_iterable_maps_1": 2,
+          ".toString": 1,
+          ".reduce": 1,
+          ".value": 1,
+          "Number": 1,
+          "second": 1,
+          "first": 1
+        }
+      },
+      "expected": 18,
+      "execution": [
+        18,
+        18,
+        18
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "iterable.ts",
+            "line": 1,
+            "column": 175,
+            "optimization": "iterable-map",
+            "outcome": "transformed",
+            "message": "Composed adjacent lazy maps; callback evaluation and item order are retained."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "iterable.ts",
+            "line": 1,
+            "column": 175,
+            "optimization": "iterable-map",
+            "outcome": "transformed",
+            "message": "Composed adjacent lazy maps; callback evaluation and item order are retained."
+          }
+        ]
+      }
+    },
+    "counted loop / 1000 iterations": {
+      "source_bytes": 222,
+      "source_sha256": "254ed64d6e761591f632c4b82c1cbdd643bc01fb069fd6d6af322b9287480092",
+      "source_calls": {
+        "Do": 1,
+        "Just": 1,
+        ".value": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 982,
+        "map_bytes": 659,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".rec": 1,
+          ".pure": 2,
+          ".done": 1,
+          "loop_step_1": 2,
+          ".bind": 1,
+          ".tail_rec_m": 1,
+          ".value": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 909,
+        "map_bytes": 641,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".rec": 1,
+          ".pure": 2,
+          ".done": 1,
+          "loop_step_1": 2,
+          ".bind": 1,
+          ".tail_rec_m": 1,
+          ".value": 1
+        }
+      },
+      "expected": 42,
+      "execution": [
+        42,
+        42,
+        42
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "loop.ts",
+            "line": 1,
+            "column": 162,
+            "optimization": "loop",
+            "outcome": "transformed",
+            "message": "Lowered loop control through MonadRec with typed next-state and break instructions."
+          },
+          {
+            "file_name": "loop.ts",
+            "line": 1,
+            "column": 102,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "loop.ts",
+            "line": 1,
+            "column": 162,
+            "optimization": "loop",
+            "outcome": "transformed",
+            "message": "Lowered loop control through MonadRec with typed next-state and break instructions."
+          },
+          {
+            "file_name": "loop.ts",
+            "line": 1,
+            "column": 102,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    },
+    "TSX": {
+      "source_bytes": 216,
+      "source_sha256": "79e461596e0e81f7ce8d436d048f6b0390c9497ef96dee752449fa747c706dff",
+      "source_calls": {
+        "Do": 1,
+        "Just": 1,
+        ".value": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 196,
+        "map_bytes": 620,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".value": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 198,
+        "map_bytes": 617,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".value": 1
+        }
+      },
+      "execution": [],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "view.tsx",
+            "line": 1,
+            "column": 95,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "view.tsx",
+            "line": 1,
+            "column": 95,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    },
+    "Unicode comments": {
+      "source_bytes": 233,
+      "source_sha256": "30f7a2eb9f3ffbb46ad65087559753f606063549ce7f32a6c5b06b8f518d1370",
+      "source_calls": {
+        "Do": 1,
+        "Just": 1,
+        ".value": 1
+      },
+      "baseline": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 213,
+        "map_bytes": 588,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".value": 1
+        }
+      },
+      "candidate": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 215,
+        "map_bytes": 573,
+        "output_calls": {
+          ".map": 1,
+          "Just": 1,
+          ".value": 1
+        }
+      },
+      "expected": 47,
+      "execution": [
+        47,
+        47,
+        47
+      ],
+      "decisions": {
+        "baseline": [
+          {
+            "file_name": "unicode.ts",
+            "line": 2,
+            "column": 98,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ],
+        "candidate": [
+          {
+            "file_name": "unicode.ts",
+            "line": 2,
+            "column": 98,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    },
+    "untimed diagnostic controls": {
+      "unsupported_sha256": "f2888055a9800b018f89ddbe2759811b45dc329f57da31f982cfc55e20652a1c",
+      "unsupported": [
+        [
+          {
+            "file_name": "unsupported.ts",
+            "line": 1,
+            "column": 113,
+            "message": "Skipped do: try statements containing yield* or return are not supported by the source transformer."
+          }
+        ],
+        [
+          {
+            "file_name": "unsupported.ts",
+            "line": 1,
+            "column": 113,
+            "message": "Skipped do: try statements containing yield* or return are not supported by the source transformer."
+          }
+        ]
+      ],
+      "malformed_sha256": "d7724fb93e3d5272d049101f827bc5af352b46176bfdc4745d9ede2f28d9ef34",
+      "malformed": [
+        {
+          "file_name": "malformed.ts",
+          "line": 1,
+          "column": 83,
+          "message": "Parse error: Unexpected token"
+        }
+      ]
+    },
+    "candidate controls": {
+      "maps_optout": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 23709,
+        "map_bytes": 4,
+        "output_calls": {
+          ".bind": 99,
+          "Just": 100,
+          ".map": 1,
+          ".value": 1
+        }
+      },
+      "cache_hit": {
+        "transformed": 1,
+        "diagnostics": [],
+        "output_bytes": 23709,
+        "map_bytes": 7227,
+        "output_calls": {
+          ".bind": 99,
+          "Just": 100,
+          ".map": 1,
+          ".value": 1
+        }
+      }
+    }
+  },
+  "results": {
+    "no target / 5000 unique functions": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 1000,
+      "sample_blocks": [
+        [
+          0.35474186400000324,
+          0.412789807000001,
+          0.422560126999997,
+          0.35115353299999696
+        ],
+        [
+          0.40531538100000036,
+          0.4200408299999981,
+          0.4249557389999973,
+          0.3379508399999977
+        ],
+        [
+          0.3467649830000009,
+          0.4091361939999988,
+          0.4136094750000047,
+          0.3331248180000039
+        ],
+        [
+          0.33048920000000365,
+          0.417708074999995,
+          0.40444770300000527,
+          0.34360695000000124
+        ],
+        [
+          0.34675521400000436,
+          0.4113345919999992,
+          0.44206598900000244,
+          0.33682346800000235
+        ],
+        [
+          0.35313547000000106,
+          0.3939548300000024,
+          0.4131583780000001,
+          0.32585430999999515
+        ],
+        [
+          0.3287694610000035,
+          0.39724766900000397,
+          0.4031878490000017,
+          0.32812871299999824
+        ],
+        [
+          0.3238439700000017,
+          0.420371146999998,
+          0.4177874259999953,
+          0.33848698900000457
+        ]
+      ],
+      "a_median_ms": 0.33821891450000113,
+      "b_median_ms": 0.41338392650000244,
+      "blocks": 8,
+      "speedup": 0.8276054985123589,
+      "confidence_95": [
+        0.8104767596235081,
+        0.8462726427422497
+      ]
+    },
+    "unused Do / 5000 unique functions": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 2,
+      "sample_blocks": [
+        [
+          71.05588200000057,
+          88.67384599999787,
+          85.57217650000166,
+          64.10536750000028
+        ],
+        [
+          69.69992949999869,
+          85.50403150000056,
+          82.50955049999902,
+          64.88943199999994
+        ],
+        [
+          66.12359800000195,
+          85.98762100000022,
+          89.25204999999914,
+          65.52126800000042
+        ],
+        [
+          64.41201000000001,
+          95.47351949999938,
+          87.95306600000185,
+          63.76412849999906
+        ],
+        [
+          60.586027999997896,
+          80.84619899999961,
+          79.71066599999904,
+          61.34511600000042
+        ],
+        [
+          60.777602499998466,
+          81.6215630000006,
+          80.46386250000069,
+          63.22485349999988
+        ],
+        [
+          62.04902399999992,
+          88.39649400000053,
+          81.9856194999993,
+          64.03313949999938
+        ],
+        [
+          65.21347850000166,
+          91.24171650000062,
+          88.45735500000228,
+          65.12213899999915
+        ]
+      ],
+      "a_median_ms": 64.25868875000015,
+      "b_median_ms": 85.77989875000094,
+      "blocks": 8,
+      "speedup": 0.7514911770384194,
+      "confidence_95": [
+        0.7310207415812785,
+        0.7713359679659094
+      ]
+    },
+    "100 yields": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 5,
+      "sample_blocks": [
+        [
+          7.485500799999864,
+          8.003525400000218,
+          5.743075200000021,
+          7.1620380000007575
+        ],
+        [
+          6.381903199999942,
+          5.858172000000195,
+          5.681091400000151,
+          5.7896378000004916
+        ],
+        [
+          5.550306800000544,
+          6.544864999999118,
+          5.669166599999881,
+          4.813830999999482
+        ],
+        [
+          4.759934800000337,
+          6.0556632000007085,
+          5.608298999999533,
+          4.961980600000243
+        ],
+        [
+          4.515123399998993,
+          5.556013600000005,
+          5.143559600001026,
+          4.368781200000376
+        ],
+        [
+          4.300401400000555,
+          5.371919800000614,
+          5.444187199999578,
+          4.15893619999988
+        ],
+        [
+          4.083721399999922,
+          5.266302999999607,
+          5.111446799999976,
+          4.035570000000007
+        ],
+        [
+          4.020815999999468,
+          5.207993999999599,
+          4.9765884000007645,
+          3.990442000000621
+        ]
+      ],
+      "a_median_ms": 4.637529099999665,
+      "b_median_ms": 5.582156299999769,
+      "blocks": 8,
+      "speedup": 0.8664609444891683,
+      "confidence_95": [
+        0.8033998982587696,
+        0.9477472044571443
+      ]
+    },
+    "1000 independent yields / Maybe": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 2,
+      "sample_blocks": [
+        [
+          37.28859949999969,
+          56.67387249999956,
+          75.82555700000012,
+          71.92217850000088
+        ],
+        [
+          48.55497700000342,
+          65.23238400000264,
+          61.85098700000162,
+          42.22403000000122
+        ],
+        [
+          42.32285799999954,
+          60.136819500003185,
+          53.72197249999954,
+          40.1324495000008
+        ],
+        [
+          37.495162499999424,
+          54.92915200000061,
+          57.004500999999436,
+          44.786715499998536
+        ],
+        [
+          37.07958750000034,
+          59.949758500002645,
+          54.477718999998615,
+          48.30886450000253
+        ],
+        [
+          46.00307200000316,
+          79.39163449999978,
+          61.28701999999976,
+          40.156991500000004
+        ],
+        [
+          35.969372499999736,
+          56.37880700000096,
+          56.16023150000183,
+          34.64746499999819
+        ],
+        [
+          34.08384400000068,
+          56.06437449999794,
+          52.314728000001196,
+          34.54878749999989
+        ]
+      ],
+      "a_median_ms": 40.1447205000004,
+      "b_median_ms": 56.8391867499995,
+      "blocks": 8,
+      "speedup": 0.6988919973736796,
+      "confidence_95": [
+        0.6545778313927268,
+        0.7475555484570184
+      ]
+    },
+    "named terminal": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 20,
+      "sample_blocks": [
+        [
+          0.45617850000016913,
+          0.4147903500001121,
+          0.3699801499999012,
+          0.5827030000000377
+        ],
+        [
+          0.40201359999991837,
+          0.38905794999991483,
+          0.3629217500001687,
+          0.4233761499999673
+        ],
+        [
+          0.4040899999999965,
+          0.37034235000028276,
+          0.6177190499998687,
+          0.41019860000014885
+        ],
+        [
+          0.39809710000008636,
+          0.34596554999989165,
+          0.3342427499999758,
+          0.39585834999998043
+        ],
+        [
+          0.3822274499998457,
+          0.4782559499999479,
+          0.3238114499999938,
+          0.39899284999992235
+        ],
+        [
+          0.3738399999998364,
+          0.33406390000018293,
+          0.3236200499999541,
+          0.3676883000000089
+        ],
+        [
+          0.5372596000001068,
+          0.34347329999982323,
+          0.3302156500001729,
+          0.3968246999997064
+        ],
+        [
+          0.35957589999998163,
+          0.33186175000009827,
+          0.319694150000214,
+          0.5200969999998051
+        ]
+      ],
+      "a_median_ms": 0.40050322499992036,
+      "b_median_ms": 0.3447194249998574,
+      "blocks": 8,
+      "speedup": 1.1410358272773,
+      "confidence_95": [
+        1.009301368811705,
+        1.272571805398207
+      ]
+    },
+    "named iterable": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 20,
+      "sample_blocks": [
+        [
+          0.3892492499999207,
+          0.4483095999999932,
+          0.42084985000001324,
+          0.4421769000000495
+        ],
+        [
+          0.5744091999997181,
+          0.44116495000016587,
+          0.40706109999991896,
+          0.37529629999989994
+        ],
+        [
+          0.362271999999939,
+          0.4279418499998428,
+          0.6029258999999001,
+          0.3937648499999341
+        ],
+        [
+          0.38516099999978903,
+          0.4421618499996839,
+          0.412757000000056,
+          0.5527830999999424
+        ],
+        [
+          0.38044559999980265,
+          0.4366999499998201,
+          0.42451330000003507,
+          0.3907747000001109
+        ],
+        [
+          0.3535469000002195,
+          0.8212047500001063,
+          0.8783799000000727,
+          0.7003936500001146
+        ],
+        [
+          0.6381082500000048,
+          0.4463102500001696,
+          0.4328281499998411,
+          0.5967180999999983
+        ],
+        [
+          0.5986061999999948,
+          0.538575100000162,
+          0.430080850000013,
+          0.5789784000000509
+        ]
+      ],
+      "a_median_ms": 0.4179708749999918,
+      "b_median_ms": 0.438932449999993,
+      "blocks": 8,
+      "speedup": 0.9750754882518652,
+      "confidence_95": [
+        0.8124142344404575,
+        1.1561902422652068
+      ]
+    },
+    "counted loop / 1000 iterations": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 20,
+      "sample_blocks": [
+        [
+          0.5467511499999091,
+          0.6046321500001796,
+          0.48303404999969646,
+          0.5443931499998144
+        ],
+        [
+          0.5076363000000128,
+          0.4836813000001712,
+          0.5771809999998367,
+          0.5989759000000049
+        ],
+        [
+          0.5598860999998578,
+          0.4810562499998923,
+          0.4770376499996928,
+          0.5023372499999823
+        ],
+        [
+          0.5977610499998264,
+          0.4798154000000068,
+          0.47566655000009633,
+          0.49055834999999204
+        ],
+        [
+          0.45306909999999334,
+          0.469151150000107,
+          0.5750735000001441,
+          0.46112589999975173
+        ],
+        [
+          0.44324244999988877,
+          0.5861831000001985,
+          0.46260775000009746,
+          0.6631323500001599
+        ],
+        [
+          0.4559931499999948,
+          0.4912286499999027,
+          0.4916268499997386,
+          0.48103625000003375
+        ],
+        [
+          0.4462962000001426,
+          0.6017376499999955,
+          0.47867325000006533,
+          0.4562992499999382
+        ]
+      ],
+      "a_median_ms": 0.49644779999998717,
+      "b_median_ms": 0.4833576749999338,
+      "blocks": 8,
+      "speedup": 0.9964633558437964,
+      "confidence_95": [
+        0.9242881888361177,
+        1.0665305672225573
+      ]
+    },
+    "TSX": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 20,
+      "sample_blocks": [
+        [
+          0.282920699999886,
+          0.3292893499998172,
+          0.36093450000007576,
+          0.3061012499998469
+        ],
+        [
+          0.29973065000012866,
+          0.476761649999753,
+          0.3335729500002344,
+          0.29293625000027534
+        ],
+        [
+          0.26720984999992653,
+          0.3425279999999475,
+          0.3404074500002025,
+          0.27746084999998855
+        ],
+        [
+          0.2597932500000752,
+          0.45327399999987394,
+          0.346560700000191,
+          0.3260191000001214
+        ],
+        [
+          0.2766532499997993,
+          0.3832639500000369,
+          0.33485990000008314,
+          0.2890247999999701
+        ],
+        [
+          0.28670845000015105,
+          0.45403740000001563,
+          0.32096849999979893,
+          0.27913305000001853
+        ],
+        [
+          0.25752844999988156,
+          0.3622705499998119,
+          0.31818774999992455,
+          0.26802495000010823
+        ],
+        [
+          0.25510585000010905,
+          0.4201745500002289,
+          0.3229954000002181,
+          0.2787698000000091
+        ]
+      ],
+      "a_median_ms": 0.2789514250000138,
+      "b_median_ms": 0.3445443500000692,
+      "blocks": 8,
+      "speedup": 0.7642156718225069,
+      "confidence_95": [
+        0.7367443793974209,
+        0.7960807087962922
+      ]
+    },
+    "Unicode comments": {
+      "a": "TypeScript Compiler API baseline / default maps",
+      "b": "Oxc candidate / default maps",
+      "iterations": 20,
+      "sample_blocks": [
+        [
+          0.24696640000001935,
+          0.25531225000013363,
+          0.24382890000015323,
+          0.24001015000030748
+        ],
+        [
+          0.23059175000016693,
+          0.25019404999984546,
+          0.23817214999980935,
+          0.23812360000010813
+        ],
+        [
+          0.2226130999999441,
+          0.2481155500001478,
+          0.35056975000006785,
+          0.27652854999978443
+        ],
+        [
+          0.23847275000007356,
+          0.26299885000007633,
+          0.24416199999977833,
+          0.23934490000028746
+        ],
+        [
+          0.22486884999998438,
+          0.2540999500000908,
+          0.2508407499997702,
+          0.24091684999984864
+        ],
+        [
+          0.3343930000002729,
+          0.25318724999997355,
+          0.24349924999987707,
+          0.23366210000021964
+        ],
+        [
+          0.22285954999970273,
+          0.24954579999975976,
+          0.2500978000000032,
+          0.2358417499999632
+        ],
+        [
+          0.2293594499999017,
+          0.256183400000009,
+          0.36155519999992974,
+          0.24327134999984992
+        ]
+      ],
+      "a_median_ms": 0.23829817500009084,
+      "b_median_ms": 0.2505173999998078,
+      "blocks": 8,
+      "speedup": 0.9269447352471589,
+      "confidence_95": [
+        0.8600216134085544,
+        0.9998097479249767
+      ]
+    },
+    "candidate only / maps opt-out / 100 yields": {
+      "a": "Oxc candidate / default maps",
+      "b": "Oxc candidate / source_map:false",
+      "iterations": 5,
+      "sample_blocks": [
+        [
+          5.5359716000006305,
+          4.774203799999668,
+          5.022737999999663,
+          4.73653420000046
+        ],
+        [
+          4.170087600000261,
+          4.748264399998879,
+          4.747230599999602,
+          4.3548827999999045
+        ],
+        [
+          4.6568805999995675,
+          4.468152199999895,
+          4.75530379999982,
+          4.214211400000204
+        ],
+        [
+          4.63805299999949,
+          4.389931399999478,
+          4.087342199998966,
+          4.65189939999982
+        ],
+        [
+          4.650907400000142,
+          4.1167562000002365,
+          4.519505599999684,
+          4.88179000000091
+        ],
+        [
+          4.197944599999755,
+          4.815796799999953,
+          4.932338400000299,
+          5.9563143999999735
+        ],
+        [
+          4.553141599999799,
+          7.385548800000106,
+          6.674122799999895,
+          5.779620599999907
+        ],
+        [
+          5.498454200000561,
+          5.2281061999994565,
+          4.778403799999796,
+          4.949132200000167
+        ]
+      ],
+      "a_median_ms": 4.654389999999694,
+      "b_median_ms": 4.764753799999744,
+      "blocks": 8,
+      "speedup": 0.9834994936611985,
+      "confidence_95": [
+        0.8894660448327563,
+        1.060908641119625
+      ]
+    },
+    "candidate only / cache hit / 100 yields": {
+      "a": "Oxc candidate / uncached default maps",
+      "b": "Oxc candidate / warm cache hit",
+      "iterations": 10,
+      "sample_blocks": [
+        [
+          4.680048800000077,
+          0.00397949999969569,
+          0.001806399999622954,
+          4.573580400000355
+        ],
+        [
+          4.727388799999607,
+          0.0035045999997237232,
+          0.0017021999999997206,
+          4.551972299999761
+        ],
+        [
+          4.651459400000022,
+          0.0033503999999084043,
+          0.001749299999937648,
+          4.382962200000475
+        ],
+        [
+          4.489066800000001,
+          0.0031209999993734527,
+          0.0016451000003144145,
+          4.637324600000284
+        ],
+        [
+          4.527196299999924,
+          0.0048842999996850265,
+          0.002364500000112457,
+          4.770562899999641
+        ],
+        [
+          4.667741399999795,
+          0.00353770000001532,
+          0.001798399999825051,
+          4.687792500000069
+        ],
+        [
+          4.860631999999896,
+          0.004948400000284891,
+          0.002369600000383798,
+          4.658192300000519
+        ],
+        [
+          4.790120999999635,
+          0.0036188999998557846,
+          0.0016781999998784158,
+          4.9307812999999445
+        ]
+      ],
+      "a_median_ms": 4.662966850000157,
+      "b_median_ms": 0.0027452999998786253,
+      "blocks": 8,
+      "speedup": 1638.322949911191,
+      "confidence_95": [
+        1475.6179381741522,
+        1797.4947929918933
+      ],
+      "cache_stats": {
+        "hits": 191,
+        "misses": 1,
+        "size": 1,
+        "capacity": 32,
+        "bytes": 68188,
+        "max_bytes": 4194304
+      }
+    }
+  },
+  "cold_import": {
+    "observations": [
+      {
+        "variant": "A",
+        "import_ms": 247.865738,
+        "wall_ms": 441.7093610000011,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 81.049971,
+        "wall_ms": 274.2460250000004,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 56.363872999999984,
+        "wall_ms": 239.461844999998,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 261.304699,
+        "wall_ms": 457.44898499999545,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 278.07376,
+        "wall_ms": 468.6226820000011,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 57.085205,
+        "wall_ms": 241.348530999996,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 55.442251999999996,
+        "wall_ms": 237.22556399999303,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 268.154878,
+        "wall_ms": 459.52951100000064,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 267.54009999999994,
+        "wall_ms": 457.64536899999075,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 62.875359,
+        "wall_ms": 244.442240999997,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 73.63998899999999,
+        "wall_ms": 257.1840479999955,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 240.549603,
+        "wall_ms": 431.3464660000027,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 241.163489,
+        "wall_ms": 428.6139919999987,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 73.369845,
+        "wall_ms": 257.7504740000004,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "B",
+        "import_ms": 77.12798699999999,
+        "wall_ms": 263.02015900000697,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      },
+      {
+        "variant": "A",
+        "import_ms": 295.32048799999995,
+        "wall_ms": 486.03035600000294,
+        "stderr": "╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n╭ Warning\n│\n│  Ignored build scripts for packages:\n│  npm:workerd@1.20260730.1\n│\n│  Lifecycle scripts are only supported when using a `node_modules` directory.\n│  Enable it in your deno config file:\n│  \"nodeModulesDir\": \"auto\"\n╰─\n"
+      }
+    ],
+    "dynamic_import": {
+      "sample_blocks": [
+        [
+          247.865738,
+          81.049971,
+          56.363872999999984,
+          261.304699
+        ],
+        [
+          278.07376,
+          57.085205,
+          55.442251999999996,
+          268.154878
+        ],
+        [
+          267.54009999999994,
+          62.875359,
+          73.63998899999999,
+          240.549603
+        ],
+        [
+          241.163489,
+          73.369845,
+          77.12798699999999,
+          295.32048799999995
+        ]
+      ],
+      "a_median_ms": 264.4223995,
+      "b_median_ms": 68.122602,
+      "blocks": 4,
+      "speedup": 3.930370752977811,
+      "confidence_95": [
+        3.603376252961721,
+        4.537275435642741
+      ]
+    },
+    "whole_process": {
+      "sample_blocks": [
+        [
+          441.7093610000011,
+          274.2460250000004,
+          239.461844999998,
+          457.44898499999545
+        ],
+        [
+          468.6226820000011,
+          241.348530999996,
+          237.22556399999303,
+          459.52951100000064
+        ],
+        [
+          457.64536899999075,
+          244.442240999997,
+          257.1840479999955,
+          431.3464660000027
+        ],
+        [
+          428.6139919999987,
+          257.7504740000004,
+          263.02015900000697,
+          486.03035600000294
+        ]
+      ],
+      "a_median_ms": 457.5471769999931,
+      "b_median_ms": 250.81314449999627,
+      "blocks": 4,
+      "speedup": 1.8029276758818282,
+      "confidence_95": [
+        1.7533267748908121,
+        1.8919251419051368
+      ]
+    }
+  },
+  "method": {
+    "full_transform_blocks": 8,
+    "cold_import_blocks": 4,
+    "order": "ABBA",
+    "warmup_batches": 3,
+    "confidence": "95% deterministic percentile bootstrap resampling whole ABBA blocks",
+    "per_observation": "serial arithmetic mean milliseconds per transform; raw blocks retained",
+    "cold_import": "fresh Deno eval processes; one untimed import per variant; cached-only and frozen lockfiles; filesystem/package/module caches warm; dynamic-import timing and process wall time separate",
+    "execution_control": "same candidate runtime and Oxc TypeScript erasure for original/baseline-generated/candidate-generated numeric defaults; counted loop bound 1000"
+  },
+  "limitations": "One host, serial in-process warmed transforms: shared JIT, GC, thermal state and system noise remain. Whole-block bootstrap describes these observations; it does not remove systematic bias. Fresh import is process-cold with warm filesystem caches. Workloads cover specific source shapes, not a universal speedup. TypeScript erasure executes fixtures without type checking."
+}

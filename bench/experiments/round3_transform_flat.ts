@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { create_binding_analysis } from "../../tools/transform_bindings.ts";
+import { create_legacy_binding_analysis } from "./legacy_bindings.ts";
 export type FlatProbe = {
   readonly code: string;
   readonly yields: number;
@@ -19,7 +19,7 @@ export function flatten_numeric_do(
     ts.ScriptTarget.Latest,
     true,
   );
-  const bindings = create_binding_analysis(file);
+  const bindings = create_legacy_binding_analysis(file);
   const imports = new Map<string, { name: string; module: string }>();
   for (const statement of file.statements) {
     if (

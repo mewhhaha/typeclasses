@@ -7,8 +7,8 @@ async work, or a type you defined this morning.
 Runs on Deno, Node, Bun, and browsers. The library core has no dependencies —
 every import inside `src/` is relative, and a portability check enforces it.
 Published on JSR as `@mewhhaha/typeclasses`. (The optional build-time
-transformer under `/transform` is the one exception: it uses the TypeScript
-compiler, and never ships to your runtime.)
+transformer under `/transform` uses Oxc's native TypeScript parser and esrap's
+TypeScript printer. It runs during the build.)
 
 `Foo<T>` names a wrapped value with dictionary operations; `RawFoo<T>` names its
 `.value()` representation. For example, use `Task<number>` for a Task value and
@@ -1065,6 +1065,15 @@ await Effect.interpret(program)
 
 The package also exports the source transformer as `./transform`:
 
+The transformer uses Oxc's TS-ESTree API. Deno callers grant
+`--allow-env --allow-read --allow-ffi` for its native loader;
+`deno task transform` includes these permissions. The library core needs no
+permissions. Type checking remains with Deno/TypeScript; Oxc parses and rewrites
+syntax without checking TypeScript types.
+
+See the [migration measurements](docs/oxc-migration.md) for workload timings and
+verification details.
+
 ```ts
 import { transform_do_program_source } from "@mewhhaha/typeclasses/transform";
 
@@ -1160,11 +1169,11 @@ deno task transform --check src/file.ts
 ```
 
 Files without possible transform targets, and parsed files that produce no
-rewrites, keep their original source text. This avoids needless TypeScript AST
-construction and printing in build pipelines while preserving diagnostics for
-unsupported `Do` and `Program` calls.
+rewrites, keep their original source text. This avoids needless AST construction
+and printing in build pipelines while preserving diagnostics for unsupported
+`Do` and `Program` calls.
 
-Bundlers can use the dependency-free adapters from `./transform/plugin`:
+Bundlers can use the adapters from `./transform/plugin`:
 
 ```ts
 import {
@@ -2732,7 +2741,7 @@ benchmark or select a focused comparison:
 deno task bench
 deno bench --allow-env --allow-read --allow-write=/tmp bench/algorithm_contexts.bench.ts
 deno bench bench/iterable_pipeline.bench.ts
-deno bench --allow-env --allow-read --allow-write=/tmp bench/do_vs_program.bench.ts
+deno bench --allow-ffi --allow-env --allow-read --allow-write=/tmp bench/do_vs_program.bench.ts
 deno task bench:case-studies
 deno task bench:scaling
 ```

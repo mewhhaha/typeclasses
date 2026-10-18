@@ -66,6 +66,12 @@ import { fail, run_except } from "@mewhhaha/typeclasses/except";
 Use the same import style as the surrounding application. Do not import internal
 files, symbols marked `@ignore`, or implementation details from this repository.
 
+The optional source transformer uses Oxc's native TS-ESTree parser and esrap's
+TypeScript printer. Deno executions that import it need
+`--allow-env --allow-read --allow-ffi`; the core library does not. Oxc does not
+perform TypeScript type checking. Keep Deno's checks and the checker-backed type
+budget separate from syntax transformation.
+
 For measured hot paths, see `docs/hills-131-210.md`. Supported explicit APIs
 include chunked Writer logs (`./chunk_log`), prepared handlers (`./handlers`),
 `compile_effect_plan` (`./effects`), `concat_many` (`./list`),

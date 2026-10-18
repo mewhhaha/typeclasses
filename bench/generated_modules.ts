@@ -1,4 +1,4 @@
-import ts from "typescript";
+import { parseSync } from "oxc-parser";
 import { transform_do_program_source } from "../tools/transform_do_program.ts";
 
 /** Prepare actual transformer output before timed benchmark callbacks run. */
@@ -36,30 +36,28 @@ export async function load_benchmark_variants<module>(source: URL): Promise<{
   }
 }
 
-function absolute_imports(code: string, source: URL): string {
-  const parsed = ts.createSourceFile(
-    source.pathname,
-    code,
-    ts.ScriptTarget.Latest,
-  );
+/** Resolve static relative imports before loading a temporary benchmark module. */
+export function absolute_imports(code: string, source: URL): string {
+  const parsed = parseSync(source.pathname, code).program;
   const replacements: {
     readonly start: number;
     readonly end: number;
     readonly text: string;
   }[] = [];
-  for (const statement of parsed.statements) {
+  for (const statement of parsed.body) {
     if (
-      !ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)
+      statement.type !== "ImportDeclaration" &&
+      statement.type !== "ExportNamedDeclaration" &&
+      statement.type !== "ExportAllDeclaration"
     ) continue;
-    const specifier = statement.moduleSpecifier;
+    const specifier = statement.source;
     if (
-      specifier === undefined || !ts.isStringLiteralLike(specifier) ||
-      !specifier.text.startsWith(".")
+      specifier == null || !specifier.value.startsWith(".")
     ) continue;
     replacements.push({
-      start: specifier.getStart(parsed),
+      start: specifier.start,
       end: specifier.end,
-      text: JSON.stringify(new URL(specifier.text, source).href),
+      text: JSON.stringify(new URL(specifier.value, source).href),
     });
   }
   for (const replacement of replacements.reverse()) {

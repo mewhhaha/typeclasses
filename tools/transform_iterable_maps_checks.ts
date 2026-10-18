@@ -1,19 +1,13 @@
-import ts from "typescript";
+import { executable_typescript } from "./transform_execute.ts";
 import { assert_equals, assert_true } from "../src/assert.ts";
 import { transform_do_program_source } from "./transform_do_program.ts";
 
 const iterable_module = new URL("../src/iterable.ts", import.meta.url).href;
 
 async function evaluate(source: string): Promise<unknown> {
-  const executable = ts.transpileModule(
+  const executable = executable_typescript(
     source.replaceAll('"../src/iterable.ts"', JSON.stringify(iterable_module)),
-    {
-      compilerOptions: {
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
-      },
-    },
-  ).outputText;
+  );
   const module = await import(
     "data:application/javascript," + encodeURIComponent(executable)
   );

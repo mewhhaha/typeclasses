@@ -48,5 +48,5 @@ full existing transformer suite remains the integration gate.
 
 ```sh
 deno test --allow-env --allow-read --allow-run --allow-write=/tmp tools/round3_transform_checks.ts
-flock /tmp/typeclasses-round3-bench.lock deno run --allow-env --allow-read --allow-write=bench/artifacts bench/experiments/round3_transform_measure.ts bench/artifacts/round3-transform-followup.json
+flock /tmp/typeclasses-round3-bench.lock deno run --allow-env --allow-read --allow-ffi --allow-write=bench/artifacts bench/experiments/round3_transform_measure.ts bench/artifacts/round3-transform-followup.json
 ```

@@ -1,192 +1,62 @@
-import ts from "typescript";
+import { parseSync, visitorKeys } from "oxc-parser";
+import type {
+  Expression,
+  IdentifierReference,
+  ImportDeclaration,
+  Node,
+  Program,
+  Statement,
+  VariableDeclaration,
+  VariableDeclarator,
+} from "oxc-parser";
+import { print } from "esrap";
+import ts_language from "esrap/languages/ts";
+import tsx_language from "esrap/languages/tsx";
+import { basename } from "node:path";
+import {
+  id,
+  is_node,
+  literal,
+  node,
+  rewrite,
+  unwrap,
+  walk,
+} from "./transform_ast.ts";
 import { create_binding_analysis } from "./transform_bindings.ts";
-import { basename, dirname, resolve } from "node:path";
+import {
+  collect_imports,
+  collect_loop_support,
+  collect_program_scopes,
+  generator_kind,
+} from "./transform_imports.ts";
+import { lower_generator } from "./transform_generator.ts";
+import { create_terminal_transform } from "./transform_terminals.ts";
 import {
   create_iterable_map_fusion,
   might_contain_iterable_maps,
 } from "./transform_iterable_maps.ts";
+import type {
+  TransformConfig,
+  TransformDiagnostic,
+  TransformReport,
+  TransformResult,
+  TransformServices,
+  TransformSourceMap,
+} from "./transform_context.ts";
+export type {
+  TransformConfig,
+  TransformDiagnostic,
+  TransformReport,
+  TransformResult,
+  TransformSourceMap,
+} from "./transform_context.ts";
 
-const is_generated_identifier = (ts as unknown as {
-  isGeneratedIdentifier?: (node: ts.Node) => boolean;
-}).isGeneratedIdentifier ?? (() => false);
-
-/** A source location and explanation for a construct that was not lowered. */
-export type TransformDiagnostic = {
-  readonly file_name: string;
-  readonly line: number;
-  readonly column: number;
-  readonly message: string;
+type ImportRequest = {
+  readonly source: string;
+  readonly imported: string;
+  readonly local: IdentifierReference;
+  readonly namespace?: boolean;
 };
-
-/** The rewritten TypeScript, its source map, and transformation diagnostics. */
-export type TransformResult = {
-  readonly code: string;
-  readonly diagnostics: readonly TransformDiagnostic[];
-  readonly map: TransformSourceMap | null;
-  readonly transformed: number;
-  /** Per-site decisions, including optimization barriers; empty unless explain is enabled. */
-  readonly reports: readonly TransformReport[];
-};
-
-/** A version 3 source map from rewritten TypeScript back to its input. */
-export type TransformSourceMap = {
-  readonly version: 3;
-  readonly file: string;
-  readonly sourceRoot: string;
-  readonly sources: readonly string[];
-  readonly sourcesContent?: readonly (string | null)[];
-  readonly names: readonly string[];
-  readonly mappings: string;
-};
-
-/** One optimization decision at an original source location. */
-export type TransformReport = TransformDiagnostic & {
-  readonly outcome: "transformed" | "preserved";
-  readonly optimization:
-    | "generator"
-    | "terminal"
-    | "terminal-body"
-    | "iterable-map"
-    | "flatten"
-    | "loop";
-};
-
-/** Module specifiers the transformer should recognize as library entrypoints. */
-export type TransformConfig = {
-  /** Skip source-map printing when the caller does not consume maps. */
-  readonly source_map?: boolean;
-  /** Collect optimization decisions without treating missed opportunities as errors. */
-  readonly explain?: boolean;
-  /** Disable individual passes for debugging and reproducible comparisons. */
-  readonly optimizations?: Partial<
-    Record<
-      | "generator"
-      | "terminal"
-      | "terminal_body"
-      | "interpreter"
-      | "iterable_map"
-      | "loop"
-      | "flatten"
-      | "candidate_scan",
-      boolean
-    >
-  >;
-  /** Additional module specifiers which export this package's public API. */
-  readonly library_specifiers?: readonly string[];
-  /** Additional module specifiers which export all terminal lift runners. */
-  readonly terminal_library_specifiers?: readonly string[];
-};
-
-type TransformKind = "do" | "program";
-
-type TerminalFunctionName =
-  | "run"
-  | "run_reader"
-  | "run_state"
-  | "run_writer";
-
-type ImportedTerminalFunction = {
-  readonly imported: TerminalFunctionName;
-};
-
-type PrimitiveFunctionName =
-  | "ask"
-  | "asks"
-  | "get"
-  | "gets"
-  | "put"
-  | "modify"
-  | "writer"
-  | "tell";
-
-type TerminalImportRequest = {
-  readonly source_local_name: string;
-  readonly imported_name:
-    | "run_reader_terminal"
-    | "run_state_terminal"
-    | "run_writer_terminal";
-  readonly local_name: ts.Identifier;
-};
-
-type TransformState = {
-  readonly kind: TransformKind;
-  readonly factory: ts.NodeFactory;
-  readonly source_file: ts.SourceFile;
-  readonly diagnostics: TransformDiagnostic[];
-  readonly effect_helper_shadowed: boolean;
-  /** The explicit dictionary supplied to `Do(dictionary, generator)`. */
-  readonly dictionary?: ts.Expression;
-  readonly loop_runtime?: ts.Identifier;
-  readonly recursive_dictionaries?: ReadonlySet<string>;
-  readonly task_dictionaries?: ReadonlySet<string>;
-  readonly used_loop_runtime?: () => void;
-  readonly continuation_type?: ts.TypeNode;
-  readonly flat_dictionary?: (
-    expression: ts.Expression,
-  ) => ts.Expression | undefined;
-  readonly used_contexts?: Set<ts.Expression>;
-  readonly optimizations?: TransformConfig["optimizations"];
-  readonly report?: (
-    node: ts.Node,
-    optimization: TransformReport["optimization"],
-    outcome: TransformReport["outcome"],
-    message: string,
-  ) => void;
-};
-
-type TransformBlock = {
-  readonly block: ts.Block;
-  readonly yielded: boolean;
-};
-
-type TransformOptions = {
-  readonly continue_expression?: ts.Expression;
-  readonly break_expression?: ts.Expression;
-};
-
-type YieldStatement =
-  | {
-    readonly kind: "bind";
-    readonly expression: ts.Expression;
-    readonly name: ts.BindingName | undefined;
-    readonly type: ts.TypeNode | undefined;
-  }
-  | {
-    readonly kind: "return";
-    readonly expression: ts.Expression;
-  };
-
-type FusedProgramYield = {
-  readonly kind: "yield";
-  readonly expression: ts.Expression;
-  readonly declaration?: {
-    readonly statement: ts.VariableStatement;
-    readonly declaration: ts.VariableDeclaration;
-  };
-  readonly returns: boolean;
-};
-
-type FusedProgramPart =
-  | FusedProgramYield
-  | {
-    readonly kind: "statement";
-    readonly statement: ts.Statement;
-  };
-
-type FusedProgramBody = {
-  readonly parts: readonly FusedProgramPart[];
-  readonly result: ts.Expression | undefined;
-};
-
-type FusedTerminalKind = "reader" | "state" | "writer";
-
-type FusedTerminalProgram = {
-  readonly expression: ts.Expression;
-  readonly needs_program_helpers: boolean;
-  readonly direct: boolean;
-};
-
-class UnsupportedGenerator extends Error {}
 
 /** Lower supported generators, effect runners, and lazy iterable map chains. */
 export function transform_do_program_source(
@@ -197,578 +67,538 @@ export function transform_do_program_source(
   if (!might_contain_transform_target(source)) {
     return unchanged_transform_result(source);
   }
-
-  const might_diagnose_unanchored = might_contain_unanchored_target(source);
-
-  const source_file = ts.createSourceFile(
-    file_name,
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    script_kind(file_name),
-  );
+  let lang: "ts" | "tsx" = "ts";
+  if (file_name.split("?", 1)[0].toLowerCase().endsWith(".tsx")) lang = "tsx";
+  const parsed = parseSync(file_name, source, {
+    lang,
+    astType: "ts",
+    preserveParens: false,
+  });
+  if (parsed.errors.length > 0) {
+    const position = source_positions(source);
+    return {
+      ...unchanged_transform_result(source),
+      diagnostics: parsed.errors.map((error) => {
+        const at = position(error.labels[0]?.start ?? 0);
+        return {
+          file_name,
+          line: at.line,
+          column: at.column + 1,
+          message: "Parse error: " + error.message,
+        };
+      }),
+    };
+  }
+  const program = parsed.program;
+  const imports = collect_imports(program, source, config);
+  let scopes = imports.program_names;
+  if (source.includes("scope") || source.includes("\\u")) {
+    scopes = collect_program_scopes(program, imports);
+  }
+  if (
+    config.optimizations?.candidate_scan !== false &&
+    !(config.optimizations?.iterable_map !== false &&
+      might_contain_iterable_maps(source))
+  ) {
+    let candidate = false;
+    walk(program, (current) => {
+      if (candidate) return false;
+      if (current.type !== "CallExpression") return;
+      if (generator_kind(current, scopes, imports) !== undefined) {
+        candidate = true;
+        return false;
+      }
+      const callee = current.callee;
+      if (
+        callee.type === "Identifier" &&
+        (imports.terminal_functions.has(callee.name) || callee.name === "Do" ||
+          callee.name === "Program")
+      ) candidate = true;
+      if (
+        callee.type === "MemberExpression" && !callee.computed &&
+        callee.property.type === "Identifier" &&
+        ["Do", "Program", "run", "handle_with", "value"].includes(
+          callee.property.name,
+        )
+      ) candidate = true;
+    });
+    if (!candidate) return unchanged_transform_result(source);
+  }
+  const position = source_positions(source);
+  walk(program, (current) => {
+    if (current.start < 0) return;
+    Object.assign(current, {
+      loc: { start: position(current.start), end: position(current.end) },
+    });
+  });
+  const comments = parsed.comments.map((comment) => ({
+    ...comment,
+    loc: { start: position(comment.start), end: position(comment.end) },
+  }));
   const diagnostics: TransformDiagnostic[] = [];
   const reports: TransformReport[] = [];
+  function location(current: Node) {
+    const at = position(Math.max(current.start, 0));
+    return { file_name, line: at.line, column: at.column + 1 };
+  }
   function report(
-    node: ts.Node,
+    current: Node,
     optimization: TransformReport["optimization"],
     outcome: TransformReport["outcome"],
     message: string,
   ) {
-    if (!config.explain) return;
-    const position = source_file.getLineAndCharacterOfPosition(
-      node.getStart(source_file),
-    );
-    reports.push({
-      file_name,
-      line: position.line + 1,
-      column: position.character + 1,
-      optimization,
-      outcome,
-      message,
-    });
+    if (config.explain) {
+      reports.push({ ...location(current), optimization, outcome, message });
+    }
   }
-  const imports = collect_imports(source_file, config);
-  if (
-    config.optimizations?.candidate_scan !== false &&
-    !(config.optimizations?.iterable_map !== false &&
-      might_contain_iterable_maps(source)) &&
-    !has_transform_candidate_call(source_file, imports)
+  const bindings = create_binding_analysis(program);
+  const loop_support = collect_loop_support(program);
+  const names = new Set<string>();
+  walk(program, (current) => {
+    if (current.type === "Identifier") names.add(current.name);
+  });
+  const fresh_counts = new Map<string, number>();
+  function fresh(prefix: string): IdentifierReference {
+    let count = (fresh_counts.get(prefix) ?? 0) + 1;
+    let name = prefix + "_" + count;
+    while (names.has(name)) {
+      count += 1;
+      name = prefix + "_" + count;
+    }
+    fresh_counts.set(prefix, count);
+    names.add(name);
+    return id(name);
+  }
+  const requests: ImportRequest[] = [];
+  function request(
+    source: string,
+    imported: string,
+    prefix = imported,
+    namespace = false,
   ) {
-    return unchanged_transform_result(source);
+    const existing = requests.find((item) =>
+      item.source === source && item.imported === imported &&
+      Boolean(item.namespace) === namespace
+    );
+    if (existing !== undefined) return existing.local;
+    const local = fresh(prefix);
+    requests.push({ source, imported, local, namespace });
+    return local;
   }
-  let binding_analysis: ReturnType<typeof create_binding_analysis> | undefined;
-  function get_bindings() {
-    binding_analysis ??= create_binding_analysis(source_file);
-    return binding_analysis;
+  function source_import(local: string): ImportDeclaration | undefined {
+    return program.body.find((statement): statement is ImportDeclaration =>
+      statement.type === "ImportDeclaration" &&
+      statement.importKind !== "type" &&
+      statement.specifiers.some((binding) => binding.local.name === local)
+    );
   }
-  let iterable_maps: ReturnType<typeof create_iterable_map_fusion> | undefined;
+  let effect: Expression | undefined;
+  function effect_helper(): Expression {
+    if (effect !== undefined) return effect;
+    // Preserve the familiar public helper name when the module already imports it.
+    if (imports.effect_names.size > 0) {
+      effect = id(imports.effect_names.values().next().value!);
+      return effect;
+    }
+    if (imports.program_module === undefined) {
+      effect = id("Effect");
+      return effect;
+    }
+    const local = id("Effect");
+    names.add("Effect");
+    requests.push({
+      source: imports.program_module,
+      imported: "Effect",
+      local,
+    });
+    effect = local;
+    return effect;
+  }
+  let loop: IdentifierReference | undefined;
+  const flat_dictionaries = new Map<string, Expression | null>();
+  const services: TransformServices = {
+    program,
+    source,
+    file_name,
+    config,
+    bindings,
+    imports,
+    recursive_dictionaries: loop_support.dictionaries,
+    task_dictionaries: loop_support.tasks,
+    fresh,
+    diagnose(current, message) {
+      diagnostics.push({ ...location(current), message });
+    },
+    report,
+    kind(current) {
+      return generator_kind(current, scopes, imports);
+    },
+    effect: effect_helper,
+    loop() {
+      if (
+        config.optimizations?.loop === false ||
+        loop_support.specifier === undefined
+      ) return undefined;
+      loop ??= request(loop_support.specifier, "*", "loop_runtime", true);
+      return loop;
+    },
+    flat_dictionary(expression) {
+      const value = unwrap(expression);
+      if (
+        value.type !== "CallExpression" || value.callee.type !== "Identifier" ||
+        !bindings.imported(value.callee)
+      ) return undefined;
+      const name = value.callee.name;
+      if (flat_dictionaries.has(name)) {
+        return flat_dictionaries.get(name) ?? undefined;
+      }
+      const declaration = source_import(name);
+      let result: Expression | undefined;
+      if (
+        declaration !== undefined &&
+        /^(?:(?:\.\.?\/)+src\/(?:maybe|either|identity|task|mod)\.ts|(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(?:maybe|either|identity|task))?)$/
+          .test(declaration.source.value)
+      ) {
+        const binding = declaration.specifiers.find((binding) =>
+          binding.local.name === name
+        );
+        if (
+          binding?.type === "ImportSpecifier" && binding.importKind !== "type"
+        ) {
+          let imported: string;
+          if (binding.imported.type === "Identifier") {
+            imported = binding.imported.name;
+          } else imported = binding.imported.value;
+          switch (imported) {
+            case "Just":
+            case "Nothing":
+              imported = "Maybe";
+              break;
+            case "Left":
+            case "Right":
+              imported = "Either";
+              break;
+            case "identity":
+              imported = "Identity";
+              break;
+            case "Task":
+              break;
+            default:
+              imported = "";
+          }
+          if (imported) {
+            result = request(
+              declaration.source.value,
+              imported,
+              "flat_dictionary",
+            );
+          }
+        }
+      }
+      flat_dictionaries.set(name, result ?? null);
+      return result;
+    },
+    terminal(imported, source_local_name) {
+      const declaration = source_import(source_local_name);
+      if (declaration === undefined) {
+        throw new Error("Missing terminal import " + source_local_name);
+      }
+      return request(declaration.source.value, imported);
+    },
+    compile(current) {
+      return lower_generator(current, services);
+    },
+  };
+  const terminals = create_terminal_transform(services);
+  let iterable: ReturnType<typeof create_iterable_map_fusion> | undefined;
   if (
     config.optimizations?.iterable_map !== false &&
     might_contain_iterable_maps(source)
   ) {
-    iterable_maps = create_iterable_map_fusion(
-      source_file,
+    iterable = create_iterable_map_fusion(
+      program,
       config.library_specifiers,
-      get_bindings(),
-    );
-  }
-
-  if (
-    !has_imported_transform_target(imports) &&
-    !might_diagnose_unanchored && !iterable_maps?.enabled
-  ) {
-    return unchanged_transform_result(source);
-  }
-
-  const bindings = {
-    resolve: (identifier: ts.Identifier) => get_bindings().resolve(identifier),
-    imported: (identifier: ts.Identifier) =>
-      get_bindings().imported(identifier),
-  };
-
-  const might_declare_program_scope = source.includes("scope") ||
-    source.includes("\\u");
-  const program_scopes = (imports.program_names.size === 0 &&
-      imports.namespaces.size === 0) || !might_declare_program_scope
-    ? imports.program_names
-    : collect_program_scopes(source_file, imports);
-  const might_transform_generator = imports.do_names.size > 0 ||
-    program_scopes.size > 0 || imports.namespaces.size > 0;
-  const might_transform_effect = imports.effect_names.size > 0 ||
-    imports.namespaces.size > 0;
-  const might_transform_terminal = imports.terminal_functions.size > 0 ||
-    imports.terminal_namespaces.size > 0;
-  const terminal_imports: TerminalImportRequest[] = [];
-  let named_programs = new Map<string, ts.CallExpression>();
-  if (
-    config.optimizations?.terminal !== false &&
-    config.optimizations?.terminal_body !== false &&
-    might_transform_generator &&
-    might_transform_terminal
-  ) {
-    named_programs = collect_named_terminal_programs(
-      source_file,
-      imports,
-      program_scopes,
       bindings,
+      (prefix) => fresh(prefix).name,
     );
   }
-  const fused_named_programs = new Set<string>();
-  const flat_dictionaries = new Map<string, ts.Expression | null>();
   let transformed = 0;
-  let needs_program_helpers = false;
-  let loop_support: ReturnType<typeof collect_loop_support> = {
-    dictionaries: new Set<string>(),
-    tasks: new Set<string>(),
-    specifier: undefined,
-  };
-  if (imports.do_names.size > 0 && /\b(?:for|while|yield)\b/.test(source)) {
-    loop_support = collect_loop_support(source_file);
-  }
-  const flat_imports = new Map<
-    string,
-    { specifier: string; name: ts.Identifier; exported: string }
-  >();
-  let loop_runtime: ts.Identifier;
-  let used_loop_runtime = false;
-
-  const transformer: ts.TransformerFactory<ts.SourceFile> = (context) => {
-    const factory = context.factory;
-    loop_runtime = factory.createUniqueName("loop_runtime");
-    let supported_loop_runtime: ts.Identifier | undefined;
-    if (loop_support.specifier !== undefined) {
-      supported_loop_runtime = loop_runtime;
+  function terminal_report(current: Node, direct: boolean) {
+    transformed += 1;
+    let explanation =
+      "Specialized terminal dispatch; unsupported primitives preserve the effect spine and keyed calls retain the original cell and runtime identity checks.";
+    if (direct) {
+      explanation =
+        "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed.";
     }
-    const diagnostic_state: TransformState = {
-      kind: "do",
-      factory,
-      source_file,
-      diagnostics,
-      effect_helper_shadowed: imports.effect_helper_shadowed,
-    };
-
-    return (source_file) => {
-      const visit: ts.Visitor = (node) => {
-        if (ts.isVariableStatement(node)) {
-          if (node.declarationList.declarations.length === 1) {
-            const name = node.declarationList.declarations[0].name;
-            if (
-              ts.isIdentifier(name) && named_programs.size > 0 &&
-              named_programs.has(named_program_key(name, bindings))
-            ) {
-              return node;
-            }
-          }
-          const visited = ts.visitEachChild(node, visit, context);
-
-          if (ts.isVariableStatement(visited)) {
-            const inlined = inline_iife_variable_statement(visited, factory);
-
-            if (inlined !== undefined) {
-              return inlined;
-            }
-          }
-
-          return visited;
-        }
-
-        if (ts.isReturnStatement(node)) {
-          const visited = ts.visitEachChild(node, visit, context);
-
-          if (ts.isReturnStatement(visited)) {
-            const inlined = inline_iife_return_statement(visited, factory);
-
-            if (inlined !== undefined) {
-              return inlined;
-            }
-          }
-
-          return visited;
-        }
-
-        if (ts.isCallExpression(node)) {
-          if (iterable_maps?.enabled) {
-            const fused = iterable_maps.fuse(node, factory);
-            if (fused !== undefined) {
-              transformed += 1;
-              report(
-                node,
-                "iterable-map",
-                "transformed",
-                "Composed adjacent lazy maps; callback evaluation and item order are retained.",
-              );
-              return ts.visitEachChild(fused, visit, context);
-            }
-          }
-          if (
-            config.explain && ts.isPropertyAccessExpression(node.expression) &&
-            node.expression.name.text === "map" &&
-            ts.isCallExpression(node.expression.expression)
-          ) {
-            report(
-              node,
-              "iterable-map",
-              "preserved",
-              "Map chain needs a known immutable iterable root and stable unary callbacks; optional calls and explicit type arguments are barriers.",
-            );
-          }
-          if (
-            config.optimizations?.terminal !== false &&
-            might_transform_generator && might_transform_terminal
-          ) {
-            const fused = transform_terminal_program_run(
-              node,
-              factory,
-              imports,
-              program_scopes,
-              terminal_imports,
-              named_programs,
-              fused_named_programs,
-              config.optimizations?.terminal_body !== false,
-              bindings,
-            );
-
-            if (fused !== undefined) {
-              transformed += 1;
-              let explanation =
-                "Specialized terminal dispatch; unsupported primitives preserve the effect spine.";
-              if (fused.direct) {
-                explanation =
-                  "Fused a primitive terminal body without an effect spine; eager construction and same-scope capture checks passed.";
-              }
-              report(node, "terminal", "transformed", explanation);
-              if (!fused.direct) {
-                report(
-                  node,
-                  "terminal-body",
-                  "preserved",
-                  "The body contains noncanonical operations or lacks explicit input types, so dynamic terminal dispatch is retained.",
-                );
-              }
-              needs_program_helpers ||= fused.needs_program_helpers;
-              return fused.expression;
-            }
-          }
-
-          const kind = config.optimizations?.generator !== false &&
-              might_transform_generator
-            ? transform_kind(node, program_scopes, imports)
-            : undefined;
-
-          if (kind !== undefined) {
-            const diagnostic_start = diagnostics.length;
-            const transformed_node = transform_call(
-              node,
-              {
-                kind,
-                factory,
-                source_file,
-                diagnostics,
-                effect_helper_shadowed: imports.effect_helper_shadowed,
-                report,
-                optimizations: config.optimizations,
-                used_contexts: new Set(),
-                flat_dictionary: (expression) => {
-                  const value = unwrap_parentheses(expression);
-                  if (
-                    !ts.isCallExpression(value) ||
-                    !ts.isIdentifier(value.expression) ||
-                    !bindings.imported(value.expression)
-                  ) return undefined;
-                  const cached_dictionary = flat_dictionaries.get(
-                    value.expression.text,
-                  );
-                  if (cached_dictionary !== undefined) {
-                    return cached_dictionary ?? undefined;
-                  }
-                  for (const statement of source_file.statements) {
-                    if (
-                      !ts.isImportDeclaration(statement) ||
-                      !ts.isStringLiteral(statement.moduleSpecifier)
-                    ) continue;
-                    const named = statement.importClause?.namedBindings;
-                    if (named === undefined || !ts.isNamedImports(named)) {
-                      continue;
-                    }
-                    for (const binding of named.elements) {
-                      if (
-                        binding.name.text !== value.expression.text ||
-                        binding.isTypeOnly
-                      ) continue;
-                      const imported =
-                        (binding.propertyName ?? binding.name).text;
-                      let exported: string | undefined;
-                      switch (imported) {
-                        case "Just":
-                        case "Nothing":
-                          exported = "Maybe";
-                          break;
-                        case "Left":
-                        case "Right":
-                          exported = "Either";
-                          break;
-                        case "identity":
-                          exported = "Identity";
-                          break;
-                        case "Task":
-                          exported = "Task";
-                          break;
-                      }
-                      if (
-                        exported === undefined ||
-                        !/^(?:(?:\.\.?\/)+src\/(?:maybe|either|identity|task|mod)\.ts|(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(?:maybe|either|identity|task))?)$/
-                          .test(statement.moduleSpecifier.text)
-                      ) return undefined;
-                      const key = statement.moduleSpecifier.text + ":" +
-                        exported;
-                      let request = flat_imports.get(key);
-                      if (request === undefined) {
-                        request = {
-                          specifier: statement.moduleSpecifier.text,
-                          exported,
-                          name: factory.createUniqueName("flat_dictionary"),
-                        };
-                        flat_imports.set(key, request);
-                      }
-                      flat_dictionaries.set(
-                        value.expression.text,
-                        request.name,
-                      );
-                      return request.name;
-                    }
-                  }
-                  return undefined;
-                },
-                loop_runtime: supported_loop_runtime,
-                recursive_dictionaries: loop_support.dictionaries,
-                task_dictionaries: loop_support.tasks,
-                used_loop_runtime: () => {
-                  used_loop_runtime = true;
-                },
-              },
-            );
-
-            if (transformed_node !== undefined) {
-              transformed += 1;
-              report(
-                node,
-                "generator",
-                "transformed",
-                "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics.",
-              );
-
-              if (kind === "program") {
-                needs_program_helpers = true;
-              }
-
-              return transformed_node;
-            }
-            report(
-              node,
-              "generator",
-              "preserved",
-              diagnostics.slice(diagnostic_start).map((item) => item.message)
-                .join(" "),
-            );
-          }
-
-          const visited = ts.visitEachChild(node, visit, context);
-
-          if (
-            config.optimizations?.terminal !== false &&
-            might_transform_terminal && ts.isCallExpression(visited)
-          ) {
-            const terminal = transform_terminal_lift_run(
-              visited,
-              factory,
-              imports,
-              terminal_imports,
-            );
-
-            if (terminal !== undefined) {
-              transformed += 1;
-              report(
-                node,
-                "terminal",
-                "transformed",
-                "Eliminated the outer effect runner; keyed calls retain the original cell and runtime identity checks.",
-              );
-              return terminal;
-            }
-          }
-
-          if (
-            config.optimizations?.interpreter !== false &&
-            might_transform_effect && ts.isCallExpression(visited)
-          ) {
-            const interpreted = transform_interpreter_call(
-              visited,
-              factory,
-              imports,
-            );
-
-            if (interpreted !== undefined) {
-              transformed += 1;
-              const terminal = config.optimizations?.terminal !== false &&
-                  ts.isCallExpression(interpreted)
-                ? transform_terminal_lift_run(
-                  interpreted,
-                  factory,
-                  imports,
-                  terminal_imports,
-                )
-                : undefined;
-
-              if (terminal !== undefined) {
-                transformed += 1;
-                return terminal;
-              }
-
-              return interpreted;
-            }
-
-            const handled = transform_handle_with_call(
-              visited,
-              factory,
-              imports,
-            );
-
-            if (handled !== undefined) {
-              transformed += 1;
-              const terminal = config.optimizations?.terminal !== false &&
-                  ts.isCallExpression(handled)
-                ? transform_terminal_lift_run(
-                  handled,
-                  factory,
-                  imports,
-                  terminal_imports,
-                )
-                : undefined;
-
-              if (terminal !== undefined) {
-                transformed += 1;
-                return terminal;
-              }
-
-              return handled;
-            }
-          }
-
-          if (
-            config.explain && might_transform_terminal &&
-            read_terminal_function_target(node.expression, imports)
-                ?.imported === "run"
-          ) {
-            report(
-              node,
-              "terminal",
-              "preserved",
-              "Direct fusion requires an immediate primitive body or a nonescaping same-scope const whose first yield is zero-argument ask/get; keyed identities remain checked by terminal runners. Eager prefixes, escaping values, explicit keyed type arguments and captured lexical scopes are barriers.",
-            );
-          }
-          if (might_diagnose_unanchored) {
-            add_unanchored_target_diagnostic(
-              visited,
-              diagnostic_state,
-              imports,
-            );
-          }
-          return visited;
-        }
-
-        return ts.visitEachChild(node, visit, context);
-      };
-
-      const visited_source = ts.visitEachChild(source_file, visit, context);
-      const remove_fused: ts.Visitor = (node) => {
+    report(current, "terminal", "transformed", explanation);
+    if (!direct) {
+      report(
+        current,
+        "terminal-body",
+        "preserved",
+        "The body contains noncanonical operations or lacks explicit input types, so dynamic terminal dispatch is retained.",
+      );
+    }
+  }
+  function visit(current: Node): Node {
+    if (terminals.skip(current)) return current;
+    if (current.type === "CallExpression") {
+      const fused = iterable?.fuse(current);
+      if (fused !== undefined) {
+        transformed += 1;
+        report(
+          current,
+          "iterable-map",
+          "transformed",
+          "Composed adjacent lazy maps; callback evaluation and item order are retained.",
+        );
+        return children(fused);
+      }
+      if (
+        current.callee.type === "MemberExpression" &&
+        !current.callee.computed &&
+        current.callee.property.type === "Identifier" &&
+        current.callee.property.name === "map" &&
+        current.callee.object.type === "CallExpression"
+      ) {
+        report(
+          current,
+          "iterable-map",
+          "preserved",
+          "Map chain needs a known immutable iterable root and stable unary callbacks; optional calls and explicit type arguments are barriers.",
+        );
+      }
+      // Immediate Program syntax must be visible before generator lowering.
+      const terminal = terminals.lower(current, "before");
+      if (terminal !== undefined) {
+        terminal_report(current, terminal.direct);
+        // Effect interpretation can expose another terminal call. Dynamic
+        // terminal dispatch deliberately retains the original Program subtree.
         if (
-          ts.isVariableStatement(node) &&
-          node.declarationList.declarations.length === 1
+          is_effect_interpreter_call(current) &&
+          terminal.expression.type === "CallExpression"
         ) {
-          const name = node.declarationList.declarations[0].name;
-          if (
-            ts.isIdentifier(name) &&
-            fused_named_programs.has(named_program_key(name, bindings))
-          ) return undefined;
+          const next = terminals.lower(terminal.expression);
+          if (next !== undefined) {
+            terminal_report(current, next.direct);
+            return next.expression;
+          }
         }
-        return ts.visitEachChild(node, remove_fused, context);
-      };
-      let visited = visited_source;
-      if (fused_named_programs.size > 0) {
-        visited = ts.visitNode(visited_source, remove_fused, ts.isSourceFile)!;
+        return terminal.expression;
       }
-
-      const updated = needs_program_helpers || terminal_imports.length > 0
-        ? update_imports(
-          visited,
-          factory,
-          needs_program_helpers,
-          diagnostics,
-          imports,
-          terminal_imports,
-        )
-        : visited;
-      let with_loops = updated;
-      if (used_loop_runtime && loop_support.specifier !== undefined) {
-        with_loops = factory.updateSourceFile(updated, [
-          factory.createImportDeclaration(
-            undefined,
-            factory.createImportClause(
-              false,
-              undefined,
-              factory.createNamespaceImport(loop_runtime),
-            ),
-            factory.createStringLiteral(loop_support.specifier),
-          ),
-          ...updated.statements,
-        ]);
+      const kind = services.kind(current);
+      if (kind !== undefined && config.optimizations?.generator !== false) {
+        const diagnostic_start = diagnostics.length;
+        const lowered = lower_generator(current, services);
+        if (lowered !== undefined) {
+          transformed += 1;
+          report(
+            current,
+            "generator",
+            "transformed",
+            "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics.",
+          );
+          return lowered;
+        }
+        report(
+          current,
+          "generator",
+          "preserved",
+          diagnostics.slice(diagnostic_start).map((diagnostic) =>
+            diagnostic.message
+          ).join(" "),
+        );
+        return current;
       }
-      if (flat_imports.size > 0) {
-        with_loops = factory.updateSourceFile(with_loops, [
-          ...[...flat_imports.values()].map((request) =>
-            factory.createImportDeclaration(
-              undefined,
-              factory.createImportClause(
-                false,
-                undefined,
-                factory.createNamedImports([
-                  factory.createImportSpecifier(
-                    false,
-                    factory.createIdentifier(request.exported),
-                    request.name,
-                  ),
-                ]),
-              ),
-              factory.createStringLiteral(request.specifier),
-            )
-          ),
-          ...with_loops.statements,
-        ]);
+      const visited = children(current);
+      if (visited.type === "CallExpression") {
+        const lowered = terminals.lower(visited);
+        if (lowered !== undefined) {
+          terminal_report(current, lowered.direct);
+          if (
+            is_effect_interpreter_call(visited) &&
+            lowered.expression.type === "CallExpression"
+          ) {
+            const next = terminals.lower(lowered.expression);
+            if (next !== undefined) {
+              terminal_report(current, next.direct);
+              return next.expression;
+            }
+          }
+          return lowered.expression;
+        }
       }
-      return iterable_maps?.add_helper(with_loops, factory) ?? with_loops;
-    };
-  };
-
-  const result = ts.transform(source_file, [transformer]);
-
-  try {
-    if (transformed === 0) {
-      return {
-        code: source,
-        diagnostics,
-        map: null,
-        transformed,
-        reports,
-      };
+      const callee = current.callee;
+      let target: string | undefined;
+      if (callee.type === "Identifier") target = callee.name;
+      if (
+        callee.type === "MemberExpression" && !callee.computed &&
+        callee.property.type === "Identifier"
+      ) target = callee.property.name;
+      if ((target === "Do" || target === "Program") && kind === undefined) {
+        const run = current.arguments[current.arguments.length - 1];
+        if (run?.type === "FunctionExpression" && run.generator) {
+          services.diagnose(
+            current,
+            "Skipped " + target +
+              ": callee is not imported from @mewhhaha/typeclasses.",
+          );
+        }
+      }
+      return visited;
     }
-
-    const output = result.transformed[0];
-    let printed: { code: string; map: TransformSourceMap | null };
-    if (config.source_map === false) {
-      printed = {
-        code: ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(
-          output,
-        ),
-        map: null,
-      };
-    } else printed = print_transformed_source(output, source, file_name);
-
-    return {
-      code: printed.code,
-      diagnostics,
-      map: printed.map,
-      transformed,
-      reports,
-    };
-  } finally {
-    result.dispose();
+    return children(current);
   }
+  function children(current: Node): Node {
+    let result = current;
+    const record = current as unknown as Record<string, unknown>;
+    for (const key of visitorKeys[current.type] ?? []) {
+      const value = record[key];
+      let next: unknown = value;
+      if (Array.isArray(value)) {
+        let changed = false;
+        const items = value.map((child) => {
+          if (!is_node(child)) return child;
+          const updated = visit(child);
+          changed ||= updated !== child;
+          return updated;
+        });
+        if (changed) next = items;
+      } else if (is_node(value)) next = visit(value);
+      if (next !== value) result = { ...result, [key]: next };
+    }
+    return result;
+  }
+  let output = visit(program) as Program;
+  output = rewrite(output, (current) => {
+    if (terminals.remove(current)) return null;
+  });
+  if (transformed === 0) {
+    return { code: source, diagnostics, map: null, transformed, reports };
+  }
+  output = add_imports(output, requests);
+  if (iterable !== undefined) output = iterable.add_helper(output);
+  output = inline_iifes(output);
+  let language = ts_language({ quotes: "double", comments });
+  if (lang === "tsx") language = tsx_language({ quotes: "double", comments });
+  if (config.source_map === false) {
+    const previous = language._;
+    language._ = (current, context, visitor) => {
+      const previous_location = context.location;
+      context.location = () => {};
+      try {
+        if (previous !== undefined) previous(current, context, visitor);
+        else visitor(current);
+      } finally {
+        context.location = previous_location;
+      }
+    };
+  }
+  const printed = print(output, language, {
+    indent: "  ",
+    sourceMapSource: basename(file_name),
+    sourceMapContent: source,
+  });
+  let map: TransformSourceMap | null = null;
+  if (config.source_map !== false) {
+    map = {
+      ...(printed.map as Omit<TransformSourceMap, "file" | "sourceRoot">),
+      file: basename(file_name),
+      sourceRoot: "",
+    };
+  }
+  return { code: printed.code + "\n", diagnostics, map, transformed, reports };
 }
 
-function script_kind(file_name: string): ts.ScriptKind {
-  const path = file_name.split("?", 1)[0].toLowerCase();
-  return path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+function is_effect_interpreter_call(value: Expression): boolean {
+  return value.type === "CallExpression" &&
+    value.callee.type === "MemberExpression";
+}
+function source_positions(source: string) {
+  const starts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source.charCodeAt(index);
+    if (character === 13) {
+      if (source.charCodeAt(index + 1) === 10) index += 1;
+      starts.push(index + 1);
+    } else if (
+      character === 10 || character === 0x2028 || character === 0x2029
+    ) starts.push(index + 1);
+  }
+  return (offset: number) => {
+    let left = 0;
+    let right = starts.length;
+    while (left + 1 < right) {
+      const middle = (left + right) >>> 1;
+      if (starts[middle] <= offset) left = middle;
+      else right = middle;
+    }
+    return { line: left + 1, column: offset - starts[left] };
+  };
+}
+function add_imports(
+  program: Program,
+  requests: readonly ImportRequest[],
+): Program {
+  const remaining = new Set(requests);
+  const body = program.body.map((statement) => {
+    if (
+      statement.type !== "ImportDeclaration" ||
+      statement.importKind === "type" || statement.specifiers.some((binding) =>
+        binding.type === "ImportNamespaceSpecifier"
+      )
+    ) {
+      return statement;
+    }
+    const added = requests.filter((request) =>
+      !request.namespace && request.source === statement.source.value &&
+      remaining.has(request)
+    );
+    for (const request of added) {
+      remaining.delete(request);
+    }
+    return {
+      ...statement,
+      specifiers: [
+        ...statement.specifiers,
+        ...added.map((request) =>
+          node({
+            type: "ImportSpecifier",
+            imported: id(request.imported),
+            local: request.local,
+            importKind: "value" as const,
+          })
+        ),
+      ],
+    };
+  });
+  for (const request of remaining) {
+    let specifiers: ImportDeclaration["specifiers"];
+    if (request.namespace) {
+      specifiers = [
+        node({ type: "ImportNamespaceSpecifier", local: request.local }),
+      ];
+    } else {specifiers = [
+        node({
+          type: "ImportSpecifier",
+          imported: id(request.imported),
+          local: request.local,
+          importKind: "value",
+        }),
+      ];}
+    body.unshift(
+      node({
+        type: "ImportDeclaration",
+        source: literal(request.source) as ImportDeclaration["source"],
+        specifiers,
+        importKind: "value",
+        attributes: [],
+        phase: null,
+      }),
+    );
+  }
+  return { ...program, body };
 }
 
 function unchanged_transform_result(source: string): TransformResult {
@@ -780,132 +610,166 @@ function unchanged_transform_result(source: string): TransformResult {
     reports: [],
   };
 }
-
-type SourceMapGenerator = {
-  toJSON(): TransformSourceMap;
-};
-
-type SourceMapWriter = {
-  getText(): string;
-};
-
-type PrinterWithSourceMaps = ts.Printer & {
-  writeFile(
-    source_file: ts.SourceFile,
-    writer: SourceMapWriter,
-    generator: SourceMapGenerator,
-  ): void;
-};
-
-type TypeScriptWithSourceMaps = typeof ts & {
-  createSourceMapGenerator(
-    host: {
-      getCurrentDirectory(): string;
-      getCanonicalFileName(file_name: string): string;
-    },
-    file_name: string,
-    source_root: string,
-    sources_directory: string,
-    options: {
-      readonly extendedDiagnostics: boolean;
-      readonly inlineSources: boolean;
-    },
-  ): SourceMapGenerator;
-  createTextWriter(new_line: string): SourceMapWriter;
-};
-
-function print_transformed_source(
-  source_file: ts.SourceFile,
-  source: string,
-  file_name: string,
-): { readonly code: string; readonly map: TransformSourceMap } {
-  const source_map_api = ts as TypeScriptWithSourceMaps;
-  if (
-    typeof source_map_api.createTextWriter !== "function" ||
-    typeof source_map_api.createSourceMapGenerator !== "function"
-  ) {
-    throw new Error(
-      "TypeScript " + ts.version +
-        " lacks the source-map printer APIs required by this transformer.",
-    );
-  }
-  const absolute_file_name = resolve(file_name);
-  const source_directory = dirname(absolute_file_name);
-  const writer = source_map_api.createTextWriter("\n");
-  const generator = source_map_api.createSourceMapGenerator(
-    {
-      getCurrentDirectory: () => source_directory,
-      getCanonicalFileName: (current_file_name) => current_file_name,
-    },
-    basename(file_name),
-    "",
-    source_directory,
-    {
-      extendedDiagnostics: false,
-      inlineSources: true,
-    },
-  );
-  const printer = ts.createPrinter({
-    newLine: ts.NewLineKind.LineFeed,
-    sourceMap: true,
-    inlineSources: true,
-  } as ts.PrinterOptions) as PrinterWithSourceMaps;
-
-  if (typeof printer.writeFile !== "function") {
-    throw new Error(
-      "TypeScript " + ts.version +
-        " lacks the source-map printer writeFile API required by this transformer.",
-    );
-  }
-  printer.writeFile(source_file, writer, generator);
-
-  const map = generator.toJSON();
-
-  if (map.sourcesContent === undefined) {
-    const source_index = map.sources.indexOf(basename(file_name));
-    const sources_content = map.sources.map((_source, index) => {
-      return index === source_index ? source : null;
-    });
-
-    return {
-      code: writer.getText(),
-      map: { ...map, sourcesContent: sources_content },
-    };
-  }
-
-  return { code: writer.getText(), map };
-}
-
 function might_contain_transform_target(source: string): boolean {
-  if (might_contain_iterable_maps(source)) return true;
-  if (source.includes("\\u")) {
+  if (might_contain_iterable_maps(source) || source.includes("\\u")) {
     return true;
   }
-
   if (
     (source.includes("Do") || source.includes("Program")) &&
     /\b(?:Do|Program)\b/.test(source)
-  ) {
-    return true;
-  }
-
+  ) return true;
   if (
     source.includes("run_") &&
     (source.includes("run_reader") || source.includes("run_state") ||
       source.includes("run_writer")) &&
     /\brun\b/.test(source)
-  ) {
-    return true;
-  }
-
+  ) return true;
   return source.includes("Effect") &&
     (source.includes("interpret") || source.includes("handle_with"));
 }
 
-function might_contain_unanchored_target(source: string): boolean {
-  return ((source.includes("Do") || source.includes("Program")) &&
-    /\b(?:Do|Program)\b/.test(source)) ||
-    source.includes("\\u");
+// Generated zero-argument wrappers contain compiler temporaries, which can move
+// into a surrounding declaration or return without leaking source local names.
+function inline_iifes(program: Program): Program {
+  function generated(statement: Statement): statement is VariableDeclaration {
+    return statement.type === "VariableDeclaration" &&
+      statement.declarations.every((declaration) =>
+        declaration.id.type === "Identifier" && declaration.id.start < 0
+      );
+  }
+  type Inline = { prefix: Statement[]; expression: Expression };
+  function expression(value: Expression): Inline | undefined {
+    if (value.type !== "CallExpression" || value.optional) return undefined;
+    const callee = unwrap(value.callee);
+    if (
+      value.start < 0 && value.arguments.length === 0 &&
+      callee.type === "ArrowFunctionExpression" && callee.params.length === 0 &&
+      callee.body.type === "BlockStatement"
+    ) {
+      const body = callee.body.body;
+      const last = body[body.length - 1];
+      if (
+        last?.type === "ReturnStatement" && last.argument !== null &&
+        body.slice(0, -1).every((statement) =>
+          generated(statement as Statement)
+        )
+      ) {
+        return {
+          prefix: body.slice(0, -1) as Statement[],
+          expression: last.argument,
+        };
+      }
+    }
+    if (
+      !static_target(value.callee) || value.arguments[0] === undefined ||
+      value.arguments[0].type === "SpreadElement"
+    ) return undefined;
+    const inner = expression(value.arguments[0]);
+    if (inner === undefined) return undefined;
+    return {
+      prefix: inner.prefix,
+      expression: {
+        ...value,
+        arguments: [inner.expression, ...value.arguments.slice(1)],
+      },
+    };
+  }
+  function sequence(
+    value: Expression,
+  ):
+    | { declarations: VariableDeclarator[]; expression: Expression }
+    | undefined {
+    const inlined = expression(value);
+    if (inlined !== undefined && inlined.prefix.length > 0) {
+      const declarations: VariableDeclarator[] = [];
+      const expressions: Expression[] = [];
+      for (const statement of inlined.prefix) {
+        if (!generated(statement)) return undefined;
+        for (const declaration of statement.declarations) {
+          if (
+            declaration.id.type !== "Identifier" || declaration.init === null
+          ) return undefined;
+          declarations.push({ ...declaration, init: null });
+          expressions.push(
+            node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: id(declaration.id.name),
+              right: declaration.init,
+            }),
+          );
+        }
+      }
+      expressions.push(inlined.expression);
+      return {
+        declarations,
+        expression: node({ type: "SequenceExpression", expressions }),
+      };
+    }
+    if (
+      value.type !== "CallExpression" || value.optional ||
+      value.arguments.some((argument) => argument.type === "SpreadElement")
+    ) return undefined;
+    const declarations: VariableDeclarator[] = [];
+    let changed = false;
+    const args = value.arguments.map((argument) => {
+      const result = sequence(argument as Expression);
+      if (result === undefined) return argument;
+      changed = true;
+      declarations.push(...result.declarations);
+      return result.expression;
+    });
+    if (!changed) return undefined;
+    return { declarations, expression: { ...value, arguments: args } };
+  }
+  function statement(current: Statement): Statement[] {
+    let value: Expression | null | undefined;
+    if (current.type === "ReturnStatement") value = current.argument;
+    if (
+      current.type === "VariableDeclaration" &&
+      current.declarations.length === 1
+    ) value = current.declarations[0].init;
+    if (value == null) return [current];
+    const inlined = expression(value);
+    const sequenced = inlined === undefined && sequence(value);
+    let prefix: Statement[];
+    let result: Expression;
+    if (inlined !== undefined) {
+      prefix = inlined.prefix;
+      result = inlined.expression;
+    } else if (sequenced) {
+      prefix = [
+        node({
+          type: "VariableDeclaration",
+          kind: "let",
+          declarations: sequenced.declarations,
+        }),
+      ];
+      result = sequenced.expression;
+    } else return [current];
+    if (current.type === "ReturnStatement") {
+      return [...prefix, { ...current, argument: result }];
+    }
+    if (current.type === "VariableDeclaration") {
+      return [...prefix, {
+        ...current,
+        declarations: [{ ...current.declarations[0], init: result }],
+      }];
+    }
+    return [current];
+  }
+  return rewrite(program, (current) => {
+    if (current.type !== "Program" && current.type !== "BlockStatement") return;
+    return {
+      ...current,
+      body: current.body.flatMap((item) => statement(item as Statement)),
+    };
+  });
+}
+function static_target(value: Expression): boolean {
+  if (value.type === "Identifier") return true;
+  return value.type === "MemberExpression" && !value.computed &&
+    !value.optional && static_target(value.object);
 }
 
 async function run_cli(args: readonly string[]) {
@@ -919,7 +783,7 @@ async function run_cli(args: readonly string[]) {
 
   if (files.length === 0) {
     console.error(
-      "usage: deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts [--write] [--check] [--explain] <file...>",
+      "usage: deno run --allow-env --allow-read --allow-write --allow-ffi tools/transform_do_program.ts [--write] [--check] [--explain] <file...>",
     );
     Deno.exit(2);
   }
@@ -954,4596 +818,9 @@ async function run_cli(args: readonly string[]) {
   }
 }
 
-function transform_call(
-  node: ts.CallExpression,
-  state: TransformState,
-): ts.Expression | undefined {
-  const explicit_dictionary = state.kind === "do" && node.arguments.length === 2
-    ? node.arguments[0]
-    : undefined;
-  const run = explicit_dictionary === undefined
-    ? node.arguments[0]
-    : node.arguments[1];
-
-  if (state.kind === "program" && state.effect_helper_shadowed) {
-    add_diagnostic(
-      state,
-      node,
-      "Skipped program: local Effect binding conflicts with generated helpers.",
-    );
-    return undefined;
-  }
-
-  if (run === undefined || !ts.isFunctionExpression(run)) {
-    add_diagnostic(
-      state,
-      node,
-      "Skipped " + state.kind + ": expected a function* argument.",
-    );
-    return undefined;
-  }
-
-  if (run.asteriskToken === undefined) {
-    add_diagnostic(
-      state,
-      node,
-      "Skipped " + state.kind + ": expected a function* argument.",
-    );
-    return undefined;
-  }
-
-  if (contains_fusion_lexical_hazard(run.body)) {
-    add_diagnostic(
-      state,
-      node,
-      "Skipped " + state.kind +
-        ": generator lexical this, arguments, new.target, super, and direct eval are not supported.",
-    );
-    return undefined;
-  }
-
-  const var_binding = generator_var_binding(run.body);
-  if (var_binding !== undefined) {
-    add_diagnostic(
-      state,
-      var_binding,
-      "Skipped " + state.kind +
-        ": var-scoped generator locals are not supported; use let or const.",
-    );
-    return undefined;
-  }
-
-  const capture = unsafe_generator_capture(run.body);
-  if (capture !== undefined) {
-    add_diagnostic(
-      state,
-      capture,
-      "Skipped " + state.kind +
-        ": generator-local state captured across yield* cannot preserve branching or repeated execution.",
-    );
-    return undefined;
-  }
-
-  const prefix_effect = unsafe_generator_prefix(run.body);
-  if (prefix_effect !== undefined) {
-    add_diagnostic(
-      state,
-      prefix_effect,
-      "Skipped " + state.kind +
-        ": observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.",
-    );
-    return undefined;
-  }
-
-  if (
-    explicit_dictionary !== undefined && ts.isIdentifier(explicit_dictionary) &&
-    state.task_dictionaries?.has(explicit_dictionary.text)
-  ) {
-    let first_yield: ts.YieldExpression | undefined;
-    const find_yield = (node: ts.Node) => {
-      if (first_yield !== undefined || ts.isFunctionLike(node)) return;
-      if (ts.isYieldExpression(node)) {
-        first_yield = node;
-        return;
-      }
-      ts.forEachChild(node, find_yield);
-    };
-    find_yield(run.body);
-    if (
-      first_yield?.expression !== undefined &&
-      !repeatable_task_construction(
-        first_yield.expression,
-        explicit_dictionary.text,
-      )
-    ) {
-      add_diagnostic(
-        state,
-        first_yield,
-        "Skipped Do: arbitrary Task first-yield construction may be observed again when the generator replays.",
-      );
-      return undefined;
-    }
-  }
-
-  try {
-    const dictionary = explicit_dictionary === undefined
-      ? undefined
-      : is_plain_identifier(explicit_dictionary)
-      ? explicit_dictionary
-      : state.factory.createUniqueName("dictionary");
-    const transformed_state: TransformState = {
-      ...state,
-      dictionary,
-    };
-    const flat = transform_flat_statements(run.body, transformed_state);
-    if (
-      flat === undefined &&
-      run.body.statements.filter((statement) =>
-          read_yield_statement(statement) !== undefined
-        ).length > 256
-    ) {
-      add_diagnostic(
-        state,
-        node,
-        "Skipped " + state.kind +
-          ": long dependent continuations require liveness threading; preserving the generator avoids compiler printer stack overflow.",
-      );
-      return undefined;
-    }
-    const transformed = flat ?? transform_statements(
-      [...run.body.statements],
-      undefined,
-      transformed_state,
-      {},
-    );
-
-    if (
-      state.kind === "do" && !transformed.yielded && dictionary === undefined
-    ) {
-      add_diagnostic(
-        state,
-        node,
-        "Skipped Do: Do requires at least one top-level yield*.",
-      );
-      return undefined;
-    }
-
-    if (
-      explicit_dictionary !== undefined && dictionary !== explicit_dictionary
-    ) {
-      const dictionary_name = dictionary as ts.Identifier;
-      return block_to_expression(
-        state.factory.createBlock([
-          state.factory.createVariableStatement(
-            undefined,
-            state.factory.createVariableDeclarationList([
-              state.factory.createVariableDeclaration(
-                dictionary_name,
-                undefined,
-                undefined,
-                explicit_dictionary,
-              ),
-            ], ts.NodeFlags.Const),
-          ),
-          ...transformed.block.statements,
-        ], true),
-        state.factory,
-      );
-    }
-
-    return block_to_expression(transformed.block, state.factory);
-  } catch (error) {
-    if (error instanceof UnsupportedGenerator) {
-      return undefined;
-    }
-
-    throw error;
-  }
-}
-
-type GeneratorBinding = {
-  readonly declaration:
-    | ts.VariableDeclaration
-    | ts.FunctionDeclaration
-    | ts.ClassDeclaration;
-  readonly allocated: boolean;
-  readonly scope_end: number;
-  readonly references: number[];
-  readonly writes: number[];
-  closure_write: boolean;
-};
-
-function unsafe_generator_capture(
-  body: ts.Block,
-): ts.Node | undefined {
-  // A continuation can run several times, including when a deferred value is
-  // executed again. Mutation of a captured generator local would then reuse
-  // the same storage instead of the generator's fresh storage.
-  const scopes: Map<string, GeneratorBinding | undefined>[] = [];
-  const scope_ends: number[] = [];
-  const bindings: GeneratorBinding[] = [];
-  const yields: number[] = [];
-
-  function lookup(name: string): GeneratorBinding | undefined {
-    for (let index = scopes.length - 1; index >= 0; index -= 1) {
-      if (scopes[index].has(name)) return scopes[index].get(name);
-    }
-    return undefined;
-  }
-
-  function declare(
-    name: ts.BindingName,
-    declaration: ts.VariableDeclaration | undefined,
-    nested: boolean,
-  ): void {
-    if (!ts.isIdentifier(name)) {
-      for (const element of name.elements) {
-        if (ts.isBindingElement(element)) {
-          declare(element.name, declaration, nested);
-        }
-      }
-      return;
-    }
-    const binding = declaration === undefined || nested ? undefined : {
-      declaration,
-      scope_end: scope_ends[scope_ends.length - 1],
-      allocated: declaration.initializer !== undefined &&
-        is_local_allocation(declaration.initializer),
-      references: [],
-      writes: [],
-      closure_write: false,
-    };
-    scopes[scopes.length - 1].set(name.text, binding);
-    if (binding !== undefined) bindings.push(binding);
-  }
-
-  function record_write(expression: ts.Expression, nested: boolean): void {
-    const target = unwrap_parentheses(expression);
-    if (ts.isIdentifier(target)) {
-      const binding = lookup(target.text);
-      if (binding !== undefined) {
-        binding.writes.push(target.pos);
-        binding.closure_write ||= nested;
-      }
-    } else if (
-      ts.isPropertyAccessExpression(target) ||
-      ts.isElementAccessExpression(target)
-    ) {
-      record_write(target.expression, nested);
-    } else if (ts.isArrayLiteralExpression(target)) {
-      for (const item of target.elements) {
-        if (!ts.isOmittedExpression(item)) record_write(item, nested);
-      }
-    } else if (ts.isObjectLiteralExpression(target)) {
-      for (const property of target.properties) {
-        if (ts.isShorthandPropertyAssignment(property)) {
-          record_write(property.name, nested);
-        }
-        if (ts.isPropertyAssignment(property)) {
-          record_write(property.initializer, nested);
-        }
-        if (ts.isSpreadAssignment(property)) {
-          record_write(property.expression, nested);
-        }
-      }
-    } else if (ts.isSpreadElement(target)) {
-      record_write(target.expression, nested);
-    }
-  }
-
-  function visit(node: ts.Node, nested = false, parent?: ts.Node): void {
-    if (ts.isTypeNode(node)) return;
-    if (ts.isFunctionLike(node)) {
-      scopes.push(new Map());
-      scope_ends.push(node.end);
-      for (const parameter of node.parameters) {
-        declare(parameter.name, undefined, true);
-      }
-      ts.forEachChild(node, (child) => visit(child, true, node));
-      scopes.pop();
-      scope_ends.pop();
-      return;
-    }
-    if (ts.isBlock(node)) {
-      scopes.push(new Map());
-      scope_ends.push(node.end);
-      for (const statement of node.statements) {
-        if (ts.isVariableStatement(statement)) {
-          for (const declaration of statement.declarationList.declarations) {
-            declare(declaration.name, declaration, nested);
-          }
-        } else if (
-          (ts.isFunctionDeclaration(statement) ||
-            ts.isClassDeclaration(statement)) && statement.name !== undefined
-        ) {
-          const binding = nested ? undefined : {
-            declaration: statement,
-            allocated: true,
-            scope_end: node.end,
-            references: [],
-            writes: [],
-            closure_write: false,
-          };
-          scopes[scopes.length - 1].set(statement.name.text, binding);
-          if (binding !== undefined) bindings.push(binding);
-        }
-      }
-      ts.forEachChild(node, (child) => visit(child, nested, node));
-      scopes.pop();
-      scope_ends.pop();
-      return;
-    }
-    if (
-      ts.isForStatement(node) || ts.isForOfStatement(node) ||
-      ts.isForInStatement(node)
-    ) {
-      scopes.push(new Map());
-      scope_ends.push(node.end);
-      if (
-        node.initializer !== undefined &&
-        ts.isVariableDeclarationList(node.initializer)
-      ) {
-        for (const declaration of node.initializer.declarations) {
-          declare(declaration.name, declaration, nested);
-        }
-      }
-      // The classic-for incrementor becomes a new recursive-loop argument.
-      if (ts.isForStatement(node)) {
-        if (node.initializer !== undefined) visit(node.initializer, nested);
-        if (node.condition !== undefined) visit(node.condition, nested);
-        visit(node.statement, nested);
-      } else {
-        visit(node.expression, nested);
-        visit(node.statement, nested);
-      }
-      scopes.pop();
-      scope_ends.pop();
-      return;
-    }
-    if (ts.isVariableDeclaration(node)) {
-      if (node.initializer !== undefined) visit(node.initializer, nested);
-      return;
-    }
-    if (ts.isYieldExpression(node) && !nested) yields.push(node.pos);
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      record_write(node.left, nested);
-    }
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken ||
-        node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      record_write(node.operand, nested);
-    }
-    if (ts.isDeleteExpression(node)) record_write(node.expression, nested);
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      generator_mutating_methods.has(node.expression.name.text)
-    ) {
-      record_write(node.expression.expression, nested);
-    }
-    if (
-      ts.isIdentifier(node) && !(parent !== undefined &&
-        ((ts.isPropertyAccessExpression(parent) ||
-          ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) &&
-          parent.name === node))
-    ) {
-      lookup(node.text)?.references.push(node.pos);
-    }
-    ts.forEachChild(node, (child) => visit(child, nested, node));
-  }
-
-  visit(body);
-  return bindings.find((binding) => {
-    let low = 0;
-    let high = yields.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (yields[middle] < binding.declaration.end) low = middle + 1;
-      else high = middle;
-    }
-    const yielded = yields[low];
-    if (yielded === undefined || yielded >= binding.scope_end) return false;
-    return binding.closure_write || binding.writes.some((write) =>
-      write > yielded
-    ) ||
-      binding.allocated &&
-        binding.references.some((reference) => reference > yielded);
-  })?.declaration;
-}
-
-function generator_var_binding(
-  body: ts.Block,
-): ts.VariableDeclarationList | undefined {
-  let binding: ts.VariableDeclarationList | undefined;
-  function visit(node: ts.Node): void {
-    if (binding !== undefined || ts.isFunctionLike(node)) return;
-    if (
-      ts.isVariableDeclarationList(node) &&
-      (node.flags & ts.NodeFlags.BlockScoped) === 0
-    ) {
-      binding = node;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(body);
-  return binding;
-}
-
-function is_local_allocation(expression: ts.Expression): boolean {
-  const value = unwrap_parentheses(expression);
-  if (ts.isConditionalExpression(value)) {
-    return is_local_allocation(value.whenTrue) ||
-      is_local_allocation(value.whenFalse);
-  }
-  return ts.isArrayLiteralExpression(value) ||
-    ts.isObjectLiteralExpression(value) ||
-    ts.isNewExpression(value) || ts.isArrowFunction(value) ||
-    ts.isFunctionExpression(value);
-}
-
-const generator_mutating_methods = new Set([
-  "push",
-  "pop",
-  "shift",
-  "unshift",
-  "splice",
-  "sort",
-  "reverse",
-  "fill",
-  "copyWithin",
-  "set",
-  "add",
-  "delete",
-  "clear",
-]);
-
-function unsafe_generator_prefix(body: ts.Block): ts.Node | undefined {
-  const scopes: Set<string>[] = [];
-  const yields: number[] = [];
-  const effects: { readonly node: ts.Node; readonly loop: boolean }[] = [];
-
-  function binding(name: ts.BindingName): void {
-    if (ts.isIdentifier(name)) scopes[scopes.length - 1].add(name.text);
-    else {for (const element of name.elements) {
-        if (ts.isBindingElement(element)) binding(element.name);
-      }}
-  }
-  function local(name: string): boolean {
-    return scopes.some((scope) => scope.has(name));
-  }
-
-  function visit(node: ts.Node, loop = false): void {
-    if (ts.isTypeNode(node) || ts.isFunctionLike(node)) return;
-    if (ts.isBlock(node)) {
-      scopes.push(new Set());
-      for (const statement of node.statements) {
-        if (ts.isVariableStatement(statement)) {
-          for (const declaration of statement.declarationList.declarations) {
-            binding(declaration.name);
-          }
-        }
-      }
-      ts.forEachChild(node, (child) => visit(child, loop));
-      scopes.pop();
-      return;
-    }
-    if (ts.isYieldExpression(node)) {
-      yields.push(node.pos);
-      return;
-    }
-    const in_loop = loop ||
-      ((ts.isForStatement(node) || ts.isForOfStatement(node) ||
-        ts.isWhileStatement(node) || ts.isDoStatement(node)) &&
-        contains_yield_or_return(node));
-    if (
-      ts.isForStatement(node) || ts.isForOfStatement(node) ||
-      ts.isForInStatement(node)
-    ) {
-      scopes.push(new Set());
-      if (
-        node.initializer !== undefined &&
-        ts.isVariableDeclarationList(node.initializer)
-      ) {
-        for (const declaration of node.initializer.declarations) {
-          binding(declaration.name);
-        }
-      }
-      // Unsupported iterable expressions get their specific diagnostic during
-      // loop lowering; they are never converted to eager materialization.
-      if (ts.isForOfStatement(node)) visit(node.statement, in_loop);
-      else ts.forEachChild(node, (child) => visit(child, in_loop));
-      scopes.pop();
-      return;
-    }
-    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      effects.push({ node, loop: in_loop });
-    }
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      const left = unwrap_parentheses(node.left);
-      if (!ts.isIdentifier(left) || !local(left.text)) {
-        effects.push({ node, loop: in_loop });
-      }
-    }
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken ||
-        node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      const operand = unwrap_parentheses(node.operand);
-      if (!ts.isIdentifier(operand) || !local(operand.text)) {
-        effects.push({ node, loop: in_loop });
-      }
-    }
-    if (ts.isDeleteExpression(node)) effects.push({ node, loop: in_loop });
-    ts.forEachChild(node, (child) => visit(child, in_loop));
-  }
-  visit(body);
-  return effects.find(({ node, loop }) =>
-    yields.some((yielded) => loop || node.end < yielded)
-  )?.node;
-}
-
-function transform_statements(
-  statements: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const prefix: ts.Statement[] = [];
-
-  for (let index = 0; index < statements.length; index += 1) {
-    const statement = statements[index];
-    const yielded = read_yield_statement(statement);
-
-    if (yielded !== undefined) {
-      const rest = statements.slice(index + 1);
-      const transformed = transform_yield(yielded, rest, state, options);
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isReturnStatement(statement)) {
-      const expression = statement.expression ?? state.factory.createVoidZero();
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          state.factory.createReturnStatement(
-            create_pure(expression, current_context, state),
-          ),
-        ], true),
-        yielded: current_context !== undefined,
-      };
-    }
-
-    if (ts.isContinueStatement(statement)) {
-      const expression = transform_continue(statement, state, options);
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          state.factory.createReturnStatement(expression),
-        ], true),
-        yielded: true,
-      };
-    }
-
-    if (ts.isBreakStatement(statement)) {
-      const expression = transform_break(statement, state, options);
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          state.factory.createReturnStatement(expression),
-        ], true),
-        yielded: true,
-      };
-    }
-
-    if (
-      ts.isIfStatement(statement) &&
-      contains_yield_or_return_or_break(statement)
-    ) {
-      const rest = statements.slice(index + 1);
-      const transformed = transform_if(
-        statement,
-        rest,
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (
-      ts.isSwitchStatement(statement) &&
-      contains_yield_or_return_or_break(statement)
-    ) {
-      const rest = statements.slice(index + 1);
-      const transformed = transform_switch(
-        statement,
-        rest,
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isForStatement(statement) && contains_yield_or_return(statement)) {
-      const rest = statements.slice(index + 1);
-      const transformed = transform_for(
-        statement,
-        rest,
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isWhileStatement(statement) && contains_yield_or_return(statement)) {
-      const transformed = transform_while(
-        statement,
-        statements.slice(index + 1),
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isDoStatement(statement) && contains_yield_or_return(statement)) {
-      const transformed = transform_do_while(
-        statement,
-        statements.slice(index + 1),
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isForOfStatement(statement) && contains_yield_or_return(statement)) {
-      const transformed = transform_for_of(
-        statement,
-        statements.slice(index + 1),
-        current_context,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          ...prefix,
-          ...transformed.block.statements,
-        ], true),
-        yielded: transformed.yielded,
-      };
-    }
-
-    if (ts.isTryStatement(statement) && contains_yield_or_return(statement)) {
-      add_diagnostic(
-        state,
-        statement,
-        "Skipped " + state.kind +
-          ": try statements containing yield* or return are not supported by the source transformer.",
-      );
-      throw new UnsupportedGenerator();
-    }
-
-    if (
-      ts.isLabeledStatement(statement) &&
-      contains_yield_or_return_or_break(statement)
-    ) {
-      add_diagnostic(
-        state,
-        statement,
-        "Skipped " + state.kind + ": labeled control flow is not supported.",
-      );
-      throw new UnsupportedGenerator();
-    }
-
-    if (contains_yield_or_return(statement)) {
-      add_diagnostic(
-        state,
-        statement,
-        "Skipped " + state.kind +
-          ": yield* and return are only transformed at the top level of the generator body.",
-      );
-      throw new UnsupportedGenerator();
-    }
-
-    prefix.push(statement);
-  }
-
-  return {
-    block: state.factory.createBlock([
-      ...prefix,
-      state.factory.createReturnStatement(
-        create_pure(state.factory.createVoidZero(), current_context, state),
-      ),
-    ], true),
-    yielded: current_context !== undefined,
-  };
-}
-
-function transform_yield(
-  yielded: YieldStatement,
-  rest: readonly ts.Statement[],
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  switch (yielded.kind) {
-    case "bind": {
-      if (state.kind === "do") {
-        const context = state.factory.createUniqueName("context");
-        const rest_block = transform_statements(rest, context, state, options);
-        const direct = create_direct_do_bind(
-          yielded.expression,
-          context,
-          bind_parameters(yielded, state),
-          rest_block.block,
-          state,
-        );
-
-        if (direct !== undefined) {
-          return {
-            block: state.factory.createBlock([
-              state.factory.createReturnStatement(direct),
-            ], true),
-            yielded: true,
-          };
-        }
-
-        return {
-          block: state.factory.createBlock([
-            state.factory.createVariableStatement(
-              undefined,
-              state.factory.createVariableDeclarationList([
-                state.factory.createVariableDeclaration(
-                  context,
-                  undefined,
-                  undefined,
-                  yielded.expression,
-                ),
-              ], ts.NodeFlags.Const),
-            ),
-            state.factory.createReturnStatement(
-              create_bind(
-                context,
-                bind_parameters(yielded, state),
-                rest_block.block,
-                state,
-              ),
-            ),
-          ], true),
-          yielded: true,
-        };
-      }
-
-      const rest_block = transform_statements(
-        rest,
-        yielded.expression,
-        state,
-        options,
-      );
-
-      return {
-        block: state.factory.createBlock([
-          state.factory.createReturnStatement(
-            create_bind(
-              yielded.expression,
-              bind_parameters(yielded, state),
-              rest_block.block,
-              state,
-            ),
-          ),
-        ], true),
-        yielded: true,
-      };
-    }
-
-    case "return": {
-      if (state.kind === "program") {
-        return {
-          block: state.factory.createBlock([
-            state.factory.createReturnStatement(
-              create_effect_from(yielded.expression, state.factory),
-            ),
-          ], true),
-          yielded: true,
-        };
-      }
-
-      return {
-        block: state.factory.createBlock([
-          state.factory.createReturnStatement(
-            yielded.expression,
-          ),
-        ], true),
-        yielded: true,
-      };
-    }
-  }
-}
-
-function transform_continue(
-  statement: ts.ContinueStatement,
-  state: TransformState,
-  options: TransformOptions,
-): ts.Expression {
-  if (statement.label !== undefined) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped " + state.kind + ": labeled continues are not supported.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  if (options.continue_expression === undefined) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped " + state.kind +
-        ": continue is only supported inside transformed for loops.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  return options.continue_expression;
-}
-
-function transform_break(
-  statement: ts.BreakStatement,
-  state: TransformState,
-  options: TransformOptions,
-): ts.Expression {
-  if (statement.label !== undefined) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped " + state.kind + ": labeled breaks are not supported.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  if (options.break_expression === undefined) {
-    add_diagnostic(
-      state,
-      statement,
-      "Skipped " + state.kind +
-        ": break is only supported inside transformed loops.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  return options.break_expression;
-}
-
-function transform_if(
-  statement: ts.IfStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const then_block = transform_statements(
-    [...unwrap_statement(statement.thenStatement), ...rest],
-    current_context,
-    state,
-    options,
-  );
-  let yielded = then_block.yielded;
-
-  if (statement.elseStatement !== undefined) {
-    const else_block = transform_statements(
-      [...unwrap_statement(statement.elseStatement), ...rest],
-      current_context,
-      state,
-      options,
-    );
-    yielded = yielded || else_block.yielded;
-
-    return {
-      block: state.factory.createBlock([
-        state.factory.updateIfStatement(
-          statement,
-          statement.expression,
-          then_block.block,
-          else_block.block,
-        ),
-      ], true),
-      yielded,
-    };
-  }
-
-  const continuation = transform_statements(
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  yielded = yielded || continuation.yielded;
-
-  return {
-    block: state.factory.createBlock([
-      state.factory.updateIfStatement(
-        statement,
-        statement.expression,
-        then_block.block,
-        undefined,
-      ),
-      ...continuation.block.statements,
-    ], true),
-    yielded,
-  };
-}
-
-function transform_switch(
-  statement: ts.SwitchStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const clauses: ts.CaseOrDefaultClause[] = [];
-  let yielded = current_context !== undefined;
-  const source_clauses = statement.caseBlock.clauses;
-
-  for (let index = 0; index < source_clauses.length; index += 1) {
-    const clause = source_clauses[index];
-    const normalized = normalize_switch_case(
-      clause,
-      rest,
-      index === source_clauses.length - 1,
-      state,
-    );
-    const transformed = transform_statements(
-      normalized,
-      current_context,
-      state,
-      options,
-    );
-    yielded = yielded || transformed.yielded;
-    clauses.push(update_switch_clause(clause, transformed.block, state));
-  }
-
-  const continuation = transform_statements(
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  yielded = yielded || continuation.yielded;
-
-  return {
-    block: state.factory.createBlock([
-      state.factory.updateSwitchStatement(
-        statement,
-        statement.expression,
-        state.factory.updateCaseBlock(statement.caseBlock, clauses),
-      ),
-      ...continuation.block.statements,
-    ], true),
-    yielded,
-  };
-}
-
-function normalize_switch_case(
-  clause: ts.CaseOrDefaultClause,
-  rest: readonly ts.Statement[],
-  is_final_clause: boolean,
-  state: TransformState,
-): readonly ts.Statement[] {
-  const statements = unwrap_case_block(clause.statements);
-
-  if (statements.length === 0) {
-    if (is_final_clause) {
-      return rest;
-    }
-
-    add_diagnostic(
-      state,
-      clause,
-      "Skipped " + state.kind + ": switch fallthrough is not supported.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  const last = statements[statements.length - 1];
-
-  if (ts.isBreakStatement(last)) {
-    if (last.label !== undefined) {
-      add_diagnostic(
-        state,
-        last,
-        "Skipped " + state.kind + ": labeled switch breaks are not supported.",
-      );
-      throw new UnsupportedGenerator();
-    }
-
-    return [...statements.slice(0, -1), ...rest];
-  }
-
-  if (
-    ts.isReturnStatement(last) || ts.isThrowStatement(last) ||
-    ts.isContinueStatement(last)
-  ) {
-    return statements;
-  }
-
-  if (is_final_clause) {
-    return [...statements, ...rest];
-  }
-
-  add_diagnostic(
-    state,
-    last,
-    "Skipped " + state.kind + ": switch fallthrough is not supported.",
-  );
-  throw new UnsupportedGenerator();
-}
-
-function transform_for(
-  statement: ts.ForStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const loop = read_for_loop(statement, state);
-  const general = transform_stack_safe_loop(
-    loop.variable,
-    loop.type,
-    loop.initializer,
-    loop.condition,
-    loop.next,
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  if (general !== undefined) return general;
-  return transform_recursive_loop(
-    loop.variable,
-    loop.type,
-    loop.initializer,
-    loop.condition,
-    loop.next,
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-  );
-}
-
-function transform_while(
-  statement: ts.WhileStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const general = transform_stack_safe_loop(
-    undefined,
-    undefined,
-    state.factory.createVoidZero(),
-    statement.expression,
-    state.factory.createVoidZero(),
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  if (general !== undefined) return general;
-  return transform_recursive_loop(
-    undefined,
-    undefined,
-    undefined,
-    statement.expression,
-    undefined,
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-  );
-}
-
-function transform_do_while(
-  statement: ts.DoStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  const general = transform_stack_safe_loop(
-    undefined,
-    undefined,
-    state.factory.createTrue(),
-    statement.expression,
-    state.factory.createFalse(),
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-    true,
-  );
-  if (general !== undefined) return general;
-  return transform_recursive_loop(
-    undefined,
-    undefined,
-    undefined,
-    statement.expression,
-    undefined,
-    unwrap_statement(statement.statement),
-    rest,
-    current_context,
-    state,
-    options,
-    true,
-  );
-}
-
-function transform_for_of(
-  statement: ts.ForOfStatement,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock {
-  if (
-    statement.awaitModifier !== undefined ||
-    !ts.isVariableDeclarationList(statement.initializer)
-  ) {
-    return unsupported_for_loop(statement, state, "of-loop initializer");
-  }
-
-  const [declaration] = statement.initializer.declarations;
-  if (
-    statement.initializer.declarations.length !== 1 ||
-    declaration === undefined || !ts.isIdentifier(declaration.name)
-  ) {
-    return unsupported_for_loop(statement, state, "of-loop initializer");
-  }
-
-  if (!is_primitive_array_literal(statement.expression)) {
-    add_diagnostic(
-      state,
-      statement.expression,
-      "Skipped " + state.kind +
-        ": for...of requires a literal array of primitive values; arbitrary iterables must preserve lazy iteration and iterator closing.",
-    );
-    throw new UnsupportedGenerator();
-  }
-  if ((statement.initializer.flags & ts.NodeFlags.BlockScoped) === 0) {
-    return unsupported_for_loop(
-      statement,
-      state,
-      "var-scoped of-loop initializer",
-    );
-  }
-
-  const items = state.factory.createUniqueName("items");
-  const index = state.factory.createUniqueName("index");
-  const item_statement = state.factory.createVariableStatement(
-    undefined,
-    state.factory.createVariableDeclarationList([
-      state.factory.createVariableDeclaration(
-        declaration.name,
-        undefined,
-        declaration.type,
-        state.factory.createElementAccessExpression(items, index),
-      ),
-    ], statement.initializer.flags),
-  );
-  const condition = state.factory.createLessThan(
-    index,
-    state.factory.createPropertyAccessExpression(items, "length"),
-  );
-  const next = state.factory.createAdd(
-    index,
-    state.factory.createNumericLiteral(1),
-  );
-  const body = [item_statement, ...unwrap_statement(statement.statement)];
-  const index_type = state.factory.createKeywordTypeNode(
-    ts.SyntaxKind.NumberKeyword,
-  );
-  const initial = state.factory.createNumericLiteral(0);
-  let transformed = transform_stack_safe_loop(
-    index,
-    index_type,
-    initial,
-    condition,
-    next,
-    body,
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  transformed ??= transform_recursive_loop(
-    index,
-    undefined,
-    initial,
-    condition,
-    next,
-    body,
-    rest,
-    current_context,
-    state,
-    options,
-  );
-  return {
-    ...transformed,
-    block: state.factory.createBlock([
-      state.factory.createVariableStatement(
-        undefined,
-        state.factory.createVariableDeclarationList([
-          state.factory.createVariableDeclaration(
-            items,
-            undefined,
-            undefined,
-            statement.expression,
-          ),
-        ], ts.NodeFlags.Const),
-      ),
-      ...transformed.block.statements,
-    ], true),
-  };
-}
-
-function is_primitive_array_literal(expression: ts.Expression): boolean {
-  const value = unwrap_parentheses(expression);
-  if (!ts.isArrayLiteralExpression(value)) return false;
-  return value.elements.every((element) => {
-    const item = unwrap_parentheses(element);
-    if (ts.isPrefixUnaryExpression(item)) {
-      return (item.operator === ts.SyntaxKind.PlusToken ||
-        item.operator === ts.SyntaxKind.MinusToken) &&
-        ts.isNumericLiteral(item.operand);
-    }
-    return ts.isStringLiteralLike(item) || ts.isNumericLiteral(item) ||
-      ts.isBigIntLiteral(item) ||
-      item.kind === ts.SyntaxKind.TrueKeyword ||
-      item.kind === ts.SyntaxKind.FalseKeyword ||
-      item.kind === ts.SyntaxKind.NullKeyword;
-  });
-}
-
-// One control-flow shape serves counted, while, do/while and literal-array loops.
-function transform_recursive_loop(
-  variable: ts.Identifier | undefined,
-  type: ts.TypeNode | undefined,
-  initial: ts.Expression | undefined,
-  condition: ts.Expression,
-  next: ts.Expression | undefined,
-  statements: readonly ts.Statement[],
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-  do_first = false,
-): TransformBlock {
-  const f = state.factory;
-  const loop_name = f.createUniqueName("loop");
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_expression = block_to_expression(exit.block, f);
-  const arguments_: ts.Expression[] = [];
-  if (next !== undefined) arguments_.push(next);
-  let continue_expression: ts.Expression = f.createCallExpression(
-    loop_name,
-    undefined,
-    arguments_,
-  );
-  if (do_first) {
-    continue_expression = block_to_expression(
-      f.createBlock([
-        f.createIfStatement(
-          condition,
-          f.createReturnStatement(continue_expression),
-        ),
-        f.createReturnStatement(exit_expression),
-      ], true),
-      f,
-    );
-  }
-  const body = transform_statements(
-    [...statements, f.createContinueStatement()],
-    current_context,
-    state,
-    {
-      ...options,
-      continue_expression,
-      break_expression: exit_expression,
-    },
-  );
-  let entry: ts.Statement = body.block;
-  if (!do_first) entry = f.createIfStatement(condition, body.block);
-  const parameters: ts.ParameterDeclaration[] = [];
-  if (variable !== undefined) {
-    parameters.push(
-      f.createParameterDeclaration(
-        undefined,
-        undefined,
-        variable,
-        undefined,
-        type,
-      ),
-    );
-  }
-  const initial_arguments: ts.Expression[] = [];
-  if (initial !== undefined) initial_arguments.push(initial);
-  state.report?.(
-    statements[0] ?? state.source_file,
-    "loop",
-    "preserved",
-    "Recursive loop fallback retains arbitrary dictionaries and early return values; stack-safe lowering requires a known MonadRec dictionary and no early returns.",
-  );
-  return {
-    yielded: true,
-    block: f.createBlock([
-      f.createFunctionDeclaration(
-        undefined,
-        undefined,
-        loop_name,
-        undefined,
-        parameters,
-        undefined,
-        f.createBlock([entry, ...exit.block.statements], true),
-      ),
-      f.createReturnStatement(
-        f.createCallExpression(loop_name, undefined, initial_arguments),
-      ),
-    ], true),
-  };
-}
-
-type ForLoop = {
-  readonly variable: ts.Identifier;
-  readonly type: ts.TypeNode | undefined;
-  readonly initializer: ts.Expression;
-  readonly condition: ts.Expression;
-  readonly next: ts.Expression;
-};
-
-function read_for_loop(
-  statement: ts.ForStatement,
-  state: TransformState,
-): ForLoop {
-  if (statement.initializer === undefined) {
-    return unsupported_for_loop(statement, state, "initializer");
-  }
-
-  if (!ts.isVariableDeclarationList(statement.initializer)) {
-    return unsupported_for_loop(statement, state, "initializer");
-  }
-
-  const declarations = statement.initializer.declarations;
-
-  if (declarations.length !== 1) {
-    return unsupported_for_loop(statement.initializer, state, "initializer");
-  }
-
-  const [declaration] = declarations;
-
-  if (!ts.isIdentifier(declaration.name)) {
-    return unsupported_for_loop(declaration, state, "initializer");
-  }
-
-  if (declaration.initializer === undefined) {
-    return unsupported_for_loop(declaration, state, "initializer");
-  }
-
-  if (statement.condition === undefined) {
-    return unsupported_for_loop(statement, state, "condition");
-  }
-
-  return {
-    variable: declaration.name,
-    type: declaration.type,
-    initializer: declaration.initializer,
-    condition: statement.condition,
-    next: read_for_loop_next(statement, declaration.name, state),
-  };
-}
-
-function read_for_loop_next(
-  statement: ts.ForStatement,
-  variable: ts.Identifier,
-  state: TransformState,
-): ts.Expression {
-  const incrementor = statement.incrementor;
-
-  if (incrementor === undefined) {
-    return unsupported_for_loop(statement, state, "incrementor");
-  }
-
-  if (ts.isPostfixUnaryExpression(incrementor)) {
-    if (!same_identifier(incrementor.operand, variable)) {
-      return unsupported_for_loop(incrementor, state, "incrementor");
-    }
-
-    switch (incrementor.operator) {
-      case ts.SyntaxKind.PlusPlusToken:
-        return plus_one(variable, state);
-      case ts.SyntaxKind.MinusMinusToken:
-        return minus_one(variable, state);
-    }
-  }
-
-  if (ts.isPrefixUnaryExpression(incrementor)) {
-    if (!same_identifier(incrementor.operand, variable)) {
-      return unsupported_for_loop(incrementor, state, "incrementor");
-    }
-
-    switch (incrementor.operator) {
-      case ts.SyntaxKind.PlusPlusToken:
-        return plus_one(variable, state);
-      case ts.SyntaxKind.MinusMinusToken:
-        return minus_one(variable, state);
-    }
-  }
-
-  if (ts.isBinaryExpression(incrementor)) {
-    if (!same_identifier(incrementor.left, variable)) {
-      return unsupported_for_loop(incrementor, state, "incrementor");
-    }
-
-    switch (incrementor.operatorToken.kind) {
-      case ts.SyntaxKind.EqualsToken:
-        return incrementor.right;
-      case ts.SyntaxKind.PlusEqualsToken:
-        return state.factory.createAdd(variable, incrementor.right);
-      case ts.SyntaxKind.MinusEqualsToken:
-        return state.factory.createSubtract(variable, incrementor.right);
-    }
-  }
-
-  return unsupported_for_loop(incrementor, state, "incrementor");
-}
-
-function unsupported_for_loop<result>(
-  node: ts.Node,
-  state: TransformState,
-  part: string,
-): result {
-  add_diagnostic(
-    state,
-    node,
-    "Skipped " + state.kind + ": unsupported for-loop " + part + ".",
-  );
-  throw new UnsupportedGenerator();
-}
-
-function plus_one(
-  variable: ts.Identifier,
-  state: TransformState,
-): ts.Expression {
-  return state.factory.createAdd(
-    variable,
-    state.factory.createNumericLiteral(1),
-  );
-}
-
-function minus_one(
-  variable: ts.Identifier,
-  state: TransformState,
-): ts.Expression {
-  return state.factory.createSubtract(
-    variable,
-    state.factory.createNumericLiteral(1),
-  );
-}
-
-function same_identifier(left: ts.Node, right: ts.Identifier): boolean {
-  return ts.isIdentifier(left) && left.text === right.text;
-}
-
-function unwrap_statement(statement: ts.Statement): readonly ts.Statement[] {
-  if (ts.isBlock(statement)) {
-    return [...statement.statements];
-  }
-
-  return [statement];
-}
-
-function unwrap_case_block(
-  statements: ts.NodeArray<ts.Statement>,
-): readonly ts.Statement[] {
-  if (statements.length !== 1) {
-    return [...statements];
-  }
-
-  const [statement] = statements;
-
-  if (!ts.isBlock(statement)) {
-    return [statement];
-  }
-
-  return [...statement.statements];
-}
-
-function update_switch_clause(
-  clause: ts.CaseOrDefaultClause,
-  block: ts.Block,
-  state: TransformState,
-): ts.CaseOrDefaultClause {
-  const statements: readonly ts.Statement[] = [block];
-
-  if (ts.isCaseClause(clause)) {
-    return state.factory.updateCaseClause(
-      clause,
-      clause.expression,
-      statements,
-    );
-  }
-
-  return state.factory.updateDefaultClause(clause, statements);
-}
-
-function bind_parameters(
-  yielded: Extract<YieldStatement, { readonly kind: "bind" }>,
-  state: TransformState,
-): readonly ts.ParameterDeclaration[] {
-  if (yielded.name === undefined) {
-    return [];
-  }
-
-  return [
-    state.factory.createParameterDeclaration(
-      undefined,
-      undefined,
-      yielded.name,
-      undefined,
-      yielded.type,
-      undefined,
-    ),
-  ];
-}
-
-function create_bind(
-  expression: ts.Expression,
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Block,
-  state: TransformState,
-): ts.Expression {
-  const factory = state.factory;
-
-  if (state.kind === "do") {
-    const mapped = create_final_map(
-      expression,
-      state.dictionary ?? expression,
-      parameters,
-      body,
-      factory,
-      state.continuation_type,
-    );
-
-    if (mapped !== undefined) {
-      return mapped;
-    }
-  } else {
-    const mapped = create_final_effect_map(
-      expression,
-      parameters,
-      body,
-      factory,
-    );
-
-    if (mapped !== undefined) {
-      return mapped;
-    }
-  }
-
-  let return_type: ts.TypeNode | undefined;
-  if (
-    state.continuation_type !== undefined && state.dictionary !== undefined &&
-    ts.isIdentifier(state.dictionary)
-  ) {
-    return_type = factory.createTypeReferenceNode("ReturnType", [
-      factory.createTypeQueryNode(
-        factory.createQualifiedName(state.dictionary, "pure"),
-        [state.continuation_type],
-      ),
-    ]);
-  }
-  const continuation = create_arrow(parameters, body, factory, return_type);
-
-  return factory.createCallExpression(
-    state.kind === "program"
-      ? property(factory, "Effect", "bind_from")
-      : factory.createPropertyAccessExpression(expression, "bind"),
-    undefined,
-    state.kind === "program" ? [expression, continuation] : [continuation],
-  );
-}
-
-function create_direct_do_bind(
-  expression: ts.Expression,
-  context: ts.Identifier,
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Block,
-  state: TransformState,
-): ts.Expression | undefined {
-  const mapped = create_final_map(
-    expression,
-    state.dictionary ?? context,
-    parameters,
-    body,
-    state.factory,
-    state.continuation_type,
-  );
-
-  if (mapped !== undefined) {
-    return mapped;
-  }
-
-  if (state.used_contexts?.has(context)) {
-    return undefined;
-  }
-
-  return create_bind(expression, parameters, body, state);
-}
-
-function create_final_map(
-  expression: ts.Expression,
-  pure_context: ts.Expression,
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Block,
-  factory: ts.NodeFactory,
-  output_type?: ts.TypeNode,
-): ts.Expression | undefined {
-  const statements = [...body.statements];
-  const last = statements[statements.length - 1];
-
-  if (last === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isReturnStatement(last)) {
-    return undefined;
-  }
-
-  if (statements.slice(0, -1).some(contains_yield_or_return)) {
-    return undefined;
-  }
-
-  const mapped = read_direct_pure(last.expression, pure_context);
-
-  if (mapped === undefined) {
-    return undefined;
-  }
-
-  const map_body = factory.createBlock([
-    ...statements.slice(0, -1),
-    factory.createReturnStatement(mapped),
-  ], true);
-
-  return factory.createCallExpression(
-    factory.createPropertyAccessExpression(expression, "map"),
-    undefined,
-    [create_arrow(parameters, map_body, factory, output_type)],
-  );
-}
-
-function create_final_effect_map(
-  expression: ts.Expression,
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Block,
-  factory: ts.NodeFactory,
-): ts.Expression | undefined {
-  const statements = [...body.statements];
-  const last = statements[statements.length - 1];
-
-  if (last === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isReturnStatement(last)) {
-    return undefined;
-  }
-
-  if (statements.slice(0, -1).some(contains_yield_or_return)) {
-    return undefined;
-  }
-
-  const mapped = read_effect_pure(last.expression);
-
-  if (mapped === undefined) {
-    return undefined;
-  }
-
-  const map_body = factory.createBlock([
-    ...statements.slice(0, -1),
-    factory.createReturnStatement(mapped),
-  ], true);
-
-  return factory.createCallExpression(
-    property(factory, "Effect", "map_from"),
-    undefined,
-    [
-      expression,
-      create_arrow(parameters, map_body, factory),
-    ],
-  );
-}
-
-function read_direct_pure(
-  expression: ts.Expression | undefined,
-  context: ts.Expression,
-): ts.Expression | undefined {
-  if (expression === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isCallExpression(expression)) {
-    return undefined;
-  }
-
-  if (!ts.isPropertyAccessExpression(expression.expression)) {
-    return undefined;
-  }
-
-  if (expression.expression.name.text !== "pure") {
-    return undefined;
-  }
-
-  if (!same_expression(expression.expression.expression, context)) {
-    return undefined;
-  }
-
-  const [value] = expression.arguments;
-
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return value;
-}
-
-function read_effect_pure(
-  expression: ts.Expression | undefined,
-): ts.Expression | undefined {
-  if (expression === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isCallExpression(expression)) {
-    return undefined;
-  }
-
-  if (!ts.isPropertyAccessExpression(expression.expression)) {
-    return undefined;
-  }
-
-  if (!ts.isIdentifier(expression.expression.expression)) {
-    return undefined;
-  }
-
-  if (expression.expression.expression.text !== "Effect") {
-    return undefined;
-  }
-
-  if (expression.expression.name.text !== "pure") {
-    return undefined;
-  }
-
-  const [value] = expression.arguments;
-
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return value;
-}
-
-function same_expression(left: ts.Expression, right: ts.Expression): boolean {
-  if (ts.isIdentifier(left) && ts.isIdentifier(right)) {
-    return left.text === right.text;
-  }
-
-  return left === right;
-}
-
-function create_arrow(
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Block,
-  factory: ts.NodeFactory,
-  output_type?: ts.TypeNode,
-): ts.ArrowFunction {
-  return factory.createArrowFunction(
-    undefined,
-    undefined,
-    [...parameters],
-    output_type,
-    undefined,
-    body,
-  );
-}
-
-function create_effect_from(
-  expression: ts.Expression,
-  factory: ts.NodeFactory,
-): ts.Expression {
-  return factory.createCallExpression(
-    property(factory, "Effect", "from"),
-    undefined,
-    [expression],
-  );
-}
-
-function create_pure(
-  expression: ts.Expression,
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-): ts.Expression {
-  const factory = state.factory;
-
-  if (state.kind === "program") {
-    return factory.createCallExpression(
-      property(factory, "Effect", "pure"),
-      undefined,
-      [expression],
-    );
-  }
-
-  if (current_context === undefined) {
-    if (state.dictionary !== undefined) {
-      return factory.createCallExpression(
-        factory.createPropertyAccessExpression(state.dictionary, "pure"),
-        undefined,
-        [expression],
-      );
-    }
-
-    add_diagnostic(
-      state,
-      expression,
-      "Skipped Do: Do requires a yielded value before returning.",
-    );
-    throw new UnsupportedGenerator();
-  }
-
-  if (state.dictionary === undefined) state.used_contexts?.add(current_context);
-  return factory.createCallExpression(
-    factory.createPropertyAccessExpression(
-      state.dictionary ?? current_context,
-      "pure",
-    ),
-    undefined,
-    [expression],
-  );
-}
-
-function read_yield_statement(
-  statement: ts.Statement,
-): YieldStatement | undefined {
-  if (ts.isVariableStatement(statement)) {
-    const declarations = statement.declarationList.declarations;
-
-    if (declarations.length !== 1) {
-      return undefined;
-    }
-
-    const [declaration] = declarations;
-
-    if (!is_yield_star(declaration.initializer)) {
-      return undefined;
-    }
-
-    return {
-      kind: "bind",
-      expression: declaration.initializer.expression,
-      name: declaration.name,
-      type: declaration.type,
-    };
-  }
-
-  if (
-    ts.isExpressionStatement(statement) &&
-    is_yield_star(statement.expression)
-  ) {
-    return {
-      kind: "bind",
-      expression: statement.expression.expression,
-      name: undefined,
-      type: undefined,
-    };
-  }
-
-  if (ts.isReturnStatement(statement) && is_yield_star(statement.expression)) {
-    return {
-      kind: "return",
-      expression: statement.expression.expression,
-    };
-  }
-
-  return undefined;
-}
-function is_yield_star(
-  expression: ts.Expression | undefined,
-): expression is ts.YieldExpression & { readonly expression: ts.Expression } {
-  if (expression === undefined) {
-    return false;
-  }
-
-  if (!ts.isYieldExpression(expression)) {
-    return false;
-  }
-
-  return expression.asteriskToken !== undefined &&
-    expression.expression !== undefined;
-}
-
-function block_to_expression(
-  block: ts.Block,
-  factory: ts.NodeFactory,
-): ts.Expression {
-  if (block.statements.length === 1) {
-    const [statement] = block.statements;
-
-    if (ts.isReturnStatement(statement) && statement.expression !== undefined) {
-      return statement.expression;
-    }
-  }
-
-  return factory.createCallExpression(
-    factory.createParenthesizedExpression(
-      factory.createArrowFunction(
-        undefined,
-        undefined,
-        [],
-        undefined,
-        undefined,
-        block,
-      ),
-    ),
-    undefined,
-    [],
-  );
-}
-
-function inline_iife_variable_statement(
-  statement: ts.VariableStatement,
-  factory: ts.NodeFactory,
-): readonly ts.Statement[] | undefined {
-  const declarations = statement.declarationList.declarations;
-
-  if (declarations.length !== 1) {
-    return undefined;
-  }
-
-  const [declaration] = declarations;
-  const inlined = inline_generated_iife_expression(
-    declaration.initializer,
-    factory,
-  );
-
-  if (inlined === undefined) {
-    return inline_iife_variable_statement_with_sequence(statement, factory);
-  }
-
-  const { prefix, expression } = inlined;
-
-  if (!prefix.every(is_generated_variable_statement)) {
-    return undefined;
-  }
-
-  const next_declaration = factory.updateVariableDeclaration(
-    declaration,
-    declaration.name,
-    declaration.exclamationToken,
-    declaration.type,
-    expression,
-  );
-
-  return [
-    ...prefix,
-    factory.updateVariableStatement(
-      statement,
-      statement.modifiers,
-      factory.updateVariableDeclarationList(
-        statement.declarationList,
-        [next_declaration],
-      ),
-    ),
-  ];
-}
-
-function inline_iife_variable_statement_with_sequence(
-  statement: ts.VariableStatement,
-  factory: ts.NodeFactory,
-): readonly ts.Statement[] | undefined {
-  const declarations = statement.declarationList.declarations;
-
-  if (declarations.length !== 1) {
-    return undefined;
-  }
-
-  const [declaration] = declarations;
-  const inlined = sequence_inline_generated_iife_expression(
-    declaration.initializer,
-    factory,
-  );
-
-  if (inlined === undefined) {
-    return undefined;
-  }
-
-  const next_declaration = factory.updateVariableDeclaration(
-    declaration,
-    declaration.name,
-    declaration.exclamationToken,
-    declaration.type,
-    inlined.expression,
-  );
-
-  return [
-    create_generated_let_statement(inlined.declarations, factory),
-    factory.updateVariableStatement(
-      statement,
-      statement.modifiers,
-      factory.updateVariableDeclarationList(
-        statement.declarationList,
-        [next_declaration],
-      ),
-    ),
-  ];
-}
-
-function inline_iife_return_statement(
-  statement: ts.ReturnStatement,
-  factory: ts.NodeFactory,
-): readonly ts.Statement[] | undefined {
-  const inlined = inline_generated_iife_expression(
-    statement.expression,
-    factory,
-  );
-
-  if (inlined === undefined) {
-    return inline_iife_return_statement_with_sequence(statement, factory);
-  }
-
-  const { prefix, expression } = inlined;
-
-  if (!prefix.every(is_generated_variable_statement)) {
-    return undefined;
-  }
-
-  return [
-    ...prefix,
-    factory.updateReturnStatement(statement, expression),
-  ];
-}
-
-function inline_iife_return_statement_with_sequence(
-  statement: ts.ReturnStatement,
-  factory: ts.NodeFactory,
-): readonly ts.Statement[] | undefined {
-  const inlined = sequence_inline_generated_iife_expression(
-    statement.expression,
-    factory,
-  );
-
-  if (inlined === undefined) {
-    return undefined;
-  }
-
-  return [
-    create_generated_let_statement(inlined.declarations, factory),
-    factory.updateReturnStatement(statement, inlined.expression),
-  ];
-}
-
-type InlinedExpression = {
-  readonly prefix: readonly ts.Statement[];
-  readonly expression: ts.Expression;
-};
-
-type SequencedExpression = {
-  readonly declarations: readonly ts.VariableDeclaration[];
-  readonly expression: ts.Expression;
-};
-
-function inline_generated_iife_expression(
-  expression: ts.Expression | undefined,
-  factory: ts.NodeFactory,
-): InlinedExpression | undefined {
-  if (expression === undefined) {
-    return undefined;
-  }
-
-  const block = read_iife_block(expression);
-
-  if (block !== undefined) {
-    return inline_iife_block(block);
-  }
-
-  if (ts.isParenthesizedExpression(expression)) {
-    const inlined = inline_generated_iife_expression(
-      expression.expression,
-      factory,
-    );
-
-    if (inlined === undefined) {
-      return undefined;
-    }
-
-    return {
-      prefix: inlined.prefix,
-      expression: factory.updateParenthesizedExpression(
-        expression,
-        inlined.expression,
-      ),
-    };
-  }
-
-  if (!ts.isCallExpression(expression)) {
-    return undefined;
-  }
-
-  if (!is_static_call_target(expression.expression)) {
-    return undefined;
-  }
-
-  const [first, ...rest] = expression.arguments;
-
-  if (first === undefined || ts.isSpreadElement(first)) {
-    return undefined;
-  }
-
-  const inlined = inline_generated_iife_expression(first, factory);
-
-  if (inlined === undefined) {
-    return undefined;
-  }
-
-  return {
-    prefix: inlined.prefix,
-    expression: factory.updateCallExpression(
-      expression,
-      expression.expression,
-      expression.typeArguments,
-      [inlined.expression, ...rest],
-    ),
-  };
-}
-
-function sequence_inline_generated_iife_expression(
-  expression: ts.Expression | undefined,
-  factory: ts.NodeFactory,
-): SequencedExpression | undefined {
-  if (expression === undefined) {
-    return undefined;
-  }
-
-  const block = read_iife_block(expression);
-
-  if (block !== undefined) {
-    return sequence_inline_iife_block(block, factory);
-  }
-
-  if (ts.isParenthesizedExpression(expression)) {
-    const inlined = sequence_inline_generated_iife_expression(
-      expression.expression,
-      factory,
-    );
-
-    if (inlined === undefined) {
-      return undefined;
-    }
-
-    return {
-      declarations: inlined.declarations,
-      expression: factory.updateParenthesizedExpression(
-        expression,
-        inlined.expression,
-      ),
-    };
-  }
-
-  if (ts.isCallExpression(expression)) {
-    return sequence_inline_call_arguments(expression, factory);
-  }
-
-  return undefined;
-}
-
-function sequence_inline_call_arguments(
-  expression: ts.CallExpression,
-  factory: ts.NodeFactory,
-): SequencedExpression | undefined {
-  const declarations: ts.VariableDeclaration[] = [];
-  const args: ts.Expression[] = [];
-  let changed = false;
-
-  for (const argument of expression.arguments) {
-    if (ts.isSpreadElement(argument)) {
-      return undefined;
-    }
-
-    const inlined = sequence_inline_generated_iife_expression(
-      argument,
-      factory,
-    );
-
-    if (inlined === undefined) {
-      args.push(argument);
-      continue;
-    }
-
-    changed = true;
-    declarations.push(...inlined.declarations);
-    args.push(inlined.expression);
-  }
-
-  if (!changed) {
-    return undefined;
-  }
-
-  return {
-    declarations,
-    expression: factory.updateCallExpression(
-      expression,
-      expression.expression,
-      expression.typeArguments,
-      args,
-    ),
-  };
-}
-
-function sequence_inline_iife_block(
-  block: ts.Block,
-  factory: ts.NodeFactory,
-): SequencedExpression | undefined {
-  const inlined = inline_iife_block(block);
-
-  if (inlined === undefined) {
-    return undefined;
-  }
-
-  if (!inlined.prefix.every(is_generated_variable_statement)) {
-    return undefined;
-  }
-
-  const declarations: ts.VariableDeclaration[] = [];
-  const expressions: ts.Expression[] = [];
-
-  for (const statement of inlined.prefix) {
-    if (!ts.isVariableStatement(statement)) {
-      return undefined;
-    }
-
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name)) {
-        return undefined;
-      }
-
-      if (declaration.initializer === undefined) {
-        return undefined;
-      }
-
-      declarations.push(
-        factory.createVariableDeclaration(
-          declaration.name,
-          undefined,
-          declaration.type,
-          undefined,
-        ),
-      );
-      expressions.push(
-        factory.createAssignment(
-          declaration.name,
-          declaration.initializer,
-        ),
-      );
-    }
-  }
-
-  if (declarations.length === 0) {
-    return undefined;
-  }
-
-  expressions.push(inlined.expression);
-
-  return {
-    declarations,
-    expression: factory.createParenthesizedExpression(
-      factory.createCommaListExpression(expressions),
-    ),
-  };
-}
-
-function create_generated_let_statement(
-  declarations: readonly ts.VariableDeclaration[],
-  factory: ts.NodeFactory,
-): ts.VariableStatement {
-  return factory.createVariableStatement(
-    undefined,
-    factory.createVariableDeclarationList(
-      [...declarations],
-      ts.NodeFlags.Let,
-    ),
-  );
-}
-
-function inline_iife_block(block: ts.Block): InlinedExpression | undefined {
-  const statements = [...block.statements];
-  const last = statements[statements.length - 1];
-
-  if (last === undefined || !ts.isReturnStatement(last)) {
-    return undefined;
-  }
-
-  if (last.expression === undefined) {
-    return undefined;
-  }
-
-  return {
-    prefix: statements.slice(0, -1),
-    expression: last.expression,
-  };
-}
-
-function is_static_call_target(expression: ts.Expression): boolean {
-  if (ts.isIdentifier(expression)) {
-    return true;
-  }
-
-  if (ts.isPropertyAccessExpression(expression)) {
-    return is_static_call_target(expression.expression);
-  }
-
-  if (ts.isParenthesizedExpression(expression)) {
-    return is_static_call_target(expression.expression);
-  }
-
-  return false;
-}
-
-function read_iife_block(
-  expression: ts.Expression | undefined,
-): ts.Block | undefined {
-  if (expression === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isCallExpression(expression)) {
-    return undefined;
-  }
-
-  if (expression.arguments.length !== 0) {
-    return undefined;
-  }
-
-  const callee = unwrap_parentheses(expression.expression);
-
-  if (!ts.isArrowFunction(callee)) {
-    return undefined;
-  }
-
-  if (callee.parameters.length !== 0) {
-    return undefined;
-  }
-
-  if (!ts.isBlock(callee.body)) {
-    return undefined;
-  }
-
-  return callee.body;
-}
-
-function is_generated_variable_statement(statement: ts.Statement): boolean {
-  if (!ts.isVariableStatement(statement)) {
-    return false;
-  }
-
-  if (statement.modifiers !== undefined && statement.modifiers.length > 0) {
-    return false;
-  }
-
-  return statement.declarationList.declarations.every((declaration) => {
-    return ts.isIdentifier(declaration.name) &&
-      is_generated_identifier(declaration.name);
-  });
-}
-
-type ImportedBindings = {
-  readonly do_names: ReadonlySet<string>;
-  readonly program_names: ReadonlySet<string>;
-  readonly effect_names: ReadonlySet<string>;
-  readonly namespaces: ReadonlySet<string>;
-  readonly terminal_functions: ReadonlyMap<string, ImportedTerminalFunction>;
-  readonly terminal_namespaces: ReadonlyMap<
-    string,
-    ReadonlySet<TerminalFunctionName>
-  >;
-  readonly primitive_functions: ReadonlyMap<string, PrimitiveFunctionName>;
-  readonly primitive_namespaces: ReadonlyMap<
-    string,
-    ReadonlySet<PrimitiveFunctionName>
-  >;
-  readonly effect_helper_shadowed: boolean;
-  readonly program_module?: string;
-};
-
-function has_imported_transform_target(imports: ImportedBindings): boolean {
-  return imports.do_names.size > 0 || imports.program_names.size > 0 ||
-    imports.effect_names.size > 0 || imports.namespaces.size > 0 ||
-    imports.terminal_functions.size > 0 ||
-    imports.terminal_namespaces.size > 0 ||
-    imports.primitive_functions.size > 0 ||
-    imports.primitive_namespaces.size > 0;
-}
-
-// A conservative call-head index can reject unused imports without building
-// lexical scopes or running the rewriting visitor. Canonical diagnostic targets
-// are included even when they are unanchored or shadowed.
-function has_transform_candidate_call(
-  source: ts.SourceFile,
-  imports: ImportedBindings,
-): boolean {
-  const names = new Set([
-    "Do",
-    "Program",
-    ...imports.do_names,
-    ...imports.program_names,
-    ...imports.effect_names,
-    ...imports.namespaces,
-    ...imports.terminal_functions.keys(),
-    ...imports.terminal_namespaces.keys(),
-    ...imports.primitive_functions.keys(),
-    ...imports.primitive_namespaces.keys(),
-  ]);
-  function visit(node: ts.Node): boolean {
-    if (ts.isImportDeclaration(node)) return false;
-    if (ts.isCallExpression(node)) {
-      let callee = unwrap_parentheses(node.expression);
-      while (
-        ts.isPropertyAccessExpression(callee) ||
-        ts.isElementAccessExpression(callee)
-      ) {
-        if (
-          ts.isPropertyAccessExpression(callee) &&
-          (callee.name.text === "Do" || callee.name.text === "Program")
-        ) return true;
-        callee = unwrap_parentheses(callee.expression);
-      }
-      if (ts.isIdentifier(callee) && names.has(callee.text)) return true;
-    }
-    return ts.forEachChild(node, visit) ?? false;
-  }
-  return visit(source);
-}
-
-const all_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
-  "run",
-  "run_reader",
-  "run_state",
-  "run_writer",
-]);
-const effect_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
-  "run",
-]);
-const reader_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
-  "run_reader",
-]);
-const state_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
-  "run_state",
-]);
-const writer_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
-  "run_writer",
-]);
-
-function collect_imports(
-  source_file: ts.SourceFile,
-  config: TransformConfig,
-): ImportedBindings {
-  const do_names = new Set<string>();
-  const program_names = new Set<string>();
-  const effect_names = new Set<string>();
-  const namespaces = new Set<string>();
-  const terminal_functions = new Map<string, ImportedTerminalFunction>();
-  const terminal_namespaces = new Map<
-    string,
-    ReadonlySet<TerminalFunctionName>
-  >();
-  const primitive_functions = new Map<string, PrimitiveFunctionName>();
-  const primitive_namespaces = new Map<
-    string,
-    ReadonlySet<PrimitiveFunctionName>
-  >();
-  let program_module: string | undefined;
-
-  for (const statement of source_file.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier)
-    ) {
-      continue;
-    }
-    const specifier = statement.moduleSpecifier.text;
-    const clause = statement.importClause;
-    if (
-      clause === undefined || clause.isTypeOnly ||
-      clause.namedBindings === undefined
-    ) {
-      continue;
-    }
-
-    const terminal_exports = terminal_exports_from_specifier(
-      specifier,
-      config,
-    );
-
-    if (terminal_exports !== undefined) {
-      if (ts.isNamespaceImport(clause.namedBindings)) {
-        terminal_namespaces.set(
-          clause.namedBindings.name.text,
-          terminal_exports,
-        );
-      } else {
-        for (const element of clause.namedBindings.elements) {
-          if (element.isTypeOnly) continue;
-          const imported = (element.propertyName ?? element.name).text;
-
-          if (is_terminal_function_name(imported)) {
-            if (terminal_exports.has(imported)) {
-              terminal_functions.set(element.name.text, {
-                imported,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    const primitive_exports = primitive_exports_from_specifier(specifier);
-
-    if (primitive_exports !== undefined) {
-      if (ts.isNamespaceImport(clause.namedBindings)) {
-        primitive_namespaces.set(
-          clause.namedBindings.name.text,
-          primitive_exports,
-        );
-      } else {
-        for (const element of clause.namedBindings.elements) {
-          if (element.isTypeOnly) continue;
-          const imported = (element.propertyName ?? element.name).text;
-          if (
-            is_primitive_function_name(imported) &&
-            primitive_exports.has(imported)
-          ) {
-            primitive_functions.set(element.name.text, imported);
-          }
-        }
-      }
-    }
-
-    if (!is_library_specifier(specifier, config)) {
-      continue;
-    }
-
-    if (ts.isNamespaceImport(clause.namedBindings)) {
-      namespaces.add(clause.namedBindings.name.text);
-      program_module ??= specifier;
-      continue;
-    }
-    for (const element of clause.namedBindings.elements) {
-      if (element.isTypeOnly) continue;
-      const imported = (element.propertyName ?? element.name).text;
-      if (imported === "Do") do_names.add(element.name.text);
-      if (imported === "Program") {
-        program_names.add(element.name.text);
-        program_module ??= specifier;
-      }
-      if (imported === "Effect") effect_names.add(element.name.text);
-    }
-  }
-
-  remove_shadowed_import_bindings(
-    source_file,
-    do_names,
-    program_names,
-    effect_names,
-    namespaces,
-    terminal_functions,
-    terminal_namespaces,
-    primitive_functions,
-    primitive_namespaces,
-  );
-
-  return {
-    do_names,
-    program_names,
-    effect_names,
-    namespaces,
-    terminal_functions,
-    terminal_namespaces,
-    primitive_functions,
-    primitive_namespaces,
-    effect_helper_shadowed: (program_names.size > 0 || namespaces.size > 0) &&
-      source_file.text.includes("Effect") &&
-      collect_non_import_value_bindings(source_file, new Set(["Effect"]))
-        .has("Effect"),
-    program_module,
-  };
-}
-
-function remove_shadowed_import_bindings(
-  source_file: ts.SourceFile,
-  do_names: Set<string>,
-  program_names: Set<string>,
-  effect_names: Set<string>,
-  namespaces: Set<string>,
-  terminal_functions: Map<string, ImportedTerminalFunction>,
-  terminal_namespaces: Map<string, ReadonlySet<TerminalFunctionName>>,
-  primitive_functions: Map<string, PrimitiveFunctionName>,
-  primitive_namespaces: Map<string, ReadonlySet<PrimitiveFunctionName>>,
-) {
-  const candidates = new Set([
-    ...do_names,
-    ...program_names,
-    ...effect_names,
-    ...namespaces,
-    ...terminal_functions.keys(),
-    ...terminal_namespaces.keys(),
-    ...primitive_functions.keys(),
-    ...primitive_namespaces.keys(),
-  ]);
-
-  if (candidates.size === 0) {
-    return;
-  }
-
-  const bindings = collect_non_import_value_bindings(source_file, candidates);
-
-  for (const name of bindings.keys()) {
-    do_names.delete(name);
-    program_names.delete(name);
-    effect_names.delete(name);
-    namespaces.delete(name);
-    terminal_functions.delete(name);
-    terminal_namespaces.delete(name);
-    primitive_functions.delete(name);
-    primitive_namespaces.delete(name);
-  }
-}
-
-const all_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
-  "ask",
-  "asks",
-  "get",
-  "gets",
-  "put",
-  "modify",
-  "writer",
-  "tell",
-]);
-const reader_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
-  "ask",
-  "asks",
-]);
-const state_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
-  "get",
-  "gets",
-  "put",
-  "modify",
-]);
-const writer_primitive_functions: ReadonlySet<PrimitiveFunctionName> = new Set([
-  "writer",
-  "tell",
-]);
-const canonical_source_specifiers = new Map<string, string>();
-
-for (
-  const module of [
-    "effects",
-    "mod",
-    "reader",
-    "state",
-    "typeclasses",
-    "writer",
-  ] as const
-) {
-  try {
-    const url = new URL(`../src/${module}.ts`, import.meta.url);
-    canonical_source_specifiers.set(url.href, module);
-    canonical_source_specifiers.set(url.pathname, module);
-  } catch {
-    // Non-hierarchical bundle URLs still use package or relative matching.
-  }
-}
-
-function primitive_exports_from_specifier(
-  specifier: string,
-): ReadonlySet<PrimitiveFunctionName> | undefined {
-  const package_match = specifier.match(
-    /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(mod|reader|state|writer))?\/?$/,
-  );
-  const source_module = canonical_source_specifiers.get(specifier) ??
-    specifier.match(
-      /^(?:\.\.?\/)+src\/(mod|reader|state|writer)(?:\.ts)?$/,
-    )?.[1];
-
-  if (package_match !== null && package_match[1] === undefined) {
-    return all_primitive_functions;
-  }
-
-  switch (package_match?.[1] ?? source_module) {
-    case "mod":
-      return all_primitive_functions;
-    case "reader":
-      return reader_primitive_functions;
-    case "state":
-      return state_primitive_functions;
-    case "writer":
-      return writer_primitive_functions;
-  }
-  return undefined;
-}
-
-function is_primitive_function_name(
-  name: string,
-): name is PrimitiveFunctionName {
-  return all_primitive_functions.has(name as PrimitiveFunctionName);
-}
-
-function collect_non_import_value_bindings(
-  source_file: ts.SourceFile,
-  candidates: ReadonlySet<string>,
-): ReadonlyMap<string, number> {
-  const bindings = new Map<string, number>();
-
-  function add_binding(name: ts.BindingName | ts.Identifier | undefined) {
-    if (name === undefined) {
-      return;
-    }
-
-    if (ts.isIdentifier(name)) {
-      if (candidates.has(name.text)) {
-        bindings.set(name.text, (bindings.get(name.text) ?? 0) + 1);
-      }
-      return;
-    }
-
-    for (const element of name.elements) {
-      if (!ts.isOmittedExpression(element)) {
-        add_binding(element.name);
-      }
-    }
-  }
-
-  function visit(node: ts.Node) {
-    if (ts.isImportDeclaration(node)) {
-      return;
-    }
-
-    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
-      add_binding(node.name);
-    } else if (ts.isModuleDeclaration(node)) {
-      if (ts.isIdentifier(node.name)) {
-        add_binding(node.name);
-      }
-    } else if (
-      ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
-      ts.isClassDeclaration(node) || ts.isClassExpression(node) ||
-      ts.isEnumDeclaration(node) || ts.isImportEqualsDeclaration(node)
-    ) {
-      add_binding(node.name);
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  ts.forEachChild(source_file, visit);
-  return bindings;
-}
-
-function terminal_exports_from_specifier(
-  specifier: string,
-  config: TransformConfig,
-): ReadonlySet<TerminalFunctionName> | undefined {
-  if (config.terminal_library_specifiers?.includes(specifier)) {
-    return all_terminal_functions;
-  }
-
-  const package_match = specifier.match(
-    /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(effects|mod|reader|state|writer))?\/?$/,
-  );
-  const source_module = canonical_source_specifiers.get(specifier) ??
-    specifier.match(
-      /^(?:\.\.?\/)+src\/(effects|mod|reader|state|writer)(?:\.ts)?$/,
-    )?.[1];
-
-  if (package_match !== null && package_match[1] === undefined) {
-    return all_terminal_functions;
-  }
-
-  switch (package_match?.[1] ?? source_module) {
-    case "mod":
-      return all_terminal_functions;
-    case "effects":
-      return effect_terminal_functions;
-    case "reader":
-      return reader_terminal_functions;
-    case "state":
-      return state_terminal_functions;
-    case "writer":
-      return writer_terminal_functions;
-  }
-
-  return undefined;
-}
-
-function is_terminal_function_name(
-  name: string,
-): name is TerminalFunctionName {
-  return name === "run" || name === "run_reader" || name === "run_state" ||
-    name === "run_writer";
-}
-
-function is_library_specifier(
-  specifier: string,
-  config: TransformConfig,
-): boolean {
-  if (config.library_specifiers?.includes(specifier)) return true;
-  if (
-    specifier === "@mewhhaha/typeclasses" ||
-    specifier.startsWith("@mewhhaha/typeclasses/") ||
-    /^jsr:@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/.*)?$/.test(specifier)
-  ) return true;
-  // The source tree is intentionally supported for local examples, benchmarks,
-  // and package tests without needing a TypeScript program/type checker.
-  const source_module = canonical_source_specifiers.get(specifier) ??
-    specifier.match(
-      /^(?:\.\.?\/)+src\/(typeclasses|effects|mod)(?:\.ts)?$/,
-    )?.[1];
-  return source_module === "typeclasses" || source_module === "effects" ||
-    source_module === "mod";
-}
-
-function collect_program_scopes(
-  source_file: ts.SourceFile,
-  imports: ImportedBindings,
-): ReadonlySet<string> {
-  const scopes = new Set<string>(imports.program_names);
-  const alias_declarations = new Map<string, number>();
-
-  for (const statement of source_file.statements) {
-    if (
-      ts.isVariableStatement(statement) &&
-      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
-    ) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (
-          ts.isIdentifier(declaration.name) &&
-          is_program_scope_call(declaration.initializer, imports)
-        ) {
-          scopes.add(declaration.name.text);
-          alias_declarations.set(declaration.name.text, declaration.getEnd());
-        }
-      }
-    }
-  }
-
-  const aliases = new Set(
-    [...scopes].filter((name) => !imports.program_names.has(name)),
-  );
-  const bindings = collect_non_import_value_bindings(source_file, aliases);
-  const called_before_declaration = new Set<string>();
-
-  function visit(node: ts.Node) {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      const declaration_end = alias_declarations.get(node.expression.text);
-
-      if (
-        declaration_end !== undefined &&
-        node.expression.getStart(source_file) < declaration_end
-      ) {
-        called_before_declaration.add(node.expression.text);
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(source_file);
-
-  for (const name of aliases) {
-    if (bindings.get(name) !== 1 || called_before_declaration.has(name)) {
-      scopes.delete(name);
-    }
-  }
-
-  return scopes;
-}
-
-function is_program_scope_call(
-  expression: ts.Expression | undefined,
-  imports: ImportedBindings,
-): boolean {
-  if (expression === undefined) {
-    return false;
-  }
-
-  if (!ts.isCallExpression(expression)) {
-    return false;
-  }
-
-  const callee = expression.expression;
-
-  if (!ts.isPropertyAccessExpression(callee)) {
-    return false;
-  }
-
-  return callee.name.text === "scope" &&
-    is_imported_target(callee.expression, "Program", imports);
-}
-
-function transform_kind(
-  node: ts.CallExpression,
-  program_scopes: ReadonlySet<string>,
-  imports: ImportedBindings,
-): TransformKind | undefined {
-  const callee = node.expression;
-
-  if (is_imported_target(callee, "Do", imports)) {
-    return "do";
-  }
-
-  if (ts.isIdentifier(callee) && program_scopes.has(callee.text)) {
-    return "program";
-  }
-
-  if (is_imported_target(callee, "Program", imports)) {
-    return "program";
-  }
-
-  return undefined;
-}
-
-type TerminalFunctionTarget =
-  | {
-    readonly kind: "named";
-    readonly local_name: string;
-    readonly imported: TerminalFunctionName;
-  }
-  | {
-    readonly kind: "namespace";
-    readonly namespace: ts.Identifier;
-    readonly imported: TerminalFunctionName;
-  };
-
-function transform_terminal_program_run(
-  node: ts.CallExpression,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-  program_scopes: ReadonlySet<string>,
-  requests: TerminalImportRequest[],
-  named_programs: ReadonlyMap<string, ts.CallExpression>,
-  fused_named_programs: Set<string>,
-  fuse_body = true,
-  bindings?: ReturnType<typeof create_binding_analysis>,
-): FusedTerminalProgram | undefined {
-  if (
-    node.questionDotToken !== undefined || node.typeArguments !== undefined ||
-    node.arguments.length !== 1
-  ) {
-    return undefined;
-  }
-
-  const outer = read_terminal_function_target(node.expression, imports);
-
-  if (outer?.imported !== "run") {
-    return undefined;
-  }
-
-  const handled = unwrap_parentheses(node.arguments[0]);
-
-  if (
-    !ts.isCallExpression(handled) || handled.questionDotToken !== undefined ||
-    handled.typeArguments !== undefined || handled.arguments.length !== 2
-  ) {
-    return undefined;
-  }
-
-  const handler = read_terminal_function_target(handled.expression, imports);
-
-  if (handler === undefined || handler.imported === "run") {
-    return undefined;
-  }
-  const terminal_kind = fused_terminal_kind(handler.imported);
-
-  const program_argument = unwrap_parentheses(handled.arguments[0]);
-  let program = program_argument;
-  if (ts.isIdentifier(program_argument)) {
-    program =
-      named_programs.get(named_program_key(program_argument, bindings)) ??
-        program_argument;
-  }
-
-  if (
-    !ts.isCallExpression(program) || program.questionDotToken !== undefined ||
-    program.typeArguments !== undefined || program.arguments.length !== 1 ||
-    transform_kind(program, program_scopes, imports) !== "program"
-  ) {
-    return undefined;
-  }
-
-  const run = program.arguments[0];
-
-  if (
-    !ts.isFunctionExpression(run) || run.asteriskToken === undefined ||
-    run.name !== undefined || run.parameters.length !== 0 ||
-    run.typeParameters !== undefined || run.type !== undefined ||
-    run.modifiers?.some((modifier) =>
-      modifier.kind === ts.SyntaxKind.AsyncKeyword
-    ) || contains_fusion_lexical_hazard(run.body) ||
-    contains_fusion_lexical_hazard(handled.arguments[1]) ||
-    contains_await_or_yield(handled.arguments[1])
-  ) {
-    return undefined;
-  }
-
-  const body = read_fused_program_body(run.body);
-
-  if (body === undefined) {
-    return undefined;
-  }
-
-  const can_fuse = fuse_body && body.parts.every((part) => {
-    if (part.kind !== "yield") return true;
-    const primitive = read_fused_primitive(part.expression, imports);
-    return primitive !== undefined &&
-      primitive_terminal_kind(primitive.name) === terminal_kind;
-  }) && (terminal_kind === "writer" ||
-    fused_terminal_input_type(body, terminal_kind, imports) !== undefined);
-
-  if (!can_fuse) {
-    const terminal_name = terminal_runner_name(handler.imported);
-    const terminal = handler.kind === "namespace"
-      ? factory.createPropertyAccessExpression(handler.namespace, terminal_name)
-      : terminal_import_identifier(handler, terminal_name, requests, factory);
-
-    return {
-      expression: factory.updateCallExpression(
-        handled,
-        terminal,
-        undefined,
-        handled.arguments,
-      ),
-      needs_program_helpers: false,
-      direct: false,
-    };
-  }
-
-  if (ts.isIdentifier(program_argument)) {
-    fused_named_programs.add(named_program_key(program_argument, bindings));
-  }
-  return {
-    expression: emit_fused_terminal_program(
-      body,
-      handled.arguments[1],
-      terminal_kind,
-      factory,
-      imports,
-    ),
-    needs_program_helpers: false,
-    direct: true,
-  };
-}
-
-function fused_terminal_kind(
-  name: Exclude<TerminalFunctionName, "run">,
-): FusedTerminalKind {
-  switch (name) {
-    case "run_reader":
-      return "reader";
-    case "run_state":
-      return "state";
-    case "run_writer":
-      return "writer";
-  }
-}
-
-function read_fused_program_body(
-  body: ts.Block,
-): FusedProgramBody | undefined {
-  const parts: FusedProgramPart[] = [];
-  let yielded = false;
-
-  for (let index = 0; index < body.statements.length; index += 1) {
-    const statement = body.statements[index];
-    const fused_yield = read_fused_program_yield(statement);
-
-    if (fused_yield !== undefined) {
-      if (fused_yield.returns && index !== body.statements.length - 1) {
-        return undefined;
-      }
-
-      yielded = true;
-      parts.push(fused_yield);
-      continue;
-    }
-
-    if (ts.isReturnStatement(statement)) {
-      if (
-        index !== body.statements.length - 1 ||
-        (statement.expression !== undefined &&
-          contains_yield_or_return_or_break(statement.expression))
-      ) {
-        return undefined;
-      }
-
-      return yielded ? { parts, result: statement.expression } : undefined;
-    }
-
-    if (contains_yield_or_return_or_break(statement)) {
-      return undefined;
-    }
-
-    parts.push({ kind: "statement", statement });
-  }
-
-  return yielded ? { parts, result: undefined } : undefined;
-}
-
-function read_fused_program_yield(
-  statement: ts.Statement,
-): FusedProgramYield | undefined {
-  if (ts.isVariableStatement(statement)) {
-    const declarations = statement.declarationList.declarations;
-
-    if (declarations.length !== 1) {
-      return undefined;
-    }
-
-    const [declaration] = declarations;
-
-    if (
-      !is_yield_star(declaration.initializer) ||
-      contains_await_or_yield(declaration.initializer.expression)
-    ) {
-      return undefined;
-    }
-
-    return {
-      kind: "yield",
-      expression: declaration.initializer.expression,
-      declaration: { statement, declaration },
-      returns: false,
-    };
-  }
-
-  if (
-    ts.isExpressionStatement(statement) &&
-    is_yield_star(statement.expression) &&
-    !contains_await_or_yield(statement.expression.expression)
-  ) {
-    return {
-      kind: "yield",
-      expression: statement.expression.expression,
-      returns: false,
-    };
-  }
-
-  if (
-    ts.isReturnStatement(statement) && is_yield_star(statement.expression) &&
-    !contains_await_or_yield(statement.expression.expression)
-  ) {
-    return {
-      kind: "yield",
-      expression: statement.expression.expression,
-      returns: true,
-    };
-  }
-
-  return undefined;
-}
-
-type FusedPrimitive = {
-  readonly name: PrimitiveFunctionName;
-  readonly arguments: readonly ts.Expression[];
-  readonly type_arguments: readonly ts.TypeNode[] | undefined;
-};
-
-function read_fused_primitive(
-  expression: ts.Expression,
-  imports: ImportedBindings,
-): FusedPrimitive | undefined {
-  const unwrapped = unwrap_fused_primitive_expression(expression);
-
-  if (
-    !ts.isCallExpression(unwrapped) ||
-    unwrapped.questionDotToken !== undefined ||
-    unwrapped.arguments.some(ts.isSpreadElement)
-  ) {
-    return undefined;
-  }
-
-  let name: PrimitiveFunctionName | undefined;
-  if (ts.isIdentifier(unwrapped.expression)) {
-    name = imports.primitive_functions.get(unwrapped.expression.text);
-  } else if (
-    ts.isPropertyAccessExpression(unwrapped.expression) &&
-    unwrapped.expression.questionDotToken === undefined &&
-    ts.isIdentifier(unwrapped.expression.expression)
-  ) {
-    const exported = imports.primitive_namespaces.get(
-      unwrapped.expression.expression.text,
-    );
-    if (
-      exported?.has(unwrapped.expression.name.text as PrimitiveFunctionName)
-    ) {
-      name = unwrapped.expression.name.text as PrimitiveFunctionName;
-    }
-  }
-
-  if (
-    name === undefined ||
-    !has_primitive_arity(name, unwrapped.arguments.length) ||
-    !has_supported_primitive_type_arguments(name, unwrapped.typeArguments) ||
-    (unwrapped.typeArguments === undefined &&
-      !has_self_typed_primitive_arguments(name, unwrapped.arguments))
-  ) {
-    return undefined;
-  }
-  return {
-    name,
-    arguments: unwrapped.arguments,
-    type_arguments: unwrapped.typeArguments,
-  };
-}
-
-function has_supported_primitive_type_arguments(
-  name: PrimitiveFunctionName,
-  type_arguments: readonly ts.TypeNode[] | undefined,
-): boolean {
-  if (type_arguments === undefined) {
-    return name !== "ask" && name !== "get" && name !== "put";
-  }
-
-  switch (name) {
-    case "ask":
-    case "get":
-    case "put":
-    case "modify":
-      return type_arguments.length === 1;
-    case "asks":
-    case "gets":
-      return type_arguments.length === 2;
-    case "writer":
-    case "tell":
-      return false;
-  }
-}
-
-function has_self_typed_primitive_arguments(
-  name: PrimitiveFunctionName,
-  arguments_: readonly ts.Expression[],
-): boolean {
-  switch (name) {
-    case "asks":
-    case "gets":
-    case "modify":
-      return has_self_typed_callable(arguments_[0]);
-    default:
-      return true;
-  }
-}
-
-function has_self_typed_callable(expression: ts.Expression): boolean {
-  let valid = true;
-  let found = false;
-
-  function visit(node: ts.Node) {
-    if (!valid) {
-      return;
-    }
-
-    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-      found = true;
-      valid = node.typeParameters === undefined && node.parameters.length > 0 &&
-        node.parameters.every((parameter) =>
-          parameter.type !== undefined &&
-          parameter.dotDotDotToken === undefined &&
-          !(ts.isIdentifier(parameter.name) && parameter.name.text === "this")
-        );
-      return;
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(expression);
-  return valid && found;
-}
-
-function unwrap_fused_primitive_expression(
-  expression: ts.Expression,
-): ts.Expression {
-  let unwrapped = expression;
-  while (ts.isParenthesizedExpression(unwrapped)) {
-    unwrapped = unwrapped.expression;
-  }
-  return unwrapped;
-}
-
-function has_primitive_arity(
-  name: PrimitiveFunctionName,
-  arity: number,
-): boolean {
-  switch (name) {
-    case "ask":
-    case "get":
-      return arity === 0;
-    case "asks":
-    case "gets":
-    case "put":
-    case "modify":
-    case "tell":
-      return arity === 1;
-    case "writer":
-      return arity === 2;
-  }
-}
-
-function primitive_terminal_kind(
-  name: PrimitiveFunctionName,
-): FusedTerminalKind {
-  switch (name) {
-    case "ask":
-    case "asks":
-      return "reader";
-    case "get":
-    case "gets":
-    case "put":
-    case "modify":
-      return "state";
-    case "writer":
-    case "tell":
-      return "writer";
-  }
-}
-
-function fused_primitive_argument_type(
-  primitive: FusedPrimitive,
-  index: number,
-  factory: ts.NodeFactory,
-): ts.TypeNode | undefined {
-  const type_arguments = primitive.type_arguments;
-
-  if (type_arguments === undefined || index !== 0) {
-    return undefined;
-  }
-
-  switch (primitive.name) {
-    case "asks":
-    case "gets":
-      return create_fused_function_type(
-        type_arguments[0],
-        type_arguments[1],
-        factory,
-      );
-    case "modify":
-      return create_fused_function_type(
-        type_arguments[0],
-        type_arguments[0],
-        factory,
-      );
-    case "put":
-      return type_arguments[0];
-    default:
-      return undefined;
-  }
-}
-
-function fused_primitive_value_type(
-  primitive: FusedPrimitive,
-): ts.TypeNode | undefined {
-  if (
-    primitive.type_arguments === undefined ||
-    (primitive.name !== "ask" && primitive.name !== "get")
-  ) {
-    return undefined;
-  }
-
-  return primitive.type_arguments[0];
-}
-
-function create_fused_function_type(
-  input: ts.TypeNode,
-  output: ts.TypeNode,
-  factory: ts.NodeFactory,
-): ts.FunctionTypeNode {
-  return factory.createFunctionTypeNode(
-    undefined,
-    [
-      factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        "value",
-        undefined,
-        input,
-      ),
-    ],
-    output,
-  );
-}
-
-function fused_terminal_input_type(
-  body: FusedProgramBody,
-  kind: FusedTerminalKind,
-  imports: ImportedBindings,
-): ts.TypeNode | undefined {
-  for (const part of body.parts) {
-    if (part.kind !== "yield") {
-      continue;
-    }
-
-    const primitive = read_fused_primitive(part.expression, imports);
-
-    if (
-      primitive === undefined ||
-      primitive_terminal_kind(primitive.name) !== kind
-    ) {
-      continue;
-    }
-
-    if (primitive.type_arguments !== undefined) {
-      return primitive.type_arguments[0];
-    }
-
-    if (
-      primitive.name === "asks" || primitive.name === "gets" ||
-      primitive.name === "modify"
-    ) {
-      const callable = unwrap_fused_primitive_expression(
-        primitive.arguments[0],
-      );
-
-      if (
-        (ts.isArrowFunction(callable) || ts.isFunctionExpression(callable)) &&
-        callable.parameters[0]?.type !== undefined
-      ) {
-        return callable.parameters[0].type;
-      }
-    }
-  }
-
-  return undefined;
-}
-
-function emit_fused_terminal_program(
-  body: FusedProgramBody,
-  input: ts.Expression,
-  kind: FusedTerminalKind,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-): ts.Expression {
-  const input_thunk = factory.createUniqueName(kind + "_input");
-  const current_input = factory.createUniqueName(
-    kind === "reader" ? "environment" : kind === "state" ? "state" : "output",
-  );
-  const statements: ts.Statement[] = [];
-  const input_type = fused_terminal_input_type(body, kind, imports);
-  let initialized = false;
-  let returned = false;
-
-  for (const part of body.parts) {
-    if (part.kind === "statement") {
-      statements.push(part.statement);
-      continue;
-    }
-
-    const primitive = read_fused_primitive(part.expression, imports);
-    const first_yield = !initialized;
-
-    if (
-      primitive === undefined ||
-      primitive_terminal_kind(primitive.name) !== kind
-    ) {
-      throw new Error("Invalid fused terminal primitive");
-    }
-
-    if (
-      primitive !== undefined &&
-      primitive_terminal_kind(primitive.name) === kind
-    ) {
-      const arguments_ = primitive.arguments.map((argument, index) => {
-        const temporary = factory.createUniqueName(
-          `${primitive.name}_argument_${index}`,
-        );
-        statements.push(create_fused_variable_statement(
-          temporary,
-          factory.createBinaryExpression(
-            factory.createVoidZero(),
-            factory.createToken(ts.SyntaxKind.CommaToken),
-            argument,
-          ),
-          ts.NodeFlags.Const,
-          factory,
-          fused_primitive_argument_type(primitive, index, factory),
-        ));
-        return temporary;
-      });
-
-      if (first_yield) {
-        statements.push(create_fused_variable_statement(
-          current_input,
-          factory.createCallExpression(input_thunk, undefined, []),
-          kind === "reader" ? ts.NodeFlags.Const : ts.NodeFlags.Let,
-          factory,
-          input_type,
-        ));
-        initialized = true;
-      }
-
-      let value: ts.Expression;
-      switch (primitive.name) {
-        case "ask":
-        case "get":
-          value = current_input;
-          break;
-        case "asks":
-        case "gets":
-          value = factory.createCallExpression(arguments_[0], undefined, [
-            current_input,
-          ]);
-          break;
-        case "put":
-          statements.push(
-            factory.createExpressionStatement(factory.createAssignment(
-              current_input,
-              arguments_[0],
-            )),
-          );
-          value = factory.createVoidZero();
-          break;
-        case "modify":
-          statements.push(
-            factory.createExpressionStatement(factory.createAssignment(
-              current_input,
-              factory.createCallExpression(arguments_[0], undefined, [
-                current_input,
-              ]),
-            )),
-          );
-          value = factory.createVoidZero();
-          break;
-        case "writer":
-          statements.push(
-            factory.createExpressionStatement(factory.createAssignment(
-              current_input,
-              factory.createCallExpression(
-                factory.createPropertyAccessExpression(current_input, "concat"),
-                undefined,
-                [arguments_[1]],
-              ),
-            )),
-          );
-          value = arguments_[0];
-          break;
-        case "tell":
-          statements.push(
-            factory.createExpressionStatement(factory.createAssignment(
-              current_input,
-              factory.createCallExpression(
-                factory.createPropertyAccessExpression(current_input, "concat"),
-                undefined,
-                [arguments_[0]],
-              ),
-            )),
-          );
-          value = factory.createVoidZero();
-          break;
-      }
-
-      const value_type = fused_primitive_value_type(primitive);
-
-      if (value_type !== undefined) {
-        const typed_value = factory.createUniqueName(
-          primitive.name + "_value",
-        );
-        statements.push(create_fused_variable_statement(
-          typed_value,
-          value,
-          ts.NodeFlags.Const,
-          factory,
-          value_type,
-        ));
-        value = typed_value;
-      }
-
-      if (part.returns) {
-        statements.push(
-          factory.createReturnStatement(
-            kind === "reader"
-              ? value
-              : create_readonly_tuple([value, current_input], factory),
-          ),
-        );
-        returned = true;
-      } else if (part.declaration !== undefined) {
-        statements.push(update_fused_binding(part.declaration, value, factory));
-      } else if (primitive.name === "asks" || primitive.name === "gets") {
-        statements.push(factory.createExpressionStatement(value));
-      }
-      continue;
-    }
-  }
-
-  if (!returned) {
-    const result = body.result ?? factory.createVoidZero();
-    const output = kind === "reader"
-      ? result
-      : create_readonly_tuple([result, current_input], factory);
-    statements.push(factory.createReturnStatement(output));
-  }
-
-  const runner = factory.createArrowFunction(
-    undefined,
-    undefined,
-    [
-      factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        input_thunk,
-        undefined,
-        undefined,
-        undefined,
-      ),
-    ],
-    undefined,
-    undefined,
-    factory.createBlock(statements, true),
-  );
-  const thunk = factory.createArrowFunction(
-    undefined,
-    undefined,
-    [],
-    undefined,
-    undefined,
-    input,
-  );
-
-  return factory.createCallExpression(
-    factory.createParenthesizedExpression(runner),
-    undefined,
-    [thunk],
-  );
-}
-
-function create_fused_variable_statement(
-  name: ts.BindingName,
-  initializer: ts.Expression,
-  flags: ts.NodeFlags,
-  factory: ts.NodeFactory,
-  type?: ts.TypeNode,
-): ts.VariableStatement {
-  return factory.createVariableStatement(
-    undefined,
-    factory.createVariableDeclarationList([
-      factory.createVariableDeclaration(
-        name,
-        undefined,
-        type,
-        initializer,
-      ),
-    ], flags),
-  );
-}
-
-function update_fused_binding(
-  binding: NonNullable<FusedProgramYield["declaration"]>,
-  initializer: ts.Expression,
-  factory: ts.NodeFactory,
-): ts.VariableStatement {
-  return factory.updateVariableStatement(
-    binding.statement,
-    binding.statement.modifiers,
-    factory.updateVariableDeclarationList(
-      binding.statement.declarationList,
-      [
-        factory.updateVariableDeclaration(
-          binding.declaration,
-          binding.declaration.name,
-          binding.declaration.exclamationToken,
-          binding.declaration.type,
-          initializer,
-        ),
-      ],
-    ),
-  );
-}
-
-function create_readonly_tuple(
-  elements: readonly ts.Expression[],
-  factory: ts.NodeFactory,
-): ts.Expression {
-  return factory.createAsExpression(
-    factory.createArrayLiteralExpression(elements),
-    factory.createTypeReferenceNode("const", undefined),
-  );
-}
-
-function contains_fusion_lexical_hazard(node: ts.Node): boolean {
-  let found = false;
-
-  function visit(child: ts.Node, parent?: ts.Node) {
-    if (found) {
-      return;
-    }
-
-    if (
-      child.kind === ts.SyntaxKind.ThisKeyword ||
-      child.kind === ts.SyntaxKind.SuperKeyword || ts.isMetaProperty(child) ||
-      (ts.isIdentifier(child) && child.text === "arguments" &&
-        !(parent !== undefined &&
-          ((ts.isPropertyAccessExpression(parent) ||
-            ts.isPropertyAssignment(parent) ||
-            ts.isPropertySignature(parent)) &&
-            parent.name === child))) ||
-      (ts.isCallExpression(child) && ts.isIdentifier(child.expression) &&
-        child.expression.text === "eval" &&
-        child.questionDotToken === undefined)
-    ) {
-      found = true;
-      return;
-    }
-
-    ts.forEachChild(child, (descendant) => visit(descendant, child));
-  }
-
-  visit(node);
-  return found;
-}
-
-function contains_await_or_yield(node: ts.Node): boolean {
-  let found = false;
-
-  function visit(child: ts.Node) {
-    if (found || ts.isFunctionLike(child)) {
-      return;
-    }
-
-    if (ts.isAwaitExpression(child) || ts.isYieldExpression(child)) {
-      found = true;
-      return;
-    }
-
-    ts.forEachChild(child, visit);
-  }
-
-  visit(node);
-  return found;
-}
-
-function transform_terminal_lift_run(
-  node: ts.CallExpression,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-  requests: TerminalImportRequest[],
-): ts.CallExpression | undefined {
-  if (
-    node.questionDotToken !== undefined || node.typeArguments !== undefined ||
-    node.arguments.length !== 1
-  ) {
-    return undefined;
-  }
-
-  const outer = read_terminal_function_target(node.expression, imports);
-
-  if (outer?.imported !== "run") {
-    return undefined;
-  }
-
-  const handled = unwrap_parentheses(node.arguments[0]);
-
-  if (
-    !ts.isCallExpression(handled) || handled.questionDotToken !== undefined ||
-    (handled.arguments.length !== 2 && handled.arguments.length !== 3)
-  ) {
-    return undefined;
-  }
-
-  const handler = read_terminal_function_target(handled.expression, imports);
-
-  if (handler === undefined || handler.imported === "run") {
-    return undefined;
-  }
-
-  if (handled.arguments.length === 3 && handled.typeArguments !== undefined) {
-    return undefined;
-  }
-  const terminal_name = terminal_runner_name(handler.imported);
-  const type_arguments = terminal_type_arguments(
-    handler.imported,
-    handled.typeArguments,
-  );
-
-  if (handled.typeArguments !== undefined && type_arguments === undefined) {
-    return undefined;
-  }
-
-  const callee = handler.kind === "namespace"
-    ? factory.createPropertyAccessExpression(handler.namespace, terminal_name)
-    : terminal_import_identifier(handler, terminal_name, requests, factory);
-
-  return factory.updateCallExpression(
-    handled,
-    callee,
-    type_arguments,
-    handled.arguments,
-  );
-}
-
-function terminal_type_arguments(
-  handler: Exclude<TerminalFunctionName, "run">,
-  type_arguments: readonly ts.TypeNode[] | undefined,
-): readonly ts.TypeNode[] | undefined {
-  if (type_arguments === undefined) {
-    return undefined;
-  }
-
-  switch (handler) {
-    case "run_reader":
-    case "run_state":
-      return type_arguments.length === 3
-        ? [type_arguments[1], type_arguments[2]]
-        : undefined;
-    case "run_writer":
-      return type_arguments.length === 4
-        ? [type_arguments[0], type_arguments[1], type_arguments[3]]
-        : undefined;
-  }
-}
-
-function read_terminal_function_target(
-  expression: ts.Expression,
-  imports: ImportedBindings,
-): TerminalFunctionTarget | undefined {
-  if (ts.isIdentifier(expression)) {
-    const binding = imports.terminal_functions.get(expression.text);
-
-    return binding === undefined ? undefined : {
-      kind: "named",
-      local_name: expression.text,
-      imported: binding.imported,
-    };
-  }
-
-  if (
-    !ts.isPropertyAccessExpression(expression) ||
-    expression.questionDotToken !== undefined ||
-    !ts.isIdentifier(expression.expression) ||
-    !is_terminal_function_name(expression.name.text)
-  ) {
-    return undefined;
-  }
-
-  const namespace = expression.expression;
-  const exported = imports.terminal_namespaces.get(namespace.text);
-
-  if (exported === undefined || !exported.has(expression.name.text)) {
-    return undefined;
-  }
-
-  return {
-    kind: "namespace",
-    namespace,
-    imported: expression.name.text,
-  };
-}
-
-function terminal_runner_name(
-  name: Exclude<TerminalFunctionName, "run">,
-): TerminalImportRequest["imported_name"] {
-  switch (name) {
-    case "run_reader":
-      return "run_reader_terminal";
-    case "run_state":
-      return "run_state_terminal";
-    case "run_writer":
-      return "run_writer_terminal";
-  }
-}
-
-function terminal_import_identifier(
-  target: Extract<TerminalFunctionTarget, { readonly kind: "named" }>,
-  imported_name: TerminalImportRequest["imported_name"],
-  requests: TerminalImportRequest[],
-  factory: ts.NodeFactory,
-): ts.Identifier {
-  const existing = requests.find((request) => {
-    return request.source_local_name === target.local_name;
-  });
-
-  if (existing !== undefined) {
-    return existing.local_name;
-  }
-
-  const local_name = factory.createUniqueName(imported_name);
-  requests.push({
-    source_local_name: target.local_name,
-    imported_name,
-    local_name,
-  });
-  return local_name;
-}
-
-function is_imported_target(
-  expression: ts.Expression,
-  name: "Do" | "Program" | "Effect",
-  imports: ImportedBindings,
-): boolean {
-  if (ts.isIdentifier(expression)) {
-    const names = name === "Do"
-      ? imports.do_names
-      : name === "Program"
-      ? imports.program_names
-      : imports.effect_names;
-    return names.has(expression.text);
-  }
-  return ts.isPropertyAccessExpression(expression) &&
-    expression.name.text === name &&
-    ts.isIdentifier(expression.expression) &&
-    imports.namespaces.has(expression.expression.text);
-}
-
-function add_unanchored_target_diagnostic(
-  node: ts.CallExpression,
-  state: TransformState,
-  imports: ImportedBindings,
-) {
-  const callee = node.expression;
-  const target = ts.isIdentifier(callee)
-    ? callee.text
-    : ts.isPropertyAccessExpression(callee)
-    ? callee.name.text
-    : undefined;
-  if (
-    (target !== "Do" && target !== "Program") ||
-    transform_kind(node, new Set(), imports) !== undefined
-  ) return;
-  const run = node.arguments[node.arguments.length - 1];
-  if (!ts.isFunctionExpression(run) || run.asteriskToken === undefined) return;
-  add_diagnostic(
-    state,
-    node,
-    "Skipped " + target +
-      ": callee is not imported from @mewhhaha/typeclasses.",
-  );
-}
-
-function is_plain_identifier(
-  expression: ts.Expression,
-): expression is ts.Identifier {
-  return ts.isIdentifier(expression);
-}
-
-function transform_handle_with_call(
-  node: ts.CallExpression,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-): ts.Expression | undefined {
-  if (!is_effect_handle_with(node.expression, imports)) {
-    return undefined;
-  }
-
-  const effect = node.arguments[0];
-  const handlers = node.arguments[1];
-
-  if (effect === undefined || handlers === undefined) {
-    return undefined;
-  }
-
-  if (!ts.isArrayLiteralExpression(handlers)) {
-    return undefined;
-  }
-
-  const handler_expressions: ts.Expression[] = [];
-
-  for (const element of handlers.elements) {
-    if (ts.isSpreadElement(element)) {
-      return undefined;
-    }
-
-    if (!is_static_effect_handler(element)) {
-      return undefined;
-    }
-
-    handler_expressions.push(element);
-  }
-
-  let expression: ts.Expression = effect;
-
-  for (const handler of handler_expressions) {
-    expression = apply_static_effect_handler(handler, expression, factory);
-  }
-
-  return expression;
-}
-
-function transform_interpreter_call(
-  node: ts.CallExpression,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-): ts.Expression | undefined {
-  if (!ts.isPropertyAccessExpression(node.expression)) {
-    return undefined;
-  }
-
-  const effect = read_interpreter_effect(
-    node.expression.expression,
-    factory,
-    imports,
-  );
-
-  if (effect === undefined) {
-    return undefined;
-  }
-
-  switch (node.expression.name.text) {
-    case "run": {
-      const [runner] = node.arguments;
-
-      if (
-        runner === undefined || node.arguments.length !== 1 ||
-        node.typeArguments !== undefined
-      ) {
-        return undefined;
-      }
-
-      if (!is_static_effect_handler(runner)) {
-        return undefined;
-      }
-
-      return apply_static_effect_handler(runner, effect, factory);
-    }
-
-    case "value":
-      if (node.arguments.length !== 0) {
-        return undefined;
-      }
-
-      return effect;
-  }
-
-  return undefined;
-}
-
-function read_interpreter_effect(
-  expression: ts.Expression,
-  factory: ts.NodeFactory,
-  imports: ImportedBindings,
-): ts.Expression | undefined {
-  if (!ts.isCallExpression(expression)) {
-    return undefined;
-  }
-
-  if (is_effect_interpret(expression.expression, imports)) {
-    return expression.arguments[0];
-  }
-
-  if (!ts.isPropertyAccessExpression(expression.expression)) {
-    return undefined;
-  }
-
-  if (expression.expression.name.text !== "handle") {
-    return undefined;
-  }
-
-  const [handler] = expression.arguments;
-
-  if (
-    handler === undefined || expression.arguments.length !== 1 ||
-    !is_static_effect_handler(handler)
-  ) {
-    return undefined;
-  }
-
-  const effect = read_interpreter_effect(
-    expression.expression.expression,
-    factory,
-    imports,
-  );
-
-  if (effect === undefined) {
-    return undefined;
-  }
-
-  return apply_static_effect_handler(handler, effect, factory);
-}
-
-function is_effect_handle_with(
-  expression: ts.Expression,
-  imports: ImportedBindings,
-): boolean {
-  if (!ts.isPropertyAccessExpression(expression)) {
-    return false;
-  }
-
-  return is_imported_target(expression.expression, "Effect", imports) &&
-    expression.name.text === "handle_with";
-}
-
-function is_effect_interpret(
-  expression: ts.Expression,
-  imports: ImportedBindings,
-): boolean {
-  if (!ts.isPropertyAccessExpression(expression)) {
-    return false;
-  }
-
-  return is_imported_target(expression.expression, "Effect", imports) &&
-    expression.name.text === "interpret";
-}
-
-function is_static_effect_handler(expression: ts.Expression): boolean {
-  if (ts.isIdentifier(expression)) {
-    return true;
-  }
-
-  if (ts.isPropertyAccessExpression(expression)) {
-    return true;
-  }
-
-  if (ts.isArrowFunction(expression)) {
-    return true;
-  }
-
-  if (ts.isFunctionExpression(expression)) {
-    return true;
-  }
-
-  if (ts.isParenthesizedExpression(expression)) {
-    return is_static_effect_handler(expression.expression);
-  }
-
-  return false;
-}
-
-function apply_static_effect_handler(
-  handler: ts.Expression,
-  argument: ts.Expression,
-  factory: ts.NodeFactory,
-): ts.Expression {
-  const unwrapped = unwrap_parentheses(handler);
-  const inlined = inline_simple_arrow_handler(unwrapped, argument, factory);
-
-  if (inlined !== undefined) {
-    return inlined;
-  }
-
-  return factory.createCallExpression(
-    call_target(handler, factory),
-    undefined,
-    [argument],
-  );
-}
-
-function inline_simple_arrow_handler(
-  handler: ts.Expression,
-  argument: ts.Expression,
-  factory: ts.NodeFactory,
-): ts.Expression | undefined {
-  if (!ts.isArrowFunction(handler)) {
-    return undefined;
-  }
-
-  const parameter = handler.parameters[0];
-
-  if (parameter === undefined || handler.parameters.length !== 1) {
-    return undefined;
-  }
-
-  if (!ts.isIdentifier(parameter.name)) {
-    return undefined;
-  }
-
-  if (!ts.isCallExpression(handler.body)) {
-    return undefined;
-  }
-
-  const name = parameter.name.text;
-  let replaced = false;
-  const args = handler.body.arguments.map((arg) => {
-    if (ts.isIdentifier(arg) && arg.text === name) {
-      replaced = true;
-      return argument;
-    }
-
-    return arg;
-  });
-
-  if (!replaced) {
-    return undefined;
-  }
-
-  return factory.updateCallExpression(
-    handler.body,
-    handler.body.expression,
-    handler.body.typeArguments,
-    args,
-  );
-}
-
-function unwrap_parentheses(expression: ts.Expression): ts.Expression {
-  let unwrapped = expression;
-
-  while (ts.isParenthesizedExpression(unwrapped)) {
-    unwrapped = unwrapped.expression;
-  }
-
-  return unwrapped;
-}
-
-function call_target(
-  expression: ts.Expression,
-  factory: ts.NodeFactory,
-): ts.Expression {
-  if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
-    return factory.createParenthesizedExpression(expression);
-  }
-
-  return expression;
-}
-
-function update_imports(
-  source_file: ts.SourceFile,
-  factory: ts.NodeFactory,
-  needs_program_helpers: boolean,
-  diagnostics: TransformDiagnostic[],
-  imports: ImportedBindings,
-  terminal_imports: readonly TerminalImportRequest[],
-): ts.SourceFile {
-  let added_program_helpers = !needs_program_helpers;
-  const added_terminal_imports = new Set<TerminalImportRequest>();
-
-  const statements = source_file.statements.map((statement) => {
-    if (!ts.isImportDeclaration(statement)) {
-      return statement;
-    }
-
-    let updated = statement;
-
-    if (needs_program_helpers && imports_value(statement, "Program")) {
-      added_program_helpers = true;
-      updated = add_import_specifiers(updated, factory, ["Effect"]);
-    }
-
-    if (needs_program_helpers && imports_value(statement, "Effect")) {
-      added_program_helpers = true;
-    }
-
-    for (const request of terminal_imports) {
-      if (!imports_value(statement, request.source_local_name)) {
-        continue;
-      }
-
-      updated = add_import_binding(updated, factory, request);
-      added_terminal_imports.add(request);
-    }
-
-    return updated;
-  });
-
-  if (
-    needs_program_helpers && !added_program_helpers &&
-    imports.program_module !== undefined
-  ) {
-    // Namespace imports cannot be amended in place; add the tiny named import
-    // needed by generated `Effect.*` calls beside the source import.
-    statements.push(factory.createImportDeclaration(
-      undefined,
-      factory.createImportClause(
-        false,
-        undefined,
-        factory.createNamedImports([
-          factory.createImportSpecifier(
-            false,
-            undefined,
-            factory.createIdentifier("Effect"),
-          ),
-        ]),
-      ),
-      factory.createStringLiteral(imports.program_module),
-    ));
-    added_program_helpers = true;
-  }
-
-  if (!added_program_helpers) {
-    diagnostics.push({
-      file_name: source_file.fileName,
-      line: 1,
-      column: 1,
-      message:
-        "Transformed Program but could not find a Program import to add Effect.",
-    });
-  }
-
-  for (const request of terminal_imports) {
-    if (added_terminal_imports.has(request)) {
-      continue;
-    }
-
-    diagnostics.push({
-      file_name: source_file.fileName,
-      line: 1,
-      column: 1,
-      message: "Transformed terminal runner but could not update its import.",
-    });
-  }
-
-  return factory.updateSourceFile(source_file, statements);
-}
-
-function imports_value(
-  declaration: ts.ImportDeclaration,
-  name: string,
-): boolean {
-  const clause = declaration.importClause;
-
-  if (clause === undefined || clause.isTypeOnly) {
-    return false;
-  }
-
-  const bindings = clause.namedBindings;
-
-  if (bindings === undefined || !ts.isNamedImports(bindings)) {
-    return false;
-  }
-
-  return bindings.elements.some((element) => {
-    if (element.isTypeOnly) {
-      return false;
-    }
-
-    return element.name.text === name;
-  });
-}
-
-function add_import_specifiers(
-  declaration: ts.ImportDeclaration,
-  factory: ts.NodeFactory,
-  names: readonly string[],
-): ts.ImportDeclaration {
-  const clause = declaration.importClause;
-
-  if (clause === undefined) {
-    return declaration;
-  }
-
-  const bindings = clause.namedBindings;
-
-  if (bindings === undefined || !ts.isNamedImports(bindings)) {
-    return declaration;
-  }
-
-  const existing = new Set(
-    bindings.elements
-      .filter((element) => !element.isTypeOnly)
-      .map((element) => element.name.text),
-  );
-  const added = names
-    .filter((name) => !existing.has(name))
-    .map((name) =>
-      factory.createImportSpecifier(
-        false,
-        undefined,
-        factory.createIdentifier(name),
-      )
-    );
-
-  if (added.length === 0) {
-    return declaration;
-  }
-
-  return factory.updateImportDeclaration(
-    declaration,
-    declaration.modifiers,
-    factory.updateImportClause(
-      clause,
-      clause.isTypeOnly,
-      clause.name,
-      factory.updateNamedImports(bindings, [...bindings.elements, ...added]),
-    ),
-    declaration.moduleSpecifier,
-    declaration.attributes,
-  );
-}
-
-function add_import_binding(
-  declaration: ts.ImportDeclaration,
-  factory: ts.NodeFactory,
-  request: TerminalImportRequest,
-): ts.ImportDeclaration {
-  const clause = declaration.importClause;
-
-  if (clause === undefined) {
-    return declaration;
-  }
-
-  const bindings = clause.namedBindings;
-
-  if (bindings === undefined || !ts.isNamedImports(bindings)) {
-    return declaration;
-  }
-
-  const added = factory.createImportSpecifier(
-    false,
-    factory.createIdentifier(request.imported_name),
-    request.local_name,
-  );
-
-  return factory.updateImportDeclaration(
-    declaration,
-    declaration.modifiers,
-    factory.updateImportClause(
-      clause,
-      clause.isTypeOnly,
-      clause.name,
-      factory.updateNamedImports(bindings, [...bindings.elements, added]),
-    ),
-    declaration.moduleSpecifier,
-    declaration.attributes,
-  );
-}
-
-function contains_yield_or_return(node: ts.Node): boolean {
-  if (ts.isFunctionLike(node)) {
-    return false;
-  }
-
-  let found = false;
-
-  function visit(node: ts.Node) {
-    if (found) {
-      return;
-    }
-
-    if (ts.isFunctionLike(node)) {
-      return;
-    }
-
-    if (ts.isYieldExpression(node) || ts.isReturnStatement(node)) {
-      found = true;
-      return;
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  ts.forEachChild(node, visit);
-
-  return found;
-}
-
-function contains_yield_or_return_or_break(node: ts.Node): boolean {
-  if (ts.isFunctionLike(node)) {
-    return false;
-  }
-
-  let found = false;
-
-  function visit(child: ts.Node) {
-    if (found || ts.isFunctionLike(child)) {
-      return;
-    }
-    if (
-      ts.isYieldExpression(child) || ts.isReturnStatement(child) ||
-      ts.isBreakStatement(child) || ts.isContinueStatement(child)
-    ) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(child, visit);
-  }
-
-  ts.forEachChild(node, visit);
-  return found;
-}
-
-function property(
-  factory: ts.NodeFactory,
-  object: string,
-  name: string,
-): ts.PropertyAccessExpression {
-  return factory.createPropertyAccessExpression(
-    factory.createIdentifier(object),
-    name,
-  );
-}
-
-function add_diagnostic(
-  state: TransformState,
-  node: ts.Node,
-  message: string,
-) {
-  const position = state.source_file.getLineAndCharacterOfPosition(
-    node.getStart(state.source_file),
-  );
-
-  state.diagnostics.push({
-    file_name: state.source_file.fileName,
-    line: position.line + 1,
-    column: position.character + 1,
-    message,
-  });
-}
-
-function format_diagnostic(diagnostic: TransformDiagnostic): string {
-  return diagnostic.file_name + ":" + diagnostic.line.toString() + ":" +
-    diagnostic.column.toString() + ": " + diagnostic.message;
-}
-
-if (import.meta.main) {
-  await run_cli(Deno.args);
-}
-
 /** Compiler and transform revision included in every cache key. */
-export const transform_cache_version: string = "4:" + ts.version;
+export const transform_cache_version: string =
+  "5:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {
@@ -5659,206 +936,6 @@ export function create_transform_cache(
   };
 }
 
-// Only explicit, unshadowed built-in dictionaries are evidence for MonadRec.
-function collect_loop_support(source: ts.SourceFile) {
-  const dictionaries = new Set<string>();
-  const tasks = new Set<string>();
-  let specifier: string | undefined;
-  for (const statement of source.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier)
-    ) continue;
-    const module = statement.moduleSpecifier.text;
-    const bindings = statement.importClause?.namedBindings;
-    if (
-      statement.importClause?.isTypeOnly || bindings === undefined ||
-      !ts.isNamedImports(bindings)
-    ) continue;
-    if (/^(?:\.\.?\/)+src\/(?:mod|typeclasses)\.ts$/.test(module)) {
-      specifier = module.replace(/(?:typeclasses|mod)\.ts$/, "loop.ts");
-    }
-    if (
-      /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/.test(
-        module,
-      )
-    ) specifier = module + "/loop";
-    let kind = module.match(
-      /^(?:\.\.?\/)+src\/(maybe|either|identity|task|mod)(?:\.ts)?$/,
-    )?.[1] ??
-      module.match(
-        /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?\/(maybe|either|identity|task)$/,
-      )?.[1];
-    if (
-      /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/.test(
-        module,
-      )
-    ) kind = "mod";
-    if (kind === undefined) continue;
-    for (const element of bindings.elements) {
-      const imported = (element.propertyName ?? element.name).text;
-      if (
-        !element.isTypeOnly &&
-        ["Maybe", "Either", "Identity", "Task"].includes(imported) &&
-        (kind === "mod" || kind === imported.toLowerCase())
-      ) {
-        dictionaries.add(element.name.text);
-        if (imported === "Task") tasks.add(element.name.text);
-      }
-    }
-  }
-  const shadowed = collect_non_import_value_bindings(source, dictionaries);
-  for (const name of shadowed.keys()) {
-    dictionaries.delete(name);
-    tasks.delete(name);
-  }
-  if (specifier === undefined) dictionaries.clear();
-  return { dictionaries, tasks, specifier };
-}
-
-// Named programs may move only when construction stops immediately at a
-// zero-argument primitive. Every use must be a same-scope terminal run.
-function collect_named_terminal_programs(
-  source: ts.SourceFile,
-  imports: ImportedBindings,
-  scopes: ReadonlySet<string>,
-  bindings: ReturnType<typeof create_binding_analysis>,
-) {
-  const candidates = new Map<string, ts.CallExpression>();
-  const declarations = new Map<string, ts.Identifier>();
-  const allowed = new Set<ts.Identifier>();
-  const owners = new Map<string, ts.Node>();
-  const nodes: { statement: ts.Statement; owner: ts.Node }[] = [];
-  function collect(node: ts.Node) {
-    if (ts.isSourceFile(node) || ts.isBlock(node)) {
-      for (const statement of node.statements) {
-        nodes.push({ statement, owner: node });
-      }
-    }
-    ts.forEachChild(node, collect);
-  }
-  collect(source);
-  for (const { statement, owner } of nodes) {
-    if (
-      !ts.isVariableStatement(statement) || statement.modifiers !== undefined ||
-      (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
-      statement.declarationList.declarations.length !== 1
-    ) continue;
-    const declaration = statement.declarationList.declarations[0];
-    if (
-      !ts.isIdentifier(declaration.name) || declaration.type !== undefined ||
-      declaration.initializer === undefined
-    ) continue;
-    const program = unwrap_parentheses(declaration.initializer);
-    if (
-      !ts.isCallExpression(program) ||
-      transform_kind(program, scopes, imports) !== "program" ||
-      program.arguments.length !== 1
-    ) continue;
-    const run = program.arguments[0];
-    if (
-      !ts.isFunctionExpression(run) || run.asteriskToken === undefined ||
-      run.name !== undefined || run.parameters.length !== 0 ||
-      run.typeParameters !== undefined || run.type !== undefined ||
-      run.modifiers !== undefined ||
-      contains_fusion_lexical_hazard(run.body)
-    ) continue;
-    const body = read_fused_program_body(run.body);
-    const first = body?.parts[0];
-    if (body === undefined || first?.kind !== "yield") continue;
-    const primitive = read_fused_primitive(first.expression, imports);
-    if (
-      primitive === undefined ||
-      (primitive.name !== "ask" && primitive.name !== "get")
-    ) continue;
-    const kind = primitive_terminal_kind(primitive.name);
-    if (
-      fused_terminal_input_type(body, kind, imports) === undefined ||
-      !body.parts.every((part) =>
-        part.kind !== "yield" ||
-        primitive_terminal_kind(
-            read_fused_primitive(part.expression, imports)?.name ?? "tell",
-          ) === kind
-      )
-    ) continue;
-    const key = named_program_key(declaration.name, bindings);
-    candidates.set(key, program);
-    declarations.set(key, declaration.name);
-    owners.set(key, owner);
-  }
-  if (candidates.size === 0) return candidates;
-  const used = new Set<string>();
-  for (const { statement, owner } of nodes) {
-    let expression: ts.Expression | undefined;
-    if (
-      ts.isExpressionStatement(statement) || ts.isReturnStatement(statement)
-    ) expression = statement.expression;
-    if (
-      ts.isVariableStatement(statement) &&
-      statement.declarationList.declarations.length === 1
-    ) expression = statement.declarationList.declarations[0].initializer;
-    if (
-      expression === undefined || !ts.isCallExpression(expression) ||
-      read_terminal_function_target(expression.expression, imports)
-          ?.imported !== "run" ||
-      expression.arguments.length !== 1
-    ) continue;
-    const handled = expression.arguments[0];
-    if (
-      !ts.isCallExpression(handled) || handled.arguments.length !== 2 ||
-      handled.typeArguments !== undefined ||
-      handled.questionDotToken !== undefined ||
-      contains_fusion_lexical_hazard(handled.arguments[1]) ||
-      contains_await_or_yield(handled.arguments[1])
-    ) continue;
-    const handler = read_terminal_function_target(handled.expression, imports);
-    const name = handled.arguments[0];
-    if (
-      handler === undefined || handler.imported === "run" ||
-      !ts.isIdentifier(name)
-    ) continue;
-    const key = named_program_key(name, bindings);
-    if (owners.get(key) !== owner) continue;
-    const candidate = candidates.get(key);
-    if (candidate === undefined || candidate.end >= name.pos) continue;
-    const run = candidate.arguments[0] as ts.FunctionExpression;
-    const first = read_fused_program_body(run.body)!
-      .parts[0] as FusedProgramYield;
-    if (
-      fused_terminal_kind(handler.imported) !==
-        primitive_terminal_kind(
-          read_fused_primitive(first.expression, imports)!.name,
-        )
-    ) continue;
-    allowed.add(name);
-    used.add(key);
-  }
-  function validate(node: ts.Node) {
-    if (ts.isIdentifier(node)) {
-      const key = named_program_key(node, bindings);
-      if (
-        candidates.has(key) && declarations.get(key) !== node &&
-        !allowed.has(node)
-      ) candidates.delete(key);
-    }
-    ts.forEachChild(node, validate);
-  }
-  validate(source);
-  for (const name of candidates.keys()) {
-    if (!used.has(name)) candidates.delete(name);
-  }
-  return candidates;
-}
-
-function named_program_key(
-  name: ts.Identifier,
-  bindings?: ReturnType<typeof create_binding_analysis>,
-): string {
-  const declaration = bindings?.resolve(name);
-  if (declaration === undefined) return name.text;
-  return name.text + ":" + declaration.pos;
-}
-
 // Source and generated code are immutable strings; clone only public containers.
 function clone_transform_result(result: TransformResult): TransformResult {
   let map: TransformSourceMap | null = null;
@@ -5880,382 +957,8 @@ function clone_transform_result(result: TransformResult): TransformResult {
   };
 }
 
-/** A flat switch is the control-flow IR for large, independent yield sequences. */
-function transform_flat_statements(
-  body: ts.Block,
-  state: TransformState,
-): TransformBlock | undefined {
-  if (
-    state.kind !== "do" || state.optimizations?.flatten === false ||
-    state.loop_runtime === undefined || body.statements.length < 128
-  ) return undefined;
-  const statements = [...body.statements];
-  const terminal = statements.pop();
-  if (
-    terminal === undefined || !ts.isReturnStatement(terminal) ||
-    is_yield_star(terminal.expression)
-  ) return undefined;
-  const yields: Extract<YieldStatement, { kind: "bind" }>[] = [];
-  const local_names = new Set<string>();
-  for (const statement of statements) {
-    const yielded = read_yield_statement(statement);
-    if (
-      yielded === undefined || yielded.kind !== "bind" ||
-      yielded.name !== undefined && !ts.isIdentifier(yielded.name)
-    ) return undefined;
-    if (yielded.name !== undefined) {
-      local_names.add((yielded.name as ts.Identifier).text);
-    }
-    yields.push(yielded);
-  }
-  // Cross-stage references need liveness threading. Keep the existing lowering
-  // for those programs; this IR deliberately contains no shared mutable frame.
-  function mentions_local(node: ts.Node, permitted?: string): boolean {
-    let found = false;
-    function visit(node: ts.Node) {
-      if (
-        ts.isIdentifier(node) && local_names.has(node.text) &&
-        node.text !== permitted
-      ) found = true;
-      if (!found) ts.forEachChild(node, visit);
-    }
-    visit(node);
-    return found;
-  }
-  if (yields.some((yielded) => mentions_local(yielded.expression))) {
-    return undefined;
-  }
-  const last = yields[yields.length - 1];
-  let last_name: string | undefined;
-  if (last.name !== undefined && ts.isIdentifier(last.name)) {
-    last_name = last.name.text;
-  }
-  if (
-    terminal.expression !== undefined &&
-    mentions_local(terminal.expression, last_name)
-  ) return undefined;
-  let dictionary = state.dictionary;
-  if (
-    dictionary !== undefined &&
-    (!ts.isIdentifier(dictionary) ||
-      !state.recursive_dictionaries?.has(dictionary.text))
-  ) return undefined;
-  dictionary ??= state.flat_dictionary?.(yields[0].expression);
-  if (dictionary === undefined) return undefined;
-  const f = state.factory;
-  const runtime = state.loop_runtime;
-  const index = f.createUniqueName("instruction");
-  const first = f.createUniqueName("first_context");
-  const call = (
-    target: ts.Expression,
-    method: string,
-    args: readonly ts.Expression[],
-  ) =>
-    f.createCallExpression(
-      f.createPropertyAccessExpression(target, method),
-      undefined,
-      args,
-    );
-  const cases = yields.map((yielded, position) => {
-    let result: ts.Expression;
-    if (position === yields.length - 1) {
-      result = call(runtime, "done", [
-        terminal.expression ?? f.createVoidZero(),
-      ]);
-    } else {result = call(runtime, "rec", [
-        f.createNumericLiteral(position + 1),
-      ]);}
-    let expression = yielded.expression;
-    if (position === 0) expression = first;
-    return f.createCaseClause(f.createNumericLiteral(position), [
-      f.createReturnStatement(
-        call(expression, "map", [
-          create_arrow(
-            bind_parameters(yielded, state),
-            f.createBlock([f.createReturnStatement(result)], true),
-            f,
-          ),
-        ]),
-      ),
-    ]);
-  });
-  state.used_loop_runtime?.();
-  state.report?.(
-    body,
-    "flatten",
-    "transformed",
-    "Flattened independent yields into a MonadRec instruction switch; generator-local captures remain isolated.",
-  );
-  return {
-    yielded: true,
-    block: f.createBlock([
-      f.createVariableStatement(
-        undefined,
-        f.createVariableDeclarationList([
-          f.createVariableDeclaration(
-            first,
-            undefined,
-            undefined,
-            yields[0].expression,
-          ),
-        ], ts.NodeFlags.Const),
-      ),
-      f.createReturnStatement(
-        call(dictionary, "tail_rec_m", [
-          f.createNumericLiteral(0),
-          f.createArrowFunction(
-            undefined,
-            undefined,
-            [f.createParameterDeclaration(
-              undefined,
-              undefined,
-              index,
-              undefined,
-              f.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
-            )],
-            undefined,
-            undefined,
-            f.createBlock([
-              f.createSwitchStatement(index, f.createCaseBlock(cases)),
-              f.createThrowStatement(
-                f.createNewExpression(f.createIdentifier("Error"), undefined, [
-                  f.createStringLiteral("Invalid generated instruction"),
-                ]),
-              ),
-            ], true),
-          ),
-        ]),
-      ),
-    ], true),
-  };
+function format_diagnostic(diagnostic: TransformDiagnostic): string {
+  return diagnostic.file_name + ":" + diagnostic.line + ":" +
+    diagnostic.column + ": " + diagnostic.message;
 }
-
-// Loop IR: each iteration returns a typed next-state or a unit exit.
-// Early returns retain recursive lowering until heterogeneous results can be
-// represented without erasing the consumer's inferred result type.
-function transform_stack_safe_loop(
-  variable: ts.Identifier | undefined,
-  type: ts.TypeNode | undefined,
-  initial: ts.Expression,
-  condition: ts.Expression,
-  next: ts.Expression,
-  statements: readonly ts.Statement[],
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-  do_first = false,
-): TransformBlock | undefined {
-  if (
-    state.optimizations?.loop === false || state.kind !== "do" ||
-    state.dictionary === undefined || !ts.isIdentifier(state.dictionary) ||
-    !state.recursive_dictionaries?.has(state.dictionary.text) ||
-    state.loop_runtime === undefined
-  ) return undefined;
-  function has_return(node: ts.Node): boolean {
-    if (ts.isFunctionLike(node)) return false;
-    if (ts.isReturnStatement(node)) return true;
-    return ts.forEachChild(node, has_return) ?? false;
-  }
-  if (statements.some(has_return)) return undefined;
-  const f = state.factory;
-  const dictionary = state.dictionary;
-  const runtime = state.loop_runtime;
-  const initial_state = f.createUniqueName("initial_state");
-  const step_type_name = f.createUniqueName("LoopInstruction");
-  const step_type = f.createTypeReferenceNode(step_type_name);
-  let state_item_type: ts.TypeNode = f.createTypeQueryNode(initial_state);
-  if (do_first) {
-    state_item_type = f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword);
-  }
-  const state_type = f.createTypeLiteralNode([
-    f.createPropertySignature(
-      undefined,
-      "first",
-      undefined,
-      f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
-    ),
-    f.createPropertySignature(
-      undefined,
-      "value",
-      undefined,
-      state_item_type,
-    ),
-  ]);
-  const call = (
-    target: ts.Expression,
-    method: string,
-    args: readonly ts.Expression[],
-  ) =>
-    f.createCallExpression(
-      f.createPropertyAccessExpression(target, method),
-      undefined,
-      args,
-    );
-  const arrow = (
-    body: ts.ConciseBody,
-    parameters: readonly ts.ParameterDeclaration[] = [],
-  ) =>
-    f.createArrowFunction(
-      undefined,
-      undefined,
-      parameters,
-      undefined,
-      undefined,
-      body,
-    );
-  const pure = (value: ts.Expression) =>
-    f.createCallExpression(
-      f.createPropertyAccessExpression(dictionary, "pure"),
-      [step_type],
-      [value],
-    );
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_step = pure(call(runtime, "done", [f.createVoidZero()]));
-  const state_value = (first: boolean, value: ts.Expression) => {
-    let flag = f.createFalse() as ts.Expression;
-    if (first) flag = f.createTrue();
-    return f.createObjectLiteralExpression([
-      f.createPropertyAssignment("first", flag),
-      f.createPropertyAssignment("value", value),
-    ]);
-  };
-  const body = transform_statements(
-    [...statements, f.createContinueStatement()],
-    current_context,
-    {
-      ...state,
-      continuation_type: step_type,
-    },
-    {
-      continue_expression: pure(
-        call(runtime, "rec", [state_value(false, next)]),
-      ),
-      break_expression: exit_step,
-    },
-  );
-  const parameters: ts.ParameterDeclaration[] = [];
-  let guard = condition;
-  if (variable !== undefined) {
-    parameters.push(
-      f.createParameterDeclaration(
-        undefined,
-        undefined,
-        variable,
-        undefined,
-        type ?? f.createTypeQueryNode(initial_state),
-      ),
-    );
-  }
-  if (do_first) {
-    const first = f.createUniqueName("first_iteration");
-    parameters.push(
-      f.createParameterDeclaration(
-        undefined,
-        undefined,
-        first,
-        undefined,
-        f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
-      ),
-    );
-    guard = f.createLogicalOr(first, condition);
-  }
-  if (parameters.length === 0) {
-    parameters.push(
-      f.createParameterDeclaration(
-        undefined,
-        undefined,
-        f.createUniqueName("unused"),
-        undefined,
-        f.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword),
-      ),
-    );
-  }
-  const step = arrow(
-    f.createBlock([
-      f.createIfStatement(guard, body.block),
-      f.createReturnStatement(exit_step),
-    ], true),
-    parameters,
-  );
-  const step_name = f.createUniqueName("loop_step");
-  const first_step = f.createUniqueName("first_step");
-  const cursor = f.createUniqueName("loop_state");
-  const recursion = call(dictionary, "tail_rec_m", [
-    state_value(true, initial_state),
-    arrow(
-      f.createBlock([
-        f.createIfStatement(
-          f.createPropertyAccessExpression(cursor, "first"),
-          f.createReturnStatement(first_step),
-        ),
-        f.createReturnStatement(
-          f.createCallExpression(step_name, undefined, [
-            f.createPropertyAccessExpression(cursor, "value"),
-          ]),
-        ),
-      ], true),
-      [f.createParameterDeclaration(undefined, undefined, cursor)],
-    ),
-  ]);
-  state.used_loop_runtime?.();
-  state.report?.(
-    statements[0] ?? state.source_file,
-    "loop",
-    "transformed",
-    "Lowered loop control through MonadRec with typed next-state and break instructions.",
-  );
-  return {
-    yielded: true,
-    block: f.createBlock([
-      f.createVariableStatement(
-        undefined,
-        f.createVariableDeclarationList([
-          f.createVariableDeclaration(
-            initial_state,
-            undefined,
-            undefined,
-            initial,
-          ),
-        ], ts.NodeFlags.Let),
-      ),
-      f.createTypeAliasDeclaration(
-        undefined,
-        step_type_name,
-        undefined,
-        f.createTypeReferenceNode(f.createQualifiedName(runtime, "LoopStep"), [
-          state_type,
-          f.createKeywordTypeNode(ts.SyntaxKind.VoidKeyword),
-        ]),
-      ),
-      f.createVariableStatement(
-        undefined,
-        f.createVariableDeclarationList([
-          f.createVariableDeclaration(step_name, undefined, undefined, step),
-          f.createVariableDeclaration(
-            first_step,
-            undefined,
-            undefined,
-            f.createCallExpression(step_name, undefined, [initial_state]),
-          ),
-        ], ts.NodeFlags.Const),
-      ),
-      f.createReturnStatement(call(recursion, "bind", [arrow(exit.block)])),
-    ], true),
-  };
-}
-
-function repeatable_task_construction(
-  expression: ts.Expression,
-  name: string,
-): boolean {
-  const node = unwrap_parentheses(expression);
-  if (ts.isIdentifier(node)) return true;
-  if (
-    !ts.isCallExpression(node) || !ts.isIdentifier(node.expression) ||
-    node.expression.text !== name || node.arguments.length !== 1
-  ) return false;
-  const callback = unwrap_parentheses(node.arguments[0]);
-  return ts.isArrowFunction(callback) || ts.isFunctionExpression(callback) ||
-    ts.isIdentifier(callback);
-}
+if (import.meta.main) await run_cli(Deno.args);

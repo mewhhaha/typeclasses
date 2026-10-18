@@ -6,6 +6,9 @@ import {
 } from "../../tools/round3_transform_checks.ts";
 import { flatten_numeric_do } from "./round3_transform_flat.ts";
 import { print_changed_statements } from "./round3_transform_print.ts";
+
+// The printer and numeric-frame rows retain their historical TypeScript AST
+// prototypes; candidate/* and flat/production-preserve use the current backend.
 const results: Record<
   string,
   { median_ms: number; samples_ms: number[]; iterations: number }
@@ -155,6 +158,7 @@ for (
     "../../tools/transform_do_program.ts",
     "../../tools/transform_bindings.ts",
     "./round3_transform_flat.ts",
+    "./legacy_bindings.ts",
     "./round3_transform_print.ts",
     "./round3_transform_measure.ts",
     "../../tools/round3_transform_checks.ts",
@@ -175,6 +179,11 @@ const artifact = {
   deno: Deno.version,
   workload:
     "7 samples;5 warmups;per-row iterations;5000 unrelated statements;typed numeric dependency chains",
+  backends: {
+    production: "Oxc ESTree",
+    printer_prototype: "historical TypeScript AST",
+    numeric_frame_prototype: "historical TypeScript AST",
+  },
   fingerprints,
   results,
   probes,

@@ -1,4 +1,4 @@
-import ts from "typescript";
+import { executable_typescript } from "./transform_execute.ts";
 import { SourceMap } from "node:module";
 import { assert_equals, assert_true } from "../src/assert.ts";
 import {
@@ -13,12 +13,7 @@ async function evaluate(source: string): Promise<unknown> {
     (_match, name: string) =>
       new URL(`../src/${name}.ts`, import.meta.url).href,
   );
-  const code = ts.transpileModule(absolute, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-    },
-  }).outputText;
+  const code = executable_typescript(absolute);
   return (await import(
     "data:application/javascript," + encodeURIComponent(code)
   )).default;

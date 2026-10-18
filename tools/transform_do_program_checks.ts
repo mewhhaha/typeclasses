@@ -1,3 +1,5 @@
+import { transform_do_program_source } from "./transform_do_program.ts";
+import { executable_typescript } from "./transform_execute.ts";
 import { assert_equals, assert_true } from "../src/assert.ts";
 import {
   arbitrary,
@@ -471,7 +473,7 @@ const output = run(run_writer(Program(function* () {
       "expected canonical primitives to avoid terminal dispatch\n\n" +
         result.code,
     );
-    assert_includes(result.code, "reader_input_1 =>");
+    assert_includes(result.code, "(reader_input_1) =>");
     assert_includes(result.code, "const ask_value_1: Config = environment_1");
     assert_includes(result.code, "const config = ask_value_1");
     assert_includes(result.code, "state_1 = modify_argument_0_1(state_1)");
@@ -814,7 +816,7 @@ const value = run(run_reader(Program(function* () {
     assert_equals(unrelated_module.diagnostics, []);
     assert_includes(unrelated_module.code, "Effect.from(ask())");
     assert_true(
-      !unrelated_module.code.includes("reader_input_1 =>"),
+      !unrelated_module.code.includes("reader_input_"),
       "expected unrelated ask implementation to remain observable\n\n" +
         unrelated_module.code,
     );
@@ -832,7 +834,7 @@ const value = run(run_reader(Program(function* () {
     assert_equals(unrelated_program.diagnostics.length, 1);
     assert_includes(unrelated_program.code, "Program(function*");
     assert_true(
-      !unrelated_program.code.includes("reader_input_1 =>"),
+      !unrelated_program.code.includes("reader_input_"),
       "expected unrelated Program constructor to remain observable\n\n" +
         unrelated_program.code,
     );
@@ -888,7 +890,7 @@ const value = run(run_reader(Program(function* () {
 
     assert_equals(invalid_typed.transformed, 1);
     assert_equals(invalid_typed.diagnostics, []);
-    assert_includes(invalid_typed.code, "reader_input_1 =>");
+    assert_includes(invalid_typed.code, "(reader_input_1) =>");
     await assert_module_has_type_error(invalid_typed.code);
 
     const asserted_yield = await transform(`
@@ -1338,7 +1340,10 @@ const parser = label(Do(function* () {
 
     assert_equals(result.transformed, 1);
     assert_equals(result.diagnostics, []);
-    assert_includes(result.code, "const parser = label(identifier.map");
+    assert_true(
+      /const parser = label\(\s*identifier\.map/.test(result.code),
+      result.code,
+    );
     assert_true(
       !result.code.includes("(() =>"),
       "expected generated Do argument wrapper to be removed\n\n" + result.code,
@@ -1365,7 +1370,10 @@ function parser() {
 
     assert_equals(result.transformed, 1);
     assert_equals(result.diagnostics, []);
-    assert_includes(result.code, "return label(identifier.map");
+    assert_true(
+      /return label\(\s*identifier\.map/.test(result.code),
+      result.code,
+    );
     assert_true(
       !result.code.includes("(() =>"),
       "expected generated Do return wrapper to be removed\n\n" + result.code,
@@ -1949,6 +1957,7 @@ Deno.test({
     const command = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
+        "--allow-ffi",
         "--allow-env",
         "--allow-read",
         new URL("./transform_do_program.ts", import.meta.url).pathname,
@@ -1971,6 +1980,7 @@ Deno.test({
     const terminal_command = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
+        "--allow-ffi",
         "--allow-env",
         "--allow-read",
         new URL("./transform_do_program.ts", import.meta.url).pathname,
@@ -2335,17 +2345,15 @@ ${statements}
   },
 });
 
-async function transform(source: string, file_name?: string) {
-  const transformer = await import("./transform_do_program.ts");
-
-  return transformer.transform_do_program_source(source, file_name);
+function transform(source: string, file_name?: string) {
+  return transform_do_program_source(source, file_name);
 }
 
 async function evaluate_module(
   source: string,
   label: string,
 ): Promise<unknown> {
-  const executable = source.replace(/\s+as const\b/g, "");
+  const executable = executable_typescript(source);
   const module = await import(
     "data:application/javascript," +
       encodeURIComponent(executable + "\n//# sourceURL=" + label + ".ts")
@@ -2438,7 +2446,8 @@ ${strip_anchoring_import(source)}
 export default program.value();
 `;
   const module = await import(
-    "data:application/javascript," + encodeURIComponent(executable)
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(executable))
   );
 
   return module.default;

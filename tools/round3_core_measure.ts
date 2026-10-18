@@ -1,7 +1,9 @@
 import ts from "typescript";
+import { type IdentifierReference, parseSync } from "oxc-parser";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type PairedBlock, summarize_pairs } from "./paired_bench.ts";
+import { walk } from "./transform_ast.ts";
 
 const baseline = resolve(
   Deno.args[0] ?? "/tmp/typeclasses-round3-baseline-2068408",
@@ -35,11 +37,17 @@ const new_transform: typeof old_transform = await module_at(
   candidate,
   "tools/transform_do_program.ts",
 );
-const old_bindings: typeof import("./transform_bindings.ts") = await module_at(
+// This side intentionally loads the historical TypeScript implementation.
+type HistoricalBindings = {
+  create_binding_analysis(source: ts.SourceFile): {
+    resolve(identifier: ts.Identifier): ts.Node | undefined;
+  };
+};
+const old_bindings: HistoricalBindings = await module_at(
   baseline,
   "tools/transform_bindings.ts",
 );
-const new_bindings: typeof old_bindings = await module_at(
+const new_bindings: typeof import("./transform_bindings.ts") = await module_at(
   candidate,
   "tools/transform_bindings.ts",
 );
@@ -193,9 +201,11 @@ pair("208/cache misses", () => {
   new_cache.clear();
   return new_cache.transform(text, "bench.ts");
 }, 10);
+const resolution_source = "const outer=1;" + "function f(){".repeat(60) +
+  "outer;" + "}".repeat(60);
 const ast = ts.createSourceFile(
   "scope.ts",
-  "const outer=1;" + "function f(){".repeat(60) + "outer;" + "}".repeat(60),
+  resolution_source,
   ts.ScriptTarget.Latest,
   true,
 );
@@ -205,15 +215,27 @@ function visit(node: ts.Node): void {
   ts.forEachChild(node, visit);
 }
 visit(ast);
+const native_ast = parseSync("scope.ts", resolution_source).program;
+const native_identifiers: IdentifierReference[] = [];
+walk(native_ast, (node) => {
+  if (node.type === "Identifier") {
+    native_identifiers.push(node as IdentifierReference);
+  }
+});
+if (identifiers.length !== native_identifiers.length) {
+  throw new Error(
+    "Resolution comparison must visit the same number of identifiers.",
+  );
+}
 const previous = old_bindings.create_binding_analysis(ast),
-  next = new_bindings.create_binding_analysis(ast);
+  next = new_bindings.create_binding_analysis(native_ast);
 pair("202/resolution1000", () => {
   for (let i = 0; i < 1000; i++) {
     for (const id of identifiers) sink = previous.resolve(id);
   }
 }, () => {
   for (let i = 0; i < 1000; i++) {
-    for (const id of identifiers) sink = next.resolve(id);
+    for (const id of native_identifiers) sink = next.resolve(id);
   }
 }, 10);
 const sources = new Map(
@@ -266,6 +288,12 @@ const report = {
   candidate,
   driver_sha256: await hash(await Deno.readTextFile(new URL(import.meta.url))),
   fingerprints,
+  resolution_probe: {
+    baseline_ast: "TypeScript",
+    candidate_ast: "Oxc ESTree",
+    identifier_count: identifiers.length,
+    parsing_included: false,
+  },
   results,
   limitations:
     "Serial in-process ABBA; includes JIT effects and shared-host noise. Per-hill controls distinguish historical and same-runtime comparisons. Allocation counts are measured separately.",

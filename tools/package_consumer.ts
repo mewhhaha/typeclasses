@@ -169,9 +169,19 @@ export async function check_package_consumer(
       }
     };
     await run(["check", "--config", config, smoke], true);
-    // The optional transformer imports TypeScript, whose initialization reads
-    // environment settings. Core-only consumers do not need this permission.
-    await run(["run", "--allow-env", "--config", config, smoke], true);
+    // Oxc's native loader also reads platform metadata before loading its addon.
+    await run(
+      [
+        "run",
+        "--allow-env",
+        "--allow-read",
+        "--allow-ffi",
+        "--config",
+        config,
+        smoke,
+      ],
+      true,
+    );
     const private_import = resolve(consumer, "private.ts");
     await Deno.writeTextFile(
       private_import,

@@ -1,6 +1,6 @@
 {
   "name": "@mewhhaha/typeclasses",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "license": "MIT",
   "sideEffects": false,
   "exports": {
@@ -82,7 +82,12 @@
       "tools/transform_do_program.ts",
       "tools/transform_iterable_maps.ts",
       "tools/transform_plugin.ts",
-      "tools/transform_bindings.ts"
+      "tools/transform_bindings.ts",
+      "tools/transform_ast.ts",
+      "tools/transform_context.ts",
+      "tools/transform_imports.ts",
+      "tools/transform_generator.ts",
+      "tools/transform_terminals.ts"
     ],
     "exclude": [
       "src/*.test.ts",
@@ -93,12 +98,15 @@
   "imports": {
     "effect": "npm:effect@3.21.4",
     "esbuild": "npm:esbuild@0.25.12",
+    "esrap": "npm:esrap@2.4.0",
     "fp-ts/Either": "npm:fp-ts@2.16.11/lib/Either.js",
     "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
     "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
     "fp-ts/StateReaderTaskEither": "npm:fp-ts@2.16.11/lib/StateReaderTaskEither.js",
     "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
     "miniflare": "npm:miniflare@4.20260730.0",
+    "oxc-parser": "npm:oxc-parser@0.154.0",
+    "oxc-transform": "npm:oxc-transform@0.154.0",
     "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
     "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
     "rolldown": "npm:rolldown@1.1.5",
@@ -107,13 +115,13 @@
     "true-myth/result": "npm:true-myth@9.1.0/result"
   },
   "tasks": {
-    "bench": "deno bench --allow-env --allow-read --allow-write=/tmp,/var/tmp bench/*.bench.ts",
-    "bench:case-studies": "deno bench --allow-env --allow-read --allow-write=/tmp,/var/tmp bench/case_studies_transformer.bench.ts",
+    "bench": "deno bench --allow-ffi --allow-env --allow-read --allow-write=/tmp,/var/tmp bench/*.bench.ts",
+    "bench:case-studies": "deno bench --allow-ffi --allow-env --allow-read --allow-write=/tmp,/var/tmp bench/case_studies_transformer.bench.ts",
     "bench:scaling": "deno bench bench/scaling.bench.ts",
     "case-study": "deno run --allow-read case_studies/main.ts",
-    "transform": "deno run --allow-env --allow-read --allow-write tools/transform_do_program.ts",
-    "check:portability": "deno run --allow-env --allow-read tools/check_portability.ts",
-    "test:entrypoints": "deno run --allow-env --allow-read tools/package_entrypoint_smoke.ts",
+    "transform": "deno run --allow-ffi --allow-env --allow-read --allow-write tools/transform_do_program.ts",
+    "check:portability": "deno run --allow-ffi --allow-env --allow-read tools/check_portability.ts",
+    "test:entrypoints": "deno run --allow-ffi --allow-env --allow-read tools/package_entrypoint_smoke.ts",
     "test:node": "node --experimental-strip-types tools/node_portability_smoke.ts",
     "test:bun": "bun tools/node_portability_smoke.ts",
     "test:browser": "deno run --allow-env --allow-net=127.0.0.1 --allow-read --allow-run --allow-write=/tmp,/var/tmp tools/browser_portability_smoke.ts",
@@ -127,8 +135,8 @@
     "example": "deno run --allow-read=examples,src examples/main.ts",
     "learn": "deno run learn_you_a_typeclasses_for_greater_good/main.ts",
     "test": "deno test --clean --coverage=/var/tmp/typeclasses-coverage --coverage-threshold=70 src examples case_studies",
-    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts tools/transform_iterable_maps_checks.ts tools/transform_optimization_checks.ts tools/transform_round2_checks.ts tools/round3_transform_checks.ts",
-    "test:benchmarks": "deno bench --allow-env --allow-read --allow-write=/tmp,/var/tmp --filter '/$a/' bench/algorithm_contexts.bench.ts bench/iterable_pipeline.bench.ts bench/scaling.bench.ts bench/do_vs_program.bench.ts bench/case_studies_transformer.bench.ts bench/large_chains_comparison.bench.ts",
+    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts tools/transform_iterable_maps_checks.ts tools/transform_optimization_checks.ts tools/transform_round2_checks.ts tools/round3_transform_checks.ts tools/oxc_ast_checks.ts tools/oxc_generator_checks.ts tools/oxc_terminal_checks.ts tools/oxc_portability_checks.ts tools/oxc_integration_checks.ts",
+    "test:benchmarks": "deno bench --allow-ffi --allow-env --allow-read --allow-write=/tmp,/var/tmp --filter '/$a/' bench/algorithm_contexts.bench.ts bench/iterable_pipeline.bench.ts bench/scaling.bench.ts bench/do_vs_program.bench.ts bench/case_studies_transformer.bench.ts bench/large_chains_comparison.bench.ts",
     "verify": "deno task fmt:check && deno task check && deno lint && deno task doc:check && deno task check:docs && deno task test && deno task test:experiments && deno task test:tools && deno task test:mutations && deno task test:transformer && deno task test:benchmarks && deno task check:portability && deno task test:entrypoints && deno task test:package && deno task test:node && deno task test:bun && deno task test:browser && deno task test:workerd && deno task example && deno task learn && deno task case-study",
     "prepublish": "deno task verify && deno task publish:dry-run",
     "check:core": "deno check src/*.ts",
@@ -143,7 +151,7 @@
     "dev:watch": "deno run --allow-read --allow-run tools/dev_watch.ts --watch",
     "test:package": "deno run --allow-env --allow-read --allow-run --allow-write=/tmp,/var/tmp tools/package_consumer.ts",
     "check:affected": "deno run --allow-read --allow-run tools/dev_watch.ts",
-    "test:tools": "deno test --allow-env --allow-read --allow-run tools/dev_watch.test.ts tools/round2_qualification_checks.ts tools/bundle_round2_checks.ts tools/round3_core_checks.ts",
+    "test:tools": "deno test --allow-ffi --allow-env --allow-read --allow-run tools/dev_watch.test.ts tools/round2_qualification_checks.ts tools/bundle_round2_checks.ts tools/round3_core_checks.ts",
     "test:experiments": "deno test bench/experiments",
     "profile:allocation": "node --experimental-strip-types tools/allocation_profile.ts"
   }
