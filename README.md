@@ -10,6 +10,11 @@ Published on JSR as `@mewhhaha/typeclasses`. (The optional build-time
 transformer under `/transform` is the one exception: it uses the TypeScript
 compiler, and never ships to your runtime.)
 
+`Foo<T>` names a wrapped value with dictionary operations; `RawFoo<T>` names its
+`.value()` representation. For example, use `Task<number>` for a Task value and
+`RawTask<number>` for its deferred function. The same rule applies to `ArrayT`,
+`List`, Reader/State/Writer, and platform wrappers.
+
 ## Why
 
 TypeScript makes you pick a container and then rewrite your logic for every
@@ -310,6 +315,18 @@ own adapter or use `Task` for asynchronous work on the main isolate.
 
 ### Migration Notes
 
+In `0.15.0`:
+
+- Wrapped public types consistently use `Foo<T>`; raw values use `RawFoo<T>`.
+- Declare `const identity = Symbol("Name")` and pass it to
+  `data<AsName>(identity)`. The type and runtime dictionary share that identity.
+- Nonempty `collect({ id: Just(1), name: Just("Ada") })` infers its dictionary.
+  Empty shapes still use `collect(Maybe, {})`.
+- Individual classes have `/typeclasses/functor`-style entry points. Typed
+  operation tables and named cell results are available through `/handlers`.
+- [Hills60–130](./docs/hills-60-130.md) records outcomes and rejected
+  experiments.
+
 - In `0.14.0`, the API uses `Maybe<T>`, `Either<E, T>`, and `Validation<E, T>`
   for wrapped values. Use `RawMaybe`, `RawEither`, and `RawValidation` for
   tuples crossing a `.value()` boundary.
@@ -465,19 +482,22 @@ import {
 } from "@mewhhaha/typeclasses/typeclass";
 import { Monad, Show } from "@mewhhaha/typeclasses/typeclasses";
 
-type Maybe<item> =
+type RawMaybe<item> =
   | readonly ["Just", item]
   | readonly ["Nothing"];
 
-declare const maybe_identity: unique symbol;
+const maybe_identity = Symbol("Maybe");
 
 interface AsMaybe
   extends As<AsMaybe, typeof maybe_identity>, Show<AsMaybe>, Monad<AsMaybe> {
   readonly [type_item]: unknown;
-  readonly [type_data]: Maybe<this[typeof type_item]>;
+  readonly [type_data]: RawMaybe<this[typeof type_item]>;
 }
 
-const Maybe = data<AsMaybe>(union(["Just", $slot], ["Nothing"]));
+const Maybe = data<AsMaybe>(
+  maybe_identity,
+  union(["Just", $slot], ["Nothing"]),
+);
 const Just = Maybe.Just;
 const Nothing = Maybe.Nothing;
 
@@ -608,10 +628,11 @@ The public data-wrapped value protocol is
 type WrappedMaybe<item> = Data<typeof Maybe, item>;
 ```
 
-`data<AsMaybe>()` creates the callable dictionary, assigns an internal kind, and
-routes calls through a cached constructor. The lower-level
-`as_data(dictionary, value)` and `as_data_cached(dictionary)` helpers remain
-available for integrations that need to manage construction directly.
+`data<AsMaybe>(maybe_identity)` creates the callable dictionary, uses the
+explicit identity as its runtime kind, and routes calls through a cached
+constructor. The lower-level `as_data(dictionary, value)` and
+`as_data_cached(dictionary)` helpers remain available for integrations that need
+to manage construction directly.
 
 Each data type declares its raw value shape once on the `As...` interface.
 `Data` uses that shape to type helper functions, instance methods, and fluent
@@ -713,13 +734,20 @@ parsed.value(); // ["Right", 42]
 Typeclass operations can also be passed around or destructured. They retain
 their dispatcher and infer the item type from the wrapped value:
 
+<!-- example:examples/documentation_calls.ts#calling-styles -->
+
 ```ts
 import { Just } from "@mewhhaha/typeclasses/maybe";
-import { Functor } from "@mewhhaha/typeclasses/typeclasses";
+import { Functor } from "@mewhhaha/typeclasses/typeclasses/functor";
+import { fmap } from "@mewhhaha/typeclasses/prelude";
 
+const fluent = Just(41).map((value) => value + 1);
 const { map } = Functor;
-map(Just(41), (value) => value + 1); // Just(42)
+const generic = map(Just(41), (value) => value + 1);
+const function_first = fmap((value) => value + 1, Just(41));
 ```
+
+<!-- /example -->
 
 `Either` does not fix the error payload to `string`; `Left(value)` keeps the
 error value's type. The examples use strings because they are easy to inspect.
@@ -734,9 +762,9 @@ select `Either.with_left<error>()`. A failure with no success item can infer its
 recovery result: `Left("missing").catch_error(error => Right(error.length))`.
 Recovery of an existing success keeps that success type.
 
-`from_nullable(value)` produces `MaybeValue<NonNullable<typeof value>>`, so a
-`map` callback receives a non-null payload even when the input type includes
-`null` or `undefined`.
+`from_nullable(value)` produces `Maybe<NonNullable<typeof value>>`, so a `map`
+callback receives a non-null payload even when the input type includes `null` or
+`undefined`.
 
 Fixed context parameters are part of the open dictionary too. `AsEither<left>`,
 `AsTuple<left>`, `AsValidation<error>`, and `AsFn<input>` keep their fixed

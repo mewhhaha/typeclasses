@@ -1,0 +1,153 @@
+{
+  "ticks": 3189,
+  "kinds": {
+    "native/unmapped": 1764,
+    "BytecodeHandler": 6,
+    "Builtin": 486,
+    "JS": 933
+  },
+  "top_js": [
+    [
+      "benchMeasure ext:cli/40_bench.js:244:28",
+      451
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:438:34",
+      36
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:438:34",
+      34
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:289:48",
+      32
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:56:40",
+      28
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:289:48",
+      27
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:13:40",
+      19
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:56:40",
+      18
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:84:74",
+      17
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:84:74",
+      16
+    ],
+    [
+      "emitTypeArguments file:///home/jacobt/.cache/deno/npm/registry.npmjs.org/typescript/5.9.3/lib/typescript.js:124225:29",
+      16
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/src/typeclasses/monad.ts:88:27",
+      14
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:305:34",
+      12
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:386:56",
+      11
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:595:30",
+      10
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:386:56",
+      10
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:13:40",
+      10
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:187:34",
+      8
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:472:27",
+      8
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:187:34",
+      7
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:305:34",
+      7
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/src/typeclasses/monad.ts:88:27",
+      5
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:213:55",
+      5
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/language.ts:484:45",
+      5
+    ],
+    [
+      "failure file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:619:17",
+      4
+    ],
+    [
+      "failure file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:619:17",
+      4
+    ],
+    [
+      "warmup ext:cli/40_bench.js:78:26",
+      4
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/language.ts:469:23",
+      4
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/language.ts:430:28",
+      4
+    ],
+    [
+      "bind file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:54:8",
+      3
+    ],
+    [
+      "compareMeasurements ext:cli/40_bench.js:206:29",
+      3
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:267:34",
+      3
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/parser.ts:213:55",
+      3
+    ],
+    [
+      " file:///var/tmp/typeclasses-round2-transform-snapshot-v3/case_studies/programming_language_parser/language.ts:441:22",
+      3
+    ],
+    [
+      " file:///var/tmp/typeclasses-case-study-transform-bench-83038e2193d920d7/case_studies/programming_language_parser/parser.ts:267:34",
+      3
+    ]
+  ],
+  "source": "/var/tmp/typeclasses-round2-parallel-v8.log",
+  "method": "streaming V8 code-creation address ranges matched to sampled program counters; top JS self ticks, including setup and both app variants"
+}

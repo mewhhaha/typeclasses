@@ -1,5 +1,7 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
+  as_data_cached,
   type Data,
   data,
   type type_data,
@@ -14,10 +16,12 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const stm_identity: unique symbol;
+export const stm_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "stm_identity",
+);
 
 /** @ignore */
-export const tvar_brand: unique symbol = Symbol("TVar.brand");
+export const tvar_brand: unique symbol = /* @__PURE__ */ Symbol("TVar.brand");
 const tvar_id = Symbol("TVar.id");
 const tvar_value = Symbol("TVar.value");
 const tvar_immutable = Symbol("TVar.immutable");
@@ -43,23 +47,92 @@ export type StmJournal = {
   readonly writes: Map<TVar<unknown>, unknown>;
 };
 
+type JournalStorage = {
+  reads?: Map<TVar<unknown>, unknown>;
+  writes?: Map<TVar<unknown>, unknown>;
+  exposed?: Set<TVar<unknown>>;
+  escaped: boolean;
+};
+class Journal implements StmJournal {
+  readonly parent?: StmJournal;
+  readonly storage: JournalStorage = { escaped: false };
+  constructor(parent?: StmJournal) {
+    this.parent = parent;
+  }
+  get reads(): Map<TVar<unknown>, unknown> {
+    return this.storage.reads ??= new Map();
+  }
+  get writes(): Map<TVar<unknown>, unknown> {
+    this.storage.escaped = true;
+    return this.storage.writes ??= new Map();
+  }
+}
+function create_journal(parent?: StmJournal): StmJournal {
+  return new Journal(parent);
+}
+function storage_of(journal: StmJournal): JournalStorage | undefined {
+  if (journal instanceof Journal) return journal.storage;
+}
+
+function reads_of(
+  journal: StmJournal,
+): Map<TVar<unknown>, unknown> | undefined {
+  const storage = storage_of(journal);
+  if (storage !== undefined) return storage.reads;
+  return journal.reads;
+}
+
+function writes_of(
+  journal: StmJournal,
+): Map<TVar<unknown>, unknown> | undefined {
+  const storage = storage_of(journal);
+  if (storage !== undefined) return storage.writes;
+  return journal.writes;
+}
+
+function writable(journal: StmJournal): Map<TVar<unknown>, unknown> {
+  const storage = storage_of(journal);
+  if (storage !== undefined) return storage.writes ??= new Map();
+  return journal.writes;
+}
+
+function expose(journal: StmJournal, variable: TVar<unknown>): void {
+  const storage = storage_of(journal);
+  if (storage !== undefined) (storage.exposed ??= new Set()).add(variable);
+}
+
 /** A synchronous transaction evaluated against an isolated journal. */
-export type Stm<item> = (journal: StmJournal) => item;
+export type RawStm<item> = (journal: StmJournal) => item;
+
+/** @ignore */
+export interface AsStmLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawStm<this[typeof type_item]>;
+}
 
 /** The callable dictionary for STM transactions. */
 export interface AsStm
-  extends As<AsStm, typeof stm_identity>, Show<AsStm>, Monad<AsStm> {
-  /** The item produced by an STM transaction. */
-  readonly [type_item]: unknown;
-  /** The journal-dependent computation represented by an STM value. */
-  readonly [type_data]: Stm<this[typeof type_item]>;
+  extends
+    As<AsStmLambda, typeof stm_identity>,
+    Show<AsStm>,
+    Monad<AsStm>,
+    Runnable {
 }
 
-/** @ignore */
-export type StmValue<item> = Data<AsStm, item>;
+/** A wrapped Stm value with its dictionary operations. */
+export type Stm<item> = Data<AsStm, item>;
 
 /** The STM dictionary and transaction constructor. */
-export const Stm: AsStm = data<AsStm>();
+export const Stm: AsStm = data<AsStm>(stm_identity, function (transaction) {
+  return this.data((journal) => {
+    // Arbitrary callbacks can retain the raw journal. They cannot establish the
+    // ownership proof used by the closed set of built-in operations.
+    const storage = storage_of(journal);
+    if (storage !== undefined) storage.escaped = true;
+    return transaction(journal);
+  });
+});
+const trusted_stm = as_data_cached(Stm);
 
 /** An expected transaction failure raised by `abort` or unsafe nesting. */
 export class StmError extends Error {
@@ -94,16 +167,16 @@ export function new_tvar<item>(value: item): TVar<item> {
 }
 
 /** Reads a TVar within a transaction. */
-export function read_tvar<item>(variable: TVar<item>): StmValue<item> {
-  return Stm((journal) => read_journal(journal, variable));
+export function read_tvar<item>(variable: TVar<item>): Stm<item> {
+  return trusted_stm((journal) => read_journal(journal, variable));
 }
 
 /** Stages a new TVar value within a transaction. */
 export function write_tvar<item>(
   variable: TVar<item>,
   value: item,
-): StmValue<void> {
-  return Stm((journal) => {
+): Stm<void> {
+  return trusted_stm((journal) => {
     write_journal(journal, variable, value);
   });
 }
@@ -112,8 +185,8 @@ export function write_tvar<item>(
 export function modify_tvar<item>(
   variable: TVar<item>,
   fn: (value: item) => item,
-): StmValue<item> {
-  return Stm((journal) => {
+): Stm<item> {
+  return trusted_stm((journal) => {
     const next = fn(read_journal(journal, variable));
     write_journal(journal, variable, next);
 
@@ -122,32 +195,28 @@ export function modify_tvar<item>(
 }
 
 /** Aborts a transaction with an explanatory message. */
-export function abort<item = never>(message: string): StmValue<item> {
-  return Stm(() => {
+export function abort<item = never>(message: string): Stm<item> {
+  return trusted_stm(() => {
     throw new StmError(message);
   });
 }
 
 /** Abandons the current branch so `or_else` can run its alternative. */
-export function retry<item = never>(): StmValue<item> {
-  return Stm(() => {
+export function retry<item = never>(): Stm<item> {
+  return trusted_stm(() => {
     throw new StmRetry();
   });
 }
 
 /** Runs the right transaction only when the left transaction retries. */
 export function or_else<item>(
-  left: StmValue<item>,
-  right: StmValue<item>,
-): StmValue<item> {
-  return Stm((journal) => {
+  left: Stm<item>,
+  right: Stm<item>,
+): Stm<item> {
+  return trusted_stm((journal) => {
     // The branch gets its own values before it can mutate them. Restoring map
     // entries afterward cannot restore references held by the enclosing program.
-    const branch: StmJournal = {
-      parent: journal,
-      reads: new Map(),
-      writes: new Map(),
-    };
+    const branch = create_journal(journal);
 
     try {
       const value = run_stm(left, branch);
@@ -164,14 +233,14 @@ export function or_else<item>(
 }
 
 /** Runs and commits a transaction as one synchronous atomic step. */
-export function atomically<item>(transaction: StmValue<item>): item {
+export function atomically<item>(transaction: Stm<item>): item {
   if (transaction_depth !== 0) {
     throw new StmError(
       "Nested atomically calls cannot join the active transaction",
     );
   }
 
-  const journal: StmJournal = { reads: new Map(), writes: new Map() };
+  const journal = create_journal();
   transaction_depth += 1;
 
   try {
@@ -193,20 +262,20 @@ Show.instance(Stm)({
 
 Functor.instance(Stm)({
   map(fn) {
-    return Stm((journal) => fn(run_stm(this, journal)));
+    return trusted_stm((journal) => fn(run_stm(this, journal)));
   },
 });
 
 Applicative.instance(Stm)({
   pure(value) {
-    return Stm(() => value);
+    return trusted_stm(() => value);
   },
 
   [applicative_lift_method](fn, rest) {
     const first = this.value();
     const transactions = rest.map((current) => current.value());
 
-    return Stm((journal) => {
+    return trusted_stm((journal) => {
       const values = [first(journal)];
 
       for (const transaction of transactions) {
@@ -218,7 +287,7 @@ Applicative.instance(Stm)({
   },
 
   ap(value) {
-    return Stm((journal) => {
+    return trusted_stm((journal) => {
       const fn = run_stm(this, journal);
       return fn(run_stm(value, journal));
     });
@@ -227,7 +296,7 @@ Applicative.instance(Stm)({
 
 Monad.instance(Stm)({
   bind(fn) {
-    return Stm((journal) => {
+    return trusted_stm((journal) => {
       const value = run_stm(this, journal);
       return run_stm(fn(value), journal);
     });
@@ -235,7 +304,7 @@ Monad.instance(Stm)({
 });
 
 function run_stm<item>(
-  transaction: StmValue<item>,
+  transaction: Stm<item>,
   journal: StmJournal,
 ): item {
   return transaction.value()(journal);
@@ -247,13 +316,13 @@ function read_journal<item>(
 ): item {
   const key = variable as TVar<unknown>;
 
-  if (journal.writes.has(key)) {
-    return journal.writes.get(key) as item;
+  const writes = writes_of(journal);
+  if (writes?.has(key)) {
+    expose(journal, key);
+    return writes.get(key) as item;
   }
-
-  if (journal.reads.has(key)) {
-    return journal.reads.get(key) as item;
-  }
+  const reads = reads_of(journal);
+  if (reads?.has(key)) return reads.get(key) as item;
 
   const value = isolate_tvar(
     variable,
@@ -270,7 +339,7 @@ function write_journal<item>(
   variable: TVar<item>,
   value: item,
 ): void {
-  journal.writes.set(
+  writable(journal).set(
     variable as TVar<unknown>,
     isolate_tvar(
       variable,
@@ -281,11 +350,27 @@ function write_journal<item>(
 }
 
 function commit_journal(journal: StmJournal): void {
-  const commits = snapshot_tvar_values(journal.writes, "commit value");
-
-  for (const [variable, value] of commits) {
-    write_current(variable, value);
+  const writes = writes_of(journal);
+  if (writes === undefined) return;
+  const storage = storage_of(journal);
+  // Private staged clones have never escaped. Only exposed snapshots need a
+  // second clone. Prepare every clone before publishing any TVar value.
+  const commits: [TVar<unknown>, unknown][] = [];
+  for (const [variable, value] of writes) {
+    if (
+      storage === undefined || storage.escaped || storage.exposed?.has(variable)
+    ) {
+      commits.push([
+        variable,
+        isolate_tvar(
+          variable,
+          value,
+          `commit value for TVar ${read_tvar_id(variable)}`,
+        ),
+      ]);
+    } else commits.push([variable, value]);
   }
+  for (const [variable, value] of commits) write_current(variable, value);
 }
 
 function lookup_journal(
@@ -294,40 +379,35 @@ function lookup_journal(
   fallback: unknown,
 ): unknown {
   for (let current = journal; current !== undefined; current = current.parent) {
-    if (current.writes.has(variable)) return current.writes.get(variable);
-    if (current.reads.has(variable)) return current.reads.get(variable);
+    const writes = writes_of(current);
+    if (writes?.has(variable)) return writes.get(variable);
+    const reads = reads_of(current);
+    if (reads?.has(variable)) return reads.get(variable);
   }
   return fallback;
 }
 
 function merge_journal(journal: StmJournal, branch: StmJournal): void {
-  for (const [variable, value] of branch.reads) {
-    if (journal.writes.has(variable)) journal.writes.set(variable, value);
-    else journal.reads.set(variable, value);
+  const reads = reads_of(branch);
+  if (reads !== undefined) {
+    for (const [variable, value] of reads) {
+      if (writes_of(journal)?.has(variable)) {
+        writable(journal).set(variable, value);
+        expose(journal, variable);
+      } else journal.reads.set(variable, value);
+    }
   }
-  for (const [variable, value] of branch.writes) {
-    journal.writes.set(variable, value);
+  const writes = writes_of(branch);
+  if (writes !== undefined) {
+    const branch_storage = storage_of(branch);
+    for (const [variable, value] of writes) {
+      writable(journal).set(variable, value);
+      if (
+        branch_storage === undefined || branch_storage.escaped ||
+        branch_storage.exposed?.has(variable)
+      ) expose(journal, variable);
+    }
   }
-}
-
-function snapshot_tvar_values(
-  values: ReadonlyMap<TVar<unknown>, unknown>,
-  operation: string,
-): Map<TVar<unknown>, unknown> {
-  const snapshot = new Map<TVar<unknown>, unknown>();
-
-  for (const [variable, value] of values) {
-    snapshot.set(
-      variable,
-      isolate_tvar(
-        variable,
-        value,
-        `${operation} for TVar ${read_tvar_id(variable)}`,
-      ),
-    );
-  }
-
-  return snapshot;
 }
 
 function read_current<item>(variable: TVar<item>): item {

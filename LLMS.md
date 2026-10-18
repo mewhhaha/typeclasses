@@ -14,6 +14,11 @@ representations and composition rules here.
 Examples in this file contain comments to explain the pattern. Production code
 should keep only comments that explain a constraint or non-obvious reason.
 
+`Foo<T>` names a wrapped value with dictionary operations; `RawFoo<T>` names its
+`.value()` representation. For example, use `Task<number>` for a Task value and
+`RawTask<number>` for its deferred function. The same rule applies to `ArrayT`,
+`List`, Reader/State/Writer, and platform wrappers.
+
 ## Choose the smallest context
 
 Start from the behavior the code needs:
@@ -104,10 +109,10 @@ The raw algebraic data types are tagged tuples. Deconstruct and switch on the
 tag when both branches need substantive handling:
 
 ```ts
-import { type EitherValue } from "@mewhhaha/typeclasses/either";
+import { type Either } from "@mewhhaha/typeclasses/either";
 
 function to_response(
-  result: EitherValue<{ readonly message: string }, number>,
+  result: Either<{ readonly message: string }, number>,
 ): Response {
   const [tag, payload] = result.value();
 
@@ -172,11 +177,20 @@ fluent matching.
 
 For a concrete value, prefer the fluent methods carried by that value:
 
+<!-- example:examples/documentation_calls.ts#calling-styles -->
+
 ```ts
-const parsed = Right("42")
-  .bind((text) => from_number(Number.parseInt(text, 10)))
-  .map((port) => port + 1);
+import { Just } from "@mewhhaha/typeclasses/maybe";
+import { Functor } from "@mewhhaha/typeclasses/typeclasses/functor";
+import { fmap } from "@mewhhaha/typeclasses/prelude";
+
+const fluent = Just(41).map((value) => value + 1);
+const { map } = Functor;
+const generic = map(Just(41), (value) => value + 1);
+const function_first = fmap((value) => value + 1, Just(41));
 ```
+
+<!-- /example -->
 
 For generic code, state the capability in the type and call the exported
 typeclass operation:
@@ -291,12 +305,12 @@ Use `Do` to flatten a chain of optional dependent lookups:
 import {
   from_nullable,
   Just,
-  type MaybeValue,
+  type Maybe,
   Nothing,
 } from "@mewhhaha/typeclasses/maybe";
 import { Do } from "@mewhhaha/typeclasses/typeclasses";
 
-function parse_positive_integer(text: string): MaybeValue<number> {
+function parse_positive_integer(text: string): Maybe<number> {
   const value = Number(text);
 
   if (Number.isInteger(value) && value > 0) {
@@ -1598,11 +1612,45 @@ similar raw shape. In particular:
   Import these phantom symbols as types. `DataItem<dictionary, item>` preserves
   fixed elements in generic folds; constrain numeric folds to dictionaries with
   an optional `[type_element]?: number` field.
-- Construct the dictionary with `data<As...>()`.
+- Declare a const identity symbol and construct the dictionary with
+  `data<As...>(identity)`.
 - Install only lawful typeclass instances.
 - Put reusable typeclass machinery in `src/typeclass.ts` and application-level
   typeclass definitions in `src/typeclasses.ts`.
 - Prefer tagged tuples for algebraic variants and switch on their tag.
+
+<!-- example:examples/documentation_dictionary.ts#custom-dictionary -->
+
+```ts
+import {
+  type As,
+  type Data,
+  data,
+  type type_data,
+  type type_item,
+} from "@mewhhaha/typeclasses/typeclass";
+import { Functor } from "@mewhhaha/typeclasses/typeclasses/functor";
+
+const box_identity = Symbol("Box");
+type RawBox<item> = { readonly item: item };
+interface AsBox extends As<AsBox, typeof box_identity>, Functor<AsBox> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawBox<this[typeof type_item]>;
+}
+type Box<item> = Data<AsBox, item>;
+const Box: AsBox = data<AsBox>(box_identity);
+
+Functor.instance(Box)({
+  map(fn) {
+    return Box({ item: fn(this.value().item) });
+  },
+});
+
+const incremented: Box<number> = Box({ item: 41 }).map((item) => item + 1);
+incremented.value(); // { item: 42 }
+```
+
+<!-- /example -->
 
 Do not add an instance because a method can be implemented mechanically. For
 example, `Validation` omits `Monad` because that instance would contradict its

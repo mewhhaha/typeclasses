@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
   type Data,
@@ -23,86 +24,91 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const iterable_identity: unique symbol;
+export const iterable_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "iterable_identity",
+);
 
 /** A factory that supplies the iterable wrapped by the dictionary. */
-export type IterableT<item> = () => Iterable<item>;
+export type RawIterableT<item> = () => Iterable<item>;
+
+/** @ignore */
+export interface AsIterableLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawIterableT<this[typeof type_item]>;
+}
 
 /** Dictionary type for lazy synchronous iterable factories. */
 export interface AsIterable
   extends
-    As<AsIterable, typeof iterable_identity>,
+    As<AsIterableLambda, typeof iterable_identity>,
     Show<AsIterable>,
     Eq<AsIterable>,
     Monoid<AsIterable>,
     Alternative<AsIterable>,
     Monad<AsIterable>,
-    Traversable<AsIterable> {
-  /** Higher-kinded slot for the yielded value type. */
-  readonly [type_item]: unknown;
-  /** Iterable factory at the selected value type. */
-  readonly [type_data]: IterableT<this[typeof type_item]>;
+    Traversable<AsIterable>,
+    Runnable {
   /** Lazily keep matching items, preserving type-guard narrowing. */
   filter<item, narrowed extends item>(
-    this: IterableValue<item>,
+    this: IterableT<item>,
     predicate: (item: item) => item is narrowed,
-  ): IterableValue<narrowed>;
+  ): IterableT<narrowed>;
   /** Lazily keep matching items. */
   filter<item>(
-    this: IterableValue<item>,
+    this: IterableT<item>,
     predicate: (item: item) => boolean,
-  ): IterableValue<item>;
+  ): IterableT<item>;
   /** Yield at most count items, closing the upstream iterator on early exit. */
-  take<item>(this: IterableValue<item>, count: number): IterableValue<item>;
+  take<item>(this: IterableT<item>, count: number): IterableT<item>;
 }
 
-/** @ignore */
-export type IterableValue<item> = Data<AsIterable, item>;
+/** A wrapped IterableT value with its dictionary operations. */
+export type IterableT<item> = Data<AsIterable, item>;
 
 /** Callable iterable dictionary with lazy list-like typeclass instances. */
-export const IterableT: AsIterable = data<AsIterable>();
+export const IterableT: AsIterable = data<AsIterable>(iterable_identity);
 
 /** Wrap a factory whose iterable is requested for each traversal. */
 export function from_factory<item>(
   factory: () => Iterable<item>,
-): IterableValue<item> {
+): IterableT<item> {
   return IterableT(factory);
 }
 
 /** Wrap a live array view without copying; later source mutations are visible. */
 export function from_array<item>(
   items: readonly item[],
-): IterableValue<item> {
+): IterableT<item> {
   return IterableT(() => items);
 }
 
 /** Snapshot an iterable so the wrapped value can be traversed repeatedly. */
 export function from_iterable<item>(
   iterable: Iterable<item>,
-): IterableValue<item> {
+): IterableT<item> {
   const items = [...iterable];
   return IterableT(() => items);
 }
 
 /** Materialize a wrapped iterable into a mutable array. */
-export function to_array<item>(iterable: IterableValue<item>): item[] {
+export function to_array<item>(iterable: IterableT<item>): item[] {
   return [...iterable.value()()];
 }
 
 /** Lazily keep matching items, preserving type-guard narrowing. */
 export function filter<item, narrowed extends item>(
-  iterable: IterableValue<item>,
+  iterable: IterableT<item>,
   predicate: (item: NoInfer<item>) => item is narrowed,
-): IterableValue<narrowed>;
+): IterableT<narrowed>;
 /** Lazily keep matching items. */
 export function filter<item>(
-  iterable: IterableValue<item>,
+  iterable: IterableT<item>,
   predicate: (item: NoInfer<item>) => boolean,
-): IterableValue<item>;
+): IterableT<item>;
 export function filter<item>(
-  iterable: IterableValue<item>,
+  iterable: IterableT<item>,
   predicate: (item: item) => boolean,
-): IterableValue<item> {
+): IterableT<item> {
   return pipeline(iterable, {
     tag: "filter",
     fn: predicate as (item: unknown) => boolean,
@@ -114,9 +120,9 @@ export function filter<item>(
  * exit. Count must be a nonnegative safe integer; zero never opens the source.
  */
 export function take<item>(
-  iterable: IterableValue<item>,
+  iterable: IterableT<item>,
   count: number,
-): IterableValue<item> {
+): IterableT<item> {
   if (!Number.isSafeInteger(count) || count < 0) {
     throw new RangeError("take count must be a nonnegative safe integer");
   }
@@ -124,25 +130,25 @@ export function take<item>(
 }
 
 function filter_method<item, narrowed extends item>(
-  this: IterableValue<item>,
+  this: IterableT<item>,
   predicate: (item: item) => item is narrowed,
-): IterableValue<narrowed>;
+): IterableT<narrowed>;
 function filter_method<item>(
-  this: IterableValue<item>,
+  this: IterableT<item>,
   predicate: (item: item) => boolean,
-): IterableValue<item>;
+): IterableT<item>;
 function filter_method<item>(
-  this: IterableValue<item>,
+  this: IterableT<item>,
   predicate: (item: item) => boolean,
-): IterableValue<item> {
+): IterableT<item> {
   return filter(this, predicate);
 }
 
 IterableT.filter = filter_method;
 IterableT.take = function <item>(
-  this: IterableValue<item>,
+  this: IterableT<item>,
   count: number,
-): IterableValue<item> {
+): IterableT<item> {
   return take(this, count);
 };
 
@@ -319,9 +325,9 @@ Traversable.instance(IterableT)({
 
 function lift_iterable_two<output>(
   fn: (...values: unknown[]) => output,
-  first: IterableT<unknown>,
-  second: IterableT<unknown>,
-): IterableValue<output> {
+  first: RawIterableT<unknown>,
+  second: RawIterableT<unknown>,
+): IterableT<output> {
   return IterableT(function* () {
     for (const left of first()) {
       for (const right of second()) {
@@ -333,10 +339,10 @@ function lift_iterable_two<output>(
 
 function lift_iterable_three<output>(
   fn: (...values: unknown[]) => output,
-  first: IterableT<unknown>,
-  second: IterableT<unknown>,
-  third: IterableT<unknown>,
-): IterableValue<output> {
+  first: RawIterableT<unknown>,
+  second: RawIterableT<unknown>,
+  third: RawIterableT<unknown>,
+): IterableT<output> {
   return IterableT(function* () {
     for (const left of first()) {
       for (const middle of second()) {
@@ -350,9 +356,9 @@ function lift_iterable_three<output>(
 
 function lift_iterable_many<output>(
   fn: (...values: unknown[]) => output,
-  first: IterableT<unknown>,
-  rest: readonly IterableValue<unknown>[],
-): IterableValue<output> {
+  first: RawIterableT<unknown>,
+  rest: readonly IterableT<unknown>[],
+): IterableT<output> {
   const sources = [
     first,
     ...rest.map((current) => current.value()),
@@ -365,23 +371,35 @@ function lift_iterable_many<output>(
 
 function* iterate_iterable_product<output>(
   fn: (...values: unknown[]) => output,
-  sources: readonly IterableT<unknown>[],
-  index: number,
+  sources: readonly RawIterableT<unknown>[],
+  _index: number,
   values: unknown[],
 ): Generator<output> {
-  if (index >= sources.length) {
-    yield fn(...values);
-    return;
-  }
-
-  for (const item of sources[index]()) {
-    values[index] = item;
-    yield* iterate_iterable_product(
-      fn,
-      sources,
-      index + 1,
-      values,
-    );
+  const iterators: Iterator<unknown>[] = [];
+  let depth = 0;
+  let failed = false;
+  try {
+    while (depth >= 0) {
+      if (depth === sources.length) {
+        yield fn(...values);
+        depth -= 1;
+        continue;
+      }
+      const iterator = iterators[depth] ??= sources[depth]()[Symbol.iterator]();
+      const next = iterator.next();
+      if (next.done) {
+        iterators.pop();
+        depth -= 1;
+        continue;
+      }
+      values[depth] = next.value;
+      depth += 1;
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    close_iterators(iterators, failed);
   }
 }
 
@@ -391,33 +409,29 @@ type Stage =
   | { readonly tag: "take"; readonly count: number };
 type Stages = { readonly stage: Stage; readonly previous?: Stages };
 type Pipeline = {
-  readonly source: IterableT<unknown>;
+  readonly source: RawIterableT<unknown>;
   readonly stages: Stages;
+  ordered?: readonly Stage[];
 };
-const pipelines = new WeakMap<IterableT<unknown>, Pipeline>();
+const pipelines = new WeakMap<RawIterableT<unknown>, Pipeline>();
 
 // One generator owns the source. Plans share immutable links; counters belong
 // to each traversal, so replay and interleaved consumers remain independent.
 function pipeline<from, to = from>(
-  value: IterableValue<from>,
+  value: IterableT<from>,
   stage: Stage,
-): IterableValue<to> {
+): IterableT<to> {
   const current = value.value();
   const previous = pipelines.get(current);
-  let source: IterableT<unknown> = current;
+  let source: RawIterableT<unknown> = current;
   let stages: Stages = { stage };
   if (previous !== undefined) {
     source = previous.source;
     stages = { stage, previous: previous.stages };
   }
+  const plan: Pipeline = { source, stages };
   const factory = function* (): Generator<to> {
-    const ordered: Stage[] = [];
-    let link: Stages | undefined = stages;
-    while (link !== undefined) {
-      ordered.push(link.stage);
-      link = link.previous;
-    }
-    ordered.reverse();
+    const ordered = ordered_stages(plan);
     const remaining = ordered.map((stage) => {
       if (stage.tag === "take") return stage.count;
       return Infinity;
@@ -447,13 +461,13 @@ function pipeline<from, to = from>(
       if (stop) return;
     }
   };
-  pipelines.set(factory, { source, stages });
+  pipelines.set(factory, plan);
   return IterableT(factory);
 }
 
 /** Collect at most limit items; closes the source without reading ahead. */
 export function preview<item>(
-  iterable: IterableValue<item>,
+  iterable: IterableT<item>,
   limit = 100,
 ): item[] {
   return to_array(take(iterable, limit));
@@ -463,3 +477,31 @@ export function preview<item>(
 export const from_array_view = from_array;
 /** Explicit finite snapshot; consumes the source immediately. */
 export const from_snapshot = from_iterable;
+
+function ordered_stages(plan: Pipeline): readonly Stage[] {
+  if (plan.ordered !== undefined) return plan.ordered;
+  const ordered: Stage[] = [];
+  let link: Stages | undefined = plan.stages;
+  while (link !== undefined) {
+    ordered.push(link.stage);
+    link = link.previous;
+  }
+  ordered.reverse();
+  plan.ordered = ordered;
+  return ordered;
+}
+
+function close_iterators(
+  iterators: readonly Iterator<unknown>[],
+  failed: boolean,
+): void {
+  let failure: { error: unknown } | undefined;
+  for (let index = iterators.length - 1; index >= 0; index -= 1) {
+    try {
+      iterators[index].return?.();
+    } catch (error) {
+      failure ??= { error };
+    }
+  }
+  if (!failed && failure !== undefined) throw failure.error;
+}

@@ -1,6 +1,6 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { Effect, type EffectExit, Program, type Uses } from "./effects.ts";
-import { type EitherValue, Left, Right } from "./either.ts";
+import { type Either, Left, Right } from "./either.ts";
 import {
   attempt,
   fail,
@@ -45,9 +45,9 @@ Deno.test("run_except reports every error the program can raise", async () => {
 
   // The left branch is the union of every error the program can raise, derived
   // from the requirements rather than named at the call site.
-  expect_type<EitherValue<Missing | Invalid, number>>(result);
+  expect_type<Either<Missing | Invalid, number>>(result);
   // @ts-expect-error the left branch cannot be narrowed to one of them
-  expect_type<EitherValue<Missing, number>>(result);
+  expect_type<Either<Missing, number>>(result);
 
   assert_equals(
     result.value(),
@@ -65,7 +65,7 @@ Deno.test("run_except removes the failure capability entirely", () => {
   // Both failure types leave the requirements together, because the handler
   // catches both. Neither may be reported as still pending, which is what the
   // old `WithoutFails<requirements, error>` did for whichever one went unnamed.
-  expect_type<Effect<never, EitherValue<Missing | Invalid, number>>>(
+  expect_type<Effect<never, Either<Missing | Invalid, number>>>(
     run_except(program),
   );
 });

@@ -12,7 +12,7 @@ import {
 } from "./semigroup.ts";
 
 /** Runtime token for the Monoid typeclass. */
-export const monoid_typeclass = Symbol("Monoid");
+export const monoid_typeclass = /* @__PURE__ */ Symbol("Monoid");
 
 /** Semigroup dictionary capability with an identity value. */
 export interface Monoid<dictionary extends Dictionary>
@@ -44,26 +44,29 @@ export type MonoidTypeclass = Typeclass<typeof monoid_typeclass, {
 }>;
 
 /** Operations for identity values and monoidal concatenation. */
-export const Monoid: MonoidTypeclass = typeclass(monoid_typeclass, {
-  empty<
-    dictionary extends Monoid<dictionary>,
-    item,
-  >(
-    witness: dictionary | Data<dictionary, unknown>,
-  ): Data<dictionary, item> {
-    return call_typeclass_method(
-      this.instance_for(witness).empty<item>,
-      witness as dictionary,
-    );
-  },
+export const Monoid: MonoidTypeclass = /* @__PURE__ */ typeclass(
+  monoid_typeclass,
+  {
+    empty<
+      dictionary extends Monoid<dictionary>,
+      item,
+    >(
+      witness: dictionary | Data<dictionary, unknown>,
+    ): Data<dictionary, item> {
+      return call_typeclass_method(
+        this.instance_for(witness).empty<item>,
+        witness as dictionary,
+      );
+    },
 
-  concat<
-    dictionary extends Monoid<dictionary>,
-    item,
-  >(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): Data<dictionary, item> {
-    return Semigroup.concat(left, right);
+    concat<
+      dictionary extends Monoid<dictionary>,
+      item,
+    >(
+      left: Data<dictionary, item>,
+      right: Data<dictionary, item>,
+    ): Data<dictionary, item> {
+      return Semigroup.concat(left, right);
+    },
   },
-});
+);

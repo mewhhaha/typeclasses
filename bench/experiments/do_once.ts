@@ -1,5 +1,7 @@
 // Rejected production experiment: representative eight-yield workloads did not
 // meet the half-runtime target. Kept for reproducible comparisons only.
+// Rejected production experiment: representative eight-yield workloads did not
+// meet the half-runtime target. Kept for reproducible comparisons only.
 import type { Data, Dictionary } from "../../src/typeclass.ts";
 import type { DoGenerator, Monad } from "../../src/typeclasses/monad.ts";
 import { monad_error_typeclass } from "../../src/typeclasses/monad_error.ts";

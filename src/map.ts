@@ -7,7 +7,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
-import { traverse_items } from "./traversal.ts";
+import { traverse_items_into } from "./traversal.ts";
 import {
   Eq,
   Foldable,
@@ -19,56 +19,64 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const map_identity: unique symbol;
-
-/** A read-only string-keyed map wrapped by the MapT dictionary. */
-export type MapT<item> = ReadonlyMap<string, item>;
-
-/** Dictionary type for string-keyed maps and their value-wise instances. */
-export interface AsMap
-  extends
-    As<AsMap, typeof map_identity>,
-    Show<AsMap>,
-    Eq<AsMap>,
-    Monoid<AsMap>,
-    Traversable<AsMap> {
-  /** Higher-kinded slot for the mapped value type. */
-  readonly [type_item]: unknown;
-  /** Read-only map representation at the selected value type. */
-  readonly [type_data]: MapT<this[typeof type_item]>;
-}
-
-type MapValue<item> = Data<AsMap, item>;
-
-/** Callable map dictionary that defensively copies maps when wrapping them. */
-export const MapT: AsMap = data<AsMap>(
-  function (map) {
-    return this.data(new Map(map));
-  },
+export const map_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "map_identity",
 );
 
-/** Build a wrapped map from string-keyed entries. */
-export function from_entries<item>(
-  entries: Iterable<readonly [string, item]>,
-): MapValue<item> {
-  return as_data(MapT, new Map(entries));
+/** A read-only map; the key parameter defaults to string. */
+export type RawMapT<item, key = string> = ReadonlyMap<key, item>;
+
+/** @ignore */
+export interface AsMapLambda<key = string> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawMapT<this[typeof type_item], key>;
+}
+
+/** Dictionary type for maps with a fixed key type and value-wise instances. */
+export interface AsMap<key = string>
+  extends
+    As<AsMapLambda<key>, typeof map_identity>,
+    Show<AsMap<key>>,
+    Eq<AsMap<key>>,
+    Monoid<AsMap<key>>,
+    Traversable<AsMap<key>> {
+}
+
+/** A map wrapped with key-preserving dictionary methods. */
+export type MapT<item, key = string> = Data<AsMap<key>, item>;
+
+/** Callable map dictionary that defensively copies maps when wrapping them. */
+// The callable boundary infers keys; methods retain that fixed key type.
+export const MapT: {
+  <key, item>(map: ReadonlyMap<key, item>): MapT<item, key>;
+} & AsMap<unknown> = data<AsMap<unknown>>(map_identity, function (map) {
+  return this.data(new Map(map));
+}) as typeof MapT;
+
+/** Build a wrapped map, inferring both key and value types. */
+export function from_entries<item, key = string>(
+  entries: Iterable<readonly [key, item]>,
+): MapT<item, key> {
+  return as_data(MapT as AsMap<key>, new Map(entries));
 }
 
 /** Build a wrapped map from an object's own enumerable entries. */
 export function from_record<item>(
   record: Readonly<Record<string, item>>,
-): MapValue<item> {
-  return from_entries(Object.entries(record));
+): MapT<item> {
+  const out = new Map<string, item>();
+  for (const key of Object.keys(record)) out.set(key, record[key]);
+  return as_data(MapT as AsMap<string>, out);
 }
 
 /** Copy a wrapped map into a mutable JavaScript Map. */
-export function to_map<item>(map: MapValue<item>): Map<string, item> {
+export function to_map<item, key>(map: MapT<item, key>): Map<key, item> {
   return new Map(map.value());
 }
 
 /** Copy a wrapped map into a plain string-keyed record. */
 export function to_record<item>(
-  map: MapValue<item>,
+  map: MapT<item>,
 ): Record<string, item> {
   return Object.fromEntries(map.value());
 }
@@ -106,7 +114,7 @@ Eq.instance(MapT)({
 Functor.instance(MapT)({
   map(fn) {
     const map = this.value();
-    const out = new Map<string, ReturnType<typeof fn>>();
+    const out = new Map<unknown, ReturnType<typeof fn>>();
 
     for (const [key, value] of map) {
       out.set(key, fn(value));
@@ -150,24 +158,53 @@ Foldable.instance(MapT)({
 
 Traversable.instance(MapT)({
   traverse(applicative, fn) {
-    const entries = traverse_items(
-      this.value(),
+    const source = this.value();
+    const keys: unknown[] = [];
+    const key_iterator = source.keys();
+    return traverse_items_into(
+      source.values(),
       applicative,
-      ([key, value]) => Functor.map(fn(value), (item) => [key, item] as const),
+      (item) => {
+        keys.push(key_iterator.next().value);
+        return fn(item);
+      },
+      (items) => as_data(MapT, map_from_values(keys, items)),
     );
-    return Functor.map(entries, (items) => as_data(MapT, new Map(items)));
   },
 });
 
 /** Snapshot a map; later source mutations are invisible. */
-export function from_snapshot<item>(
-  source: ReadonlyMap<string, item>,
-): MapValue<item> {
+export function from_snapshot<item, key>(
+  source: ReadonlyMap<key, item>,
+): MapT<item, key> {
   return MapT(source);
 }
 /** Wrap a live map by reference; later source mutations remain visible. */
-export function from_map_view<item>(
-  source: ReadonlyMap<string, item>,
-): MapValue<item> {
-  return as_data(MapT, source);
+export function from_map_view<item, key>(
+  source: ReadonlyMap<key, item>,
+): MapT<item, key> {
+  return as_data(MapT as AsMap<key>, source);
+}
+
+/** Fold values with their original keys, without materializing entries. */
+export function fold_with_key<key, item, state>(
+  map: MapT<item, key>,
+  initial: state,
+  fn: (state: state, item: item, key: key) => state,
+): state {
+  let result = initial;
+  map.value().forEach((item, key) => {
+    result = fn(result, item, key);
+  });
+  return result;
+}
+
+function map_from_values<key, item>(
+  keys: readonly key[],
+  items: Iterable<item>,
+): Map<key, item> {
+  const out = new Map<key, item>();
+  let index = 0;
+  for (const item of items) out.set(keys[index++], item);
+  return out;
 }

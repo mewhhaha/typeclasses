@@ -6,7 +6,7 @@ import {
   type Uses,
   type WithoutOperation,
 } from "../../src/effects.ts";
-import { type EitherValue, Left, Right } from "../../src/either.ts";
+import { type Either, Left, Right } from "../../src/either.ts";
 import { type AsTask, handle_operation_task } from "../../src/task.ts";
 import type { TraceAttributes, TraceScope } from "./trace.ts";
 import type { HttpProblem, Todo, TodoCreate, TodoPatch } from "./types.ts";
@@ -15,7 +15,7 @@ export type DatabaseError =
   | readonly ["todo_not_found", { readonly id: string }]
   | readonly ["storage_failed", { readonly message: string }];
 
-export type DatabaseResult<item> = EitherValue<DatabaseError, item>;
+export type DatabaseResult<item> = Either<DatabaseError, item>;
 
 export type ListTodos =
   & Operation<DatabaseResult<readonly Todo[]>>

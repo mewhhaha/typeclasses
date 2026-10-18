@@ -1,4 +1,4 @@
-import { type EitherValue, Left, Right } from "../src/either.ts";
+import { type Either, Left, Right } from "../src/either.ts";
 import { Just } from "../src/maybe.ts";
 import { match } from "../src/tagged.ts";
 
@@ -57,7 +57,7 @@ function describe_profile(profile: ProfileLookup): string {
   });
 }
 
-function describe_result(result: EitherValue<string, number>): string {
+function describe_result(result: Either<string, number>): string {
   return result.match({
     Left: (message) => "error: " + message,
     Right: (value) => "ok: " + value.toString(),

@@ -9,7 +9,7 @@ import {
 import type { Functor as FunctorDictionary } from "./functor.ts";
 
 /** Runtime token for the Comonad typeclass. */
-export const comonad_typeclass = Symbol("Comonad");
+export const comonad_typeclass = /* @__PURE__ */ Symbol("Comonad");
 
 /** Functor dictionary capability for extracting and extending contexts. */
 export interface Comonad<dictionary extends Dictionary>
@@ -39,31 +39,34 @@ export type ComonadTypeclass = Typeclass<typeof comonad_typeclass, {
 }>;
 
 /** Operations for extracting and extending Comonad values. */
-export const Comonad: ComonadTypeclass = typeclass(comonad_typeclass, {
-  extract<
-    dictionary extends Comonad<dictionary>,
-    item,
-  >(
-    value: Data<dictionary, item>,
-  ): item {
-    return call_typeclass_method(
-      this.instance_for(value).extract<item>,
-      value,
-    );
-  },
+export const Comonad: ComonadTypeclass = /* @__PURE__ */ typeclass(
+  comonad_typeclass,
+  {
+    extract<
+      dictionary extends Comonad<dictionary>,
+      item,
+    >(
+      value: Data<dictionary, item>,
+    ): item {
+      return call_typeclass_method(
+        this.instance_for(value).extract<item>,
+        value,
+      );
+    },
 
-  extend<
-    dictionary extends Comonad<dictionary>,
-    from,
-    to,
-  >(
-    value: Data<dictionary, from>,
-    fn: (value: Data<dictionary, from>) => to,
-  ): Data<dictionary, to> {
-    return call_typeclass_method(
-      this.instance_for(value).extend<from, to>,
-      value,
-      fn,
-    );
+    extend<
+      dictionary extends Comonad<dictionary>,
+      from,
+      to,
+    >(
+      value: Data<dictionary, from>,
+      fn: (value: Data<dictionary, from>) => to,
+    ): Data<dictionary, to> {
+      return call_typeclass_method(
+        this.instance_for(value).extend<from, to>,
+        value,
+        fn,
+      );
+    },
   },
-});
+);

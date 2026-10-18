@@ -12,7 +12,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Profunctor typeclass. */
-export const profunctor_typeclass = Symbol("Profunctor");
+export const profunctor_typeclass = /* @__PURE__ */ Symbol("Profunctor");
 /** Phantom key for a profunctor's fixed input parameter. */
 export declare const profunctor_input: unique symbol;
 /** Phantom key for rebuilding a profunctor after input mapping. */
@@ -108,7 +108,7 @@ export type ProfunctorTypeclass = Typeclass<typeof profunctor_typeclass, {
 }>;
 
 /** Operations for mapping Profunctor inputs and outputs. */
-export const Profunctor: ProfunctorTypeclass = typeclass(
+export const Profunctor: ProfunctorTypeclass = /* @__PURE__ */ typeclass(
   profunctor_typeclass,
   {
     dimap<

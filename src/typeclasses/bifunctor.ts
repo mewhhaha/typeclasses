@@ -12,7 +12,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Bifunctor typeclass. */
-export const bifunctor_typeclass = Symbol("Bifunctor");
+export const bifunctor_typeclass = /* @__PURE__ */ Symbol("Bifunctor");
 /** Phantom key for a bifunctor's fixed left parameter. */
 export declare const bifunctor_left: unique symbol;
 /** Phantom key for rebuilding a bifunctor after mapping its left parameter. */
@@ -98,7 +98,7 @@ export type BifunctorTypeclass = Typeclass<typeof bifunctor_typeclass, {
 }>;
 
 /** Operations for mapping both sides of Bifunctor values. */
-export const Bifunctor: BifunctorTypeclass = typeclass(
+export const Bifunctor: BifunctorTypeclass = /* @__PURE__ */ typeclass(
   bifunctor_typeclass,
   {
     bimap<

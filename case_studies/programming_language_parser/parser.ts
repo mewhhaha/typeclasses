@@ -54,7 +54,7 @@ export type Parser<item> = {
   parse(state: ParseState): ParseReply<item>;
 };
 
-declare const parser_identity: unique symbol;
+const parser_identity: unique symbol = Symbol("parser_identity");
 
 export interface AsParser
   extends
@@ -70,7 +70,7 @@ export interface AsParser
 
 export type ParserValue<item> = Data<AsParser, item>;
 
-export const Parser = data<AsParser>();
+export const Parser = data<AsParser>(parser_identity);
 
 Show.instance(Parser)({
   show() {

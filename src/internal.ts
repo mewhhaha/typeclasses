@@ -29,12 +29,3 @@ export function is_kind_of<dictionary extends Dictionary>(
   return typeof value === "object" && value !== null &&
     (value as Dictionary)[kind] === dictionary[kind];
 }
-
-/** Retag a configured dictionary so it shares its base dictionary's runtime kind. */
-export function configured_dictionary<
-  base extends Dictionary,
-  configured extends Dictionary,
->(base: base, dictionary: configured): configured {
-  Object.defineProperty(dictionary, kind, { value: base[kind] });
-  return dictionary;
-}

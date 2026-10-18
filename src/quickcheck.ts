@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
   type Data,
@@ -6,10 +7,10 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
-import { type EitherValue, Left, Right } from "./either.ts";
+import { type Either, Left, Right } from "./either.ts";
 import type { Effect } from "./effects.ts";
-import { from_array, type ListValue, to_array } from "./list.ts";
-import { Just, type MaybeValue, Nothing } from "./maybe.ts";
+import { from_array, type List, to_array } from "./list.ts";
+import { Just, type Maybe, Nothing } from "./maybe.ts";
 import {
   Applicative,
   type Applicative as ApplicativeDictionary,
@@ -26,7 +27,9 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const gen_identity: unique symbol;
+export const gen_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "gen_identity",
+);
 
 /** Deterministic state threaded through a generator. */
 export type GenState = {
@@ -35,22 +38,28 @@ export type GenState = {
 };
 
 /** A deterministic generator computation. */
-export type Gen<item> = (state: GenState) => readonly [item, GenState];
+export type RawGen<item> = (state: GenState) => readonly [item, GenState];
+
+/** @ignore */
+export interface AsGenLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawGen<this[typeof type_item]>;
+}
 
 /** Dictionary type for deterministic generators. */
 export interface AsGen
-  extends As<AsGen, typeof gen_identity>, Show<AsGen>, MonadDictionary<AsGen> {
-  /** Higher-kinded slot for the generated item type. */
-  readonly [type_item]: unknown;
-  /** Generator representation at the selected item type. */
-  readonly [type_data]: Gen<this[typeof type_item]>;
+  extends
+    As<AsGenLambda, typeof gen_identity>,
+    Show<AsGen>,
+    MonadDictionary<AsGen>,
+    Runnable {
 }
 
 /** A generator wrapped with its Functor, Applicative, and Monad operations. */
-export type GenValue<item> = Data<AsGen, item>;
+export type Gen<item> = Data<AsGen, item>;
 
 /** Callable generator dictionary. */
-export const Gen: AsGen = data<AsGen>();
+export const Gen: AsGen = data<AsGen>(gen_identity);
 
 /** Options shared by property checks. */
 export type CheckSettings = {
@@ -63,7 +72,7 @@ export type CheckSettings = {
 
 /** A value generator paired with its shrinking strategy. */
 export type Arbitrary<item> = {
-  readonly generate: GenValue<item>;
+  readonly generate: Gen<item>;
   readonly shrink: (value: item) => Iterable<item>;
 };
 
@@ -186,13 +195,13 @@ const default_alphabet =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /** Wraps a deterministic generator function. */
-export function generator<item>(generate: Gen<item>): GenValue<item> {
+export function generator<item>(generate: RawGen<item>): Gen<item> {
   return Gen(generate);
 }
 
 /** Runs one generator with an explicit seed and size. */
 export function run_gen<item>(
-  value: GenValue<item>,
+  value: Gen<item>,
   state: GenState,
 ): readonly [item, GenState] {
   return value.value()(normalize_state(state));
@@ -200,7 +209,7 @@ export function run_gen<item>(
 
 /** Produces deterministic samples from one generator. */
 export function sample<item>(
-  value: GenValue<item>,
+  value: Gen<item>,
   options: {
     readonly seed?: number;
     readonly size?: number;
@@ -224,12 +233,12 @@ export function sample<item>(
 }
 
 /** Generates one constant value. */
-export function constant<item>(value: item): GenValue<item> {
+export function constant<item>(value: item): Gen<item> {
   return Gen((state) => [value, state]);
 }
 
 /** Generates an integer in an inclusive range. */
-export function integer(options: IntegerOptions = {}): GenValue<number> {
+export function integer(options: IntegerOptions = {}): Gen<number> {
   return Gen((state) => {
     const bounds = integer_bounds(options, state.size);
     const [unit, next] = next_random(state);
@@ -241,14 +250,14 @@ export function integer(options: IntegerOptions = {}): GenValue<number> {
 }
 
 /** Generates a boolean with equal probability. */
-export function boolean(): GenValue<boolean> {
+export function boolean(): Gen<boolean> {
   return integer({ min: 0, max: 1 }).map((value) => value === 1);
 }
 
 /** Selects one value from a non-empty collection. */
 export function element<item>(
   values: readonly [item, ...item[]],
-): GenValue<item> {
+): Gen<item> {
   return integer({ min: 0, max: values.length - 1 }).map(
     (index) => values[index],
   );
@@ -256,8 +265,8 @@ export function element<item>(
 
 /** Selects and runs one generator from a non-empty collection. */
 export function one_of<item>(
-  values: readonly [GenValue<item>, ...GenValue<item>[]],
-): GenValue<item> {
+  values: readonly [Gen<item>, ...Gen<item>[]],
+): Gen<item> {
   return Gen((state) => {
     const [index, selected_state] = integer({
       min: 0,
@@ -270,16 +279,16 @@ export function one_of<item>(
 
 /** Gives a generator access to the current size. */
 export function sized<item>(
-  select: (size: number) => GenValue<item>,
-): GenValue<item> {
+  select: (size: number) => Gen<item>,
+): Gen<item> {
   return Gen((state) => select(state.size).value()(state));
 }
 
 /** Runs a generator with a fixed size while preserving its seed. */
 export function resize<item>(
   size: number,
-  value: GenValue<item>,
-): GenValue<item> {
+  value: Gen<item>,
+): Gen<item> {
   const normalized_size = non_negative_integer(size, "generator size");
 
   return Gen((state) => {
@@ -294,9 +303,9 @@ export function resize<item>(
 
 /** Generates an array of values. */
 export function array_of<item>(
-  value: GenValue<item>,
+  value: Gen<item>,
   options: CollectionOptions = {},
-): GenValue<readonly item[]> {
+): Gen<readonly item[]> {
   return Gen((state) => {
     const bounds = collection_bounds(options, state.size);
     const [length, length_state] = integer({
@@ -318,7 +327,7 @@ export function array_of<item>(
 
 /** Creates an Arbitrary from a generator and optional shrinker. */
 export function arbitrary<item>(
-  generate: GenValue<item>,
+  generate: Gen<item>,
   shrink: (value: item) => Iterable<item> = no_shrink,
 ): Arbitrary<item> {
   return { generate, shrink };
@@ -402,10 +411,10 @@ export function array_arbitrary<item>(
 /** Creates optional values and shrinks present values toward Nothing. */
 export function maybe_arbitrary<item>(
   item: Arbitrary<item>,
-): Arbitrary<MaybeValue<item>> {
-  const generate = one_of<MaybeValue<item>>([
-    constant<MaybeValue<item>>(Nothing<item>()),
-    item.generate.map((value): MaybeValue<item> => Just(value)),
+): Arbitrary<Maybe<item>> {
+  const generate = one_of<Maybe<item>>([
+    constant<Maybe<item>>(Nothing<item>()),
+    item.generate.map((value): Maybe<item> => Just(value)),
   ]);
 
   return arbitrary(generate, function* (value) {
@@ -427,8 +436,8 @@ export function maybe_arbitrary<item>(
 export function either_arbitrary<left, right>(
   left: Arbitrary<left>,
   right: Arbitrary<right>,
-): Arbitrary<EitherValue<left, right>> {
-  const generate = one_of<EitherValue<left, right>>([
+): Arbitrary<Either<left, right>> {
+  const generate = one_of<Either<left, right>>([
     left.generate.map((value) => Left<left, right>(value)),
     right.generate.map((value) => Right<left, right>(value)),
   ]);
@@ -454,7 +463,7 @@ export function either_arbitrary<left, right>(
 export function list_arbitrary<item>(
   item: Arbitrary<item>,
   options: CollectionOptions = {},
-): Arbitrary<ListValue<item>> {
+): Arbitrary<List<item>> {
   const arrays = array_arbitrary(item, options);
 
   return arbitrary(
@@ -1287,20 +1296,48 @@ Show.instance(Gen)({
   },
 });
 
+type GenPlan = {
+  readonly source: RawGen<unknown>;
+  readonly bind: (item: unknown) => Gen<unknown>;
+};
+const gen_plans = new WeakMap<RawGen<unknown>, GenPlan>();
+
 Monad.derive(Gen)({
   pure(value) {
     return constant(value);
   },
 
   bind(fn) {
-    const first = this.value();
-
-    return Gen((state) => {
-      const [value, next] = first(state);
-      return fn(value).value()(next);
+    const source = this.value();
+    const execute: RawGen<unknown> = (state) => run_plan(execute, state);
+    gen_plans.set(execute, {
+      source,
+      bind: fn as (item: unknown) => Gen<unknown>,
     });
+    return Gen(execute) as ReturnType<typeof fn>;
   },
 });
+
+function run_plan(
+  source: RawGen<unknown>,
+  state: GenState,
+): readonly [unknown, GenState] {
+  const pending: GenPlan[] = [];
+  let current = source;
+  while (true) {
+    const plan = gen_plans.get(current);
+    if (plan !== undefined) {
+      pending.push(plan);
+      current = plan.source;
+      continue;
+    }
+    const [value, next] = current(state);
+    state = next;
+    const continuation = pending.pop();
+    if (continuation === undefined) return [value, state];
+    current = continuation.bind(value).value();
+  }
+}
 
 function next_random(state: GenState): readonly [number, GenState] {
   const seed = (state.seed + 0x6d2b79f5) >>> 0;
@@ -1415,14 +1452,10 @@ function* shrink_integer(
 }
 
 function* shrink_string(value: string, minimum: number): Iterable<string> {
-  const characters = Array.from(value);
-
-  if (characters.length > minimum) {
-    yield characters.slice(0, minimum).join("");
-  }
-
-  for (let index = characters.length - 1; index > minimum; index -= 1) {
-    yield characters.slice(0, index).join("");
+  for (
+    const characters of shrink_array(Array.from(value), no_shrink, minimum)
+  ) {
+    yield characters.join("");
   }
 }
 
@@ -1435,8 +1468,17 @@ function* shrink_array<item>(
     yield values.slice(0, minimum);
   }
 
-  for (let index = values.length - 1; index > minimum; index -= 1) {
-    yield values.slice(0, index);
+  // Remove every aligned chunk, then refine to individual positions. This
+  // reaches interior witnesses while avoiding a quadratic candidate count.
+  for (
+    let width = Math.floor(values.length / 2);
+    width > 0;
+    width = Math.floor(width / 2)
+  ) {
+    for (let start = 0; start + width <= values.length; start += width) {
+      if (values.length - width < minimum) continue;
+      yield [...values.slice(0, start), ...values.slice(start + width)];
+    }
   }
 
   for (let index = 0; index < values.length; index += 1) {

@@ -1,0 +1,31 @@
+{
+  "compiler": "6.0.3",
+  "import_map": {
+    "imports": {
+      "effect": "npm:effect@3.21.4",
+      "esbuild": "npm:esbuild@0.25.12",
+      "fp-ts/Either": "npm:fp-ts@2.16.11/lib/Either.js",
+      "fp-ts/Option": "npm:fp-ts@2.16.11/lib/Option.js",
+      "fp-ts/ReaderTaskEither": "npm:fp-ts@2.16.11/lib/ReaderTaskEither.js",
+      "fp-ts/StateReaderTaskEither": "npm:fp-ts@2.16.11/lib/StateReaderTaskEither.js",
+      "fp-ts/function": "npm:fp-ts@2.16.11/lib/function.js",
+      "miniflare": "npm:miniflare@4.20260730.0",
+      "purify-ts/Either": "npm:purify-ts@2.1.4/Either",
+      "purify-ts/Maybe": "npm:purify-ts@2.1.4/Maybe",
+      "rolldown": "npm:rolldown@1.1.5",
+      "typescript": "npm:typescript@6.0.3",
+      "true-myth/maybe": "npm:true-myth@9.1.0/maybe",
+      "true-myth/result": "npm:true-myth@9.1.0/result"
+    }
+  },
+  "command": "TMPDIR=/var/tmp deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write --import-map=COMPAT_IMPORT_MAP.json --filter=\"/independent 10000|printed source map|generated loop IR|bundler source maps/\" tools/transform_round2_checks.ts",
+  "exit_code": 0,
+  "stdout_and_stderr": "Check tools/transform_round2_checks.ts\nrunning 4 tests from ./tools/transform_round2_checks.ts\nindependent 10000-yield Do compiles and executes without printer or runtime stack growth ... ok (1s)\nprinted source map resolves the original line and column of retained statements ... ok (3ms)\ngenerated loop IR and flat switch retain checked TypeScript result types ... ok (1s)\nbundler source maps compose original callback line and column through esbuild and Rolldown ... ok (157ms)\n\nok | 4 passed | 0 failed | 9 filtered out (3s)\n\n",
+  "source_hashes": {
+    "tools/transform_do_program.ts": "6372be03f0b646aaf58c1a1083f5ecc6aecee499d754428f86040dded8fdf253",
+    "tools/transform_bindings.ts": "faeeb46848e2a84d6402578affb48143dab597c136b9f078eb9a28a3afcec4f4",
+    "tools/transform_iterable_maps.ts": "c822821ed50c1c37158e2e731092227e1fb55ac0938dff3291d588275edf7ad4",
+    "tools/transform_plugin.ts": "ab6acca3173980b336c8a41613ee67d11d6673d6fb062a658ebc3248dc44f581",
+    "tools/transform_round2_checks.ts": "83a0ab1589b045decb7a7abae73c1aea47aa81fca7ff0571e3f0bb2efa76e10a"
+  }
+}

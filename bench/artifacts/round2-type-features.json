@@ -1,0 +1,183 @@
+{
+  "command_prefix": [
+    "deno",
+    "run",
+    "--allow-env",
+    "--allow-read",
+    "tools/type_budget.ts",
+    "."
+  ],
+  "cwd": "/var/tmp/typeclasses-round2-final-ugc54eze",
+  "runtime": "Deno 2.9.7, npm TypeScript 5.9.3",
+  "features": [
+    {
+      "feature": "core",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 526.2862110000001,
+      "instantiations": 11984,
+      "types": 5352,
+      "modules": 3,
+      "workload_sha256": "df3fb637e09bd7d3576f67134106c792b595ab4d49ca664c7e8f31d1aef62fbb",
+      "source_sha256": "198469eb40bd8e2e96fea29d6c6adcfe96d221c47947aa27aeb5f4871b34e5a4",
+      "memory": {
+        "rss": 251883520,
+        "heapTotal": 153051136,
+        "heapUsed": 87631192,
+        "external": 2467301
+      }
+    },
+    {
+      "feature": "maybe",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 982.1868380000001,
+      "instantiations": 103957,
+      "types": 33593,
+      "modules": 30,
+      "workload_sha256": "819adae2cc239d3bf675c3f991c14fd00f7eb2352d015d589a53de002df12c7f",
+      "source_sha256": "98429febad8c2bbd5d99f633abd702cd5338ef9213a91ef06ca28ff6190814ff",
+      "memory": {
+        "rss": 297746432,
+        "heapTotal": 192421888,
+        "heapUsed": 130669600,
+        "external": 2575534
+      }
+    },
+    {
+      "feature": "fluent",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 983.830472,
+      "instantiations": 104148,
+      "types": 33617,
+      "modules": 30,
+      "workload_sha256": "98b5a7c4f6d758016e84d36a3a36726864b6f67fabfb574802e5561d4585ae12",
+      "source_sha256": "98429febad8c2bbd5d99f633abd702cd5338ef9213a91ef06ca28ff6190814ff",
+      "memory": {
+        "rss": 294109184,
+        "heapTotal": 190849024,
+        "heapUsed": 144288664,
+        "external": 2575580
+      }
+    },
+    {
+      "feature": "generic",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 977.766067,
+      "instantiations": 104097,
+      "types": 33614,
+      "modules": 30,
+      "workload_sha256": "fa683cd0ebab66bb9e7c282b1d752690224365672b199031d278b489350f893f",
+      "source_sha256": "98429febad8c2bbd5d99f633abd702cd5338ef9213a91ef06ca28ff6190814ff",
+      "memory": {
+        "rss": 295026688,
+        "heapTotal": 193208320,
+        "heapUsed": 130739536,
+        "external": 2575615
+      }
+    },
+    {
+      "feature": "generator",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 996.1825960000001,
+      "instantiations": 105139,
+      "types": 33875,
+      "modules": 30,
+      "workload_sha256": "fefbbe2d02465489b8cd2e4a1012e69288827bb841fd1483bb57eb0cfdbd2b94",
+      "source_sha256": "98429febad8c2bbd5d99f633abd702cd5338ef9213a91ef06ca28ff6190814ff",
+      "memory": {
+        "rss": 294506496,
+        "heapTotal": 191373312,
+        "heapUsed": 147134632,
+        "external": 2575654
+      }
+    },
+    {
+      "feature": "effect",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 624.555805,
+      "instantiations": 25464,
+      "types": 9325,
+      "modules": 4,
+      "workload_sha256": "322d39f932b4bb654964a3bf48090c1bc2d6397e7ef14bd405a3409f71939fb7",
+      "source_sha256": "01a0e5b64c3d4c70e5bef8628acf8dd69a403bf9bdfdff14f4a6fba470f44d84",
+      "memory": {
+        "rss": 259104768,
+        "heapTotal": 158556160,
+        "heapUsed": 99741832,
+        "external": 2502293
+      }
+    },
+    {
+      "feature": "collect",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 1004.9485849999999,
+      "instantiations": 104312,
+      "types": 33696,
+      "modules": 30,
+      "workload_sha256": "5f0ad4f31dde42c22aaa56e63dec4e2637bcc099a94c7fcf34e1e05864311327",
+      "source_sha256": "98429febad8c2bbd5d99f633abd702cd5338ef9213a91ef06ca28ff6190814ff",
+      "memory": {
+        "rss": 294633472,
+        "heapTotal": 190586880,
+        "heapUsed": 145714584,
+        "external": 2575629
+      }
+    },
+    {
+      "feature": "schema",
+      "compiler": "5.9.3",
+      "runtime": {
+        "deno": "2.9.7",
+        "v8": "15.0.245.2-rusty",
+        "typescript": "6.0.3"
+      },
+      "check_ms": 530.083447,
+      "instantiations": 12195,
+      "types": 5468,
+      "modules": 3,
+      "workload_sha256": "9e931c7a76bde69532dd008b7a9e10805aea38a9a01894f96a24de1033e0ed14",
+      "source_sha256": "198469eb40bd8e2e96fea29d6c6adcfe96d221c47947aa27aeb5f4871b34e5a4",
+      "memory": {
+        "rss": 253853696,
+        "heapTotal": 152264704,
+        "heapUsed": 88217160,
+        "external": 2467403
+      }
+    }
+  ],
+  "interpretation": "Independent direct consumers; counts include the entire transitive module graph and are not additive per-operator charges. Compare maybe/fluent/generic/generator/collect on the same graph; core/effect/schema have different graphs."
+}

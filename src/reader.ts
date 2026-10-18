@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import { bind_computation, map_computation } from "./computation.ts";
 import {
   type As,
@@ -32,29 +33,34 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const reader_identity: unique symbol;
+export const reader_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "reader_identity",
+);
 
 /** A computation that reads a shared environment. */
-export type Reader<environment, item> = (environment: environment) => item;
+export type RawReader<environment, item> = (environment: environment) => item;
+
+/** @ignore */
+export interface AsReaderLambda<environment> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawReader<environment, this[typeof type_item]>;
+}
 
 /** The callable Reader dictionary for one environment type. */
 export interface AsReader<environment>
   extends
-    As<AsReader<environment>, typeof reader_identity>,
+    As<AsReaderLambda<environment>, typeof reader_identity>,
     Show<AsReader<environment>>,
-    Monad<AsReader<environment>> {
-  /** The item produced by a Reader value. */
-  readonly [type_item]: unknown;
-  /** The environment-dependent computation represented by a Reader value. */
-  readonly [type_data]: Reader<environment, this[typeof type_item]>;
+    Monad<AsReader<environment>>,
+    Runnable {
   /** Wraps an environment-dependent computation. */
-  <item>(value: Reader<environment, item>): ReaderValue<environment, item>;
+  <item>(value: RawReader<environment, item>): Reader<environment, item>;
 }
 
 /** A Reader computation wrapped with its typeclass dictionary. */
-export type ReaderValue<environment, item> = WrappedData<
+export type Reader<environment, item> = WrappedData<
   AsReader<environment>,
-  Reader<environment, item>,
+  RawReader<environment, item>,
   item
 >;
 
@@ -63,14 +69,16 @@ export type ReaderConstructor =
   & AsReader<unknown>
   & {
     <environment, item>(
-      value: Reader<environment, item>,
-    ): ReaderValue<environment, item>;
+      value: RawReader<environment, item>,
+    ): Reader<environment, item>;
     /** Selects the environment type for pure values and generic operations. */
     with_environment<environment>(): AsReader<environment>;
   };
 
 /** The Reader dictionary and constructor. */
-export const Reader = data<AsReader<unknown>>() as ReaderConstructor;
+export const Reader = data<AsReader<unknown>>(
+  reader_identity,
+) as ReaderConstructor;
 const reader_kind = Reader[kind];
 
 Object.defineProperty(Reader, "with_environment", {
@@ -79,23 +87,29 @@ Object.defineProperty(Reader, "with_environment", {
 });
 
 /** Reads the current environment. */
-export function ask<environment>(): ReaderValue<environment, environment> {
+export function ask<environment>(): Reader<environment, environment> {
   return Reader((environment: environment) => environment);
 }
 
 /** Selects a value from the current environment. */
 export function asks<environment, item>(
   fn: (environment: environment) => item,
-): ReaderValue<environment, item> {
+): Reader<environment, item> {
   return Reader(fn);
 }
 
 /** Runs a Reader after adapting an outer environment to its expected one. */
 export function local<outer, inner, item>(
-  reader: ReaderValue<inner, item>,
+  reader: Reader<inner, item>,
   fn: (environment: outer) => inner,
-): ReaderValue<outer, item> {
+): Reader<outer, item> {
   return Reader((environment: outer) => reader.value()(fn(environment)));
+}
+
+/** @ignore */
+export interface AsReaderCellLambda<environment> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawReader<environment, this[typeof type_item]>;
 }
 
 /**
@@ -107,18 +121,15 @@ export function local<outer, inner, item>(
  */
 export interface AsReaderCell<key extends PropertyKey, environment> extends
   As<
-    AsReaderCell<key, environment>,
+    AsReaderCellLambda<environment>,
     CellIdentity<typeof reader_identity, key>
   >,
   Show<AsReaderCell<key, environment>>,
-  Monad<AsReaderCell<key, environment>> {
-  /** The item produced by a cell value. */
-  readonly [type_item]: unknown;
-  /** The environment-dependent computation represented by a cell value. */
-  readonly [type_data]: Reader<environment, this[typeof type_item]>;
+  Monad<AsReaderCell<key, environment>>,
+  Runnable {
   /** Wraps a computation reading this cell. */
   <item>(
-    value: Reader<environment, item>,
+    value: RawReader<environment, item>,
   ): ReaderCellValue<key, environment, item>;
   /** Reads this cell's environment. */
   ask(): ReaderCellValue<key, environment, environment>;
@@ -132,7 +143,7 @@ export interface AsReaderCell<key extends PropertyKey, environment> extends
 export type ReaderCellValue<key extends PropertyKey, environment, item> =
   WrappedData<
     AsReaderCell<key, environment>,
-    Reader<environment, item>,
+    RawReader<environment, item>,
     item
   >;
 
@@ -220,7 +231,7 @@ function make_reader_cell<key extends PropertyKey, environment>(
   return dictionary;
 
   function wrap<item>(
-    value: Reader<environment, item>,
+    value: RawReader<environment, item>,
   ): ReaderCellValue<key, environment, item> {
     return dictionary(value);
   }
@@ -345,7 +356,7 @@ export type TerminalReaderEnvironment<requirements> =
 
 /** Runs one Reader value or an effect containing only Reader lifts. */
 export function run_reader_terminal<environment, item>(
-  reader: ReaderValue<environment, item>,
+  reader: Reader<environment, item>,
   environment: environment,
 ): item;
 /** Runs an effect containing only Reader lifts. */
@@ -356,7 +367,7 @@ export function run_reader_terminal<requirements, item>(
 /** Runs a Reader value or an effect containing only Reader lifts. */
 export function run_reader_terminal<requirements, environment, item>(
   value:
-    | ReaderValue<environment, item>
+    | Reader<environment, item>
     | Effect<requirements, item>,
   environment: environment & TerminalReaderEnvironment<requirements>,
 ): item;
@@ -382,7 +393,7 @@ export function run_reader_terminal<
 export function run_reader_terminal(
   ...args:
     | readonly [
-      ReaderValue<unknown, unknown> | Effect<unknown, unknown>,
+      Reader<unknown, unknown> | Effect<unknown, unknown>,
       unknown,
     ]
     | readonly [
@@ -409,7 +420,7 @@ export function run_reader_terminal(
 
 function run_reader_kind(
   effect:
-    | ReaderValue<unknown, unknown>
+    | Reader<unknown, unknown>
     | ReaderCellValue<PropertyKey, unknown, unknown>
     | Effect<unknown, unknown>,
   runtime_kind: AsReader<unknown>[typeof kind],
@@ -420,7 +431,7 @@ function run_reader_kind(
       throw new TypeError("Unhandled effect operation: lift");
     }
 
-    return (effect as ReaderValue<unknown, unknown>).value()(environment);
+    return (effect as Reader<unknown, unknown>).value()(environment);
   }
 
   return handle_lift_terminal(

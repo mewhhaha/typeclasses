@@ -1,5 +1,5 @@
 import { assert_equals } from "./assert.ts";
-import { Just, Maybe, type MaybeValue } from "./maybe.ts";
+import { Just, Maybe } from "./maybe.ts";
 import {
   type As,
   call_typeclass_method,
@@ -19,14 +19,14 @@ Deno.test("typeclass operations retain inference when destructured or passed as 
   const { pure, lift } = Applicative;
   const { bind } = Monad;
   const { show } = Show;
-  const mapped: MaybeValue<string> = map(Just(42), (value) => value.toFixed(1));
-  const bound: MaybeValue<number> = bind(Just(21), (value) => Just(value * 2));
-  const lifted: MaybeValue<number> = lift(
+  const mapped: Maybe<string> = map(Just(42), (value) => value.toFixed(1));
+  const bound: Maybe<number> = bind(Just(21), (value) => Just(value * 2));
+  const lifted: Maybe<number> = lift(
     (left, right) => left + right,
     Just(20),
     Just(22),
   );
-  const direct: MaybeValue<number> = pure(Maybe, 42);
+  const direct: Maybe<number> = pure(Maybe, 42);
 
   assert_equals(mapped.value(), ["Just", "42.0"]);
   assert_equals(bound.value(), ["Just", 42]);
@@ -44,7 +44,7 @@ void shared_prototype_requires_a_definition;
 
 const size_token = Symbol("Detached size");
 const doubled_size = Symbol("Doubled size");
-declare const box_identity: unique symbol;
+const box_identity: unique symbol = Symbol("box_identity");
 
 interface Size<dictionary extends Dictionary> extends
   TypeclassDictionary<
@@ -74,7 +74,7 @@ const Size = typeclass(size_token, {
 });
 
 Deno.test("custom typeclasses support detached installation, lookup, and derived operations", () => {
-  const Box = data<AsBox>();
+  const Box = data<AsBox>(box_identity);
   const { instance, instance_for, size, [doubled_size]: double } = Size;
   const methods = instance(Box)({
     size() {

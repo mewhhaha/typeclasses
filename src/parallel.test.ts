@@ -272,3 +272,30 @@ Deno.test("a clone failure rejects one map while preserving pool health", async 
   await rejection_from(pool.map([() => 1]));
   assert_equals(await pool.map([42]), [42]);
 });
+
+Deno.test("abort inside a transfer callback never posts cancelled work or strands capacity", async () => {
+  using script = worker_script(`self.onmessage = (event) => {
+    const [, batch] = event.data;
+    let jobs = [batch];
+    if (event.data[0] === "jobs") jobs = batch;
+    if (jobs.some(job => job.input === "hang")) return;
+    for (const job of jobs) self.postMessage(["done", {
+      batch: job.batch, id: job.id, output: job.input
+    }]);
+  };`);
+  using pool = create_worker_pool<string, string>(script.url, { workers: 1 });
+  const controller = new AbortController();
+  let transfers = 0;
+  const cancelled = await rejection_from(pool.map(["hang", "hang"], {
+    batch_size: 2,
+    signal: controller.signal,
+    transfer() {
+      transfers += 1;
+      controller.abort("during transfer");
+      return [];
+    },
+  }));
+  assert_equals(cancelled.name, "AbortError");
+  assert_equals(transfers, 1);
+  assert_equals(await settles_within(pool.map(["next"])), ["next"]);
+});

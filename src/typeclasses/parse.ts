@@ -8,7 +8,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Parse typeclass. */
-export const parse_typeclass = Symbol("Parse");
+export const parse_typeclass = /* @__PURE__ */ Symbol("Parse");
 
 /** Dictionary capability for applying string parsers. */
 export interface Parse<dictionary extends Dictionary>
@@ -33,18 +33,21 @@ export type ParseTypeclass = Typeclass<typeof parse_typeclass, {
 }>;
 
 /** Operations for parsing strings with wrapped parser functions. */
-export const Parse: ParseTypeclass = typeclass(parse_typeclass, {
-  parse<
-    dictionary extends Parse<dictionary>,
-    item,
-  >(
-    parser: WrappedData<dictionary, (input: string) => item, item>,
-    input: string,
-  ): item {
-    return call_typeclass_method(
-      this.instance_for(parser).parse<item>,
-      parser,
-      input,
-    );
+export const Parse: ParseTypeclass = /* @__PURE__ */ typeclass(
+  parse_typeclass,
+  {
+    parse<
+      dictionary extends Parse<dictionary>,
+      item,
+    >(
+      parser: WrappedData<dictionary, (input: string) => item, item>,
+      input: string,
+    ): item {
+      return call_typeclass_method(
+        this.instance_for(parser).parse<item>,
+        parser,
+        input,
+      );
+    },
   },
-});
+);

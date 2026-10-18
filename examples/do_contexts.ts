@@ -1,6 +1,6 @@
 import type { RawMaybe } from "../src/maybe.ts";
 import { from_array, to_array } from "../src/list.ts";
-import { from_nullable, Just, type MaybeValue, Nothing } from "../src/maybe.ts";
+import { from_nullable, Just, type Maybe, Nothing } from "../src/maybe.ts";
 import { Do } from "../src/typeclasses.ts";
 
 export type Endpoint = {
@@ -21,7 +21,7 @@ export type DoContextScenario = {
 
 export function resolve_endpoint(
   input: Partial<Record<string, string>>,
-): MaybeValue<Endpoint> {
+): Maybe<Endpoint> {
   return Do(function* () {
     const host = yield* from_nullable(input.host);
     const port_text = yield* from_nullable(input.port);
@@ -62,7 +62,7 @@ export function run_do_context_examples() {
   );
 }
 
-function parse_positive_integer(text: string): MaybeValue<number> {
+function parse_positive_integer(text: string): Maybe<number> {
   const value = Number(text);
 
   if (Number.isInteger(value) && value > 0) {

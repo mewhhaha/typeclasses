@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
   type Data,
@@ -30,14 +31,30 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const task_identity: unique symbol;
+export const task_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "task_identity",
+);
 
 /** @ignore */
-export declare const parallel_task_identity: unique symbol;
+export const parallel_task_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "parallel_task_identity",
+);
 
 const task_cancellation = Symbol("Task cancellation");
 const protected_promises = new WeakMap<Promise<unknown>, AbortSignal>();
-const completed_tasks = new WeakMap<Task<unknown>, unknown>();
+const completed_tasks = new WeakMap<RawTask<unknown>, unknown>();
+type TaskStep =
+  | { readonly tag: "map"; readonly apply: (value: unknown) => unknown }
+  | {
+    readonly tag: "bind";
+    readonly apply: (value: unknown) => RawTask<unknown>;
+  };
+type TaskPlan = TaskStep & { source: RawTask<unknown> };
+const task_plan = Symbol("Task.plan");
+type PlannedTask = RawTask<unknown> & { [task_plan]?: TaskPlan };
+function plan_of(task: RawTask<unknown>): TaskPlan | undefined {
+  return (task as PlannedTask)[task_plan];
+}
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
 export type TaskItem<item> = Extract<item, PromiseLike<unknown>> extends never
@@ -45,7 +62,7 @@ export type TaskItem<item> = Extract<item, PromiseLike<unknown>> extends never
   : never;
 
 /** Deferred async work whose resolved item cannot itself be a thenable. */
-export type Task<item> = (
+export type RawTask<item> = (
   signal?: AbortSignal,
 ) => Promise<TaskItem<item>>;
 
@@ -53,6 +70,10 @@ export type Task<item> = (
 export type RunTaskOptions = {
   /** Cancels the whole composed computation when aborted. */
   readonly signal?: AbortSignal;
+  /** Yields to the host after this many pure plan steps; disabled by default. */
+  readonly yield_every?: number;
+  /** Optional host scheduler used with `yield_every`. */
+  readonly schedule?: () => Promise<void>;
 };
 
 /** The observable outcome of a Task computation. */
@@ -65,52 +86,63 @@ export type TaskExit<item> =
     readonly reason: unknown;
   };
 
+/** @ignore */
+export interface AsTaskLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawTask<this[typeof type_item]>;
+}
+
 /** The callable dictionary for deferred Task computations. */
 export interface AsTask
   extends
-    As<AsTask, typeof task_identity>,
+    As<AsTaskLambda, typeof task_identity>,
     Show<AsTask>,
     MonadError<AsTask>,
-    MonadRec<AsTask> {
-  /** The item carried by a Task value. */
-  readonly [type_item]: unknown;
-  /** The deferred computation represented by a Task value. */
-  readonly [type_data]: Task<this[typeof type_item]>;
+    MonadRec<AsTask>,
+    Runnable {
 }
 
-/** @ignore */
-export type TaskValue<item> = Data<AsTask, item>;
+/** A wrapped Task value with its dictionary operations. */
+export type Task<item> = Data<AsTask, item>;
 
 /** The Task dictionary and constructor. */
-export const Task: AsTask = data<AsTask>();
+export const Task: AsTask = data<AsTask>(task_identity);
+
+/** The raw deferred function carried by a parallel Task. */
+export type RawParallelTask<item> = RawTask<item>;
+
+/** @ignore */
+export interface AsParallelTaskLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawParallelTask<this[typeof type_item]>;
+}
 
 /** Deferred tasks whose Applicative instance runs independent work concurrently. */
 export interface AsParallelTask
   extends
-    As<AsParallelTask, typeof parallel_task_identity>,
+    As<AsParallelTaskLambda, typeof parallel_task_identity>,
     Show<AsParallelTask>,
-    Applicative<AsParallelTask> {
-  /** The item carried by a parallel Task value. */
-  readonly [type_item]: unknown;
-  /** The deferred computation represented by this value. */
-  readonly [type_data]: Task<this[typeof type_item]>;
+    Applicative<AsParallelTask>,
+    Runnable {
 }
 
 /** A Task using the concurrent, applicative-only dictionary. */
-export type ParallelTaskValue<item> = Data<AsParallelTask, item>;
+export type ParallelTask<item> = Data<AsParallelTask, item>;
 
 /** The parallel Task dictionary and constructor. */
-export const ParallelTask: AsParallelTask = data<AsParallelTask>();
+export const ParallelTask: AsParallelTask = data<AsParallelTask>(
+  parallel_task_identity,
+);
 
 /** Selects concurrent Applicative composition without starting this Task. */
-export function parallel<item>(task: TaskValue<item>): ParallelTaskValue<item> {
+export function parallel<item>(task: Task<item>): ParallelTask<item> {
   return ParallelTask(task.value());
 }
 
 /** Selects sequential Monad composition without starting this parallel Task. */
 export function sequential<item>(
-  task: ParallelTaskValue<item>,
-): TaskValue<item> {
+  task: ParallelTask<item>,
+): Task<item> {
   return Task(task.value());
 }
 
@@ -123,24 +155,35 @@ export type TaskRequirements =
 /** The item produced by a Task runner input, including unions of inputs. */
 export type RunTaskItem<value> = value extends
   Effect<TaskRequirements, infer item> ? item
-  : value extends TaskValue<infer item> | ParallelTaskValue<infer item> ? item
+  : value extends Task<infer item> | ParallelTask<infer item> ? item
   : never;
 
 /** Creates a Task that succeeds with a non-thenable value. */
-export function succeed<item>(value: item & TaskItem<item>): TaskValue<item> {
+export function succeed<item>(value: item & TaskItem<item>): Task<item> {
   return succeed_task(value, "Task.succeed");
 }
 
 /** Defers asynchronous work until the returned Task is run. */
 export function from_fn<item>(
-  run: (signal: AbortSignal | undefined) => Promise<TaskItem<item>>,
-): TaskValue<item> {
+  run: (signal: AbortSignal | undefined) => PromiseLike<TaskItem<item>>,
+): Task<item>;
+/** Defers synchronous work with the same cold and cancellation semantics. */
+export function from_fn<item>(
+  run: (signal: AbortSignal | undefined) => TaskItem<item>,
+): Task<item>;
+/** Infers the resolved item when the thunk conditionally returns async work. */
+export function from_fn<item>(
+  run: (signal: AbortSignal | undefined) => item | PromiseLike<item>,
+): Task<Awaited<item>>;
+export function from_fn(
+  run: (signal: AbortSignal | undefined) => unknown,
+): Task<unknown> {
   return Task((signal) => {
     if (signal?.aborted) {
       return Promise.reject(task_abort_error("Task.from_fn", signal));
     }
 
-    let pending: Promise<TaskItem<item>>;
+    let pending: Promise<unknown>;
 
     try {
       pending = Promise.resolve(run(signal));
@@ -155,7 +198,7 @@ export function from_fn<item>(
 /** Adopts an already-running promise. Use `from_fn` when work must be deferred. */
 export function from_promise<item>(
   promise: PromiseLike<TaskItem<item>>,
-): TaskValue<item> {
+): Task<item> {
   const pending = Promise.resolve(promise);
   // Adoption takes responsibility for rejection immediately, even if the Task
   // is run later or starts with an already-aborted signal.
@@ -203,16 +246,22 @@ export async function run_task<
   requirements extends TaskRequirements = TaskRequirements,
   item = unknown,
   value extends
-    | TaskValue<unknown>
-    | ParallelTaskValue<unknown>
+    | Task<unknown>
+    | ParallelTask<unknown>
     | Effect<TaskRequirements, unknown> =
       | Effect<requirements, item>
-      | TaskValue<item>
-      | ParallelTaskValue<item>,
+      | Task<item>
+      | ParallelTask<item>,
 >(
   value: value,
   options: RunTaskOptions = {},
 ): Promise<RunTaskItem<value>> {
+  if (
+    options.yield_every !== undefined &&
+    (!Number.isInteger(options.yield_every) || options.yield_every < 1)
+  ) {
+    throw new RangeError("Task yield_every must be a positive integer");
+  }
   if (is_task_value(value)) {
     const task = value.value();
     if (options.signal?.aborted) {
@@ -221,7 +270,12 @@ export async function run_task<
     if (completed_tasks.has(task)) {
       return completed_tasks.get(task) as RunTaskItem<value>;
     }
-    return await start_task(task, options.signal, "run_task") as RunTaskItem<
+    return await start_task(
+      task,
+      options.signal,
+      "run_task",
+      options,
+    ) as RunTaskItem<
       value
     >;
   }
@@ -245,7 +299,12 @@ export async function run_task<
           }
           let value: unknown;
           if (completed_tasks.has(task)) value = completed_tasks.get(task);
-          else value = await start_task(task, options.signal, "run_task");
+          else {value = await start_task(
+              task,
+              options.signal,
+              "run_task",
+              options,
+            );}
           current = current[2](value) as Effect<
             TaskRequirements,
             unknown
@@ -301,12 +360,12 @@ export async function run_task_exit<
   requirements extends TaskRequirements = TaskRequirements,
   item = unknown,
   value extends
-    | TaskValue<unknown>
-    | ParallelTaskValue<unknown>
+    | Task<unknown>
+    | ParallelTask<unknown>
     | Effect<TaskRequirements, unknown> =
       | Effect<requirements, item>
-      | TaskValue<item>
-      | ParallelTaskValue<item>,
+      | Task<item>
+      | ParallelTask<item>,
 >(
   value: value,
   options: RunTaskOptions = {},
@@ -328,7 +387,7 @@ export async function run_task_exit<
 
 function is_task_value(
   value: unknown,
-): value is TaskValue<unknown> | ParallelTaskValue<unknown> {
+): value is Task<unknown> | ParallelTask<unknown> {
   return is_kind_of(value, Task) || is_kind_of(value, ParallelTask);
 }
 
@@ -340,14 +399,10 @@ Show.instance(Task)({
 
 Functor.instance(Task)({
   map(fn) {
-    return Task((signal) => {
-      return continue_task(
-        this.value(),
-        signal,
-        "Task.map",
-        (value) => task_item(fn(value), "Task.map"),
-      );
-    });
+    return Task(compose_task(this.value(), {
+      tag: "map",
+      apply: (value) => task_item(fn(value), "Task.map"),
+    }));
   },
 });
 
@@ -386,14 +441,10 @@ Show.instance(ParallelTask)({
 
 Functor.instance(ParallelTask)({
   map(fn) {
-    return ParallelTask((signal) => {
-      return continue_task(
-        this.value(),
-        signal,
-        "ParallelTask.map",
-        (value) => task_item(fn(value), "ParallelTask.map"),
-      );
-    });
+    return ParallelTask(compose_task(this.value(), {
+      tag: "map",
+      apply: (value) => task_item(fn(value), "ParallelTask.map"),
+    }));
   },
 });
 
@@ -429,7 +480,7 @@ Applicative.instance(ParallelTask)({
   ): Data<AsParallelTask, to> {
     return ParallelTask((signal) => {
       return run_concurrently(
-        [this.value() as Task<unknown>, value.value() as Task<unknown>],
+        [this.value() as RawTask<unknown>, value.value() as RawTask<unknown>],
         signal,
         "ParallelTask.ap",
       ).then(([fn, item]) => {
@@ -444,14 +495,10 @@ Applicative.instance(ParallelTask)({
 
 Monad.instance(Task)({
   bind(fn) {
-    return Task((signal) => {
-      return continue_task(
-        this.value(),
-        signal,
-        "Task.bind",
-        (value) => start_task(fn(value).value(), signal, "Task.bind"),
-      );
-    });
+    return Task(compose_task(this.value(), {
+      tag: "bind",
+      apply: (value) => fn(value).value(),
+    }));
   },
 });
 
@@ -506,9 +553,10 @@ MonadError.instance(Task)({
 });
 
 function start_task<item>(
-  task: Task<item>,
+  task: RawTask<item>,
   signal: AbortSignal | undefined,
   operation: string,
+  options: RunTaskOptions = {},
 ): Promise<TaskItem<item>> {
   if (signal?.aborted) {
     return Promise.reject(task_abort_error(operation, signal));
@@ -517,7 +565,11 @@ function start_task<item>(
   let pending: Promise<TaskItem<item>>;
 
   try {
-    pending = task(signal);
+    const plan = plan_of(task as RawTask<unknown>);
+    if (plan !== undefined) {
+      pending = evaluate_task(plan, signal, options) as Promise<TaskItem<item>>;
+      if (signal !== undefined) protected_promises.set(pending, signal);
+    } else pending = task(signal);
   } catch (error) {
     return Promise.reject(error);
   }
@@ -525,20 +577,20 @@ function start_task<item>(
   return await_with_signal(pending, signal, operation);
 }
 
-function succeed_task<item>(value: item, operation: string): TaskValue<item> {
+function succeed_task<item>(value: item, operation: string): Task<item> {
   const resolved = task_item(value, operation);
-  const task: Task<item> = (signal) => {
+  const task: RawTask<item> = (signal) => {
     if (signal?.aborted) {
       return Promise.reject(task_abort_error(operation, signal));
     }
     return Promise.resolve(resolved);
   };
-  completed_tasks.set(task as Task<unknown>, resolved);
+  completed_tasks.set(task as RawTask<unknown>, resolved);
   return Task(task);
 }
 
 function run_concurrently(
-  tasks: readonly Task<unknown>[],
+  tasks: readonly RawTask<unknown>[],
   signal: AbortSignal | undefined,
   operation: string,
 ): Promise<readonly unknown[]> {
@@ -695,15 +747,26 @@ function ignore_failure(_error: unknown): void {}
 export function traverse_task<input, output>(
   inputs: Iterable<input>,
   concurrency: number,
-  fn: (input: input, index: number) => TaskValue<output>,
+  fn: (input: input, index: number) => Task<output>,
   options: RunTaskOptions = {},
-): TaskValue<readonly output[]> {
+): Task<readonly output[]> {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new RangeError(
       "Task traversal concurrency must be a positive integer",
     );
   }
-  return from_fn(async (parent_signal) => {
+  return Task<readonly output[]>((parent_signal) => {
+    const pending = traverse(parent_signal);
+    // The workers observe cancellation and finish iterator cleanup before the
+    // public Task settles, including when cleanup itself fails.
+    if (parent_signal !== undefined) {
+      protected_promises.set(pending, parent_signal);
+    }
+    return pending;
+  });
+  async function traverse(
+    parent_signal: AbortSignal | undefined,
+  ): Promise<readonly output[]> {
     const signals: AbortSignal[] = [];
     if (parent_signal !== undefined) signals.push(parent_signal);
     if (options.signal !== undefined) signals.push(options.signal);
@@ -725,11 +788,12 @@ export function traverse_task<input, output>(
             return;
           }
           const index = next_index++;
-          results[index] = await start_task(
-            fn(next.value, index).value(),
-            signal,
-            "Task.traverse",
-          );
+          const task = fn(next.value, index).value();
+          if (completed_tasks.has(task)) {
+            results[index] = completed_tasks.get(task) as output;
+          } else {
+            results[index] = await start_task(task, signal, "Task.traverse");
+          }
         } catch (error) {
           if (!failed) {
             failed = true;
@@ -751,21 +815,94 @@ export function traverse_task<input, output>(
       if (failed) throw failure;
       if (signal.aborted) throw task_abort_error("Task.traverse", signal);
       return results;
+    } catch (error) {
+      if (!exhausted) {
+        exhausted = true;
+        try {
+          iterator.return?.();
+        } catch (cleanup_error) {
+          throw new AggregateError(
+            [error, cleanup_error],
+            "Task traversal and iterator cleanup both failed",
+          );
+        }
+      }
+      throw error;
     } finally {
-      if (!exhausted) iterator.return?.();
+      if (!exhausted) {
+        exhausted = true;
+        iterator.return?.();
+      }
     }
-  });
+  }
 }
 
-function continue_task<item, result>(
-  task: Task<item>,
+function compose_task<from, to>(
+  source: RawTask<from>,
+  step: {
+    readonly tag: "bind";
+    readonly apply: (value: TaskItem<from>) => RawTask<to>;
+  },
+): RawTask<to>;
+function compose_task<from, to>(
+  source: RawTask<from>,
+  step: { readonly tag: "map"; readonly apply: (value: TaskItem<from>) => to },
+): RawTask<to>;
+function compose_task(
+  source: RawTask<unknown>,
+  step: TaskStep,
+): RawTask<unknown> {
+  const plan = step as TaskPlan;
+  plan.source = source;
+  const task: RawTask<unknown> = (signal) => {
+    const pending = evaluate_task(plan, signal, {});
+    if (signal !== undefined) protected_promises.set(pending, signal);
+    return pending;
+  };
+  (task as PlannedTask)[task_plan] = plan;
+  return task;
+}
+
+async function evaluate_task(
+  plan: TaskPlan,
   signal: AbortSignal | undefined,
-  operation: string,
-  fn: (value: TaskItem<item>) => result,
-): Promise<Awaited<result>> {
-  const continued = start_task(task, signal, operation).then(fn);
-  // The source and any dependent Task already observe this signal. Its
-  // rejection flows through this promise without a second abort listener.
-  if (signal !== undefined) protected_promises.set(continued, signal);
-  return continued as Promise<Awaited<result>>;
+  options: RunTaskOptions,
+): Promise<unknown> {
+  const frames: TaskStep[] = [plan];
+  let current = plan.source;
+  let steps = 0;
+  while (true) {
+    let nested = plan_of(current);
+    while (nested !== undefined) {
+      frames.push(nested);
+      current = nested.source;
+      nested = plan_of(current);
+    }
+    if (signal?.aborted) throw task_abort_error("Task plan", signal);
+    let value: unknown;
+    if (completed_tasks.has(current)) value = completed_tasks.get(current);
+    else value = await start_task(current, signal, "Task plan");
+    while (true) {
+      if (signal?.aborted) throw task_abort_error("Task plan", signal);
+      const step = frames.pop();
+      if (step === undefined) return value;
+      if (options.yield_every !== undefined && ++steps >= options.yield_every) {
+        steps = 0;
+        let pending: Promise<void>;
+        if (options.schedule !== undefined) pending = options.schedule();
+        else pending = new Promise((resolve) => setTimeout(resolve, 0));
+        await await_with_signal(pending, signal, "Task scheduler");
+        if (signal?.aborted) throw task_abort_error("Task plan", signal);
+      }
+      switch (step.tag) {
+        case "map":
+          value = step.apply(value);
+          break;
+        case "bind":
+          current = step.apply(value);
+          break;
+      }
+      if (step.tag === "bind") break;
+    }
+  }
 }

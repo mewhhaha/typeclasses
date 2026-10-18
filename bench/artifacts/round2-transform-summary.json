@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "file": "/var/tmp/typeclasses-round2-transform-ab-final.json",
+      "sha256": "2e9b08214dc9ae3636b93bb9617a653e60b315544042ce5eda4c2409d74495c1",
+      "source_sha256": "928a9f2193651d2fb0219a35da0d9007fa622842305c6952db73f0b7075f7103",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 10223.195291,
+      "benchmarks": [
+        {
+          "name": "baseline/no target",
+          "mean_us": 1.6254701073170732
+        },
+        {
+          "name": "baseline/100 yields",
+          "mean_us": 8239.655
+        },
+        {
+          "name": "baseline/named terminal",
+          "mean_us": 266.709
+        },
+        {
+          "name": "baseline/named iterable",
+          "mean_us": 255.09
+        },
+        {
+          "name": "baseline/counted loop",
+          "mean_us": 244.782
+        },
+        {
+          "name": "baseline/100 yields cached",
+          "mean_us": 14.571
+        },
+        {
+          "name": "baseline/large no-op cache disabled",
+          "mean_us": 32726.758
+        },
+        {
+          "name": "current/no target",
+          "mean_us": 1.6249684707317071
+        },
+        {
+          "name": "current/100 yields",
+          "mean_us": 4327.597
+        },
+        {
+          "name": "current/named terminal",
+          "mean_us": 324.537
+        },
+        {
+          "name": "current/named iterable",
+          "mean_us": 310.19
+        },
+        {
+          "name": "current/counted loop",
+          "mean_us": 340.025
+        },
+        {
+          "name": "current/100 yields cached",
+          "mean_us": 0.9903664475409835
+        },
+        {
+          "name": "current/large no-op cache disabled",
+          "mean_us": 60.584
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-transform-cold-final.json",
+      "sha256": "e517784903ce60cfabfc995def703f3ef5395a971cad1fbbb77f7b8ca28db031",
+      "source_sha256": "b72e71f774a2948045e32c3fc0e522e7ba70ed6f3b14745be4155ef6e97ccc77",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 4530.664986,
+      "benchmarks": [
+        {
+          "name": "baseline/100 yields",
+          "mean_us": 8034.42
+        },
+        {
+          "name": "baseline/100 yields cached",
+          "mean_us": 14.861
+        },
+        {
+          "name": "current/100 yields",
+          "mean_us": 2907.563
+        },
+        {
+          "name": "current/100 yields cached",
+          "mean_us": 1.4220762148936168
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-all.json",
+      "sha256": "0c65466c53cd08b7d895746498442a68e959f36f7c6b8ddc0f268f284bed44dd",
+      "source_sha256": "b84eb927a7ab8b3d9f3ea5e71e976f5d8dc917ff51134cba6f91c5a73eb7c47b",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 6822.388782999999,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 48087.773
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+          "mean_us": 53752.658
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-generator.json",
+      "sha256": "68b5e2207e3f62a6e0fa5e8790fbf6853453b598b85068688e7faa6f0eaa4a8c",
+      "source_sha256": "b84eb927a7ab8b3d9f3ea5e71e976f5d8dc917ff51134cba6f91c5a73eb7c47b",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 6809.848386000001,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 46005.673
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=0)",
+          "mean_us": 52075.325
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-terminal.json",
+      "sha256": "f11f86296303c68c3df1299eeb40d560d9ae0ccdd80220687e0fa8cccc24afdf",
+      "source_sha256": "b84eb927a7ab8b3d9f3ea5e71e976f5d8dc917ff51134cba6f91c5a73eb7c47b",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 6610.725004,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 47151.594
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+          "mean_us": 52736.797
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-interpreter.json",
+      "sha256": "32eda6557975cddfb77555ac649e4bb025d65e4f2f0907b6e1cdc3c29106315c",
+      "source_sha256": "b84eb927a7ab8b3d9f3ea5e71e976f5d8dc917ff51134cba6f91c5a73eb7c47b",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 8265.036379000001,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 68214.262
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=0, preserved files=1)",
+          "mean_us": 70138.698
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-clone.json",
+      "sha256": "080248c22fe613972e4ca8524a2635a8b5a349b13cd99b4234b67d13916dbe56",
+      "source_sha256": "928a9f2193651d2fb0219a35da0d9007fa622842305c6952db73f0b7075f7103",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 7338.298649,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 48502.5
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=0, preserved files=0)",
+          "mean_us": 51643.323
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-all-reverse.json",
+      "sha256": "11e5fa1e21ff69a3c6b315d36c86be35115541bbd284da7e122dae6ff4651b7e",
+      "source_sha256": "928a9f2193651d2fb0219a35da0d9007fa622842305c6952db73f0b7075f7103",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 7137.070124999999,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+          "mean_us": 55611.22
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 50063.226
+        }
+      ]
+    },
+    {
+      "file": "/var/tmp/typeclasses-round2-application-profile.json",
+      "sha256": "71dece453db6d00579e07f5dcfca737b12c82f98f255c3bb35097f289e8aabba",
+      "source_sha256": "aef933da401024e889468f811bf7a82c5b72adff51e0fc9fb638bbd8dab20b75",
+      "changed_files": [],
+      "exit_code": 0,
+      "elapsed_ms": 7837.683846000001,
+      "benchmarks": [
+        {
+          "name": "case study/parallel_analyzer dry run (without transformer)",
+          "mean_us": 48081.163
+        },
+        {
+          "name": "case study/parallel_analyzer dry run (with transformer, rewrites=2, preserved files=1)",
+          "mean_us": 56156.503
+        }
+      ]
+    }
+  ],
+  "baseline_revision": "6c9751e",
+  "baseline_transformer_sha256": "a0104c71a201db1a065091bb87ecdf327afe8b6451d3a04b36a056fbef0ef113",
+  "limits": [
+    "Large flattening supports independent yields and at most the final yielded local in the return expression; long dependent chains are diagnosed before printer overflow.",
+    "Early-return loops keep recursive lowering, including existing TS7023/TS7024 strict inference limit; arbitrary iterable finalization stays on preservation path.",
+    "App ablation is not a zero-regression claim: clone control and unchanged active-module hashes falsify a simple attribution to the transformation passes. Absolute host timing was noisy.",
+    "Final lexical-scope end guard and report label changes came after timing snapshots; the measured source workloads do not exercise that guard."
+  ],
+  "qualification": [
+    "87 focused transformer checks passed before final lexical-scope test, then 3 targeted checks including that added test passed.",
+    "The 10000-yield generated output also passes strict Deno typechecking as Maybe<number>.",
+    "TypeScript 5.9.3 and npm 6.0.3 printer/transpile/map probes pass; Deno consumer checker is bundled6.0.3.",
+    "Every app-ablation process asserts repeated original/transformed outputs, failures, logs and writes for all five complete case studies."
+  ]
+}

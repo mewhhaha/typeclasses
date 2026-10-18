@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { create_binding_analysis } from "./transform_bindings.ts";
 import { basename, dirname, resolve } from "node:path";
 import {
   create_iterable_map_fusion,
@@ -46,6 +47,7 @@ export type TransformReport = TransformDiagnostic & {
     | "terminal"
     | "terminal-body"
     | "iterable-map"
+    | "flatten"
     | "loop";
 };
 
@@ -53,6 +55,19 @@ export type TransformReport = TransformDiagnostic & {
 export type TransformConfig = {
   /** Collect optimization decisions without treating missed opportunities as errors. */
   readonly explain?: boolean;
+  /** Disable individual passes for debugging and reproducible comparisons. */
+  readonly optimizations?: Partial<
+    Record<
+      | "generator"
+      | "terminal"
+      | "terminal_body"
+      | "interpreter"
+      | "iterable_map"
+      | "loop"
+      | "flatten",
+      boolean
+    >
+  >;
   /** Additional module specifiers which export this package's public API. */
   readonly library_specifiers?: readonly string[];
   /** Additional module specifiers which export all terminal lift runners. */
@@ -100,7 +115,14 @@ type TransformState = {
   readonly dictionary?: ts.Expression;
   readonly loop_runtime?: ts.Identifier;
   readonly recursive_dictionaries?: ReadonlySet<string>;
+  readonly task_dictionaries?: ReadonlySet<string>;
   readonly used_loop_runtime?: () => void;
+  readonly continuation_type?: ts.TypeNode;
+  readonly flat_dictionary?: (
+    expression: ts.Expression,
+  ) => ts.Expression | undefined;
+  readonly used_contexts?: Set<ts.Expression>;
+  readonly optimizations?: TransformConfig["optimizations"];
   readonly report?: (
     node: ts.Node,
     optimization: TransformReport["optimization"],
@@ -205,7 +227,10 @@ export function transform_do_program_source(
   }
   const imports = collect_imports(source_file, config);
   let iterable_maps: ReturnType<typeof create_iterable_map_fusion> | undefined;
-  if (might_contain_iterable_maps(source)) {
+  if (
+    config.optimizations?.iterable_map !== false &&
+    might_contain_iterable_maps(source)
+  ) {
     iterable_maps = create_iterable_map_fusion(
       source_file,
       config.library_specifiers,
@@ -218,6 +243,17 @@ export function transform_do_program_source(
   ) {
     return unchanged_transform_result(source);
   }
+
+  let binding_analysis: ReturnType<typeof create_binding_analysis> | undefined;
+  function get_bindings() {
+    binding_analysis ??= create_binding_analysis(source_file);
+    return binding_analysis;
+  }
+  const bindings = {
+    resolve: (identifier: ts.Identifier) => get_bindings().resolve(identifier),
+    imported: (identifier: ts.Identifier) =>
+      get_bindings().imported(identifier),
+  };
 
   const might_declare_program_scope = source.includes("scope") ||
     source.includes("\\u");
@@ -233,11 +269,17 @@ export function transform_do_program_source(
     imports.terminal_namespaces.size > 0;
   const terminal_imports: TerminalImportRequest[] = [];
   let named_programs = new Map<string, ts.CallExpression>();
-  if (might_transform_generator && might_transform_terminal) {
+  if (
+    config.optimizations?.terminal !== false &&
+    config.optimizations?.terminal_body !== false &&
+    might_transform_generator &&
+    might_transform_terminal
+  ) {
     named_programs = collect_named_terminal_programs(
       source_file,
       imports,
       program_scopes,
+      bindings,
     );
   }
   const fused_named_programs = new Set<string>();
@@ -245,17 +287,26 @@ export function transform_do_program_source(
   let needs_program_helpers = false;
   let loop_support: ReturnType<typeof collect_loop_support> = {
     dictionaries: new Set<string>(),
+    tasks: new Set<string>(),
     specifier: undefined,
   };
-  if (imports.do_names.size > 0 && /\bfor\b/.test(source)) {
+  if (imports.do_names.size > 0 && /\b(?:for|while|yield)\b/.test(source)) {
     loop_support = collect_loop_support(source_file);
   }
+  const flat_imports = new Map<
+    string,
+    { specifier: string; name: ts.Identifier; exported: string }
+  >();
   let loop_runtime: ts.Identifier;
   let used_loop_runtime = false;
 
   const transformer: ts.TransformerFactory<ts.SourceFile> = (context) => {
     const factory = context.factory;
     loop_runtime = factory.createUniqueName("loop_runtime");
+    let supported_loop_runtime: ts.Identifier | undefined;
+    if (loop_support.specifier !== undefined) {
+      supported_loop_runtime = loop_runtime;
+    }
     const diagnostic_state: TransformState = {
       kind: "do",
       factory,
@@ -269,7 +320,10 @@ export function transform_do_program_source(
         if (ts.isVariableStatement(node)) {
           if (node.declarationList.declarations.length === 1) {
             const name = node.declarationList.declarations[0].name;
-            if (ts.isIdentifier(name) && named_programs.has(name.text)) {
+            if (
+              ts.isIdentifier(name) && named_programs.size > 0 &&
+              named_programs.has(named_program_key(name, bindings))
+            ) {
               return node;
             }
           }
@@ -326,7 +380,10 @@ export function transform_do_program_source(
               "Map chain needs a known immutable iterable root and stable unary callbacks; optional calls and explicit type arguments are barriers.",
             );
           }
-          if (might_transform_generator && might_transform_terminal) {
+          if (
+            config.optimizations?.terminal !== false &&
+            might_transform_generator && might_transform_terminal
+          ) {
             const fused = transform_terminal_program_run(
               node,
               factory,
@@ -335,6 +392,8 @@ export function transform_do_program_source(
               terminal_imports,
               named_programs,
               fused_named_programs,
+              config.optimizations?.terminal_body !== false,
+              bindings,
             );
 
             if (fused !== undefined) {
@@ -359,7 +418,8 @@ export function transform_do_program_source(
             }
           }
 
-          const kind = might_transform_generator
+          const kind = config.optimizations?.generator !== false &&
+              might_transform_generator
             ? transform_kind(node, program_scopes, imports)
             : undefined;
 
@@ -374,8 +434,72 @@ export function transform_do_program_source(
                 diagnostics,
                 effect_helper_shadowed: imports.effect_helper_shadowed,
                 report,
-                loop_runtime,
+                optimizations: config.optimizations,
+                used_contexts: new Set(),
+                flat_dictionary: (expression) => {
+                  const value = unwrap_parentheses(expression);
+                  if (
+                    !ts.isCallExpression(value) ||
+                    !ts.isIdentifier(value.expression) ||
+                    !bindings.imported(value.expression)
+                  ) return undefined;
+                  for (const statement of source_file.statements) {
+                    if (
+                      !ts.isImportDeclaration(statement) ||
+                      !ts.isStringLiteral(statement.moduleSpecifier)
+                    ) continue;
+                    const named = statement.importClause?.namedBindings;
+                    if (named === undefined || !ts.isNamedImports(named)) {
+                      continue;
+                    }
+                    for (const binding of named.elements) {
+                      if (
+                        binding.name.text !== value.expression.text ||
+                        binding.isTypeOnly
+                      ) continue;
+                      const imported =
+                        (binding.propertyName ?? binding.name).text;
+                      let exported: string | undefined;
+                      switch (imported) {
+                        case "Just":
+                        case "Nothing":
+                          exported = "Maybe";
+                          break;
+                        case "Left":
+                        case "Right":
+                          exported = "Either";
+                          break;
+                        case "identity":
+                          exported = "Identity";
+                          break;
+                        case "Task":
+                          exported = "Task";
+                          break;
+                      }
+                      if (
+                        exported === undefined ||
+                        !/^(?:(?:\.\.?\/)+src\/(?:maybe|either|identity|task|mod)\.ts|(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(?:maybe|either|identity|task))?)$/
+                          .test(statement.moduleSpecifier.text)
+                      ) return undefined;
+                      const key = statement.moduleSpecifier.text + ":" +
+                        exported;
+                      let request = flat_imports.get(key);
+                      if (request === undefined) {
+                        request = {
+                          specifier: statement.moduleSpecifier.text,
+                          exported,
+                          name: factory.createUniqueName("flat_dictionary"),
+                        };
+                        flat_imports.set(key, request);
+                      }
+                      return request.name;
+                    }
+                  }
+                  return undefined;
+                },
+                loop_runtime: supported_loop_runtime,
                 recursive_dictionaries: loop_support.dictionaries,
+                task_dictionaries: loop_support.tasks,
                 used_loop_runtime: () => {
                   used_loop_runtime = true;
                 },
@@ -408,7 +532,10 @@ export function transform_do_program_source(
 
           const visited = ts.visitEachChild(node, visit, context);
 
-          if (might_transform_terminal && ts.isCallExpression(visited)) {
+          if (
+            config.optimizations?.terminal !== false &&
+            might_transform_terminal && ts.isCallExpression(visited)
+          ) {
             const terminal = transform_terminal_lift_run(
               visited,
               factory,
@@ -428,7 +555,10 @@ export function transform_do_program_source(
             }
           }
 
-          if (might_transform_effect && ts.isCallExpression(visited)) {
+          if (
+            config.optimizations?.interpreter !== false &&
+            might_transform_effect && ts.isCallExpression(visited)
+          ) {
             const interpreted = transform_interpreter_call(
               visited,
               factory,
@@ -437,7 +567,8 @@ export function transform_do_program_source(
 
             if (interpreted !== undefined) {
               transformed += 1;
-              const terminal = ts.isCallExpression(interpreted)
+              const terminal = config.optimizations?.terminal !== false &&
+                  ts.isCallExpression(interpreted)
                 ? transform_terminal_lift_run(
                   interpreted,
                   factory,
@@ -462,7 +593,8 @@ export function transform_do_program_source(
 
             if (handled !== undefined) {
               transformed += 1;
-              const terminal = ts.isCallExpression(handled)
+              const terminal = config.optimizations?.terminal !== false &&
+                  ts.isCallExpression(handled)
                 ? transform_terminal_lift_run(
                   handled,
                   factory,
@@ -506,17 +638,23 @@ export function transform_do_program_source(
       };
 
       const visited_source = ts.visitEachChild(source_file, visit, context);
-      const visited = factory.updateSourceFile(
-        visited_source,
-        visited_source.statements.filter((statement) => {
+      const remove_fused: ts.Visitor = (node) => {
+        if (
+          ts.isVariableStatement(node) &&
+          node.declarationList.declarations.length === 1
+        ) {
+          const name = node.declarationList.declarations[0].name;
           if (
-            !ts.isVariableStatement(statement) ||
-            statement.declarationList.declarations.length !== 1
-          ) return true;
-          const name = statement.declarationList.declarations[0].name;
-          return !ts.isIdentifier(name) || !fused_named_programs.has(name.text);
-        }),
-      );
+            ts.isIdentifier(name) &&
+            fused_named_programs.has(named_program_key(name, bindings))
+          ) return undefined;
+        }
+        return ts.visitEachChild(node, remove_fused, context);
+      };
+      let visited = visited_source;
+      if (fused_named_programs.size > 0) {
+        visited = ts.visitNode(visited_source, remove_fused, ts.isSourceFile)!;
+      }
 
       const updated = needs_program_helpers || terminal_imports.length > 0
         ? update_imports(
@@ -541,6 +679,28 @@ export function transform_do_program_source(
             factory.createStringLiteral(loop_support.specifier),
           ),
           ...updated.statements,
+        ]);
+      }
+      if (flat_imports.size > 0) {
+        with_loops = factory.updateSourceFile(with_loops, [
+          ...[...flat_imports.values()].map((request) =>
+            factory.createImportDeclaration(
+              undefined,
+              factory.createImportClause(
+                false,
+                undefined,
+                factory.createNamedImports([
+                  factory.createImportSpecifier(
+                    false,
+                    factory.createIdentifier(request.exported),
+                    request.name,
+                  ),
+                ]),
+              ),
+              factory.createStringLiteral(request.specifier),
+            )
+          ),
+          ...with_loops.statements,
         ]);
       }
       return iterable_maps?.add_helper(with_loops, factory) ?? with_loops;
@@ -629,6 +789,15 @@ function print_transformed_source(
   file_name: string,
 ): { readonly code: string; readonly map: TransformSourceMap } {
   const source_map_api = ts as TypeScriptWithSourceMaps;
+  if (
+    typeof source_map_api.createTextWriter !== "function" ||
+    typeof source_map_api.createSourceMapGenerator !== "function"
+  ) {
+    throw new Error(
+      "TypeScript " + ts.version +
+        " lacks the source-map printer APIs required by this transformer.",
+    );
+  }
   const absolute_file_name = resolve(file_name);
   const source_directory = dirname(absolute_file_name);
   const writer = source_map_api.createTextWriter("\n");
@@ -651,6 +820,12 @@ function print_transformed_source(
     inlineSources: true,
   } as ts.PrinterOptions) as PrinterWithSourceMaps;
 
+  if (typeof printer.writeFile !== "function") {
+    throw new Error(
+      "TypeScript " + ts.version +
+        " lacks the source-map printer writeFile API required by this transformer.",
+    );
+  }
   printer.writeFile(source_file, writer, generator);
 
   const map = generator.toJSON();
@@ -676,7 +851,10 @@ function might_contain_transform_target(source: string): boolean {
     return true;
   }
 
-  if (source.includes("Do") || source.includes("Program")) {
+  if (
+    (source.includes("Do") || source.includes("Program")) &&
+    /\b(?:Do|Program)\b/.test(source)
+  ) {
     return true;
   }
 
@@ -694,7 +872,8 @@ function might_contain_transform_target(source: string): boolean {
 }
 
 function might_contain_unanchored_target(source: string): boolean {
-  return source.includes("Do") || source.includes("Program") ||
+  return ((source.includes("Do") || source.includes("Program")) &&
+    /\b(?:Do|Program)\b/.test(source)) ||
     source.includes("\\u");
 }
 
@@ -825,6 +1004,36 @@ function transform_call(
     return undefined;
   }
 
+  if (
+    explicit_dictionary !== undefined && ts.isIdentifier(explicit_dictionary) &&
+    state.task_dictionaries?.has(explicit_dictionary.text)
+  ) {
+    let first_yield: ts.YieldExpression | undefined;
+    const find_yield = (node: ts.Node) => {
+      if (first_yield !== undefined || ts.isFunctionLike(node)) return;
+      if (ts.isYieldExpression(node)) {
+        first_yield = node;
+        return;
+      }
+      ts.forEachChild(node, find_yield);
+    };
+    find_yield(run.body);
+    if (
+      first_yield?.expression !== undefined &&
+      !repeatable_task_construction(
+        first_yield.expression,
+        explicit_dictionary.text,
+      )
+    ) {
+      add_diagnostic(
+        state,
+        first_yield,
+        "Skipped Do: arbitrary Task first-yield construction may be observed again when the generator replays.",
+      );
+      return undefined;
+    }
+  }
+
   try {
     const dictionary = explicit_dictionary === undefined
       ? undefined
@@ -835,7 +1044,22 @@ function transform_call(
       ...state,
       dictionary,
     };
-    const transformed = transform_statements(
+    const flat = transform_flat_statements(run.body, transformed_state);
+    if (
+      flat === undefined &&
+      run.body.statements.filter((statement) =>
+          read_yield_statement(statement) !== undefined
+        ).length > 256
+    ) {
+      add_diagnostic(
+        state,
+        node,
+        "Skipped " + state.kind +
+          ": long dependent continuations require liveness threading; preserving the generator avoids compiler printer stack overflow.",
+      );
+      return undefined;
+    }
+    const transformed = flat ?? transform_statements(
       [...run.body.statements],
       undefined,
       transformed_state,
@@ -892,7 +1116,7 @@ type GeneratorBinding = {
     | ts.FunctionDeclaration
     | ts.ClassDeclaration;
   readonly allocated: boolean;
-  readonly yields: number[];
+  readonly scope_end: number;
   readonly references: number[];
   readonly writes: number[];
   closure_write: boolean;
@@ -905,7 +1129,9 @@ function unsafe_generator_capture(
   // executed again. Mutation of a captured generator local would then reuse
   // the same storage instead of the generator's fresh storage.
   const scopes: Map<string, GeneratorBinding | undefined>[] = [];
+  const scope_ends: number[] = [];
   const bindings: GeneratorBinding[] = [];
+  const yields: number[] = [];
 
   function lookup(name: string): GeneratorBinding | undefined {
     for (let index = scopes.length - 1; index >= 0; index -= 1) {
@@ -929,9 +1155,9 @@ function unsafe_generator_capture(
     }
     const binding = declaration === undefined || nested ? undefined : {
       declaration,
+      scope_end: scope_ends[scope_ends.length - 1],
       allocated: declaration.initializer !== undefined &&
         is_local_allocation(declaration.initializer),
-      yields: [],
       references: [],
       writes: [],
       closure_write: false,
@@ -978,15 +1204,18 @@ function unsafe_generator_capture(
     if (ts.isTypeNode(node)) return;
     if (ts.isFunctionLike(node)) {
       scopes.push(new Map());
+      scope_ends.push(node.end);
       for (const parameter of node.parameters) {
         declare(parameter.name, undefined, true);
       }
       ts.forEachChild(node, (child) => visit(child, true, node));
       scopes.pop();
+      scope_ends.pop();
       return;
     }
     if (ts.isBlock(node)) {
       scopes.push(new Map());
+      scope_ends.push(node.end);
       for (const statement of node.statements) {
         if (ts.isVariableStatement(statement)) {
           for (const declaration of statement.declarationList.declarations) {
@@ -999,7 +1228,7 @@ function unsafe_generator_capture(
           const binding = nested ? undefined : {
             declaration: statement,
             allocated: true,
-            yields: [],
+            scope_end: node.end,
             references: [],
             writes: [],
             closure_write: false,
@@ -1010,6 +1239,7 @@ function unsafe_generator_capture(
       }
       ts.forEachChild(node, (child) => visit(child, nested, node));
       scopes.pop();
+      scope_ends.pop();
       return;
     }
     if (
@@ -1017,6 +1247,7 @@ function unsafe_generator_capture(
       ts.isForInStatement(node)
     ) {
       scopes.push(new Map());
+      scope_ends.push(node.end);
       if (
         node.initializer !== undefined &&
         ts.isVariableDeclarationList(node.initializer)
@@ -1035,21 +1266,14 @@ function unsafe_generator_capture(
         visit(node.statement, nested);
       }
       scopes.pop();
+      scope_ends.pop();
       return;
     }
     if (ts.isVariableDeclaration(node)) {
       if (node.initializer !== undefined) visit(node.initializer, nested);
       return;
     }
-    if (ts.isYieldExpression(node) && !nested) {
-      for (const scope of scopes) {
-        for (const binding of scope.values()) {
-          if (binding !== undefined && binding.declaration.end <= node.pos) {
-            binding.yields.push(node.pos);
-          }
-        }
-      }
-    }
+    if (ts.isYieldExpression(node) && !nested) yields.push(node.pos);
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
@@ -1084,15 +1308,22 @@ function unsafe_generator_capture(
   }
 
   visit(body);
-  return bindings.find((binding) =>
-    binding.yields.some((yielded) =>
-      binding.closure_write || binding.writes.some((write) =>
-        write > yielded
-      ) ||
+  return bindings.find((binding) => {
+    let low = 0;
+    let high = yields.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (yields[middle] < binding.declaration.end) low = middle + 1;
+      else high = middle;
+    }
+    const yielded = yields[low];
+    if (yielded === undefined || yielded >= binding.scope_end) return false;
+    return binding.closure_write || binding.writes.some((write) =>
+      write > yielded
+    ) ||
       binding.allocated &&
-        binding.references.some((reference) => reference > yielded)
-    )
-  )?.declaration;
+        binding.references.some((reference) => reference > yielded);
+  })?.declaration;
 }
 
 function generator_var_binding(
@@ -1548,7 +1779,9 @@ function transform_yield(
 
       return {
         block: state.factory.createBlock([
-          state.factory.createReturnStatement(yielded.expression),
+          state.factory.createReturnStatement(
+            yielded.expression,
+          ),
         ], true),
         yielded: true,
       };
@@ -1782,82 +2015,31 @@ function transform_for(
   options: TransformOptions,
 ): TransformBlock {
   const loop = read_for_loop(statement, state);
-  const stack_safe = transform_simple_recursive_for(
-    statement,
-    loop,
+  const general = transform_stack_safe_loop(
+    loop.variable,
+    loop.type,
+    loop.initializer,
+    loop.condition,
+    loop.next,
+    unwrap_statement(statement.statement),
     rest,
     current_context,
     state,
     options,
   );
-  if (stack_safe !== undefined) {
-    state.report?.(
-      statement,
-      "loop",
-      "transformed",
-      "Explicit unshadowed built-in dictionary supports MonadRec; the counted loop has one discarded yield and no inner control flow.",
-    );
-    return stack_safe;
-  }
-  state.report?.(
-    statement,
-    "loop",
-    "preserved",
-    "Stack-safe specialization requires an explicit known MonadRec dictionary and a single discarded yield. Arbitrary dictionaries may branch or lack MonadRec; captured mutable locals and break/return values need a separate state-machine proof.",
-  );
-  const loop_name = state.factory.createUniqueName("loop");
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_expression = block_to_expression(exit.block, state.factory);
-  const next_call = state.factory.createCallExpression(
-    loop_name,
-    undefined,
-    [loop.next],
-  );
-  const body = transform_statements(
-    [
-      ...unwrap_statement(statement.statement),
-      state.factory.createContinueStatement(undefined),
-    ],
+  if (general !== undefined) return general;
+  return transform_recursive_loop(
+    loop.variable,
+    loop.type,
+    loop.initializer,
+    loop.condition,
+    loop.next,
+    unwrap_statement(statement.statement),
+    rest,
     current_context,
     state,
-    {
-      ...options,
-      continue_expression: next_call,
-      break_expression: exit_expression,
-    },
+    options,
   );
-
-  return {
-    block: state.factory.createBlock([
-      state.factory.createFunctionDeclaration(
-        undefined,
-        undefined,
-        loop_name,
-        undefined,
-        [
-          state.factory.createParameterDeclaration(
-            undefined,
-            undefined,
-            loop.variable,
-            undefined,
-            loop.type,
-            undefined,
-          ),
-        ],
-        undefined,
-        state.factory.createBlock([
-          state.factory.createIfStatement(loop.condition, body.block),
-          ...exit.block.statements,
-        ], true),
-      ),
-      state.factory.createReturnStatement(
-        state.factory.createCallExpression(loop_name, undefined, [
-          loop.initializer,
-        ]),
-      ),
-    ], true),
-    yielded: true,
-  };
 }
 
 function transform_while(
@@ -1867,40 +2049,30 @@ function transform_while(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
-  state.report?.(
-    statement,
-    "loop",
-    "preserved",
-    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
-  );
-  const loop_name = state.factory.createUniqueName("loop");
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_expression = block_to_expression(exit.block, state.factory);
-  const next_call = state.factory.createCallExpression(
-    loop_name,
+  const general = transform_stack_safe_loop(
     undefined,
-    [],
-  );
-  const body = transform_statements(
-    [
-      ...unwrap_statement(statement.statement),
-      state.factory.createContinueStatement(),
-    ],
+    undefined,
+    state.factory.createVoidZero(),
+    statement.expression,
+    state.factory.createVoidZero(),
+    unwrap_statement(statement.statement),
+    rest,
     current_context,
     state,
-    {
-      ...options,
-      continue_expression: next_call,
-      break_expression: exit_expression,
-    },
+    options,
   );
-
-  return recursive_loop_block(
-    loop_name,
-    [],
-    state.factory.createIfStatement(statement.expression, body.block),
-    exit,
+  if (general !== undefined) return general;
+  return transform_recursive_loop(
+    undefined,
+    undefined,
+    undefined,
+    statement.expression,
+    undefined,
+    unwrap_statement(statement.statement),
+    rest,
+    current_context,
     state,
+    options,
   );
 }
 
@@ -1911,37 +2083,33 @@ function transform_do_while(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
-  state.report?.(
-    statement,
-    "loop",
-    "preserved",
-    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
-  );
-  const loop_name = state.factory.createUniqueName("loop");
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_expression = block_to_expression(exit.block, state.factory);
-  const next_expression = state.factory.createConditionalExpression(
+  const general = transform_stack_safe_loop(
+    undefined,
+    undefined,
+    state.factory.createTrue(),
     statement.expression,
-    state.factory.createToken(ts.SyntaxKind.QuestionToken),
-    state.factory.createCallExpression(loop_name, undefined, []),
-    state.factory.createToken(ts.SyntaxKind.ColonToken),
-    exit_expression,
-  );
-  const body = transform_statements(
-    [
-      ...unwrap_statement(statement.statement),
-      state.factory.createContinueStatement(),
-    ],
+    state.factory.createFalse(),
+    unwrap_statement(statement.statement),
+    rest,
     current_context,
     state,
-    {
-      ...options,
-      continue_expression: next_expression,
-      break_expression: exit_expression,
-    },
+    options,
+    true,
   );
-
-  return recursive_loop_block(loop_name, [], body.block, exit, state);
+  if (general !== undefined) return general;
+  return transform_recursive_loop(
+    undefined,
+    undefined,
+    undefined,
+    statement.expression,
+    undefined,
+    unwrap_statement(statement.statement),
+    rest,
+    current_context,
+    state,
+    options,
+    true,
+  );
 }
 
 function transform_for_of(
@@ -1951,12 +2119,6 @@ function transform_for_of(
   state: TransformState,
   options: TransformOptions,
 ): TransformBlock {
-  state.report?.(
-    statement,
-    "loop",
-    "preserved",
-    "This loop retains recursive continuations. Iterator closing, mutable state, break/return and lexical captures prevent the counted-loop MonadRec specialization.",
-  );
   if (
     statement.awaitModifier !== undefined ||
     !ts.isVariableDeclarationList(statement.initializer)
@@ -1991,12 +2153,6 @@ function transform_for_of(
 
   const items = state.factory.createUniqueName("items");
   const index = state.factory.createUniqueName("index");
-  const loop_name = state.factory.createUniqueName("loop");
-  const exit = transform_statements(rest, current_context, state, options);
-  const exit_expression = block_to_expression(exit.block, state.factory);
-  const next_call = state.factory.createCallExpression(loop_name, undefined, [
-    state.factory.createAdd(index, state.factory.createNumericLiteral(1)),
-  ]);
   const item_statement = state.factory.createVariableStatement(
     undefined,
     state.factory.createVariableDeclarationList([
@@ -2008,26 +2164,45 @@ function transform_for_of(
       ),
     ], statement.initializer.flags),
   );
-  const body = transform_statements(
-    [
-      item_statement,
-      ...unwrap_statement(statement.statement),
-      state.factory.createContinueStatement(),
-    ],
-    current_context,
-    state,
-    {
-      ...options,
-      continue_expression: next_call,
-      break_expression: exit_expression,
-    },
-  );
   const condition = state.factory.createLessThan(
     index,
     state.factory.createPropertyAccessExpression(items, "length"),
   );
-
+  const next = state.factory.createAdd(
+    index,
+    state.factory.createNumericLiteral(1),
+  );
+  const body = [item_statement, ...unwrap_statement(statement.statement)];
+  const index_type = state.factory.createKeywordTypeNode(
+    ts.SyntaxKind.NumberKeyword,
+  );
+  const initial = state.factory.createNumericLiteral(0);
+  let transformed = transform_stack_safe_loop(
+    index,
+    index_type,
+    initial,
+    condition,
+    next,
+    body,
+    rest,
+    current_context,
+    state,
+    options,
+  );
+  transformed ??= transform_recursive_loop(
+    index,
+    undefined,
+    initial,
+    condition,
+    next,
+    body,
+    rest,
+    current_context,
+    state,
+    options,
+  );
   return {
+    ...transformed,
     block: state.factory.createBlock([
       state.factory.createVariableStatement(
         undefined,
@@ -2040,25 +2215,8 @@ function transform_for_of(
           ),
         ], ts.NodeFlags.Const),
       ),
-      state.factory.createFunctionDeclaration(
-        undefined,
-        undefined,
-        loop_name,
-        undefined,
-        [state.factory.createParameterDeclaration(undefined, undefined, index)],
-        undefined,
-        state.factory.createBlock([
-          state.factory.createIfStatement(condition, body.block),
-          ...exit.block.statements,
-        ], true),
-      ),
-      state.factory.createReturnStatement(
-        state.factory.createCallExpression(loop_name, undefined, [
-          state.factory.createNumericLiteral(0),
-        ]),
-      ),
+      ...transformed.block.statements,
     ], true),
-    yielded: true,
   };
 }
 
@@ -2080,29 +2238,91 @@ function is_primitive_array_literal(expression: ts.Expression): boolean {
   });
 }
 
-function recursive_loop_block(
-  loop_name: ts.Identifier,
-  parameters: readonly ts.ParameterDeclaration[],
-  body: ts.Statement,
-  exit: TransformBlock,
+// One control-flow shape serves counted, while, do/while and literal-array loops.
+function transform_recursive_loop(
+  variable: ts.Identifier | undefined,
+  type: ts.TypeNode | undefined,
+  initial: ts.Expression | undefined,
+  condition: ts.Expression,
+  next: ts.Expression | undefined,
+  statements: readonly ts.Statement[],
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
   state: TransformState,
+  options: TransformOptions,
+  do_first = false,
 ): TransformBlock {
+  const f = state.factory;
+  const loop_name = f.createUniqueName("loop");
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_expression = block_to_expression(exit.block, f);
+  const arguments_: ts.Expression[] = [];
+  if (next !== undefined) arguments_.push(next);
+  let continue_expression: ts.Expression = f.createCallExpression(
+    loop_name,
+    undefined,
+    arguments_,
+  );
+  if (do_first) {
+    continue_expression = block_to_expression(
+      f.createBlock([
+        f.createIfStatement(
+          condition,
+          f.createReturnStatement(continue_expression),
+        ),
+        f.createReturnStatement(exit_expression),
+      ], true),
+      f,
+    );
+  }
+  const body = transform_statements(
+    [...statements, f.createContinueStatement()],
+    current_context,
+    state,
+    {
+      ...options,
+      continue_expression,
+      break_expression: exit_expression,
+    },
+  );
+  let entry: ts.Statement = body.block;
+  if (!do_first) entry = f.createIfStatement(condition, body.block);
+  const parameters: ts.ParameterDeclaration[] = [];
+  if (variable !== undefined) {
+    parameters.push(
+      f.createParameterDeclaration(
+        undefined,
+        undefined,
+        variable,
+        undefined,
+        type,
+      ),
+    );
+  }
+  const initial_arguments: ts.Expression[] = [];
+  if (initial !== undefined) initial_arguments.push(initial);
+  state.report?.(
+    statements[0] ?? state.source_file,
+    "loop",
+    "preserved",
+    "Recursive loop fallback retains arbitrary dictionaries and early return values; stack-safe lowering requires a known MonadRec dictionary and no early returns.",
+  );
   return {
-    block: state.factory.createBlock([
-      state.factory.createFunctionDeclaration(
+    yielded: true,
+    block: f.createBlock([
+      f.createFunctionDeclaration(
         undefined,
         undefined,
         loop_name,
         undefined,
         parameters,
         undefined,
-        state.factory.createBlock([body, ...exit.block.statements], true),
+        f.createBlock([entry, ...exit.block.statements], true),
       ),
-      state.factory.createReturnStatement(
-        state.factory.createCallExpression(loop_name, undefined, []),
+      f.createReturnStatement(
+        f.createCallExpression(loop_name, undefined, initial_arguments),
       ),
     ], true),
-    yielded: true,
   };
 }
 
@@ -2324,6 +2544,7 @@ function create_bind(
       parameters,
       body,
       factory,
+      state.continuation_type,
     );
 
     if (mapped !== undefined) {
@@ -2342,7 +2563,19 @@ function create_bind(
     }
   }
 
-  const continuation = create_arrow(parameters, body, factory);
+  let return_type: ts.TypeNode | undefined;
+  if (
+    state.continuation_type !== undefined && state.dictionary !== undefined &&
+    ts.isIdentifier(state.dictionary)
+  ) {
+    return_type = factory.createTypeReferenceNode("ReturnType", [
+      factory.createTypeQueryNode(
+        factory.createQualifiedName(state.dictionary, "pure"),
+        [state.continuation_type],
+      ),
+    ]);
+  }
+  const continuation = create_arrow(parameters, body, factory, return_type);
 
   return factory.createCallExpression(
     state.kind === "program"
@@ -2366,13 +2599,14 @@ function create_direct_do_bind(
     parameters,
     body,
     state.factory,
+    state.continuation_type,
   );
 
   if (mapped !== undefined) {
     return mapped;
   }
 
-  if (contains_identifier(body, context)) {
+  if (state.used_contexts?.has(context)) {
     return undefined;
   }
 
@@ -2385,6 +2619,7 @@ function create_final_map(
   parameters: readonly ts.ParameterDeclaration[],
   body: ts.Block,
   factory: ts.NodeFactory,
+  output_type?: ts.TypeNode,
 ): ts.Expression | undefined {
   const statements = [...body.statements];
   const last = statements[statements.length - 1];
@@ -2415,7 +2650,7 @@ function create_final_map(
   return factory.createCallExpression(
     factory.createPropertyAccessExpression(expression, "map"),
     undefined,
-    [create_arrow(parameters, map_body, factory)],
+    [create_arrow(parameters, map_body, factory, output_type)],
   );
 }
 
@@ -2538,40 +2773,17 @@ function same_expression(left: ts.Expression, right: ts.Expression): boolean {
   return left === right;
 }
 
-function contains_identifier(
-  node: ts.Node,
-  identifier: ts.Identifier,
-): boolean {
-  let found = false;
-
-  function visit(child: ts.Node) {
-    if (found) {
-      return;
-    }
-
-    if (ts.isIdentifier(child) && child.text === identifier.text) {
-      found = true;
-      return;
-    }
-
-    ts.forEachChild(child, visit);
-  }
-
-  ts.forEachChild(node, visit);
-
-  return found;
-}
-
 function create_arrow(
   parameters: readonly ts.ParameterDeclaration[],
   body: ts.Block,
   factory: ts.NodeFactory,
+  output_type?: ts.TypeNode,
 ): ts.ArrowFunction {
   return factory.createArrowFunction(
     undefined,
     undefined,
     [...parameters],
-    undefined,
+    output_type,
     undefined,
     body,
   );
@@ -2620,6 +2832,7 @@ function create_pure(
     throw new UnsupportedGenerator();
   }
 
+  if (state.dictionary === undefined) state.used_contexts?.add(current_context);
   return factory.createCallExpression(
     factory.createPropertyAccessExpression(
       state.dictionary ?? current_context,
@@ -3698,6 +3911,8 @@ function transform_terminal_program_run(
   requests: TerminalImportRequest[],
   named_programs: ReadonlyMap<string, ts.CallExpression>,
   fused_named_programs: Set<string>,
+  fuse_body = true,
+  bindings?: ReturnType<typeof create_binding_analysis>,
 ): FusedTerminalProgram | undefined {
   if (
     node.questionDotToken !== undefined || node.typeArguments !== undefined ||
@@ -3731,7 +3946,9 @@ function transform_terminal_program_run(
   const program_argument = unwrap_parentheses(handled.arguments[0]);
   let program = program_argument;
   if (ts.isIdentifier(program_argument)) {
-    program = named_programs.get(program_argument.text) ?? program_argument;
+    program =
+      named_programs.get(named_program_key(program_argument, bindings)) ??
+        program_argument;
   }
 
   if (
@@ -3763,7 +3980,7 @@ function transform_terminal_program_run(
     return undefined;
   }
 
-  const can_fuse = body.parts.every((part) => {
+  const can_fuse = fuse_body && body.parts.every((part) => {
     if (part.kind !== "yield") return true;
     const primitive = read_fused_primitive(part.expression, imports);
     return primitive !== undefined &&
@@ -3790,7 +4007,7 @@ function transform_terminal_program_run(
   }
 
   if (ts.isIdentifier(program_argument)) {
-    fused_named_programs.add(program_argument.text);
+    fused_named_programs.add(named_program_key(program_argument, bindings));
   }
   return {
     expression: emit_fused_terminal_program(
@@ -5255,7 +5472,7 @@ if (import.meta.main) {
 }
 
 /** Compiler and transform revision included in every cache key. */
-export const transform_cache_version: string = "2:" + ts.version;
+export const transform_cache_version: string = "3:" + ts.version;
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {
@@ -5300,20 +5517,24 @@ export function create_transform_cache(
       file_name = "input.ts",
       config: TransformConfig = {},
     ): TransformResult {
+      if (capacity === 0 || max_bytes === 0) {
+        misses += 1;
+        return transform_do_program_source(source, file_name, config);
+      }
       const key = JSON.stringify([
         transform_cache_version,
-        source,
         file_name,
         config.library_specifiers ?? [],
         config.terminal_library_specifiers ?? [],
         config.explain ?? false,
-      ]);
+        config.optimizations ?? {},
+      ]) + "\0" + source;
       const cached = entries.get(key);
       if (cached !== undefined) {
         hits += 1;
         entries.delete(key);
         entries.set(key, cached);
-        return structuredClone(cached.result);
+        return clone_transform_result(cached.result);
       }
       misses += 1;
       const result = transform_do_program_source(source, file_name, config);
@@ -5325,7 +5546,7 @@ export function create_transform_cache(
           entries.delete(oldest);
         }
         entries.set(key, {
-          result: structuredClone(result),
+          result: clone_transform_result(result),
           bytes: entry_bytes,
         });
         bytes += entry_bytes;
@@ -5345,6 +5566,7 @@ export function create_transform_cache(
 // Only explicit, unshadowed built-in dictionaries are evidence for MonadRec.
 function collect_loop_support(source: ts.SourceFile) {
   const dictionaries = new Set<string>();
+  const tasks = new Set<string>();
   let specifier: string | undefined;
   for (const statement of source.statements) {
     if (
@@ -5383,92 +5605,19 @@ function collect_loop_support(source: ts.SourceFile) {
         !element.isTypeOnly &&
         ["Maybe", "Either", "Identity", "Task"].includes(imported) &&
         (kind === "mod" || kind === imported.toLowerCase())
-      ) dictionaries.add(element.name.text);
+      ) {
+        dictionaries.add(element.name.text);
+        if (imported === "Task") tasks.add(element.name.text);
+      }
     }
   }
   const shadowed = collect_non_import_value_bindings(source, dictionaries);
-  for (const name of shadowed.keys()) dictionaries.delete(name);
+  for (const name of shadowed.keys()) {
+    dictionaries.delete(name);
+    tasks.delete(name);
+  }
   if (specifier === undefined) dictionaries.clear();
-  return { dictionaries, specifier };
-}
-
-function transform_simple_recursive_for(
-  statement: ts.ForStatement,
-  loop: ReturnType<typeof read_for_loop>,
-  rest: readonly ts.Statement[],
-  current_context: ts.Expression | undefined,
-  state: TransformState,
-  options: TransformOptions,
-): TransformBlock | undefined {
-  if (
-    state.kind !== "do" || state.dictionary === undefined ||
-    !ts.isIdentifier(state.dictionary) ||
-    !state.recursive_dictionaries?.has(state.dictionary.text) ||
-    state.loop_runtime === undefined
-  ) return undefined;
-  const statements = unwrap_statement(statement.statement);
-  if (statements.length !== 1) return undefined;
-  const yielded = read_yield_statement(statements[0]);
-  if (
-    yielded === undefined || yielded.kind !== "bind" ||
-    yielded.name !== undefined
-  ) return undefined;
-  const f = state.factory;
-  const runtime = state.loop_runtime;
-  const call = (receiver: ts.Expression, name: string, args: ts.Expression[]) =>
-    f.createCallExpression(
-      f.createPropertyAccessExpression(receiver, name),
-      undefined,
-      args,
-    );
-  const arrow = (
-    body: ts.ConciseBody,
-    parameters: ts.ParameterDeclaration[] = [],
-  ) =>
-    f.createArrowFunction(
-      undefined,
-      undefined,
-      parameters,
-      undefined,
-      undefined,
-      body,
-    );
-  const step = arrow(
-    f.createBlock([
-      f.createIfStatement(
-        loop.condition,
-        f.createReturnStatement(
-          call(yielded.expression, "map", [
-            arrow(call(runtime, "rec", [loop.next])),
-          ]),
-        ),
-      ),
-      f.createReturnStatement(
-        call(state.dictionary, "pure", [
-          call(runtime, "done", [f.createVoidZero()]),
-        ]),
-      ),
-    ], true),
-    [f.createParameterDeclaration(
-      undefined,
-      undefined,
-      loop.variable,
-      undefined,
-      loop.type ?? f.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
-    )],
-  );
-  const recursion = call(state.dictionary, "tail_rec_m", [
-    loop.initializer,
-    step,
-  ]);
-  const exit = transform_statements(rest, current_context, state, options);
-  state.used_loop_runtime?.();
-  return {
-    block: f.createBlock([
-      f.createReturnStatement(call(recursion, "bind", [arrow(exit.block)])),
-    ], true),
-    yielded: true,
-  };
+  return { dictionaries, tasks, specifier };
 }
 
 // Named programs may move only when construction stops immediately at a
@@ -5477,11 +5626,23 @@ function collect_named_terminal_programs(
   source: ts.SourceFile,
   imports: ImportedBindings,
   scopes: ReadonlySet<string>,
+  bindings: ReturnType<typeof create_binding_analysis>,
 ) {
   const candidates = new Map<string, ts.CallExpression>();
   const declarations = new Map<string, ts.Identifier>();
   const allowed = new Set<ts.Identifier>();
-  for (const statement of source.statements) {
+  const owners = new Map<string, ts.Node>();
+  const nodes: { statement: ts.Statement; owner: ts.Node }[] = [];
+  function collect(node: ts.Node) {
+    if (ts.isSourceFile(node) || ts.isBlock(node)) {
+      for (const statement of node.statements) {
+        nodes.push({ statement, owner: node });
+      }
+    }
+    ts.forEachChild(node, collect);
+  }
+  collect(source);
+  for (const { statement, owner } of nodes) {
     if (
       !ts.isVariableStatement(statement) || statement.modifiers !== undefined ||
       (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
@@ -5524,14 +5685,18 @@ function collect_named_terminal_programs(
           ) === kind
       )
     ) continue;
-    candidates.set(declaration.name.text, program);
-    declarations.set(declaration.name.text, declaration.name);
+    const key = named_program_key(declaration.name, bindings);
+    candidates.set(key, program);
+    declarations.set(key, declaration.name);
+    owners.set(key, owner);
   }
   if (candidates.size === 0) return candidates;
   const used = new Set<string>();
-  for (const statement of source.statements) {
+  for (const { statement, owner } of nodes) {
     let expression: ts.Expression | undefined;
-    if (ts.isExpressionStatement(statement)) expression = statement.expression;
+    if (
+      ts.isExpressionStatement(statement) || ts.isReturnStatement(statement)
+    ) expression = statement.expression;
     if (
       ts.isVariableStatement(statement) &&
       statement.declarationList.declarations.length === 1
@@ -5556,7 +5721,9 @@ function collect_named_terminal_programs(
       handler === undefined || handler.imported === "run" ||
       !ts.isIdentifier(name)
     ) continue;
-    const candidate = candidates.get(name.text);
+    const key = named_program_key(name, bindings);
+    if (owners.get(key) !== owner) continue;
+    const candidate = candidates.get(key);
     if (candidate === undefined || candidate.end >= name.pos) continue;
     const run = candidate.arguments[0] as ts.FunctionExpression;
     const first = read_fused_program_body(run.body)!
@@ -5568,13 +5735,16 @@ function collect_named_terminal_programs(
         )
     ) continue;
     allowed.add(name);
-    used.add(name.text);
+    used.add(key);
   }
   function validate(node: ts.Node) {
-    if (
-      ts.isIdentifier(node) && candidates.has(node.text) &&
-      declarations.get(node.text) !== node && !allowed.has(node)
-    ) candidates.delete(node.text);
+    if (ts.isIdentifier(node)) {
+      const key = named_program_key(node, bindings);
+      if (
+        candidates.has(key) && declarations.get(key) !== node &&
+        !allowed.has(node)
+      ) candidates.delete(key);
+    }
     ts.forEachChild(node, validate);
   }
   validate(source);
@@ -5582,4 +5752,414 @@ function collect_named_terminal_programs(
     if (!used.has(name)) candidates.delete(name);
   }
   return candidates;
+}
+
+function named_program_key(
+  name: ts.Identifier,
+  bindings?: ReturnType<typeof create_binding_analysis>,
+): string {
+  const declaration = bindings?.resolve(name);
+  if (declaration === undefined) return name.text;
+  return name.text + ":" + declaration.pos;
+}
+
+// Source and generated code are immutable strings; clone only public containers.
+function clone_transform_result(result: TransformResult): TransformResult {
+  let map: TransformSourceMap | null = null;
+  if (result.map !== null) {
+    map = {
+      ...result.map,
+      sources: [...result.map.sources],
+      names: [...result.map.names],
+    };
+    if (result.map.sourcesContent !== undefined) {
+      map = { ...map, sourcesContent: [...result.map.sourcesContent] };
+    }
+  }
+  return {
+    ...result,
+    map,
+    diagnostics: result.diagnostics.map((item) => ({ ...item })),
+    reports: result.reports.map((item) => ({ ...item })),
+  };
+}
+
+/** A flat switch is the control-flow IR for large, independent yield sequences. */
+function transform_flat_statements(
+  body: ts.Block,
+  state: TransformState,
+): TransformBlock | undefined {
+  if (
+    state.kind !== "do" || state.optimizations?.flatten === false ||
+    state.loop_runtime === undefined || body.statements.length < 128
+  ) return undefined;
+  const statements = [...body.statements];
+  const terminal = statements.pop();
+  if (
+    terminal === undefined || !ts.isReturnStatement(terminal) ||
+    is_yield_star(terminal.expression)
+  ) return undefined;
+  const yields: Extract<YieldStatement, { kind: "bind" }>[] = [];
+  const local_names = new Set<string>();
+  for (const statement of statements) {
+    const yielded = read_yield_statement(statement);
+    if (
+      yielded === undefined || yielded.kind !== "bind" ||
+      yielded.name !== undefined && !ts.isIdentifier(yielded.name)
+    ) return undefined;
+    if (yielded.name !== undefined) {
+      local_names.add((yielded.name as ts.Identifier).text);
+    }
+    yields.push(yielded);
+  }
+  // Cross-stage references need liveness threading. Keep the existing lowering
+  // for those programs; this IR deliberately contains no shared mutable frame.
+  function mentions_local(node: ts.Node, permitted?: string): boolean {
+    let found = false;
+    function visit(node: ts.Node) {
+      if (
+        ts.isIdentifier(node) && local_names.has(node.text) &&
+        node.text !== permitted
+      ) found = true;
+      if (!found) ts.forEachChild(node, visit);
+    }
+    visit(node);
+    return found;
+  }
+  if (yields.some((yielded) => mentions_local(yielded.expression))) {
+    return undefined;
+  }
+  const last = yields[yields.length - 1];
+  let last_name: string | undefined;
+  if (last.name !== undefined && ts.isIdentifier(last.name)) {
+    last_name = last.name.text;
+  }
+  if (
+    terminal.expression !== undefined &&
+    mentions_local(terminal.expression, last_name)
+  ) return undefined;
+  let dictionary = state.dictionary;
+  if (
+    dictionary !== undefined &&
+    (!ts.isIdentifier(dictionary) ||
+      !state.recursive_dictionaries?.has(dictionary.text))
+  ) return undefined;
+  dictionary ??= state.flat_dictionary?.(yields[0].expression);
+  if (dictionary === undefined) return undefined;
+  const f = state.factory;
+  const runtime = state.loop_runtime;
+  const index = f.createUniqueName("instruction");
+  const first = f.createUniqueName("first_context");
+  const call = (
+    target: ts.Expression,
+    method: string,
+    args: readonly ts.Expression[],
+  ) =>
+    f.createCallExpression(
+      f.createPropertyAccessExpression(target, method),
+      undefined,
+      args,
+    );
+  const cases = yields.map((yielded, position) => {
+    let result: ts.Expression;
+    if (position === yields.length - 1) {
+      result = call(runtime, "done", [
+        terminal.expression ?? f.createVoidZero(),
+      ]);
+    } else {result = call(runtime, "rec", [
+        f.createNumericLiteral(position + 1),
+      ]);}
+    let expression = yielded.expression;
+    if (position === 0) expression = first;
+    return f.createCaseClause(f.createNumericLiteral(position), [
+      f.createReturnStatement(
+        call(expression, "map", [
+          create_arrow(
+            bind_parameters(yielded, state),
+            f.createBlock([f.createReturnStatement(result)], true),
+            f,
+          ),
+        ]),
+      ),
+    ]);
+  });
+  state.used_loop_runtime?.();
+  state.report?.(
+    body,
+    "flatten",
+    "transformed",
+    "Flattened independent yields into a MonadRec instruction switch; generator-local captures remain isolated.",
+  );
+  return {
+    yielded: true,
+    block: f.createBlock([
+      f.createVariableStatement(
+        undefined,
+        f.createVariableDeclarationList([
+          f.createVariableDeclaration(
+            first,
+            undefined,
+            undefined,
+            yields[0].expression,
+          ),
+        ], ts.NodeFlags.Const),
+      ),
+      f.createReturnStatement(
+        call(dictionary, "tail_rec_m", [
+          f.createNumericLiteral(0),
+          f.createArrowFunction(
+            undefined,
+            undefined,
+            [f.createParameterDeclaration(
+              undefined,
+              undefined,
+              index,
+              undefined,
+              f.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
+            )],
+            undefined,
+            undefined,
+            f.createBlock([
+              f.createSwitchStatement(index, f.createCaseBlock(cases)),
+              f.createThrowStatement(
+                f.createNewExpression(f.createIdentifier("Error"), undefined, [
+                  f.createStringLiteral("Invalid generated instruction"),
+                ]),
+              ),
+            ], true),
+          ),
+        ]),
+      ),
+    ], true),
+  };
+}
+
+// Loop IR: each iteration returns a typed next-state or a unit exit.
+// Early returns retain recursive lowering until heterogeneous results can be
+// represented without erasing the consumer's inferred result type.
+function transform_stack_safe_loop(
+  variable: ts.Identifier | undefined,
+  type: ts.TypeNode | undefined,
+  initial: ts.Expression,
+  condition: ts.Expression,
+  next: ts.Expression,
+  statements: readonly ts.Statement[],
+  rest: readonly ts.Statement[],
+  current_context: ts.Expression | undefined,
+  state: TransformState,
+  options: TransformOptions,
+  do_first = false,
+): TransformBlock | undefined {
+  if (
+    state.optimizations?.loop === false || state.kind !== "do" ||
+    state.dictionary === undefined || !ts.isIdentifier(state.dictionary) ||
+    !state.recursive_dictionaries?.has(state.dictionary.text) ||
+    state.loop_runtime === undefined
+  ) return undefined;
+  function has_return(node: ts.Node): boolean {
+    if (ts.isFunctionLike(node)) return false;
+    if (ts.isReturnStatement(node)) return true;
+    return ts.forEachChild(node, has_return) ?? false;
+  }
+  if (statements.some(has_return)) return undefined;
+  const f = state.factory;
+  const dictionary = state.dictionary;
+  const runtime = state.loop_runtime;
+  const initial_state = f.createUniqueName("initial_state");
+  const step_type_name = f.createUniqueName("LoopInstruction");
+  const step_type = f.createTypeReferenceNode(step_type_name);
+  let state_item_type: ts.TypeNode = f.createTypeQueryNode(initial_state);
+  if (do_first) {
+    state_item_type = f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword);
+  }
+  const state_type = f.createTypeLiteralNode([
+    f.createPropertySignature(
+      undefined,
+      "first",
+      undefined,
+      f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+    ),
+    f.createPropertySignature(
+      undefined,
+      "value",
+      undefined,
+      state_item_type,
+    ),
+  ]);
+  const call = (
+    target: ts.Expression,
+    method: string,
+    args: readonly ts.Expression[],
+  ) =>
+    f.createCallExpression(
+      f.createPropertyAccessExpression(target, method),
+      undefined,
+      args,
+    );
+  const arrow = (
+    body: ts.ConciseBody,
+    parameters: readonly ts.ParameterDeclaration[] = [],
+  ) =>
+    f.createArrowFunction(
+      undefined,
+      undefined,
+      parameters,
+      undefined,
+      undefined,
+      body,
+    );
+  const pure = (value: ts.Expression) =>
+    f.createCallExpression(
+      f.createPropertyAccessExpression(dictionary, "pure"),
+      [step_type],
+      [value],
+    );
+  const exit = transform_statements(rest, current_context, state, options);
+  const exit_step = pure(call(runtime, "done", [f.createVoidZero()]));
+  const state_value = (first: boolean, value: ts.Expression) => {
+    let flag = f.createFalse() as ts.Expression;
+    if (first) flag = f.createTrue();
+    return f.createObjectLiteralExpression([
+      f.createPropertyAssignment("first", flag),
+      f.createPropertyAssignment("value", value),
+    ]);
+  };
+  const body = transform_statements(
+    [...statements, f.createContinueStatement()],
+    current_context,
+    {
+      ...state,
+      continuation_type: step_type,
+    },
+    {
+      continue_expression: pure(
+        call(runtime, "rec", [state_value(false, next)]),
+      ),
+      break_expression: exit_step,
+    },
+  );
+  const parameters: ts.ParameterDeclaration[] = [];
+  let guard = condition;
+  if (variable !== undefined) {
+    parameters.push(
+      f.createParameterDeclaration(
+        undefined,
+        undefined,
+        variable,
+        undefined,
+        type ?? f.createTypeQueryNode(initial_state),
+      ),
+    );
+  }
+  if (do_first) {
+    const first = f.createUniqueName("first_iteration");
+    parameters.push(
+      f.createParameterDeclaration(
+        undefined,
+        undefined,
+        first,
+        undefined,
+        f.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+      ),
+    );
+    guard = f.createLogicalOr(first, condition);
+  }
+  if (parameters.length === 0) {
+    parameters.push(
+      f.createParameterDeclaration(
+        undefined,
+        undefined,
+        f.createUniqueName("unused"),
+        undefined,
+        f.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword),
+      ),
+    );
+  }
+  const step = arrow(
+    f.createBlock([
+      f.createIfStatement(guard, body.block),
+      f.createReturnStatement(exit_step),
+    ], true),
+    parameters,
+  );
+  const step_name = f.createUniqueName("loop_step");
+  const first_step = f.createUniqueName("first_step");
+  const cursor = f.createUniqueName("loop_state");
+  const recursion = call(dictionary, "tail_rec_m", [
+    state_value(true, initial_state),
+    arrow(
+      f.createBlock([
+        f.createIfStatement(
+          f.createPropertyAccessExpression(cursor, "first"),
+          f.createReturnStatement(first_step),
+        ),
+        f.createReturnStatement(
+          f.createCallExpression(step_name, undefined, [
+            f.createPropertyAccessExpression(cursor, "value"),
+          ]),
+        ),
+      ], true),
+      [f.createParameterDeclaration(undefined, undefined, cursor)],
+    ),
+  ]);
+  state.used_loop_runtime?.();
+  state.report?.(
+    statements[0] ?? state.source_file,
+    "loop",
+    "transformed",
+    "Lowered loop control through MonadRec with typed next-state and break instructions.",
+  );
+  return {
+    yielded: true,
+    block: f.createBlock([
+      f.createVariableStatement(
+        undefined,
+        f.createVariableDeclarationList([
+          f.createVariableDeclaration(
+            initial_state,
+            undefined,
+            undefined,
+            initial,
+          ),
+        ], ts.NodeFlags.Let),
+      ),
+      f.createTypeAliasDeclaration(
+        undefined,
+        step_type_name,
+        undefined,
+        f.createTypeReferenceNode(f.createQualifiedName(runtime, "LoopStep"), [
+          state_type,
+          f.createKeywordTypeNode(ts.SyntaxKind.VoidKeyword),
+        ]),
+      ),
+      f.createVariableStatement(
+        undefined,
+        f.createVariableDeclarationList([
+          f.createVariableDeclaration(step_name, undefined, undefined, step),
+          f.createVariableDeclaration(
+            first_step,
+            undefined,
+            undefined,
+            f.createCallExpression(step_name, undefined, [initial_state]),
+          ),
+        ], ts.NodeFlags.Const),
+      ),
+      f.createReturnStatement(call(recursion, "bind", [arrow(exit.block)])),
+    ], true),
+  };
+}
+
+function repeatable_task_construction(
+  expression: ts.Expression,
+  name: string,
+): boolean {
+  const node = unwrap_parentheses(expression);
+  if (ts.isIdentifier(node)) return true;
+  if (
+    !ts.isCallExpression(node) || !ts.isIdentifier(node.expression) ||
+    node.expression.text !== name || node.arguments.length !== 1
+  ) return false;
+  const callback = unwrap_parentheses(node.arguments[0]);
+  return ts.isArrowFunction(callback) || ts.isFunctionExpression(callback) ||
+    ts.isIdentifier(callback);
 }

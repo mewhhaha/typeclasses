@@ -893,9 +893,9 @@ const value = run(run_reader(Program(function* () {
 
     const asserted_yield = await transform(`
 import { Program, run } from "../src/effects.ts";
-import { ask, run_reader, type ReaderValue } from "../src/reader.ts";
+import { ask, run_reader, type Reader } from "../src/reader.ts";
 const value = run(run_reader(Program(function* () {
-  return yield* (ask<number>() as unknown as ReaderValue<string, string>);
+  return yield* (ask<number>() as unknown as Reader<string, string>);
 }), "ok"));
 `);
 

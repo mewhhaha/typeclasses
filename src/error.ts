@@ -8,29 +8,33 @@ import {
 import { Eq, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const error_identity: unique symbol;
+export const error_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "error_identity",
+);
 
 /** The JavaScript error wrapped by the `ErrorT` dictionary. */
-export type ErrorT = Error;
+export type RawErrorT = Error;
+
+/** @ignore */
+export interface AsErrorLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawErrorT;
+}
 
 /** Dictionary type for errors compared by name, message, and cause. */
 export interface AsError
-  extends As<AsError, typeof error_identity>, Show<AsError>, Eq<AsError> {
-  /** Higher-kinded item slot retained for dictionary compatibility. */
-  readonly [type_item]: unknown;
-  /** Raw `Error` representation for this dictionary. */
-  readonly [type_data]: ErrorT;
+  extends As<AsErrorLambda, typeof error_identity>, Show<AsError>, Eq<AsError> {
 }
 
-/** @ignore */
-export type ErrorValue = Data<AsError, Error>;
+/** A wrapped ErrorT value with its dictionary operations. */
+export type ErrorT = Data<AsError, Error>;
 
 /** Callable dictionary for wrapping JavaScript errors by reference. */
-export const ErrorT: AsError = data<AsError>();
+export const ErrorT: AsError = data<AsError>(error_identity);
 
 /** Wrap a JavaScript error without cloning it. */
-export function from_error(error: Error): ErrorValue {
-  return ErrorT(error) as ErrorValue;
+export function from_error(error: Error): ErrorT {
+  return ErrorT(error) as ErrorT;
 }
 
 Show.instance(ErrorT)({

@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import { assert_equals } from "./assert.ts";
 import {
   $slot,
@@ -23,14 +24,15 @@ import {
 
 type Box<item> = readonly ["Box", item];
 
-declare const box_identity: unique symbol;
+const box_identity: unique symbol = Symbol("box_identity");
 
-interface AsBox extends As<AsBox, typeof box_identity>, MonadDictionary<AsBox> {
+interface AsBox
+  extends As<AsBox, typeof box_identity>, MonadDictionary<AsBox>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
-const Box = data<AsBox>();
+const Box = data<AsBox>(box_identity);
 
 Monad.derive(Box)({
   pure(value) {
@@ -102,15 +104,18 @@ Deno.test("Monad.derive installs lawful Functor and Applicative defaults", () =>
   );
 });
 
-declare const ap_box_identity: unique symbol;
+const ap_box_identity: unique symbol = Symbol("ap_box_identity");
 
 interface AsApBox
-  extends As<AsApBox, typeof ap_box_identity>, ApplicativeDictionary<AsApBox> {
+  extends
+    As<AsApBox, typeof ap_box_identity>,
+    ApplicativeDictionary<AsApBox>,
+    Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
-const ApBox = data<AsApBox>();
+const ApBox = data<AsApBox>(ap_box_identity);
 
 Applicative.derive(ApBox)({
   pure(value) {
@@ -135,15 +140,18 @@ Deno.test("Applicative.derive installs its Functor default", () => {
   );
 });
 
-declare const ord_box_identity: unique symbol;
+const ord_box_identity: unique symbol = Symbol("ord_box_identity");
 
 interface AsOrdBox
-  extends As<AsOrdBox, typeof ord_box_identity>, OrdDictionary<AsOrdBox> {
+  extends
+    As<AsOrdBox, typeof ord_box_identity>,
+    OrdDictionary<AsOrdBox>,
+    Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
-const OrdBox = data<AsOrdBox>();
+const OrdBox = data<AsOrdBox>(ord_box_identity);
 
 Ord.derive(OrdBox)({
   compare(right) {
@@ -168,9 +176,12 @@ Deno.test("Ord.derive installs Eq from compare", () => {
 });
 
 Deno.test("Monad.derive infers a tagged dictionary without constructor metadata", () => {
-  const TaggedBox = Object.assign(data<AsBox>(union(["Box", $slot])), {
-    description: "tagged monad",
-  });
+  const TaggedBox = Object.assign(
+    data<AsBox>(box_identity, union(["Box", $slot])),
+    {
+      description: "tagged monad",
+    },
+  );
   const { derive } = Monad;
 
   derive(TaggedBox)({
@@ -207,9 +218,12 @@ Deno.test("Monad.derive infers a tagged dictionary without constructor metadata"
 });
 
 Deno.test("Applicative.derive infers a tagged dictionary without constructor metadata", () => {
-  const TaggedBox = Object.assign(data<AsApBox>(union(["Box", $slot])), {
-    description: "tagged applicative",
-  });
+  const TaggedBox = Object.assign(
+    data<AsApBox>(ap_box_identity, union(["Box", $slot])),
+    {
+      description: "tagged applicative",
+    },
+  );
 
   Applicative.derive(TaggedBox)({
     pure: TaggedBox.Box,
@@ -239,9 +253,12 @@ Deno.test("Applicative.derive infers a tagged dictionary without constructor met
 });
 
 Deno.test("Ord.derive infers a tagged dictionary without constructor metadata", () => {
-  const TaggedBox = Object.assign(data<AsOrdBox>(union(["Box", $slot])), {
-    description: "tagged order",
-  });
+  const TaggedBox = Object.assign(
+    data<AsOrdBox>(ord_box_identity, union(["Box", $slot])),
+    {
+      description: "tagged order",
+    },
+  );
 
   Ord.derive(TaggedBox)({
     compare(right) {

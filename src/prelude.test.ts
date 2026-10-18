@@ -15,7 +15,6 @@ import {
   Just,
   Maybe,
   maybe as maybe_eliminate,
-  type MaybeValue,
   Nothing,
   to_either,
   to_nullable,
@@ -66,16 +65,16 @@ import { from_fn, Task } from "./task.ts";
 import { Writer } from "./writer.ts";
 
 Deno.test("prelude maps, applies, and binds with contextual inference", () => {
-  const lifted: MaybeValue<number> = pure(Maybe, 42);
-  const mapped: MaybeValue<string> = fmap(
+  const lifted: Maybe<number> = pure(Maybe, 42);
+  const mapped: Maybe<string> = fmap(
     (value) => value.toFixed(1),
     Just(42),
   );
-  const applied: MaybeValue<number> = ap(
+  const applied: Maybe<number> = ap(
     Just((value: number) => value + 1),
     Just(41),
   );
-  const bound: MaybeValue<string> = bind(
+  const bound: Maybe<string> = bind(
     Just(42),
     (value) => Just(value.toString()),
   );
@@ -87,22 +86,22 @@ Deno.test("prelude maps, applies, and binds with contextual inference", () => {
 });
 
 Deno.test("prelude lifts functions and folds values", () => {
-  const one: MaybeValue<number> = lift((a) => a + 1, Just(1));
-  const two: MaybeValue<number> = lift((a, b) => a + b, Just(1), Just(2));
-  const three: MaybeValue<number> = lift(
+  const one: Maybe<number> = lift((a) => a + 1, Just(1));
+  const two: Maybe<number> = lift((a, b) => a + b, Just(1), Just(2));
+  const three: Maybe<number> = lift(
     (a, b, c) => a + b + c,
     Just(1),
     Just(2),
     Just(3),
   );
-  const four: MaybeValue<number> = lift(
+  const four: Maybe<number> = lift(
     (a, b, c, d) => a + b + c + d,
     Just(1),
     Just(2),
     Just(3),
     Just(4),
   );
-  const five: MaybeValue<number> = lift(
+  const five: Maybe<number> = lift(
     (a, b, c, d, e) => a + b + c + d + e,
     Just(1),
     Just(2),
@@ -110,7 +109,7 @@ Deno.test("prelude lifts functions and folds values", () => {
     Just(4),
     Just(5),
   );
-  const six: MaybeValue<
+  const six: Maybe<
     readonly [number, string, boolean, bigint, null, undefined]
   > = lift(
     (a, b, c, d, e, f) => [a, b, c, d, e, f] as const,

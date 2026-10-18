@@ -10,7 +10,7 @@ import {
   suspend,
   type Uses,
 } from "./effects.ts";
-import { type EitherValue, Left, Right } from "./either.ts";
+import { type Either, Left, Right } from "./either.ts";
 import { type AsTask, from_fn, is_task_cancellation } from "./task.ts";
 
 /** An operation that short-circuits a program with a typed error.
@@ -70,7 +70,7 @@ export function fail<error>(error: error): Effect<Fails<error>, never> {
 
 /** Lifts an Either, failing the program on its left branch. */
 export function from_either<error, item>(
-  value: EitherValue<error, item>,
+  value: Either<error, item>,
 ): Effect<Fails<error>, item> {
   const [branch, payload] = value.value();
 
@@ -143,11 +143,11 @@ export function run_except<requirements, item>(
   effect: Effect<requirements, item>,
 ): Effect<
   WithoutFails<requirements>,
-  EitherValue<FailsError<requirements>, item>
+  Either<FailsError<requirements>, item>
 > {
   return handle_fails<FailsError<requirements>, item>(effect) as Effect<
     WithoutFails<requirements>,
-    EitherValue<FailsError<requirements>, item>
+    Either<FailsError<requirements>, item>
   >;
 }
 
@@ -187,7 +187,7 @@ type Settled<error, item> =
 
 function handle_fails<error, item>(
   effect: Effect<unknown, item>,
-): Effect<unknown, EitherValue<error, item>> {
+): Effect<unknown, Either<error, item>> {
   if (effect[0] === "pure") {
     return pure(Right<error, item>(effect[1]));
   }
@@ -215,7 +215,7 @@ function handle_fails<error, item>(
 function handle_protected_fails<error, item>(
   scope: Ensuring[1],
   resume: (value: unknown) => Effect<unknown, item>,
-): Effect<unknown, EitherValue<error, item>> {
+): Effect<unknown, Either<error, item>> {
   // Prepare allocates outcome state when the runner enters the scope. Reusing
   // the handled effect, including concurrent runs, never shares that state.
   const protect: Ensuring = ["effect.ensuring", {
@@ -246,7 +246,7 @@ function handle_protected_fails<error, item>(
   return suspend(protect, (value) => {
     // The runner resumes with the nested effect's item, which the handler above
     // made an Either.
-    const [branch, payload] = (value as EitherValue<error, unknown>).value();
+    const [branch, payload] = (value as Either<error, unknown>).value();
 
     switch (branch) {
       case "Left":

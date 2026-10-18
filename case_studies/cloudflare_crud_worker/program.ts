@@ -1,5 +1,5 @@
 import { Effect, Program, type Uses } from "../../src/effects.ts";
-import { type EitherValue, Left, Right } from "../../src/either.ts";
+import { type Either, Left, Right } from "../../src/either.ts";
 import { ask, type AsReader } from "../../src/reader.ts";
 import { type AsTask, from_fn } from "../../src/task.ts";
 import { type Clock, now } from "./clock.ts";
@@ -186,14 +186,14 @@ function delete_response(context: RequestContext, id: string) {
 
 function read_create_body(
   request: Request,
-): Effect<Uses<AsTask>, EitherValue<HttpProblem, TodoCreate>> {
+): Effect<Uses<AsTask>, Either<HttpProblem, TodoCreate>> {
   return Effect.lift(
     from_fn(async () => {
       const parsed = await read_json(request);
       const parsed_value = parsed.value();
 
       if (Left.is(parsed_value)) {
-        return parsed as EitherValue<HttpProblem, TodoCreate>;
+        return parsed as Either<HttpProblem, TodoCreate>;
       }
 
       const decoded = decode_create(parsed_value[1]);
@@ -202,21 +202,21 @@ function read_create_body(
         return Left<HttpProblem, TodoCreate>(decoded);
       }
 
-      return Right(decoded) as EitherValue<HttpProblem, TodoCreate>;
+      return Right(decoded) as Either<HttpProblem, TodoCreate>;
     }),
   );
 }
 
 function read_patch_body(
   request: Request,
-): Effect<Uses<AsTask>, EitherValue<HttpProblem, TodoPatch>> {
+): Effect<Uses<AsTask>, Either<HttpProblem, TodoPatch>> {
   return Effect.lift(
     from_fn(async () => {
       const parsed = await read_json(request);
       const parsed_value = parsed.value();
 
       if (Left.is(parsed_value)) {
-        return parsed as EitherValue<HttpProblem, TodoPatch>;
+        return parsed as Either<HttpProblem, TodoPatch>;
       }
 
       const decoded = decode_patch(parsed_value[1]);
@@ -225,16 +225,16 @@ function read_patch_body(
         return Left<HttpProblem, TodoPatch>(decoded);
       }
 
-      return Right(decoded) as EitherValue<HttpProblem, TodoPatch>;
+      return Right(decoded) as Either<HttpProblem, TodoPatch>;
     }),
   );
 }
 
 async function read_json(
   request: Request,
-): Promise<EitherValue<HttpProblem, unknown>> {
+): Promise<Either<HttpProblem, unknown>> {
   try {
-    return Right(await request.json()) as EitherValue<HttpProblem, unknown>;
+    return Right(await request.json()) as Either<HttpProblem, unknown>;
   } catch (error) {
     return Left<HttpProblem, unknown>([
       "bad_json",

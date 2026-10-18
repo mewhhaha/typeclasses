@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import {
   $slot,
   type As,
@@ -29,42 +30,48 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const list_identity: unique symbol;
+export const list_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "list_identity",
+);
 
 /** An immutable recursive list represented by `Cons` and `Nil` tuples. */
-export type List<item> =
+export type RawList<item> =
   | Nil
   | Cons<item>;
 
 /** The empty-list branch of {@link List}. */
 export type Nil = readonly ["Nil"];
 /** A non-empty list branch containing its head and remaining tail. */
-export type Cons<item> = readonly ["Cons", item, List<item>];
+export type Cons<item> = readonly ["Cons", item, RawList<item>];
+
+/** @ignore */
+export interface AsListLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawList<this[typeof type_item]>;
+}
 
 /** Dictionary type for immutable recursive lists. */
 export interface AsList
   extends
-    As<AsList, typeof list_identity>,
+    As<AsListLambda, typeof list_identity>,
     Show<AsList>,
     Monoid<AsList>,
     Alternative<AsList>,
     Monad<AsList>,
     MonadRec<AsList>,
     Traversable<AsList>,
-    Ord<AsList> {
-  /** Higher-kinded slot for the list element type. */
-  readonly [type_item]: unknown;
-  /** Recursive-list representation at the selected element type. */
-  readonly [type_data]: List<this[typeof type_item]>;
+    Ord<AsList>,
+    Matchable {
 }
 
-/** @ignore */
-export type ListValue<item> = Data<AsList, item>;
+/** A wrapped List value with its dictionary operations. */
+export type List<item> = Data<AsList, item>;
 /** Callable tagged-union dictionary for `List` values. */
 export type ListConstructor = UnionDictionary<AsList>;
 
 /** Callable list dictionary with `Cons` and `Nil` branch constructors. */
 export const List: ListConstructor = data<AsList>(
+  list_identity,
   union(["Cons", $slot, $slot], ["Nil"]),
 );
 /** Construct or recognize the non-empty `Cons` branch. */
@@ -73,16 +80,16 @@ export const Cons: ListConstructor["Cons"] = List.Cons;
 export const Nil: ListConstructor["Nil"] = List.Nil;
 
 /** Convert an array into an immutable recursive list. */
-export function from_array<item>(items: readonly item[]): ListValue<item> {
+export function from_array<item>(items: readonly item[]): List<item> {
   return List(list_from_array(items));
 }
 
 /** Materialize a wrapped list into a mutable array. */
-export function to_array<item>(list: ListValue<item>): item[] {
+export function to_array<item>(list: List<item>): item[] {
   return list_to_array(list.value());
 }
 
-function list_from_array<item>(items: readonly item[]): List<item> {
+function list_from_array<item>(items: readonly item[]): RawList<item> {
   let list = list_nil<item>();
 
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -95,7 +102,8 @@ function list_from_array<item>(items: readonly item[]): List<item> {
 
 Show.instance(List)({
   show() {
-    const items = to_array(this).map((item) => inspect(item));
+    const items: string[] = [];
+    for (const item of list_items(this.value())) items.push(inspect(item));
     return "[" + items.join(", ") + "]";
   },
 });
@@ -327,26 +335,26 @@ Traversable.instance(List)({
 });
 
 const empty: Nil = Object.freeze(["Nil"]);
-function list_nil<item>(): List<item> {
+function list_nil<item>(): RawList<item> {
   return empty;
 }
 
-function list_cons<item>(head: item, tail: List<item>): List<item> {
+function list_cons<item>(head: item, tail: RawList<item>): RawList<item> {
   return ["Cons", head, tail];
 }
 
 // Cells are private until finish; published list tails never change.
 function list_builder<item>() {
-  let first: List<item> = list_nil();
-  let last: ["Cons", item, List<item>] | undefined;
+  let first: RawList<item> = list_nil();
+  let last: ["Cons", item, RawList<item>] | undefined;
   return {
     push(item: item): void {
-      const cell: ["Cons", item, List<item>] = ["Cons", item, list_nil()];
+      const cell: ["Cons", item, RawList<item>] = ["Cons", item, list_nil()];
       if (last === undefined) first = cell;
       else last[2] = cell;
       last = cell;
     },
-    finish(tail: List<item> = list_nil()): List<item> {
+    finish(tail: RawList<item> = list_nil()): RawList<item> {
       if (last === undefined) return tail;
       last[2] = tail;
       return first;
@@ -354,7 +362,10 @@ function list_builder<item>() {
   };
 }
 
-function list_append<item>(left: List<item>, right: List<item>): List<item> {
+function list_append<item>(
+  left: RawList<item>,
+  right: RawList<item>,
+): RawList<item> {
   const out = list_builder<item>();
   let source = left;
   while (source[0] === "Cons") {
@@ -367,8 +378,8 @@ function list_append<item>(left: List<item>, right: List<item>): List<item> {
 
 function lift_list_one<output>(
   fn: (...values: unknown[]) => output,
-  first: List<unknown>,
-): ListValue<output> {
+  first: RawList<unknown>,
+): List<output> {
   let source = first;
   const out = list_builder<output>();
 
@@ -383,9 +394,9 @@ function lift_list_one<output>(
 
 function lift_list_two<output>(
   fn: (...values: unknown[]) => output,
-  first: List<unknown>,
-  second: List<unknown>,
-): ListValue<output> {
+  first: RawList<unknown>,
+  second: RawList<unknown>,
+): List<output> {
   let left = first;
   const out = list_builder<output>();
 
@@ -407,10 +418,10 @@ function lift_list_two<output>(
 
 function lift_list_three<output>(
   fn: (...values: unknown[]) => output,
-  first: List<unknown>,
-  second: List<unknown>,
-  third: List<unknown>,
-): ListValue<output> {
+  first: RawList<unknown>,
+  second: RawList<unknown>,
+  third: RawList<unknown>,
+): List<output> {
   let left = first;
   const out = list_builder<output>();
 
@@ -439,31 +450,34 @@ function lift_list_three<output>(
 
 function lift_list_many<output>(
   fn: (...values: unknown[]) => output,
-  first: List<unknown>,
-  rest: readonly ListValue<unknown>[],
-): ListValue<output> {
+  first: RawList<unknown>,
+  rest: readonly List<unknown>[],
+): List<output> {
   const sources = [first, ...rest.map((value) => value.value())];
   const values: unknown[] = [];
   const out = list_builder<output>();
-  visit(0);
-  return List(out.finish());
-
-  function visit(index: number): void {
-    if (index === sources.length) {
+  const positions = [...sources];
+  let depth = 0;
+  while (depth >= 0) {
+    if (depth === sources.length) {
       out.push(fn(...values));
-      return;
+      depth -= 1;
+      continue;
     }
-    let source = sources[index];
-    while (source[0] === "Cons") {
-      const [, head, tail] = source;
-      values[index] = head;
-      visit(index + 1);
-      source = tail;
+    const current = positions[depth];
+    if (current[0] === "Nil") {
+      positions[depth] = sources[depth];
+      depth -= 1;
+      continue;
     }
+    values[depth] = current[1];
+    positions[depth] = current[2];
+    depth += 1;
   }
+  return List(out.finish());
 }
 
-function list_to_array<item>(list: List<item>): item[] {
+function list_to_array<item>(list: RawList<item>): item[] {
   const items: item[] = [];
   let rest = list;
 
@@ -476,7 +490,7 @@ function list_to_array<item>(list: List<item>): item[] {
   return items;
 }
 
-function* list_items<item>(list: List<item>): Generator<item> {
+function* list_items<item>(list: RawList<item>): Generator<item> {
   let source = list;
   while (source[0] === "Cons") {
     const [, head, tail] = source;
@@ -485,7 +499,7 @@ function* list_items<item>(list: List<item>): Generator<item> {
   }
 }
 
-function list_from_items<item>(items: Iterable<item>): ListValue<item> {
+function list_from_items<item>(items: Iterable<item>): List<item> {
   const out = list_builder<item>();
   for (const item of items) out.push(item);
   return List(out.finish());

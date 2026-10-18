@@ -9,7 +9,7 @@ import {
 import type { Applicative as ApplicativeDictionary } from "./applicative.ts";
 
 /** Runtime token for the Alternative typeclass. */
-export const alternative_typeclass = Symbol("Alternative");
+export const alternative_typeclass = /* @__PURE__ */ Symbol("Alternative");
 
 /** Applicative dictionary capability with empty and choice operations. */
 export interface Alternative<dictionary extends Dictionary>
@@ -45,7 +45,7 @@ export type AlternativeTypeclass = Typeclass<typeof alternative_typeclass, {
 }>;
 
 /** Operations for empty values and left-biased contextual choice. */
-export const Alternative: AlternativeTypeclass = typeclass(
+export const Alternative: AlternativeTypeclass = /* @__PURE__ */ typeclass(
   alternative_typeclass,
   {
     empty<

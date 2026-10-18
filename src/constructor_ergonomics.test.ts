@@ -1,6 +1,6 @@
 import { assert_equals } from "./assert.ts";
-import { Either, type EitherValue, Left, Right } from "./either.ts";
-import { from_nullable, type MaybeValue } from "./maybe.ts";
+import { Either, Left, Right } from "./either.ts";
+import { from_nullable, type Maybe } from "./maybe.ts";
 import { kind } from "./typeclass.ts";
 import { Do, Functor, Monad } from "./typeclasses.ts";
 import {
@@ -9,7 +9,6 @@ import {
   Valid,
   Validation,
   type ValidationSemigroup,
-  type ValidationValue,
 } from "./validation.ts";
 
 Deno.test("Either branch aliases share inferred and explicit constructor types", () => {
@@ -25,9 +24,9 @@ Deno.test("Either branch aliases share inferred and explicit constructor types",
   );
   const raw = Either(["Right", 1]).map((value) => value + 1);
 
-  expect_type<EitherValue<string, number>>(inferred);
-  expect_type<EitherValue<string, number>>(mapped);
-  expect_type<EitherValue<string, number>>(explicit);
+  expect_type<Either<string, number>>(inferred);
+  expect_type<Either<string, number>>(mapped);
+  expect_type<Either<string, number>>(explicit);
   assert_equals(inferred.value(), ["Right", 2]);
   assert_equals(mapped.value(), ["Left", "missing"]);
   assert_equals(explicit.value(), ["Right", 2]);
@@ -72,8 +71,8 @@ Deno.test("Validation branch aliases infer errors and compose successful functio
   );
   const raw = Validation(["valid", 1]).map((value) => value + 1);
 
-  expect_type<ValidationValue<readonly string[], number>>(invalid);
-  expect_type<ValidationValue<readonly string[], number>>(applied);
+  expect_type<Validation<readonly string[], number>>(invalid);
+  expect_type<Validation<readonly string[], number>>(applied);
   assert_equals(invalid.value(), ["invalid", ["missing"], semigroup]);
   assert_equals(applied.value().slice(0, 2), ["invalid", ["missing"]]);
   assert_equals(raw.value(), ["valid", 2]);
@@ -106,8 +105,8 @@ Deno.test("configured dictionary views retain branch types and guards", () => {
   const Result = Either.with_left<string>();
   const good = Result.Right(1);
   const bad = Result.Left<number>("missing");
-  expect_type<EitherValue<string, number>>(good);
-  expect_type<EitherValue<string, number>>(bad);
+  expect_type<Either<string, number>>(good);
+  expect_type<Either<string, number>>(bad);
   assert_equals(Object.is(Result.Right, Right), true);
   assert_equals(Object.is(Result.Left, Left), true);
 
@@ -121,10 +120,10 @@ Deno.test("configured dictionary views retain branch types and guards", () => {
   const viewed = ErrorView.Invalid<number>(["missing"], semigroup);
   const applied = Errors.Valid((value: number) => value + 1).ap(invalid);
 
-  expect_type<ValidationValue<readonly string[], number>>(valid);
-  expect_type<ValidationValue<readonly string[], number>>(invalid);
-  expect_type<ValidationValue<readonly string[], number>>(viewed);
-  expect_type<ValidationValue<readonly string[], number>>(applied);
+  expect_type<Validation<readonly string[], number>>(valid);
+  expect_type<Validation<readonly string[], number>>(invalid);
+  expect_type<Validation<readonly string[], number>>(viewed);
+  expect_type<Validation<readonly string[], number>>(applied);
   assert_equals(valid.value(), ["valid", 2]);
   assert_equals(invalid.value(), viewed.value());
   assert_equals(Errors[kind], Validation[kind]);
@@ -152,9 +151,9 @@ Deno.test("pure Either fluent chains infer their eventual error payload", () => 
     Right(value + 1)
   );
 
-  expect_type<EitherValue<{ code: string }, number>>(chained);
-  expect_type<EitherValue<{ code: string }, number>>(recovered);
-  expect_type<EitherValue<never, number>>(still_pure);
+  expect_type<Either<{ code: string }, number>>(chained);
+  expect_type<Either<{ code: string }, number>>(recovered);
+  expect_type<Either<never, number>>(still_pure);
   assert_equals(chained.value(), ["Left", { code: "missing" }]);
   assert_equals(recovered.value(), ["Right", 7]);
   assert_equals(still_pure.value(), ["Right", 3]);
@@ -173,10 +172,10 @@ Deno.test("pure Either values interoperate with generic and applicative methods"
   });
   const applied = Right((value: number) => value + 1).ap(Right(1));
 
-  expect_type<EitherValue<string, number>>(mapped);
-  expect_type<EitherValue<string, number>>(bound);
-  expect_type<EitherValue<string, number>>(sequenced);
-  expect_type<EitherValue<string, number>>(applied);
+  expect_type<Either<string, number>>(mapped);
+  expect_type<Either<string, number>>(bound);
+  expect_type<Either<string, number>>(sequenced);
+  expect_type<Either<string, number>>(applied);
   assert_equals(mapped.value(), ["Right", 3]);
   assert_equals(bound.value(), ["Right", 2]);
   assert_equals(sequenced.value(), ["Right", 5]);
@@ -195,11 +194,11 @@ Deno.test("from_nullable exposes only non-null payloads", () => {
   const explicit_null = from_nullable<string>(null);
   const explicit_undefined = from_nullable<string>(undefined);
 
-  expect_type<MaybeValue<string>>(explicit);
-  expect_type<MaybeValue<never>>(null_value);
-  expect_type<MaybeValue<never>>(undefined_value);
-  expect_type<MaybeValue<string>>(explicit_null);
-  expect_type<MaybeValue<string>>(explicit_undefined);
+  expect_type<Maybe<string>>(explicit);
+  expect_type<Maybe<never>>(null_value);
+  expect_type<Maybe<never>>(undefined_value);
+  expect_type<Maybe<string>>(explicit_null);
+  expect_type<Maybe<string>>(explicit_undefined);
   assert_equals(explicit.value(), ["Just", "ADA"]);
   assert_equals(null_value.value(), ["Nothing"]);
   assert_equals(undefined_value.value(), ["Nothing"]);

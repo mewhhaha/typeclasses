@@ -12,7 +12,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Category typeclass. */
-export const category_typeclass = Symbol("Category");
+export const category_typeclass = /* @__PURE__ */ Symbol("Category");
 /** Phantom key for a category arrow's input parameter. */
 export declare const category_input: unique symbol;
 /** Phantom key for rebuilding category arrows with new inputs. */
@@ -110,46 +110,49 @@ export type CategoryTypeclass = Typeclass<typeof category_typeclass, {
 }>;
 
 /** Operations for category identities and arrow composition. */
-export const Category: CategoryTypeclass = typeclass(category_typeclass, {
-  id<dictionary extends CategoryDefinition, item>(
-    dictionary: dictionary,
-  ): Data<AppliedData<CategoryContextOf<dictionary>, item>, item> {
-    const implementation =
-      dictionary[category_typeclass] as unknown as CategoryImplementation<
-        dictionary
-      >;
+export const Category: CategoryTypeclass = /* @__PURE__ */ typeclass(
+  category_typeclass,
+  {
+    id<dictionary extends CategoryDefinition, item>(
+      dictionary: dictionary,
+    ): Data<AppliedData<CategoryContextOf<dictionary>, item>, item> {
+      const implementation =
+        dictionary[category_typeclass] as unknown as CategoryImplementation<
+          dictionary
+        >;
 
-    return call_typeclass_method(
-      implementation.id<item>,
-      dictionary,
-    );
-  },
+      return call_typeclass_method(
+        implementation.id<item>,
+        dictionary,
+      );
+    },
 
-  compose<
-    dictionary extends CategoryDefinition,
-    before_dictionary extends CategoryDefinition,
-    to,
-  >(
-    after: Data<dictionary, to>,
-    before:
-      & Data<before_dictionary, CategoryInput<dictionary>>
-      & InCategoryContext<dictionary, before_dictionary>,
-  ): Data<before_dictionary, to> {
-    const implementation =
-      after[category_typeclass] as unknown as CategoryImplementation<
-        dictionary
-      >;
+    compose<
+      dictionary extends CategoryDefinition,
+      before_dictionary extends CategoryDefinition,
+      to,
+    >(
+      after: Data<dictionary, to>,
+      before:
+        & Data<before_dictionary, CategoryInput<dictionary>>
+        & InCategoryContext<dictionary, before_dictionary>,
+    ): Data<before_dictionary, to> {
+      const implementation =
+        after[category_typeclass] as unknown as CategoryImplementation<
+          dictionary
+        >;
 
-    return call_typeclass_method(
-      implementation.compose<to, CategoryInput<before_dictionary>>,
-      after,
-      before as unknown as Data<
-        AppliedData<
-          CategoryContextOf<dictionary>,
-          CategoryInput<before_dictionary>
+      return call_typeclass_method(
+        implementation.compose<to, CategoryInput<before_dictionary>>,
+        after,
+        before as unknown as Data<
+          AppliedData<
+            CategoryContextOf<dictionary>,
+            CategoryInput<before_dictionary>
+          >,
+          CategoryInput<dictionary>
         >,
-        CategoryInput<dictionary>
-      >,
-    ) as unknown as Data<before_dictionary, to>;
+      ) as unknown as Data<before_dictionary, to>;
+    },
   },
-});
+);

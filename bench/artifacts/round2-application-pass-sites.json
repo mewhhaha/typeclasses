@@ -1,0 +1,1281 @@
+[
+  {
+    "file": "case_studies/parallel_analyzer/analyzer.ts",
+    "input_sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "5e7850e431b0bf785a9b29984465f6860b68408b5342e70c9e573c30c61762cf",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/effects.ts",
+    "input_sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "62c62111172c43c49cf57991649b91776bd63873e546a4e2846e8784832b72ca",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/mod.ts",
+    "input_sha256": "346bb1452b897cb75fbf9e7dc3e3a6c1f546a0de5bbbbdcce80e1a51247a8720",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "6ec8f47cd2f233b1415af3cc9df73393a6bd8d99b8852f4b09a2c526e9938cbe",
+        "same_input": false,
+        "transformed": 2,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "6ec8f47cd2f233b1415af3cc9df73393a6bd8d99b8852f4b09a2c526e9938cbe",
+        "same_input": false,
+        "transformed": 2,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "6ec8f47cd2f233b1415af3cc9df73393a6bd8d99b8852f4b09a2c526e9938cbe",
+        "same_input": false,
+        "transformed": 2,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "6ec8f47cd2f233b1415af3cc9df73393a6bd8d99b8852f4b09a2c526e9938cbe",
+        "same_input": false,
+        "transformed": 2,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "346bb1452b897cb75fbf9e7dc3e3a6c1f546a0de5bbbbdcce80e1a51247a8720",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "6ec8f47cd2f233b1415af3cc9df73393a6bd8d99b8852f4b09a2c526e9938cbe",
+        "same_input": false,
+        "transformed": 2,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/program.ts",
+    "input_sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": true,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": true,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": true,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": true,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "aa872c5e8934b0de146b7f921003e289b3db67a11771295d0b6a2b1e0b7cdc7f",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": true,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/report.ts",
+    "input_sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "e69453639b468ccf1e331f5d2d30f961ad4aec809b0f3f2a89a1d0b66953cc1a",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/types.ts",
+    "input_sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "daf746df9c4b82580bd31e704d81304ea758cee741c5ebb5ec95bb9840e49f91",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/parallel_analyzer/worker.ts",
+    "input_sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "c0bb4b412a1710b972effbf3eebafd1e299aa7a9a615ef19edfdc3f4966a8bbe",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/programming_language_parser/language.ts",
+    "input_sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 17,
+        "preserved": true,
+        "reports": [
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 264,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 317,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 333,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 350,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 369,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 384,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 408,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 453,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 489,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 503,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 517,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 536,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 554,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 636,
+            "column": 20,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 808,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 827,
+            "column": 10,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 854,
+            "column": 16,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      },
+      {
+        "mode": "generator",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 17,
+        "preserved": true,
+        "reports": [
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 264,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 317,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 333,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 350,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 369,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 384,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 408,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 453,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 489,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 503,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 517,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 536,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 554,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 636,
+            "column": 20,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 808,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 827,
+            "column": 10,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 854,
+            "column": 16,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 17,
+        "preserved": true,
+        "reports": [
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 264,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 317,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 333,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 350,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 369,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 384,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 408,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 453,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 489,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 503,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 517,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 536,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 554,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 636,
+            "column": 20,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 808,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 827,
+            "column": 10,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 854,
+            "column": 16,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 17,
+        "preserved": true,
+        "reports": [
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 264,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 317,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 333,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 350,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 369,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 384,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 408,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 453,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 489,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 503,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 517,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 536,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 554,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 636,
+            "column": 20,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 808,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 827,
+            "column": 10,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 854,
+            "column": 16,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "49eae951a9852fc7f033a80dc55e3ccf2139da5247ca6fa76338cb85f8b72ba9",
+        "same_input": true,
+        "transformed": 17,
+        "preserved": true,
+        "reports": [
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 264,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 317,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 333,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 350,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 369,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 384,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 408,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 453,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 489,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 503,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 517,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 536,
+            "column": 3,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 554,
+            "column": 7,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 636,
+            "column": 20,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 808,
+            "column": 5,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 827,
+            "column": 10,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          },
+          {
+            "file_name": "case_studies/programming_language_parser/language.ts",
+            "line": 854,
+            "column": 16,
+            "optimization": "generator",
+            "outcome": "transformed",
+            "message": "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "file": "case_studies/programming_language_parser/mod.ts",
+    "input_sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "a570e9b88f1a3ed82b4422d2316c4e7b500e639cae8f7f6974f056bc31c1ecff",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/programming_language_parser/parser.ts",
+    "input_sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "40c383aa2037de71fe00bad64a533b17374be191bc3b4190f56d85238b5203af",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  },
+  {
+    "file": "case_studies/programming_language_parser/token.ts",
+    "input_sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+    "outputs": [
+      {
+        "mode": "all",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "generator",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "terminal_body",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "interpreter",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      },
+      {
+        "mode": "iterable_map",
+        "sha256": "710e3432c6a469359995b6344667d8f4497908bcd3f19abb6c46933122c15c11",
+        "same_input": true,
+        "transformed": 0,
+        "preserved": false,
+        "reports": []
+      }
+    ]
+  }
+]

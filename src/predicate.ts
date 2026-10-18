@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
   type Data,
@@ -8,40 +9,45 @@ import {
 import { Contravariant, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const predicate_identity: unique symbol;
+export const predicate_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "predicate_identity",
+);
 
 /** A boolean test over values of one input type. */
-export type Predicate<item> = (value: item) => boolean;
+export type RawPredicate<item> = (value: item) => boolean;
+
+/** @ignore */
+export interface AsPredicateLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawPredicate<this[typeof type_item]>;
+}
 
 /** Dictionary type for contravariant predicates. */
 export interface AsPredicate
   extends
-    As<AsPredicate, typeof predicate_identity>,
+    As<AsPredicateLambda, typeof predicate_identity>,
     Show<AsPredicate>,
     Contravariant<AsPredicate>,
-    Monoid<AsPredicate> {
-  /** Higher-kinded slot for the predicate input type. */
-  readonly [type_item]: unknown;
-  /** Predicate representation at the selected input type. */
-  readonly [type_data]: Predicate<this[typeof type_item]>;
+    Monoid<AsPredicate>,
+    Runnable {
 }
 
 /** A predicate wrapped with fluent contravariant methods. */
-export type PredicateValue<item> = Data<AsPredicate, item>;
+export type Predicate<item> = Data<AsPredicate, item>;
 
 /** Callable Predicate dictionary and the source of its instances. */
-export const Predicate: AsPredicate = data<AsPredicate>();
+export const Predicate: AsPredicate = data<AsPredicate>(predicate_identity);
 
 /** Wrap a predicate function. */
 export function predicate<item>(
-  value: Predicate<item>,
-): PredicateValue<item> {
+  value: RawPredicate<item>,
+): Predicate<item> {
   return Predicate(value);
 }
 
 /** Test a value with a wrapped predicate. */
 export function test<item>(
-  value: PredicateValue<item>,
+  value: Predicate<item>,
   item: item,
 ): boolean {
   return value.run(item);

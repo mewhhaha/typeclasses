@@ -1,4 +1,4 @@
-import { type EitherValue, Right } from "../src/either.ts";
+import { type Either, Right } from "../src/either.ts";
 import { type AsMaybe, Just, Maybe, Nothing } from "../src/maybe.ts";
 import type { Data } from "../src/typeclass.ts";
 import { Do, Functor, Monad } from "../src/typeclasses.ts";
@@ -324,9 +324,9 @@ function bind_maybe_call_site(
 }
 
 function bind_either_call_site(
-  value: EitherValue<never, number>,
-): EitherValue<never, number> {
-  return value.bind(typeclasses_either_next) as EitherValue<never, number>;
+  value: Either<never, number>,
+): Either<never, number> {
+  return value.bind(typeclasses_either_next) as Either<never, number>;
 }
 
 function bind_mixed_call_site(
@@ -397,7 +397,7 @@ function consume_typeclasses(value: Data<AsMaybe, number>): number {
   return 0;
 }
 
-function consume_either(value: EitherValue<never, number>): number {
+function consume_either(value: Either<never, number>): number {
   const either = value.value();
 
   if (Right.is(either)) {

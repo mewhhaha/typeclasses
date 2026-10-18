@@ -91,6 +91,9 @@ export function typeclasses_esbuild_plugin(
             loader: path.endsWith(".tsx") ? "tsx" : "ts",
           };
         }
+        if (result.transformed === 0 && result.diagnostics.length === 0) {
+          return undefined;
+        }
         return {
           contents: with_inline_source_map(result.code, result.map),
           loader: path.endsWith(".tsx") ? "tsx" : "ts",
@@ -155,6 +158,7 @@ function transform_rollup_source(
 
     context.warn(message);
   }
+  if (result.transformed === 0 && result.diagnostics.length === 0) return null;
   return { code: result.code, map: result.map };
 }
 
@@ -168,7 +172,10 @@ function might_contain_target(code: string): boolean {
   // Imported aliases need not retain either public name at the call site, so
   // include the import declaration itself in this cheap pre-parse filter.
   if (code.includes("\\u")) return true;
-  if (code.includes("Do") || code.includes("Program")) return true;
+  if (
+    (code.includes("Do") || code.includes("Program")) &&
+    /\b(?:Do|Program)\b/.test(code)
+  ) return true;
   if (
     code.includes("run_") &&
     (code.includes("run_reader") || code.includes("run_state") ||

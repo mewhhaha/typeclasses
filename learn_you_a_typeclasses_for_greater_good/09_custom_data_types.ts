@@ -12,7 +12,7 @@ type Tree<item> =
   | readonly ["leaf", item]
   | readonly ["branch", Tree<item>, Tree<item>];
 
-declare const tree_identity: unique symbol;
+const tree_identity: unique symbol = Symbol("tree_identity");
 
 interface AsTree
   extends
@@ -26,7 +26,7 @@ interface AsTree
 
 type TreeValue<item> = Data<AsTree, item>;
 
-const Tree = data<AsTree>();
+const Tree = data<AsTree>(tree_identity);
 
 export function lesson_09_custom_data_types() {
   const tree = branch(

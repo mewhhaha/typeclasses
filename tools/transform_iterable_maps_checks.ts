@@ -166,16 +166,14 @@ Deno.test("iterable fusion leaves unknown dictionaries, shadowed imports, and un
 
 Deno.test("fused iterable maps preserve contextual typing and changing element types", async () => {
   const source = `
-import { from_array, type IterableValue } from ${
-    JSON.stringify(iterable_module)
-  };
-const strings: IterableValue<string> = from_array([1, 2])
+import { from_array, type IterableT } from ${JSON.stringify(iterable_module)};
+const strings: IterableT<string> = from_array([1, 2])
   .map(n => n + 1).map(n => n.toString());
-const choices: IterableValue<"yes" | "no"> = from_array([1, 2])
+const choices: IterableT<"yes" | "no"> = from_array([1, 2])
   .map(n => n > 0 ? "yes" : "no").map(s => s);
-const functions: IterableValue<number> = from_array([1, 2])
+const functions: IterableT<number> = from_array([1, 2])
   .map(n => () => n).map(fn => fn());
-const annotated: IterableValue<number> = from_array([1, 2])
+const annotated: IterableT<number> = from_array([1, 2])
   .map((n: number): string => n.toString()).map((s: string) => s.length);
 export { strings, choices, functions, annotated };
 `;

@@ -10,7 +10,7 @@ import {
 import type { Monad as MonadDictionary } from "./monad.ts";
 
 /** Runtime token for the MonadRec typeclass. */
-export const monad_rec_typeclass = Symbol("MonadRec");
+export const monad_rec_typeclass = /* @__PURE__ */ Symbol("MonadRec");
 
 /** Monad capability for recursion without growing the JavaScript stack. */
 export interface MonadRec<dictionary extends Dictionary>
@@ -43,17 +43,20 @@ export type MonadRecTypeclass = Typeclass<
 >;
 
 /** Operations for stack-safe recursive monadic computations. */
-export const MonadRec: MonadRecTypeclass = typeclass(monad_rec_typeclass, {
-  tail_rec_m<dictionary extends Dictionary, state, output>(
-    dictionary: MonadRec<dictionary>,
-    initial: state,
-    step: (state: state) => Data<dictionary, LoopStep<state, output>>,
-  ): Data<dictionary, output> {
-    return call_typeclass_method(
-      this.instance_for(dictionary).tail_rec_m<state, output>,
-      dictionary as unknown as dictionary,
-      initial,
-      step,
-    );
+export const MonadRec: MonadRecTypeclass = /* @__PURE__ */ typeclass(
+  monad_rec_typeclass,
+  {
+    tail_rec_m<dictionary extends Dictionary, state, output>(
+      dictionary: MonadRec<dictionary>,
+      initial: state,
+      step: (state: state) => Data<dictionary, LoopStep<state, output>>,
+    ): Data<dictionary, output> {
+      return call_typeclass_method(
+        this.instance_for(dictionary).tail_rec_m<state, output>,
+        dictionary as unknown as dictionary,
+        initial,
+        step,
+      );
+    },
   },
-});
+);

@@ -9,7 +9,7 @@ import {
 import type { Monad as MonadDictionary } from "./monad.ts";
 
 /** Runtime token for the MonadError typeclass. */
-export const monad_error_typeclass = Symbol("MonadError");
+export const monad_error_typeclass = /* @__PURE__ */ Symbol("MonadError");
 /** Phantom key for a MonadError dictionary's associated error type. */
 export declare const monad_error_error: unique symbol;
 
@@ -79,7 +79,7 @@ export type MonadErrorTypeclass = Typeclass<typeof monad_error_typeclass, {
 }>;
 
 /** Operations for throwing and recovering typed monadic errors. */
-export const MonadError: MonadErrorTypeclass = typeclass(
+export const MonadError: MonadErrorTypeclass = /* @__PURE__ */ typeclass(
   monad_error_typeclass,
   {
     throw_error<dictionary extends MonadErrorDictionary, item>(
@@ -88,7 +88,10 @@ export const MonadError: MonadErrorTypeclass = typeclass(
     ): Data<dictionary, item> {
       const implementation = this.instance_for(
         witness,
-      ) as MonadErrorImplementation<dictionary, MonadErrorType<dictionary>>;
+      ) as unknown as MonadErrorImplementation<
+        dictionary,
+        MonadErrorType<dictionary>
+      >;
 
       return call_typeclass_method(
         implementation.throw_error<item>,
@@ -105,7 +108,10 @@ export const MonadError: MonadErrorTypeclass = typeclass(
     ): Data<dictionary, item> {
       const implementation = this.instance_for(
         value,
-      ) as MonadErrorImplementation<dictionary, MonadErrorType<dictionary>>;
+      ) as unknown as MonadErrorImplementation<
+        dictionary,
+        MonadErrorType<dictionary>
+      >;
 
       return call_typeclass_method(
         implementation.catch_error<item>,

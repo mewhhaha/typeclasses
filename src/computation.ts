@@ -1,5 +1,5 @@
-// Persistent function composition for Reader and State. Functions retain their
-// public raw shape; only functions produced here carry an inspectable plan.
+// Persistent Reader/State composition. Compile the requested static segment once;
+// execution cursors belong to the invocation, so recursive runs remain isolated.
 type Raw = (context: unknown) => unknown;
 type Frame =
   | { readonly tag: "map"; readonly apply: (value: unknown) => unknown }
@@ -11,7 +11,11 @@ type Frame =
     ) => readonly [Raw, unknown];
   };
 type Plan = { readonly source: Raw; readonly frame: Frame };
+type Compiled = { readonly source: Raw; readonly frames: readonly Frame[] };
 const plans = new WeakMap<Raw, Plan>();
+// Weak cached segments avoid retaining quadratic arrays when callers execute
+// every prefix of a growing plan. Active runs hold their own strong reference.
+const compiled = new WeakMap<Plan, WeakRef<Compiled>>();
 
 export function map_computation<context, from, to>(
   source: (context: context) => from,
@@ -38,34 +42,59 @@ export function bind_computation<context, from, to>(
 
 function compose(source: Raw, frame: Frame): Raw {
   const plan = { source, frame };
-  const composed: Raw = (context) => evaluate(plan, context);
+  const composed: Raw = (context) => evaluate(compile(plan), context);
   plans.set(composed, plan);
   return composed;
 }
 
-function evaluate(plan: Plan, context: unknown): unknown {
-  const frames: Frame[] = [plan.frame];
-  let current = plan.source;
+function compile(plan: Plan): Compiled {
+  const cached = compiled.get(plan)?.deref();
+  if (cached !== undefined) return cached;
+  const frames = [plan.frame];
+  let source = plan.source;
+  let nested = plans.get(source);
+  while (nested !== undefined) {
+    frames.push(nested.frame);
+    source = nested.source;
+    nested = plans.get(source);
+  }
+  frames.reverse();
+  const result = { source, frames };
+  compiled.set(plan, new WeakRef(result));
+  return result;
+}
+
+function evaluate(segment: Compiled, context: unknown): unknown {
+  // Most binds return a raw primitive and need no suspended segment at all.
+  const pending: { segment: Compiled; index: number }[] = [];
+  let index = 0;
+  let value = segment.source(context);
   while (true) {
-    let nested = plans.get(current);
-    while (nested !== undefined) {
-      frames.push(nested.frame);
-      current = nested.source;
-      nested = plans.get(current);
+    if (index === segment.frames.length) {
+      const previous = pending.pop();
+      if (previous === undefined) return value;
+      segment = previous.segment;
+      index = previous.index;
+      continue;
     }
-    let value = current(context);
-    while (true) {
-      const frame = frames.pop();
-      if (frame === undefined) return value;
-      switch (frame.tag) {
-        case "map":
-          value = frame.apply(value);
-          break;
-        case "bind":
-          [current, context] = frame.apply(value, context);
-          break;
+    const frame = segment.frames[index++];
+    switch (frame.tag) {
+      case "map":
+        value = frame.apply(value);
+        break;
+      case "bind": {
+        const [source, next_context] = frame.apply(value, context);
+        context = next_context;
+        const plan = plans.get(source);
+        if (plan === undefined) value = source(context);
+        else {
+          pending.push({ segment, index });
+          segment = compile(plan);
+          index = 0;
+          value = segment.source(context);
+        }
+        break;
       }
-      if (frame.tag === "bind") break;
     }
   }
 }

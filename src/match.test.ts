@@ -79,9 +79,9 @@ Deno.test("non-tagged wrapped values reject runtime matching", () => {
   let threw = false;
 
   try {
-    (Fn((value: number) => value + 1).match as unknown as (
-      cases: Record<PropertyKey, never>,
-    ) => unknown)({});
+    (Fn((value: number) => value + 1) as unknown as {
+      match(cases: Record<PropertyKey, never>): unknown;
+    }).match({});
   } catch (error) {
     threw = error instanceof TypeError;
   }
@@ -96,7 +96,7 @@ Deno.test({
     // @ts-expect-error exhaustive fluent matches require Nothing
     Just(1).match({ Just: (value) => value });
 
-    // @ts-expect-error non-tagged wrapped values expose match as never
+    // @ts-expect-error non-tagged wrapped values have no match member
     Fn((value: number) => value).match({});
   },
 });

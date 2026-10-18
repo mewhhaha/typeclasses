@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import { assert_equals } from "./assert.ts";
 import {
   $slot,
@@ -12,15 +13,15 @@ type Tiny<item> =
   | readonly ["One", item]
   | readonly ["None"];
 
-declare const tiny_identity: unique symbol;
+const tiny_identity: unique symbol = Symbol("tiny_identity");
 
-interface AsTiny extends As<AsTiny, typeof tiny_identity> {
+interface AsTiny extends As<AsTiny, typeof tiny_identity>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Tiny<this[typeof type_item]>;
 }
 
 Deno.test("union definitions use the tagged tuple shape", () => {
-  const Tiny = data<AsTiny>(union(["One", $slot], ["None"]));
+  const Tiny = data<AsTiny>(tiny_identity, union(["One", $slot], ["None"]));
   const value: Tiny<number> = ["One", 1];
 
   assert_equals(Tiny.One(1).value(), ["One", 1]);
@@ -37,16 +38,16 @@ Deno.test("union definitions use the tagged tuple shape", () => {
 
 function check_union_definition_types(): void {
   // @ts-expect-error One needs one payload slot.
-  data<AsTiny>(union(["One"], ["None"]));
+  data<AsTiny>(tiny_identity, union(["One"], ["None"]));
 
   // @ts-expect-error variant tuple must start with the matching tag.
-  data<AsTiny>(union(["None", $slot], ["None"]));
+  data<AsTiny>(tiny_identity, union(["None", $slot], ["None"]));
 
   // @ts-expect-error extra variants are not part of the data type.
-  data<AsTiny>(union(["One", $slot], ["None"], ["Extra"]));
+  data<AsTiny>(tiny_identity, union(["One", $slot], ["None"], ["Extra"]));
 
   // @ts-expect-error every variant in the data type must be listed.
-  data<AsTiny>(union(["One", $slot]));
+  data<AsTiny>(tiny_identity, union(["One", $slot]));
 }
 
 void check_union_definition_types;

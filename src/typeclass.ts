@@ -1,3 +1,5 @@
+import type { Matchable } from "./data_value.ts";
+export type { dictionary_type, Matchable, Runnable } from "./data_value.ts";
 export { is_data, match_tagged } from "./data_value.ts";
 export type {
   TaggedMatchCases,
@@ -44,7 +46,7 @@ export type AppliedData<type extends DataType, item> =
 
 /** Resolve the raw value shape accepted by a dictionary. */
 export type ContextData<dictionary extends Dictionary, item> = AppliedData<
-  DictionaryDataType<dictionary>,
+  RawDictionaryDataType<dictionary>,
   item
 >;
 
@@ -67,6 +69,19 @@ export type Data<dictionary extends Dictionary, item> = WrappedData<
   ContextData<dictionary, item>,
   DataItem<dictionary, item>
 >;
+
+/** Recover the owning dictionary without constructing or unwrapping a value. */
+export function dictionary_of<dictionary extends Dictionary>(
+  value: Data<dictionary, unknown>,
+): dictionary {
+  if (!raw_is_data(value)) throw new TypeError("Expected a wrapped data value");
+  let prototype = Object.getPrototypeOf(value);
+  while (prototype !== null) {
+    if (Object.hasOwn(prototype, kind)) return prototype as dictionary;
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  throw new TypeError("Wrapped value has no dictionary");
+}
 
 /** Resolve the element exposed by a context, including fixed-element contexts. */
 export type DataItem<dictionary extends Dictionary, item> = dictionary extends
@@ -94,6 +109,8 @@ export type Dictionary<
 /** A callable dictionary that wraps raw values of a data description. */
 export interface As<type extends DataType, identity>
   extends Dictionary<type, identity>, DataType {
+  /** Resolve the raw shape without traversing this dictionary's capabilities. */
+  readonly [type_data]: AppliedData<type, this[typeof type_item]>;
   /** Wrap a raw value and attach this dictionary's operations. */
   <item extends DataItem<this, unknown> = DataItem<this, unknown>>(
     value: AppliedData<type, item>,
@@ -203,11 +220,15 @@ export type UnionValue<schema extends UnionSchema, item> =
     : never
     : never;
 
+/** @ignore */
+export interface AsUnionLambda<schema extends UnionSchema> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: UnionValue<schema, this[typeof type_item]>;
+}
+
 /** Dictionary inferred from a union declaration. */
 export interface AsUnion<schema extends UnionSchema, identity>
-  extends As<AsUnion<schema, identity>, identity> {
-  /** The schema resolved at the selected generic item. */
-  readonly [type_data]: UnionValue<schema, this[typeof type_item]>;
+  extends As<AsUnionLambda<schema>, identity>, Matchable {
 }
 
 /** @ignore */
@@ -237,6 +258,40 @@ export function define_union<
   );
   dictionary[kind] = identity;
   return dictionary;
+}
+
+/** A flat record or tuple description with generic and fixed payload slots. */
+export type DataSchema =
+  | Readonly<Record<string, Slot | Field<unknown>>>
+  | readonly (Slot | Field<unknown>)[];
+
+/** Resolve a data schema at its generic item type. */
+export type SchemaValue<schema extends DataSchema, item> = {
+  readonly [key in keyof schema]: schema[key] extends Slot ? item
+    : schema[key] extends Field<infer value> ? value
+    : never;
+};
+
+/** @ignore */
+export interface AsSchemaLambda<schema extends DataSchema> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: SchemaValue<schema, this[typeof type_item]>;
+}
+
+/** Dictionary inferred from a flat record or tuple schema. */
+export interface AsSchema<schema extends DataSchema, identity>
+  extends As<AsSchemaLambda<schema>, identity> {
+}
+
+/** Define a callable data dictionary from one record or tuple schema. */
+export function define_data<
+  const identity extends symbol,
+  const schema extends DataSchema,
+>(
+  identity: identity & UniqueSymbol<identity>,
+  _schema: schema,
+): AsSchema<schema, identity> {
+  return data<AsSchema<schema, identity>>(identity);
 }
 
 /** @ignore */
@@ -300,25 +355,30 @@ export function union<const variants extends UnionVariantsShape>(
   };
 }
 
-/** Create an empty callable dictionary. */
-export function data<dictionary extends Dictionary>(): dictionary;
-/** Create a tagged-union dictionary from a union declaration. */
+/** Create a dictionary using the same identity token as its static description. */
 export function data<dictionary extends Dictionary>(
+  identity: dictionary[typeof type_identity] & symbol,
+): dictionary;
+/** Create a tagged dictionary with an explicit identity token. */
+export function data<dictionary extends Dictionary>(
+  identity: dictionary[typeof type_identity] & symbol,
   construct: UnionDefinition<TaggedUnionShape<dictionary>>,
 ): UnionDictionary<dictionary>;
-/** Create a dictionary backed by a custom value constructor. */
+/** Create a custom dictionary with an explicit identity token. */
 export function data<dictionary extends Dictionary>(
+  identity: dictionary[typeof type_identity] & symbol,
   construct: DataConstructor<dictionary>,
 ): dictionary;
 export function data<dictionary extends Dictionary>(
-  construct?:
+  identity: dictionary[typeof type_identity] & symbol,
+  construct_dictionary?:
     | DataConstructor<dictionary>
-    | UnionDefinition<
-      TaggedUnionShape<dictionary>
-    >,
+    | UnionDefinition<TaggedUnionShape<dictionary>>,
 ): dictionary {
-  const runtime_kind = Symbol("Data.dictionary") as dictionary[typeof kind];
-  const construct_dictionary = construct;
+  if (typeof identity !== "symbol") {
+    throw new TypeError("A dictionary requires its declared identity symbol");
+  }
+  const runtime_kind = identity;
 
   if (construct_dictionary === undefined) {
     const target = raw_data_dictionary<dictionary>();
@@ -328,7 +388,9 @@ export function data<dictionary extends Dictionary>(
   }
 
   if (is_union_definition(construct_dictionary)) {
-    return tagged_data_from_union(construct_dictionary);
+    const target = tagged_data_from_union(construct_dictionary);
+    target[kind] = runtime_kind;
+    return target;
   }
 
   const target = function <item>(
@@ -1068,8 +1130,10 @@ export function install_instance<implementation extends object>(
   }
 
   const installed = Object.create(Object.getPrototypeOf(implementation));
+  const methods = Reflect.ownKeys(implementation);
+  const extensible = Object.isExtensible(target);
 
-  for (const method of Reflect.ownKeys(implementation)) {
+  for (const method of methods) {
     const descriptor = Object.getOwnPropertyDescriptor(implementation, method)!;
     const owner = owners.get(method);
     const existing = target[method];
@@ -1094,7 +1158,7 @@ export function install_instance<implementation extends object>(
       );
     }
 
-    if (descriptor.enumerable) {
+    if (descriptor.enumerable && (!extensible || method in target)) {
       assert_property_assignable(target, method);
     }
 
@@ -1111,11 +1175,11 @@ export function install_instance<implementation extends object>(
     Object.defineProperty(installed, method, descriptor);
   }
 
-  assert_property_assignable(target, token);
+  if (!extensible || token in target) assert_property_assignable(target, token);
   Object.assign(target, installed);
   target[token] = installed;
 
-  for (const method of Reflect.ownKeys(implementation)) {
+  for (const method of methods) {
     owners.set(method, token);
   }
 

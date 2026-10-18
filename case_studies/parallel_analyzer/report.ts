@@ -15,7 +15,7 @@ import type {
   FileSummary,
 } from "./types.ts";
 
-declare const report_identity: unique symbol;
+const report_identity: unique symbol = Symbol("report_identity");
 
 export interface AsReport
   extends
@@ -29,7 +29,7 @@ export interface AsReport
 
 export type ReportValue = Data<AsReport, AnalyzerReport>;
 
-export const Report = data<AsReport>();
+export const Report = data<AsReport>(report_identity);
 
 export function empty_report(): AnalyzerReport {
   return {

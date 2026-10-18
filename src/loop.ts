@@ -1,7 +1,7 @@
 /** @ignore */
-export const loop_done = Symbol("loop.done");
+export const loop_done = /* @__PURE__ */ Symbol("loop.done");
 /** @ignore */
-export const loop_rec = Symbol("loop.rec");
+export const loop_rec = /* @__PURE__ */ Symbol("loop.rec");
 
 /** A terminal loop step carrying the final output. */
 export type LoopDone<output> = readonly [typeof loop_done, output];

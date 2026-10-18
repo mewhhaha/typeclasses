@@ -1,0 +1,15 @@
+{
+  "compiler": "5.9.3",
+  "tolerance": 0.05,
+  "baseline": "round2 final; original revision 6c9751e",
+  "values": {
+    "instantiations": 243852,
+    "root_namespace": 50251,
+    "root_just": 39050,
+    "maybe_just": 16569
+  },
+  "evidence": {
+    "types": "bench/artifacts/round2-types-final.json",
+    "imports": "bench/artifacts/round2-import-final.json"
+  }
+}

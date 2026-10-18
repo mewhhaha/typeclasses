@@ -10,34 +10,39 @@ import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const form_data_identity: unique symbol;
+export const form_data_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "form_data_identity",
+);
 
 /** A name-value pair stored in `FormData`. */
 export type FormDataEntry = readonly [string, FormDataEntryValue];
 /** The raw form payload wrapped by the `FormDataT` dictionary. */
-export type FormDataT = FormData;
+export type RawFormDataT = FormData;
+
+/** @ignore */
+export interface AsFormDataLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawFormDataT;
+}
 
 /** Dictionary type for ordered, potentially repeated form entries. */
 export interface AsFormData
   extends
-    As<AsFormData, typeof form_data_identity>,
+    As<AsFormDataLambda, typeof form_data_identity>,
     Show<AsFormData>,
     Eq<AsFormData>,
     Monoid<AsFormData>,
     Foldable<AsFormData> {
-  /** Higher-kinded slot exposed as a form entry when folding. */
-  readonly [type_item]: FormDataEntry;
   /** Folding always exposes a form entry. */
   readonly [type_element]: FormDataEntry;
-  /** Raw `FormData` representation for this dictionary. */
-  readonly [type_data]: FormDataT;
 }
 
-/** @ignore */
-export type FormDataValue = Data<AsFormData, FormDataEntry>;
+/** A wrapped FormDataT value with its dictionary operations. */
+export type FormDataT = Data<AsFormData, FormDataEntry>;
 
 /** Callable form-data dictionary that clones forms when wrapping them. */
 export const FormDataT: AsFormData = data<AsFormData>(
+  form_data_identity,
   function (form_data) {
     return this.data(clone_form_data(form_data));
   },
@@ -46,12 +51,12 @@ export const FormDataT: AsFormData = data<AsFormData>(
 /** Build wrapped form data by appending entries in iteration order. */
 export function from_entries(
   entries: Iterable<FormDataEntry>,
-): FormDataValue {
-  return FormDataT(form_data_from_entries(entries)) as FormDataValue;
+): FormDataT {
+  return FormDataT(form_data_from_entries(entries)) as FormDataT;
 }
 
 /** Copy a wrapped form into an ordered array of entries. */
-export function to_entries(form_data: FormDataValue): FormDataEntry[] {
+export function to_entries(form_data: FormDataT): FormDataEntry[] {
   return [...form_data.value().entries()];
 }
 

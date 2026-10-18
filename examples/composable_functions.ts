@@ -1,5 +1,5 @@
 import { fn } from "../src/fn.ts";
-import { predicate, type PredicateValue } from "../src/predicate.ts";
+import { type Predicate, predicate } from "../src/predicate.ts";
 import { Category, Profunctor } from "../src/typeclasses.ts";
 
 const shipping_cents_by_country = {
@@ -65,7 +65,7 @@ type OrderPricingDecision =
   };
 
 type OrderPricingPolicy = {
-  readonly accepts: PredicateValue<NormalizedOrder>;
+  readonly accepts: Predicate<NormalizedOrder>;
   readonly rejection_reason: (order: NormalizedOrder) => string;
 };
 

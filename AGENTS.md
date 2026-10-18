@@ -9,7 +9,7 @@ The core pattern is:
 
 - Define a data type and an `As...` dictionary interface with the same raw value
   shape expressed through `type_item` and `type_data`.
-- Export a same-named callable dictionary with `data<As...>()`.
+- Export a same-named callable dictionary with `data<As...>(identity)`.
 - Attach typeclass methods directly to the callable dictionary.
 - Use tests and examples to make the typeclass behavior obvious.
 
@@ -32,7 +32,7 @@ machinery, add it only when it improves the public API or examples.
 - Keep application/sublibrary typeclass definitions in `src/typeclasses.ts`.
 - Keep each data type and its typeclass instances in one file.
 - Keep the `As...` dictionary interface next to the data type and its
-  `data<As...>()` export.
+  `data<As...>(identity)` export.
 - Prefer `switch` statements, then the tagged `match` helper, then explicit `if`
   statements for branching. For tuple-tagged values, typically deconstruct the
   value with `const [tag, payload] = value` and switch on `tag`.

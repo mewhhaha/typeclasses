@@ -8,7 +8,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Show typeclass. */
-export const show_typeclass = Symbol("Show");
+export const show_typeclass = /* @__PURE__ */ Symbol("Show");
 
 /** Dictionary capability for rendering contextual values. */
 export interface Show<dictionary extends Dictionary>
@@ -29,7 +29,7 @@ export type ShowTypeclass = Typeclass<typeof show_typeclass, {
 }>;
 
 /** Operations for rendering values through their Show dictionaries. */
-export const Show: ShowTypeclass = typeclass(show_typeclass, {
+export const Show: ShowTypeclass = /* @__PURE__ */ typeclass(show_typeclass, {
   show<dictionary extends Show<dictionary>>(
     value: Data<dictionary, unknown>,
   ): string {

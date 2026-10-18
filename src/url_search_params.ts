@@ -10,37 +10,42 @@ import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const url_search_params_identity: unique symbol;
+export const url_search_params_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "url_search_params_identity",
+);
 
 /** A name-value pair stored in URL search parameters. */
 export type URLSearchParamsEntry = readonly [string, string];
 /** The raw parameter collection wrapped by the `URLSearchParamsT` dictionary. */
-export type URLSearchParamsT = URLSearchParams;
+export type RawURLSearchParamsT = URLSearchParams;
+
+/** @ignore */
+export interface AsURLSearchParamsLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawURLSearchParamsT;
+}
 
 /** Dictionary type for ordered, potentially repeated URL parameters. */
 export interface AsURLSearchParams
   extends
-    As<AsURLSearchParams, typeof url_search_params_identity>,
+    As<AsURLSearchParamsLambda, typeof url_search_params_identity>,
     Show<AsURLSearchParams>,
     Eq<AsURLSearchParams>,
     Monoid<AsURLSearchParams>,
     Foldable<AsURLSearchParams> {
-  /** Higher-kinded slot exposed as an entry when folding. */
-  readonly [type_item]: URLSearchParamsEntry;
   /** Folding always exposes a name-value pair. */
   readonly [type_element]: URLSearchParamsEntry;
-  /** Raw `URLSearchParams` representation for this dictionary. */
-  readonly [type_data]: URLSearchParamsT;
 }
 
-/** @ignore */
-export type URLSearchParamsValue = Data<
+/** A wrapped URLSearchParamsT value with its dictionary operations. */
+export type URLSearchParamsT = Data<
   AsURLSearchParams,
   URLSearchParamsEntry
 >;
 
 /** Callable parameter dictionary that clones collections when wrapping them. */
 export const URLSearchParamsT: AsURLSearchParams = data<AsURLSearchParams>(
+  url_search_params_identity,
   function (params) {
     return this.data(new URLSearchParams(params));
   },
@@ -49,19 +54,19 @@ export const URLSearchParamsT: AsURLSearchParams = data<AsURLSearchParams>(
 /** Build wrapped parameters by appending entries in iteration order. */
 export function from_entries(
   entries: Iterable<URLSearchParamsEntry>,
-): URLSearchParamsValue {
+): URLSearchParamsT {
   const params = new URLSearchParams();
 
   for (const [name, value] of entries) {
     params.append(name, value);
   }
 
-  return URLSearchParamsT(params) as URLSearchParamsValue;
+  return URLSearchParamsT(params) as URLSearchParamsT;
 }
 
 /** Copy wrapped parameters into an ordered array of entries. */
 export function to_entries(
-  params: URLSearchParamsValue,
+  params: URLSearchParamsT,
 ): URLSearchParamsEntry[] {
   return [...params.value().entries()];
 }

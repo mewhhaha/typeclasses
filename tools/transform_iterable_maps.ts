@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { create_binding_analysis } from "./transform_bindings.ts";
 
 const constructors = new Set([
   "IterableT",
@@ -62,7 +63,7 @@ export function create_iterable_map_fusion(
 
   const immutable = new Map<string, ts.VariableDeclaration>();
   const callbacks = new Map<string, ts.FunctionLikeDeclaration>();
-  const binding_counts = new Map<string, number>();
+  const bindings = create_binding_analysis(source);
   for (const statement of source.statements) {
     if (
       ts.isVariableStatement(statement) &&
@@ -84,53 +85,14 @@ export function create_iterable_map_fusion(
       callbacks.set(statement.name.text, statement);
     }
   }
-  const candidates = new Set([
-    ...functions,
-    ...namespaces,
-    ...roots,
-    ...root_namespaces,
-  ]);
-  function remove_binding(name: ts.BindingName | ts.Identifier | undefined) {
-    if (name === undefined) return;
-    if (ts.isIdentifier(name)) {
-      binding_counts.set(name.text, (binding_counts.get(name.text) ?? 0) + 1);
-      functions.delete(name.text);
-      namespaces.delete(name.text);
-      roots.delete(name.text);
-      root_namespaces.delete(name.text);
-      return;
-    }
-    for (const element of name.elements) {
-      if (!ts.isOmittedExpression(element)) remove_binding(element.name);
-    }
-  }
-  function visit_bindings(node: ts.Node) {
-    if (ts.isImportDeclaration(node)) return;
-    if (
-      ts.isVariableDeclaration(node) || ts.isParameter(node) ||
-      ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
-      ts.isClassDeclaration(node) || ts.isClassExpression(node) ||
-      ts.isEnumDeclaration(node) || ts.isImportEqualsDeclaration(node)
-    ) remove_binding(node.name);
-    if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-      remove_binding(node.name);
-    }
-    ts.forEachChild(node, visit_bindings);
-  }
-  if (candidates.size > 0) ts.forEachChild(source, visit_bindings);
-  for (const name of immutable.keys()) {
-    if (binding_counts.get(name) !== 1) immutable.delete(name);
-  }
-  for (const name of callbacks.keys()) {
-    if (binding_counts.get(name) !== 1) callbacks.delete(name);
-  }
 
   function mapper(expression: ts.Expression): boolean {
     const node = unwrap(expression);
     if (ts.isIdentifier(node)) {
       const callback = callbacks.get(node.text);
       if (
-        callback === undefined ||
+        callback === undefined || bindings.resolve(node) !== callback &&
+          bindings.resolve(node) !== immutable.get(node.text) ||
         callback.pos >= node.pos && !ts.isFunctionDeclaration(callback)
       ) return false;
       return unary_mapper(callback);
@@ -146,7 +108,8 @@ export function create_iterable_map_fusion(
     if (ts.isIdentifier(node)) {
       const declaration = immutable.get(node.text);
       if (
-        declaration?.initializer === undefined || declaration.end >= node.pos ||
+        declaration?.initializer === undefined ||
+        bindings.resolve(node) !== declaration || declaration.end >= node.pos ||
         seen.has(node.text)
       ) return false;
       seen.add(node.text);
@@ -156,7 +119,9 @@ export function create_iterable_map_fusion(
       return false;
     }
     const callee = unwrap(node.expression);
-    if (ts.isIdentifier(callee)) return functions.has(callee.text);
+    if (ts.isIdentifier(callee)) {
+      return functions.has(callee.text) && bindings.imported(callee);
+    }
     if (
       !ts.isPropertyAccessExpression(callee) ||
       callee.questionDotToken !== undefined
@@ -166,14 +131,16 @@ export function create_iterable_map_fusion(
     if (constructors.has(method)) {
       if (
         ts.isIdentifier(receiver) &&
-        (namespaces.has(receiver.text) || roots.has(receiver.text))
+        (namespaces.has(receiver.text) || roots.has(receiver.text)) &&
+        bindings.imported(receiver)
       ) return true;
       if (
         ts.isPropertyAccessExpression(receiver) &&
         receiver.questionDotToken === undefined &&
         receiver.name.text === "iterable" &&
         ts.isIdentifier(receiver.expression) &&
-        root_namespaces.has(receiver.expression.text)
+        root_namespaces.has(receiver.expression.text) &&
+        bindings.imported(receiver.expression)
       ) return true;
     }
     return (method === "map" || method === "filter" || method === "take" ||

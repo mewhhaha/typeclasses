@@ -1,10 +1,11 @@
 import type { RawBox, RawReader, RawResult } from "./shapes.ts";
 // Third-party declarations extend TypeLambda without editing its module.
+// Third-party declarations extend TypeLambda without editing its module.
 import type { TypeLambda, Value } from "./lambda.ts";
 export { combine, map } from "./lambda.ts";
-declare const box_identity: unique symbol;
-declare const result_identity: unique symbol;
-declare const reader_identity: unique symbol;
+const box_identity: unique symbol = Symbol("box_identity");
+const result_identity: unique symbol = Symbol("result_identity");
+const reader_identity: unique symbol = Symbol("reader_identity");
 export interface BoxLambda extends TypeLambda {
   readonly identity: typeof box_identity;
   readonly result: RawBox<this["argument"]>;

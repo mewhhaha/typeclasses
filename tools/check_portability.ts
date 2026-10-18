@@ -57,6 +57,22 @@ async function check_source(source_url: URL): Promise<void> {
   visit(source_file);
 
   function visit(node: ts.Node): void {
+    if (
+      path.startsWith("src/") && ts.isParameter(node) &&
+      ts.isConstructorDeclaration(node.parent) &&
+      node.modifiers?.some((modifier) =>
+        modifier.kind === ts.SyntaxKind.ReadonlyKeyword ||
+        modifier.kind === ts.SyntaxKind.PublicKeyword ||
+        modifier.kind === ts.SyntaxKind.PrivateKeyword ||
+        modifier.kind === ts.SyntaxKind.ProtectedKeyword
+      )
+    ) {
+      add_violation(
+        source_file,
+        node.getStart(source_file),
+        "constructor parameter properties are unsupported by Node strip-only mode",
+      );
+    }
     if (ts.isTypeParameterDeclaration(node) && node.name.text === "out") {
       add_violation(
         source_file,

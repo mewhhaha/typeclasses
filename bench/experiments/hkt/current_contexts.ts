@@ -1,10 +1,11 @@
 import type { RawBox, RawReader, RawResult } from "./shapes.ts";
 // Third-party Functor-only dictionaries use production As/Data machinery.
+// Third-party Functor-only dictionaries use production As/Data machinery.
 import type { As, Data, type_data, type_item } from "../../../src/typeclass.ts";
 import { Functor } from "../../../src/typeclasses/functor.ts";
-declare const box_identity: unique symbol;
-declare const result_identity: unique symbol;
-declare const reader_identity: unique symbol;
+const box_identity: unique symbol = Symbol("box_identity");
+const result_identity: unique symbol = Symbol("result_identity");
+const reader_identity: unique symbol = Symbol("reader_identity");
 export interface AsBox extends As<AsBox, typeof box_identity>, Functor<AsBox> {
   readonly [type_item]: unknown;
   readonly [type_data]: RawBox<this[typeof type_item]>;

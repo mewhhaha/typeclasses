@@ -13,7 +13,7 @@ import { Eq, type Eq as EqDictionary } from "./eq.ts";
 export type Ordering = "lt" | "eq" | "gt";
 
 /** Runtime token for the Ord typeclass. */
-export const ord_typeclass = Symbol("Ord");
+export const ord_typeclass = /* @__PURE__ */ Symbol("Ord");
 
 /** Eq dictionary capability for total ordering. */
 export interface Ord<dictionary extends Dictionary> extends
@@ -76,7 +76,7 @@ export type OrdTypeclass =
   };
 
 /** Operations for ordering values through Ord dictionaries. */
-export const Ord: OrdTypeclass = typeclass(ord_typeclass, {
+export const Ord: OrdTypeclass = /* @__PURE__ */ typeclass(ord_typeclass, {
   derive<dictionary extends Ord<dictionary>>(
     dictionary: Ord<dictionary>,
   ): (minimal: MinimalOrd<dictionary>) => void {

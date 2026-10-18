@@ -19,7 +19,7 @@ import {
   type Lift,
   type TaggedOperation,
 } from "./effects.ts";
-import { configured_dictionary, is_kind_of } from "./internal.ts";
+import { is_kind_of } from "./internal.ts";
 import {
   cell_dictionary,
   type CellIdentity,
@@ -37,39 +37,43 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const writer_identity: unique symbol;
+export const writer_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "writer_identity",
+);
 
 /** A value paired with output accumulated through a Monoid dictionary. */
-export type Writer<
+export type RawWriter<
   output extends Dictionary,
   log,
   item,
 > = readonly [item, Data<output, log>];
+
+/** @ignore */
+export interface AsWriterLambda<output extends Dictionary, log> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawWriter<output, log, this[typeof type_item]>;
+}
 
 /** The callable Writer dictionary for one output and log type. */
 export interface AsWriter<
   output extends Dictionary,
   log,
 > extends
-  As<AsWriter<output, log>, typeof writer_identity>,
+  As<AsWriterLambda<output, log>, typeof writer_identity>,
   Show<AsWriter<output, log>>,
   Monad<AsWriter<output, log>> {
-  /** The item produced by a Writer value. */
-  readonly [type_item]: unknown;
-  /** The item and accumulated output represented by a Writer value. */
-  readonly [type_data]: Writer<output, log, this[typeof type_item]>;
   /** Wraps an item and its accumulated output. */
-  <item>(value: Writer<output, log, item>): WriterValue<output, log, item>;
+  <item>(value: RawWriter<output, log, item>): Writer<output, log, item>;
 }
 
 /** A Writer pair wrapped with its typeclass dictionary. */
-export type WriterValue<
+export type Writer<
   output extends Dictionary,
   log,
   item,
 > = WrappedData<
   AsWriter<output, log>,
-  Writer<output, log, item>,
+  RawWriter<output, log, item>,
   item
 >;
 
@@ -78,11 +82,11 @@ export type WriterConstructor =
   & Omit<AsWriter<Dictionary, unknown>, "pure">
   & {
     <item>(
-      value: Writer<Dictionary, unknown, item>,
+      value: RawWriter<Dictionary, unknown, item>,
     ): Data<AsWriter<Dictionary, unknown>, item>;
     <output extends MonoidDictionary<output>, log, item>(
-      value: Writer<output, log, item>,
-    ): WriterValue<output, log, item>;
+      value: RawWriter<output, log, item>,
+    ): Writer<output, log, item>;
     /** Configures Writer with the empty value for an output Monoid. */
     with<output extends MonoidDictionary<output>, log>(
       empty: Data<output, log>,
@@ -92,7 +96,7 @@ export type WriterConstructor =
 /** The Writer dictionary and configurable constructor. */
 export const Writer = data<
   AsWriter<Dictionary, unknown>
->() as unknown as WriterConstructor;
+>(writer_identity) as unknown as WriterConstructor;
 const writer_kind = Writer[kind];
 const canonical_array_concat = array_concat_method;
 
@@ -108,8 +112,8 @@ export function writer<
 >(
   value: item,
   output: Data<output, log>,
-): WriterValue<output, log, item> {
-  return Writer([value, output] as const) as unknown as WriterValue<
+): Writer<output, log, item> {
+  return Writer([value, output] as const) as unknown as Writer<
     output,
     log,
     item
@@ -119,8 +123,14 @@ export function writer<
 /** Appends output without producing a meaningful item. */
 export function tell<output extends MonoidDictionary<output>, log>(
   output: Data<output, log>,
-): WriterValue<output, log, void> {
+): Writer<output, log, void> {
   return writer(undefined, output);
+}
+
+/** @ignore */
+export interface AsWriterCellLambda<output extends Dictionary, log> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawWriter<output, log, this[typeof type_item]>;
 }
 
 /**
@@ -135,16 +145,15 @@ export interface AsWriterCell<
   output extends Dictionary,
   log,
 > extends
-  As<AsWriterCell<key, output, log>, CellIdentity<typeof writer_identity, key>>,
+  As<
+    AsWriterCellLambda<output, log>,
+    CellIdentity<typeof writer_identity, key>
+  >,
   Show<AsWriterCell<key, output, log>>,
   Monad<AsWriterCell<key, output, log>> {
-  /** The item produced by a cell value. */
-  readonly [type_item]: unknown;
-  /** The item and accumulated output represented by a cell value. */
-  readonly [type_data]: Writer<output, log, this[typeof type_item]>;
   /** Wraps an item and its accumulated output. */
   <item>(
-    value: Writer<output, log, item>,
+    value: RawWriter<output, log, item>,
   ): WriterCellValue<key, output, log, item>;
   /** Appends output to this cell without producing a meaningful item. */
   tell(output: Data<output, log>): WriterCellValue<key, output, log, void>;
@@ -163,7 +172,7 @@ export type WriterCellValue<
   item,
 > = WrappedData<
   AsWriterCell<key, output, log>,
-  Writer<output, log, item>,
+  RawWriter<output, log, item>,
   item
 >;
 
@@ -255,7 +264,7 @@ function make_writer_cell<
     value: item,
     output: Data<output, log>,
   ): WriterCellValue<key, output, log, item> {
-    return dictionary([value, output] as Writer<output, log, item>);
+    return dictionary([value, output] as RawWriter<output, log, item>);
   }
 }
 
@@ -410,7 +419,7 @@ export function run_writer_terminal<
   log,
   item,
 >(
-  writer: WriterValue<output, log, item>,
+  writer: Writer<output, log, item>,
   empty: Data<output, log>,
 ): readonly [item, Data<output, log>];
 /** Runs an effect containing only Writer lifts. */
@@ -426,7 +435,7 @@ export function run_writer_terminal<
   item,
 >(
   value:
-    | WriterValue<output, log, item>
+    | Writer<output, log, item>
     | Effect<requirements, item>,
   empty: Data<output, log> & TerminalWriterEmpty<requirements>,
 ): readonly [item, Data<output, log>];
@@ -457,7 +466,7 @@ export function run_writer_terminal<
 ): readonly [item, Data<output, log>];
 export function run_writer_terminal(
   ...args: readonly unknown[]
-): readonly [unknown, Data<Dictionary, unknown>] {
+): readonly [unknown, unknown] {
   const [effect, empty, runtime_kind] = args.length === 2
     ? [args[0], args[1], writer_kind] as const
     : [
@@ -492,7 +501,7 @@ function run_writer_terminal_kind(
       throw new TypeError("Unhandled effect operation: lift");
     }
 
-    const [value, next_output] = (effect as unknown as WriterValue<
+    const [value, next_output] = (effect as unknown as Writer<
       output,
       log,
       item
@@ -646,7 +655,7 @@ function writer_any<item>(
   return Writer([
     value,
     output as Data<Dictionary, unknown>,
-  ] as Writer<Dictionary, unknown, item>);
+  ] as RawWriter<Dictionary, unknown, item>);
 }
 
 function empty_output(output: unknown): unknown {
@@ -672,10 +681,7 @@ function configured_writer<
   output extends MonoidDictionary<output>,
   log,
 >(empty: Data<output, log>): AsWriter<output, log> {
-  const dictionary = configured_dictionary(
-    Writer,
-    data<AsWriter<output, log>>(),
-  );
+  const dictionary = data<AsWriter<output, log>>(writer_identity);
 
   Show.instance(dictionary)({
     show() {
@@ -731,7 +737,7 @@ function configured_writer<
   function wrap<item>(
     value: item,
     output: Data<output, log>,
-  ): WriterValue<output, log, item> {
+  ): Writer<output, log, item> {
     return dictionary([value, output] as const);
   }
 }

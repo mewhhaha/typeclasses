@@ -8,7 +8,8 @@
     "npm:purify-ts@2.1.4": "2.1.4",
     "npm:rolldown@1.1.5": "1.1.5",
     "npm:true-myth@9.1.0": "9.1.0",
-    "npm:typescript@5.9.3": "5.9.3"
+    "npm:typescript@5.9.3": "5.9.3",
+    "npm:typescript@6.0.3": "6.0.3"
   },
   "npm": {
     "@cloudflare/workerd-darwin-64@1.20260730.1": {
@@ -657,6 +658,10 @@
     },
     "typescript@5.9.3": {
       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "bin": true
+    },
+    "typescript@6.0.3": {
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
       "bin": true
     },
     "undici@7.28.0": {

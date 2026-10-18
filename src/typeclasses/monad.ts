@@ -13,7 +13,7 @@ import { Functor } from "./functor.ts";
 import { monad_error_typeclass } from "./monad_error.ts";
 
 /** Runtime token for the Monad typeclass. */
-export const monad_typeclass = Symbol("Monad");
+export const monad_typeclass = /* @__PURE__ */ Symbol("Monad");
 
 /** Applicative dictionary capability for context-dependent sequencing. */
 export interface Monad<dictionary extends Dictionary>
@@ -81,52 +81,55 @@ type DoErrorMethods<dictionary extends Dictionary> = {
 };
 
 /** Operations for sequencing values through Monad dictionaries. */
-export const Monad: MonadTypeclass = typeclass(monad_typeclass, {
-  derive<dictionary extends Monad<dictionary>>(
-    dictionary: Monad<dictionary>,
-  ): (minimal: MinimalMonad<dictionary>) => void {
-    return (minimal) => {
-      Monad.instance(dictionary)({
-        bind: minimal.bind,
-      });
+export const Monad: MonadTypeclass = /* @__PURE__ */ typeclass(
+  monad_typeclass,
+  {
+    derive<dictionary extends Monad<dictionary>>(
+      dictionary: Monad<dictionary>,
+    ): (minimal: MinimalMonad<dictionary>) => void {
+      return (minimal) => {
+        Monad.instance(dictionary)({
+          bind: minimal.bind,
+        });
 
-      Functor.instance(dictionary)({
-        map<from, to>(
-          this: Data<dictionary, from>,
-          fn: (value: from) => to,
-        ): Data<dictionary, to> {
-          return this.bind((value) => this.pure(fn(value)));
-        },
-      });
+        Functor.instance(dictionary)({
+          map<from, to>(
+            this: Data<dictionary, from>,
+            fn: (value: from) => to,
+          ): Data<dictionary, to> {
+            return this.bind((value) => this.pure(fn(value)));
+          },
+        });
 
-      Applicative.instance(dictionary)({
-        pure: minimal.pure,
-        ap<from, to>(
-          this: Data<dictionary, (value: NoInfer<from>) => to>,
-          value: Data<dictionary, from>,
-        ): Data<dictionary, to> {
-          return this.bind((fn) => value.bind((item) => this.pure(fn(item))));
-        },
-      });
-    };
-  },
+        Applicative.instance(dictionary)({
+          pure: minimal.pure,
+          ap<from, to>(
+            this: Data<dictionary, (value: NoInfer<from>) => to>,
+            value: Data<dictionary, from>,
+          ): Data<dictionary, to> {
+            return this.bind((fn) => value.bind((item) => this.pure(fn(item))));
+          },
+        });
+      };
+    },
 
-  bind<
-    dictionary extends Monad<dictionary>,
-    from,
-    to,
-  >(
-    value: Data<dictionary, from>,
-    fn: (value: from) => Data<dictionary, to>,
-  ): Data<dictionary, to> {
-    const bind = value[monad_typeclass].bind as (
-      this: Data<dictionary, from>,
+    bind<
+      dictionary extends Monad<dictionary>,
+      from,
+      to,
+    >(
+      value: Data<dictionary, from>,
       fn: (value: from) => Data<dictionary, to>,
-    ) => Data<dictionary, to>;
+    ): Data<dictionary, to> {
+      const bind = value[monad_typeclass].bind as (
+        this: Data<dictionary, from>,
+        fn: (value: from) => Data<dictionary, to>,
+      ) => Data<dictionary, to>;
 
-    return bind.call(value, fn);
+      return bind.call(value, fn);
+    },
   },
-});
+);
 
 /** Run generator-based monadic notation with an explicit dictionary. */
 export function Do<dictionary extends Monad<dictionary>, result>(

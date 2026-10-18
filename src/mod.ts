@@ -34,7 +34,7 @@ export type {
 export * as array from "./array.ts";
 /** Namespace containing replayable synchronous iterable operations. */
 export * as iterable from "./iterable.ts";
-/** Namespace containing string-keyed map wrappers and conversions. */
+/** Namespace containing key-preserving map wrappers and conversions. */
 export * as map from "./map.ts";
 /** Namespace containing Set wrappers and instances. */
 export * as set from "./set.ts";

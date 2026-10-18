@@ -4,7 +4,7 @@ import {
   type TaggedOperation,
   type Uses,
 } from "../../src/effects.ts";
-import { type EitherValue, Left, Right } from "../../src/either.ts";
+import { type Either, Left, Right } from "../../src/either.ts";
 import { type AsTask, from_fn } from "../../src/task.ts";
 
 export type FileSystemError =
@@ -18,7 +18,7 @@ export type FileSystemError =
     { readonly path: string; readonly message: string },
   ];
 
-export type FileSystemResult<item> = EitherValue<FileSystemError, item>;
+export type FileSystemResult<item> = Either<FileSystemError, item>;
 
 export type ReadFile =
   & Operation<FileSystemResult<string>>

@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -10,44 +11,49 @@ import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Monoid, Semigroup, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const data_view_identity: unique symbol;
+export const data_view_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "data_view_identity",
+);
 
 /** The raw byte view wrapped by the `DataViewT` dictionary. */
-export type DataViewT = DataView;
+export type RawDataViewT = DataView;
+
+/** @ignore */
+export interface AsDataViewLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawDataViewT;
+}
 
 /** Dictionary type for byte-oriented `DataView` values. */
 export interface AsDataView
   extends
-    As<AsDataView, typeof data_view_identity>,
+    As<AsDataViewLambda, typeof data_view_identity>,
     Show<AsDataView>,
     Eq<AsDataView>,
     Monoid<AsDataView>,
     Foldable<AsDataView> {
-  /** Higher-kinded slot exposed as a byte when folding. */
-  readonly [type_item]: number;
   /** Bytes remain numbers for every operation on this dictionary. */
   readonly [type_element]: number;
-  /** Raw `DataView` representation for this dictionary. */
-  readonly [type_data]: DataViewT;
 }
 
-/** @ignore */
-export type DataViewValue = Data<AsDataView, number>;
+/** A wrapped DataViewT value with its dictionary operations. */
+export type DataViewT = Data<AsDataView, number>;
 
 /** Callable data-view dictionary that clones views when wrapping them. */
 export const DataViewT: AsDataView = data<AsDataView>(
+  data_view_identity,
   function (view) {
     return this.data(clone_data_view(view));
   },
 );
 
 /** Copy byte-like input into a wrapped `DataView`. */
-export function from_bytes(bytes: ArrayLike<number>): DataViewValue {
-  return DataViewT(new DataView(Uint8Array.from(bytes).buffer));
+export function from_bytes(bytes: ArrayLike<number>): DataViewT {
+  return as_data(DataViewT, new DataView(Uint8Array.from(bytes).buffer));
 }
 
 /** Copy the visible bytes of a wrapped view into a new `Uint8Array`. */
-export function to_bytes(view: DataViewValue): Uint8Array {
+export function to_bytes(view: DataViewT): Uint8Array {
   return new Uint8Array(clone_data_view(view.value()).buffer);
 }
 
@@ -75,13 +81,13 @@ Semigroup.instance(DataViewT)({
     out.set(left, 0);
     out.set(right_value, left.length);
 
-    return DataViewT(new DataView(out.buffer));
+    return as_data(DataViewT, new DataView(out.buffer));
   },
 });
 
 Monoid.instance(DataViewT)({
   empty() {
-    return DataViewT(new DataView(new ArrayBuffer(0)));
+    return as_data(DataViewT, new DataView(new ArrayBuffer(0)));
   },
 });
 
@@ -103,12 +109,14 @@ Foldable.instance(DataViewT)({
 
 function clone_data_view(view: DataView): DataView {
   const bytes = to_view_bytes(view);
-  return new DataView(bytes.buffer);
+  return new DataView(Uint8Array.from(bytes).buffer);
 }
 
 function to_view_bytes(view: DataView): Uint8Array {
   return new Uint8Array(
-    view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength),
+    view.buffer,
+    view.byteOffset,
+    view.byteLength,
   );
 }
 

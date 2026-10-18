@@ -26,15 +26,23 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const array_identity: unique symbol;
+export const array_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "array_identity",
+);
 
 /** The immutable array representation wrapped by the ArrayT dictionary. */
-export type ArrayT<item> = readonly item[];
+export type RawArrayT<item> = readonly item[];
+
+/** @ignore */
+export interface AsArrayLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawArrayT<this[typeof type_item]>;
+}
 
 /** Dictionary type for immutable arrays and their list-like instances. */
 export interface AsArray
   extends
-    As<AsArray, typeof array_identity>,
+    As<AsArrayLambda, typeof array_identity>,
     Show<AsArray>,
     Monoid<AsArray>,
     Alternative<AsArray>,
@@ -42,24 +50,21 @@ export interface AsArray
     MonadRec<AsArray>,
     Traversable<AsArray>,
     Ord<AsArray> {
-  /** Higher-kinded slot for the array element type. */
-  readonly [type_item]: unknown;
-  /** Immutable array representation at the selected element type. */
-  readonly [type_data]: ArrayT<this[typeof type_item]>;
 }
 
-type ArrayValue<item> = Data<AsArray, item>;
+/** An immutable array wrapped with its dictionary methods. */
+export type ArrayT<item> = Data<AsArray, item>;
 
 /** Callable immutable-array dictionary with fluent typeclass methods. */
-export const ArrayT: AsArray = data<AsArray>();
+export const ArrayT: AsArray = data<AsArray>(array_identity);
 
 /** Snapshot an array. All positions, including holes, become explicit values. */
-export function from_array<item>(items: readonly item[]): ArrayValue<item> {
+export function from_array<item>(items: readonly item[]): ArrayT<item> {
   return ArrayT([...items]);
 }
 
 /** Copy a wrapped immutable array into a mutable JavaScript array. */
-export function to_array<item>(array: ArrayValue<item>): item[] {
+export function to_array<item>(array: ArrayT<item>): item[] {
   return [...array.value()];
 }
 
@@ -310,7 +315,7 @@ function lift_array_two<result>(
   fn: (...values: unknown[]) => result,
   first: readonly unknown[],
   second: readonly unknown[],
-): ArrayValue<result> {
+): ArrayT<result> {
   const out = new Array<result>(first.length * second.length);
   let out_index = 0;
 
@@ -331,7 +336,7 @@ function lift_array_three<result>(
   first: readonly unknown[],
   second: readonly unknown[],
   third: readonly unknown[],
-): ArrayValue<result> {
+): ArrayT<result> {
   const out = new Array<result>(first.length * second.length * third.length);
   let out_index = 0;
 
@@ -358,24 +363,30 @@ function lift_array_three<result>(
 function lift_array_many<result>(
   fn: (...values: unknown[]) => result,
   first: readonly unknown[],
-  rest: readonly ArrayValue<unknown>[],
-): ArrayValue<result> {
+  rest: readonly ArrayT<unknown>[],
+): ArrayT<result> {
   const sources = [first, ...rest.map((value) => value.value())];
   const values: unknown[] = [];
   const out: result[] = [];
-  visit(0);
-  return ArrayT(out);
-
-  function visit(index: number): void {
-    if (index === sources.length) {
+  const positions = new Array<number>(sources.length).fill(0);
+  let depth = 0;
+  while (depth >= 0) {
+    if (depth === sources.length) {
       out.push(fn(...values));
-      return;
+      depth -= 1;
+      continue;
     }
-    for (const item of sources[index]) {
-      values[index] = item;
-      visit(index + 1);
+    const position = positions[depth];
+    if (position === sources[depth].length) {
+      positions[depth] = 0;
+      depth -= 1;
+      continue;
     }
+    values[depth] = sources[depth][position];
+    positions[depth] += 1;
+    depth += 1;
   }
+  return ArrayT(out);
 }
 
 /** Explicit shallow snapshot; later source mutations are invisible. */
@@ -383,6 +394,18 @@ export const from_snapshot = from_array;
 /** Wrap an array by reference; later mutations remain visible. */
 export function from_array_view<item>(
   items: readonly item[],
-): ArrayValue<item> {
+): ArrayT<item> {
   return ArrayT(items);
+}
+
+/** Pair every position, including holes, with its zero-based index. */
+export function indexed<item>(
+  array: ArrayT<item>,
+): ArrayT<readonly [number, item]> {
+  const source = array.value();
+  const out = new Array<readonly [number, item]>(source.length);
+  for (let index = 0; index < source.length; index += 1) {
+    out[index] = [index, source[index]];
+  }
+  return ArrayT(out);
 }

@@ -1,0 +1,59 @@
+{
+  "source_evidence": "round2-types-final.json and round2-import-final.json",
+  "gates": [
+    {
+      "name": "verify",
+      "command": "TMPDIR=/var/tmp npm exec --yes --package=bun@1.4.3 -- deno task verify",
+      "exit_code": 0,
+      "summary": [
+        "ok | 339 passed | 0 failed | 1 ignored (19s)",
+        "| All files                                            |     87.3 |       81.6 |   79.5 |",
+        "ok | 6 passed | 0 failed (65ms)",
+        "ok | 10 passed | 0 failed (259ms)",
+        "ok | 88 passed | 0 failed (13s)"
+      ],
+      "log_sha256": "ad4516461a372d0f7921202c4c399359d30f67f4c24c6b495ffff8848deaf836"
+    },
+    {
+      "name": "tests",
+      "command": "TMPDIR=/var/tmp deno test",
+      "exit_code": 0,
+      "summary": [
+        "ok | 347 passed | 0 failed | 1 ignored (4s)"
+      ],
+      "log_sha256": "02653e6d61bc234163c3db23479adc2720c23f69f31e0e7bf868e866f2d2ec09"
+    },
+    {
+      "name": "budgets",
+      "command": "TMPDIR=/var/tmp deno task check:budgets",
+      "exit_code": 0,
+      "summary": [],
+      "log_sha256": "1e0dc76ada5bd1f07d9019138ffd558fe78f3a27f710d1ecb5cf87d6a182dfaf"
+    },
+    {
+      "name": "toolchains",
+      "command": "TMPDIR=/var/tmp npm exec --yes --package=bun@1.4.3 -- deno task check:toolchains",
+      "exit_code": 0,
+      "summary": [],
+      "log_sha256": "10c8a7b37e2ec61110d0dfffafb48e123bd07597df700958ab37a5f3f6d40867"
+    },
+    {
+      "name": "publish",
+      "command": "TMPDIR=/var/tmp deno task publish:dry-run",
+      "exit_code": 0,
+      "summary": [
+        "Success Dry run complete"
+      ],
+      "log_sha256": "4324f0570907eb8003e4d15fb478ff2867bc9c52df7ff5c28b244ac468af4fc9"
+    },
+    {
+      "name": "compiler_compatibility",
+      "compiler": "6.0.3",
+      "exit_code": 0,
+      "summary": "4 passed, 9 filtered out; precise maps, bundler maps,10k execution and generated strict types",
+      "evidence": "round2-compiler-compat.json"
+    }
+  ],
+  "ignored": "one existing intentional test",
+  "notes": "Bun supplied by the pinned npm package. No registry artifact published."
+}

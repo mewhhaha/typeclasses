@@ -35,7 +35,9 @@ export function match<value extends MatchValue, output>(
   cases: MatchCases<value, output>,
 ): output {
   if (is_data(value)) {
-    return value.match(cases as TaggedMatchCases<TaggedValue, output>);
+    return (value as unknown as {
+      match(cases: TaggedMatchCases<TaggedValue, output>): output;
+    }).match(cases as TaggedMatchCases<TaggedValue, output>);
   }
   return match_tagged(
     value as TaggedValue,

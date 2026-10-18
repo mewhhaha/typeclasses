@@ -1,0 +1,396 @@
+{
+  "captured_at": "2026-10-17T23:50:38.882Z",
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "spec": {
+    "baseline": [
+      "deno",
+      "run",
+      "--no-check",
+      "bench/experiments/round2_pair_workload.ts",
+      "nested"
+    ],
+    "candidate": [
+      "deno",
+      "run",
+      "--no-check",
+      "bench/experiments/round2_pair_workload.ts",
+      "fused"
+    ],
+    "blocks": 6,
+    "warmups": 1,
+    "cwd": "/var/tmp/typeclasses-round2-collections-measure",
+    "inputs": [
+      "src/assert.ts",
+      "src/cell.ts",
+      "src/data_value.ts",
+      "src/date.ts",
+      "src/error.ts",
+      "src/fn.ts",
+      "src/identity.ts",
+      "src/inspect.ts",
+      "src/internal.ts",
+      "src/loop.ts",
+      "src/parallel.ts",
+      "src/predicate.ts",
+      "src/quickcheck.ts",
+      "src/readable_stream.ts",
+      "src/regexp.ts",
+      "src/set.ts",
+      "src/tagged.ts",
+      "src/tuple.ts",
+      "src/typeclasses.ts",
+      "src/weak_map.ts",
+      "src/weak_set.ts",
+      "src/array.ts",
+      "src/array_buffer.ts",
+      "src/async_iterable.ts",
+      "src/data_view.ts",
+      "src/effects.ts",
+      "src/either.ts",
+      "src/examples.ts",
+      "src/except.ts",
+      "src/form_data.ts",
+      "src/iterable.ts",
+      "src/list.ts",
+      "src/map.ts",
+      "src/maybe.ts",
+      "src/mod.ts",
+      "src/prelude.ts",
+      "src/reader.ts",
+      "src/record.ts",
+      "src/state.ts",
+      "src/stm.ts",
+      "src/task.ts",
+      "src/traversal.ts",
+      "src/typeclass.ts",
+      "src/typed_array.ts",
+      "src/url_search_params.ts",
+      "src/validation.ts",
+      "src/writer.ts",
+      "src/computation.ts",
+      "src/handlers.ts",
+      "src/typeclasses/alternative.ts",
+      "src/typeclasses/arrow.ts",
+      "src/typeclasses/bifunctor.ts",
+      "src/typeclasses/category.ts",
+      "src/typeclasses/comonad.ts",
+      "src/typeclasses/contravariant.ts",
+      "src/typeclasses/eq.ts",
+      "src/typeclasses/functor.ts",
+      "src/typeclasses/mod.ts",
+      "src/typeclasses/monad_rec.ts",
+      "src/typeclasses/monoid.ts",
+      "src/typeclasses/parse.ts",
+      "src/typeclasses/profunctor.ts",
+      "src/typeclasses/semigroup.ts",
+      "src/typeclasses/show.ts",
+      "src/typeclasses/traversable.ts",
+      "src/typeclasses/applicative.ts",
+      "src/typeclasses/foldable.ts",
+      "src/typeclasses/monad.ts",
+      "src/typeclasses/monad_error.ts",
+      "src/typeclasses/ord.ts",
+      "bench/experiments/round2_pair_workload.ts",
+      "tools/paired_bench.ts"
+    ],
+    "metric": "elapsed_ms"
+  },
+  "metric": "elapsed_ms",
+  "order": "ABBA",
+  "observations": [
+    {
+      "variant": "A",
+      "value": 126.74695000000001,
+      "wall_ms": 217.55602400000004,
+      "stdout": "{\"elapsed_ms\":126.74695000000001,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 80.59028500000001,
+      "wall_ms": 129.6619300000001,
+      "stdout": "{\"elapsed_ms\":80.59028500000001,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 83.168814,
+      "wall_ms": 133.47520700000007,
+      "stdout": "{\"elapsed_ms\":83.168814,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 133.960419,
+      "wall_ms": 199.1103599999999,
+      "stdout": "{\"elapsed_ms\":133.960419,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 126.560005,
+      "wall_ms": 187.43001299999992,
+      "stdout": "{\"elapsed_ms\":126.560005,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 77.974954,
+      "wall_ms": 126.04962599999999,
+      "stdout": "{\"elapsed_ms\":77.974954,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 81.6249,
+      "wall_ms": 132.651431,
+      "stdout": "{\"elapsed_ms\":81.6249,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 126.243574,
+      "wall_ms": 225.00035100000014,
+      "stdout": "{\"elapsed_ms\":126.243574,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 127.035429,
+      "wall_ms": 225.08514300000002,
+      "stdout": "{\"elapsed_ms\":127.035429,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 81.95084,
+      "wall_ms": 161.77597000000014,
+      "stdout": "{\"elapsed_ms\":81.95084,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 74.777738,
+      "wall_ms": 123.11303499999985,
+      "stdout": "{\"elapsed_ms\":74.777738,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 128.277629,
+      "wall_ms": 190.719204,
+      "stdout": "{\"elapsed_ms\":128.277629,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 137.24901800000004,
+      "wall_ms": 238.69243200000028,
+      "stdout": "{\"elapsed_ms\":137.24901800000004,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 83.24556999999999,
+      "wall_ms": 139.67912699999988,
+      "stdout": "{\"elapsed_ms\":83.24556999999999,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 75.919377,
+      "wall_ms": 125.33165100000042,
+      "stdout": "{\"elapsed_ms\":75.919377,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 124.80309700000001,
+      "wall_ms": 194.9059299999999,
+      "stdout": "{\"elapsed_ms\":124.80309700000001,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 133.54539,
+      "wall_ms": 194.2249670000001,
+      "stdout": "{\"elapsed_ms\":133.54539,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 77.07073499999998,
+      "wall_ms": 146.27804700000024,
+      "stdout": "{\"elapsed_ms\":77.07073499999998,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 85.39812999999998,
+      "wall_ms": 160.91010499999993,
+      "stdout": "{\"elapsed_ms\":85.39812999999998,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 133.05476800000002,
+      "wall_ms": 194.07265600000028,
+      "stdout": "{\"elapsed_ms\":133.05476800000002,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 135.528519,
+      "wall_ms": 198.79247600000008,
+      "stdout": "{\"elapsed_ms\":135.528519,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 86.21334999999999,
+      "wall_ms": 154.3055129999998,
+      "stdout": "{\"elapsed_ms\":86.21334999999999,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "B",
+      "value": 78.31524999999999,
+      "wall_ms": 129.28819999999996,
+      "stdout": "{\"elapsed_ms\":78.31524999999999,\"checksum\":200000}\n",
+      "stderr": ""
+    },
+    {
+      "variant": "A",
+      "value": 139.171873,
+      "wall_ms": 208.36476799999946,
+      "stdout": "{\"elapsed_ms\":139.171873,\"checksum\":200000}\n",
+      "stderr": ""
+    }
+  ],
+  "blocks": [
+    [
+      126.74695000000001,
+      80.59028500000001,
+      83.168814,
+      133.960419
+    ],
+    [
+      126.560005,
+      77.974954,
+      81.6249,
+      126.243574
+    ],
+    [
+      127.035429,
+      81.95084,
+      74.777738,
+      128.277629
+    ],
+    [
+      137.24901800000004,
+      83.24556999999999,
+      75.919377,
+      124.80309700000001
+    ],
+    [
+      133.54539,
+      77.07073499999998,
+      85.39812999999998,
+      133.05476800000002
+    ],
+    [
+      135.528519,
+      86.21334999999999,
+      78.31524999999999,
+      139.171873
+    ]
+  ],
+  "summary": {
+    "blocks": 6,
+    "speedup": 1.6267168567439718,
+    "confidence_95": [
+      1.6021476002661477,
+      1.651177439280513
+    ]
+  },
+  "source_hashes": {
+    "src/assert.ts": "66996bf65f4948b9246441b19dd93e3995c9c61a9d2661f0482ab62e7d4af3b9",
+    "src/cell.ts": "785b1262446eeaf4a52bf3440c221e48da5d13a6f6d4be6d7a3cb7cf7b8cd1be",
+    "src/data_value.ts": "ef5256b981bfe0c6136d94b6eeb1cdc1f25358604a11ce50cec5fff65caa7a63",
+    "src/date.ts": "454db9741db43665cc67d41ffd307c37ebfff7fa82eff8063b3ac9c40343a146",
+    "src/error.ts": "3a568b34958bec0ee9be0d7f5d9c46bcd734ddeb226f4951105c2180b009e659",
+    "src/fn.ts": "1acd89d4208c19db8d691b34e0cfd43da2ea33eab61d83d40a0b37ad0f8df0bf",
+    "src/identity.ts": "324b6a8ad86d25c945c637a14e1c7dc47e897532ec4c3544a1b3b21ecd42dc40",
+    "src/inspect.ts": "79acef69a89cdc6e420de6cfa640628c86d2cac52a74c3df171a794253bf989c",
+    "src/internal.ts": "36d202e4d3e3f82dd8309345559f9a338eca31279e1578baac2f2b824f9882aa",
+    "src/loop.ts": "5cc7b5fbf2f2c7259622b1ebc1916a7694c5524045275637a5ab649e1ba45ce2",
+    "src/parallel.ts": "05b3f5f417635ce8efb2293468d893021320bf619dabdde31b52e93596f95af2",
+    "src/predicate.ts": "245f93c5dd118ab2558c6dfbb7f05657afd2e2dacc26bf841cfd99b8fc008a00",
+    "src/quickcheck.ts": "c8f33ad8f953c180a9bbc67546a820ee4bdbc7a44c2004e17889c862e61ec9d7",
+    "src/readable_stream.ts": "256fdcc0559114c00c1b4ef727f3118680513962234eb131176e24a4d6e4f2a0",
+    "src/regexp.ts": "ba7e4065ee4e57cfb63ae5b11036e0a5378c707410d58133b911a6c0f2bc0dcb",
+    "src/set.ts": "0deb36022422be3a6788505ec3b13c631e5b20a8503e0e99ac5803ab6d02588a",
+    "src/tagged.ts": "50339a34be3bb04e93caac04aeb34a2938c683a29f690d2756ee2003d53c63bc",
+    "src/tuple.ts": "25e21417899cceaffd93df5d1bd38300548458bd90cde9906d2ef9dafc15ce0c",
+    "src/typeclasses.ts": "1b58b3133bf32e1e2bd160b79cedcacffb0c373920e2ee55f7deff26e32beb95",
+    "src/weak_map.ts": "40a67a6d0b1c33d4c7d9d3a888ee2fb54a1c9ae6fc08b1d511be942d3d923d88",
+    "src/weak_set.ts": "716ddadd0e7272e230b0094ecc5bbdfcd47ac993c4b19949717329724e141f95",
+    "src/array.ts": "6a74719cc5e43b6f145e2741b2a01c2e470fe8ccf191a0f3a1ee2f0f8b349bb2",
+    "src/array_buffer.ts": "d6e25bf7e153b545caa7f51816f9b2052120499b2985633097ff808950688646",
+    "src/async_iterable.ts": "9127f99312a2570a5c3ca45e4376218835c88cb1d4c0763eeba15411b4f9d1f3",
+    "src/data_view.ts": "884fb18e69fdb7121fd0b0fd50679c57a17812259ed03ce36543fb5f7495a430",
+    "src/effects.ts": "9d11e1e9c4d630b5ee6cb7f0d72812da2f1ad7e9c8dd0a9f05ed6961cae07218",
+    "src/either.ts": "b4eeca23dd390007bd4727d7afe3c830f497b79ee5aae06ff235a8e5924d2148",
+    "src/examples.ts": "1d423c3004d2f563a6935555593317a1456de2e3ac523a5ffaee278312e07fb3",
+    "src/except.ts": "a59a9fae7bf6f49eee0c96107eaf2341b6537cf6c2cb06ded6704d57fdd0bf25",
+    "src/form_data.ts": "ec4e47c7ff613d4d928b9407e0b6f8c4fe0f7098ce294f4bcee5c9823497f042",
+    "src/iterable.ts": "65800581b9fdd56f2efe055afee0e57ce4dd832e62169ecf903ce9a25b822531",
+    "src/list.ts": "851de3feebef3a40d935682cfe2b7ce5201a01e8175faebdf4323f0b33d8c1b2",
+    "src/map.ts": "840a4adb74adb70ea83a16d41d4d146f6a78b5beebf1b3184c31e0677dcf20c4",
+    "src/maybe.ts": "ad7145c816ad1bbb0757c19b0520486452c2d5609b717df64caa342c5cac782f",
+    "src/mod.ts": "a6aaaa69bc66dfe67ccfb7800ad4c6efdc08e807e9d61de38f32d1891955bc08",
+    "src/prelude.ts": "4f549e98a1155b85bfd445c7d1de28f0295fe589890f5a1064d2a90cca9ce5d3",
+    "src/reader.ts": "25f8ff2acf925c5b81ae460e0500f9d5ec1539d84d20133940d7837d6ed7fd6c",
+    "src/record.ts": "a683a54eeb55b7827586e83aad4faa259734d58017d048afbea1ba386dae1b82",
+    "src/state.ts": "09aa98660d628d98cb38694a768fc6755b47c4ff95610e4e4c495f60165b2028",
+    "src/stm.ts": "e299f55591a78e6d1981d75f5f067d61130e6972ca102c3dd327d65a06667aa6",
+    "src/task.ts": "705af3b266fb8d8480fde51a15780e11cdd0e0405dd50ce5472a3d789b8b2a2a",
+    "src/traversal.ts": "b88132f52c3d61e9ba4c7c7bd51ddadca84e2f9f3cc23cec1fd9a4e451cfda93",
+    "src/typeclass.ts": "d881d6ea824fec2697d7c2ed25329e3d064a9ef949da03c79304486f18d56046",
+    "src/typed_array.ts": "7ee6f20a8ed1f7722e4b863d101cc3d80f567b85d2e4c8abfebc6ecae3516e35",
+    "src/url_search_params.ts": "f2df36806af29b481ae4845ddffbc2a1559246e32083dbc27e65b42ed7cd579f",
+    "src/validation.ts": "9c36eb4e2adc99cc2f09e67a74b0f1c266fa519f9f9ea76795a51afa370dc720",
+    "src/writer.ts": "5a89f60104a1166aadda28e20ef8350ca18e3d51510d4c271f8ef8d836ecee05",
+    "src/computation.ts": "c113fac216c638a79a438dde7ef754b399f22a2e15c21810004873441b292599",
+    "src/handlers.ts": "983527862fd8aae9e5f20d004ff3518dd7a45eba653065408ae51c27819cd5a4",
+    "src/typeclasses/alternative.ts": "2f391adf7de7e80110b591922f85c81d75e005d0e514c774c2d95a54bfb65ab3",
+    "src/typeclasses/arrow.ts": "e1acc934b2f5ca121d7ce353acef09adeb569d0d8378aaf69c183e171a8f49f2",
+    "src/typeclasses/bifunctor.ts": "c0b894a1eb1bc75e3115c4c1ea07123d0131f707787841ce3f36e02e154dd2b4",
+    "src/typeclasses/category.ts": "741924070c55c3098a303637566b29ea54fc03c543412c1713d51eec15741c35",
+    "src/typeclasses/comonad.ts": "6d8ada90b31827ea3714535a949964f92f04adba2a665682dd95f964326c9b9a",
+    "src/typeclasses/contravariant.ts": "815ec2ca91e59b877f48b6774078cc157b75ade8597f6e8a97dd176f0fdd5ae5",
+    "src/typeclasses/eq.ts": "3db3a5baf796bf52817b01fe06eb76641c78af941c03f418e5413812bc1db379",
+    "src/typeclasses/functor.ts": "6c3198e5a9f8b404f1c1432c985cbbc3d2a9195428fe8cbd493034f5cfa61b3d",
+    "src/typeclasses/mod.ts": "91ba72a009ede1e0d0424ec009d7f55c16f5ac54e82cd0f5cbc64a08f1c06514",
+    "src/typeclasses/monad_rec.ts": "20c921cc60268012e6334f8fd446e23b538ac869f31271e428e48ae19de9cfae",
+    "src/typeclasses/monoid.ts": "c31e064633630d6ad88cda35339350f808374b29774f77873d5719b8f4f0e961",
+    "src/typeclasses/parse.ts": "e909da107fba471bb0acab7b0ef80c36c158cb106179946eedf49d93e0d66353",
+    "src/typeclasses/profunctor.ts": "35733cf3cb92f2418920b6c9de1f13960477a3280c80bf9bcc43836469c4cfa7",
+    "src/typeclasses/semigroup.ts": "d48acb9a139c55375ffa1ed8b23125b2bd3d10db5b1e24d1c46bebe3d82c97b1",
+    "src/typeclasses/show.ts": "59aeba266e97bdc38e61c19196169e1e533b19973928777a62a9592594cee89e",
+    "src/typeclasses/traversable.ts": "8f1e5d42fe92ca3a1f370b61a7463e96f1ecc2a6743907bfdba36b120cf81edb",
+    "src/typeclasses/applicative.ts": "cceea55aeedb3c4c5660b892fb984a6d53e0d5c4a6f04e8e8281a92a3817ba2d",
+    "src/typeclasses/foldable.ts": "b7079dd3c74bbacfd71fe4e593ff2277d72c80c89decb9ef1c8eda8d3e3637ff",
+    "src/typeclasses/monad.ts": "e8713508200d7eb1ac0ecb1faac6ea4756eb641a6b7de60898ada817bfc1d378",
+    "src/typeclasses/monad_error.ts": "82d0a3bda1ecd58393348bee9ff43aeb59003af6521cafdb06e609983f9527a1",
+    "src/typeclasses/ord.ts": "9f5231489bde35c9e7a03bdabccc4944c2b2de390de0796930f5915f2a7576a9",
+    "bench/experiments/round2_pair_workload.ts": "628c78cbfbf9fca4e14a833bd3f23b54d6f6ea12e5a2e6de94d35dc24e56220f",
+    "tools/paired_bench.ts": "51ebe6d4cf0af80b437be002926639dfa12c84cd5a5c0c6f2736bc8286450f64"
+  },
+  "changed_inputs": [],
+  "limitations": "95% percentile bootstrap over ABBA blocks; descriptive on one host, not protection against systematic bias. Process startup is included unless metric selects workload timing."
+}

@@ -1,6 +1,6 @@
 import { assert_equals } from "./assert.ts";
-import { Either, type EitherValue, Left, Right } from "./either.ts";
-import { run_task, succeed, Task, type TaskValue } from "./task.ts";
+import { Either, Left, Right } from "./either.ts";
+import { run_task, succeed, Task } from "./task.ts";
 import { MonadError } from "./typeclasses.ts";
 
 Deno.test("bottom-valued Either failures infer their recovery result", () => {
@@ -15,8 +15,8 @@ Deno.test("bottom-valued Either failures infer their recovery result", () => {
     (error) => Right(error.length),
   );
 
-  expect_type<EitherValue<string, number>>(fluent);
-  expect_type<EitherValue<string, number>>(generic);
+  expect_type<Either<string, number>>(fluent);
+  expect_type<Either<string, number>>(generic);
   assert_equals(fluent.value(), ["Right", 7]);
   assert_equals(generic.value(), ["Right", 7]);
 });
@@ -42,10 +42,10 @@ Deno.test("recovery preserves ordinary successes and rethrows", () => {
     (error) => Left(error.toUpperCase()),
   );
 
-  expect_type<EitherValue<string, number>>(successful);
-  expect_type<EitherValue<string, number>>(generic_success);
-  expect_type<EitherValue<string, number>>(rethrown);
-  expect_type<EitherValue<string, number>>(generic_rethrow);
+  expect_type<Either<string, number>>(successful);
+  expect_type<Either<string, number>>(generic_success);
+  expect_type<Either<string, number>>(rethrown);
+  expect_type<Either<string, number>>(generic_rethrow);
   assert_equals(successful.value(), ["Right", 1]);
   assert_equals(generic_success.value(), ["Right", 1]);
   assert_equals(rethrown.value(), ["Left", "MISSING"]);
@@ -69,9 +69,9 @@ Deno.test("bottom-valued Task failures infer recovery without running it early",
     return succeed(2);
   });
 
-  expect_type<TaskValue<number>>(fluent);
-  expect_type<TaskValue<number>>(generic);
-  expect_type<TaskValue<number>>(ordinary);
+  expect_type<Task<number>>(fluent);
+  expect_type<Task<number>>(generic);
+  expect_type<Task<number>>(ordinary);
   assert_equals(calls, 0);
   assert_equals(await run_task(fluent), 7);
   assert_equals(await run_task(generic), 7);

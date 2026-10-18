@@ -10,7 +10,9 @@ import { inspect } from "./inspect.ts";
 import { Eq, Foldable, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const typed_array_identity: unique symbol;
+export const typed_array_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "typed_array_identity",
+);
 
 /** Any JavaScript typed array whose elements are numbers. */
 export type NumericTypedArray =
@@ -39,7 +41,7 @@ export type TypedArrayElement<item> = item extends number ? number
   : number | bigint;
 
 /** The typed-array representation wrapped by the `TypedArrayT` dictionary. */
-export type TypedArrayT<item = number | bigint> = unknown extends item
+export type RawTypedArrayT<item = number | bigint> = unknown extends item
   ? AnyTypedArray
   : [item] extends [never] ? never
   : [item] extends [number] ? NumericTypedArray
@@ -47,23 +49,27 @@ export type TypedArrayT<item = number | bigint> = unknown extends item
   : [item] extends [number | bigint] ? AnyTypedArray
   : never;
 
+/** @ignore */
+export interface AsTypedArrayLambda<
+  element extends number | bigint = number | bigint,
+> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawTypedArrayT<element>;
+}
+
 /** Dictionary type shared by numeric and big-integer typed arrays. */
 export interface AsTypedArray<element extends number | bigint = number | bigint>
   extends
-    As<AsTypedArray<element>, typeof typed_array_identity>,
+    As<AsTypedArrayLambda<element>, typeof typed_array_identity>,
     Show<AsTypedArray<element>>,
     Eq<AsTypedArray<element>>,
     Foldable<AsTypedArray<element>> {
-  /** Higher-kinded slot for the typed-array element type. */
-  readonly [type_item]: TypedArrayElement<element>;
-  /** Typed-array representation at the selected element type. */
-  readonly [type_data]: TypedArrayT<element>;
   /** Numeric arrays expose numbers; big-integer arrays expose bigints. */
   readonly [type_element]: TypedArrayElement<element>;
 }
 
-/** @ignore */
-export type TypedArrayValue<item> = Data<
+/** A wrapped TypedArrayT value with its dictionary operations. */
+export type TypedArrayT<item> = Data<
   AsTypedArray<TypedArrayElement<item>>,
   TypedArrayElement<item>
 >;
@@ -71,10 +77,10 @@ export type TypedArrayValue<item> = Data<
 /** Callable dictionary that infers numeric and big-integer elements from input. */
 export type TypedArrayConstructor =
   & {
-    <array extends AnyTypedArray>(array: array): TypedArrayValue<
+    <array extends AnyTypedArray>(array: array): TypedArrayT<
       TypedArrayItem<array>
     >;
-    <item extends number | bigint>(array: TypedArrayT<item>): TypedArrayValue<
+    <item extends number | bigint>(array: RawTypedArrayT<item>): TypedArrayT<
       item
     >;
   }
@@ -82,6 +88,7 @@ export type TypedArrayConstructor =
 
 /** Callable typed-array dictionary that preserves and clones the input kind. */
 export const TypedArrayT: TypedArrayConstructor = data<AsTypedArray>(
+  typed_array_identity,
   function (array) {
     return this.data(clone_typed_array(array));
   },
@@ -90,15 +97,15 @@ export const TypedArrayT: TypedArrayConstructor = data<AsTypedArray>(
 /** Wrap a defensive copy of a JavaScript typed array. */
 export function from_typed_array<array extends AnyTypedArray>(
   array: array,
-): TypedArrayValue<TypedArrayItem<array>> {
+): TypedArrayT<TypedArrayItem<array>> {
   return TypedArrayT(array);
 }
 
 /** Copy a wrapped value into a typed array of the same concrete kind. */
 export function to_typed_array<item>(
-  array: TypedArrayValue<item>,
-): TypedArrayT<item> {
-  return clone_typed_array(array.value()) as TypedArrayT<item>;
+  array: TypedArrayT<item>,
+): RawTypedArrayT<item> {
+  return clone_typed_array(array.value()) as RawTypedArrayT<item>;
 }
 
 Show.instance(TypedArrayT)({

@@ -4,7 +4,7 @@ import {
   from_array,
   from_factory,
   from_iterable,
-  type IterableValue,
+  type IterableT,
   take,
   to_array,
 } from "./iterable.ts";
@@ -94,11 +94,11 @@ Deno.test("filter and take close upstream on consumer exits and callback failure
 
 Deno.test("iterable filters preserve type-guard narrowing through maps and bounds", () => {
   const values = from_array<number | string>([1, "two", 3, "four"]);
-  const standalone: IterableValue<string> = filter(
+  const standalone: IterableT<string> = filter(
     values,
     (item): item is string => typeof item === "string",
   );
-  const fluent: IterableValue<string> = values.filter(
+  const fluent: IterableT<string> = values.filter(
     (item): item is string => typeof item === "string",
   ).take(1);
   assert_equals(to_array(standalone.map((item) => item.length)), [3, 4]);

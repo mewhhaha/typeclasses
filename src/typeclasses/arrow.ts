@@ -18,7 +18,7 @@ import type {
 } from "./category.ts";
 
 /** Runtime token for the Arrow typeclass. */
-export const arrow_typeclass = Symbol("Arrow");
+export const arrow_typeclass = /* @__PURE__ */ Symbol("Arrow");
 
 /** Rebuilding context for Arrow dictionaries. */
 export interface ArrowContext extends CategoryContext {}
@@ -115,54 +115,59 @@ export type ArrowTypeclass = Typeclass<typeof arrow_typeclass, {
 }>;
 
 /** Operations for constructing and pairing Arrow values. */
-export const Arrow: ArrowTypeclass = typeclass(arrow_typeclass, {
-  arr<dictionary extends ArrowDefinition, from, to>(
-    dictionary: dictionary,
-    fn: (value: from) => to,
-  ): Data<AppliedData<CategoryContextOf<dictionary>, from>, to> {
-    const implementation =
-      dictionary[arrow_typeclass] as unknown as ArrowImplementation<dictionary>;
+export const Arrow: ArrowTypeclass = /* @__PURE__ */ typeclass(
+  arrow_typeclass,
+  {
+    arr<dictionary extends ArrowDefinition, from, to>(
+      dictionary: dictionary,
+      fn: (value: from) => to,
+    ): Data<AppliedData<CategoryContextOf<dictionary>, from>, to> {
+      const implementation =
+        dictionary[arrow_typeclass] as unknown as ArrowImplementation<
+          dictionary
+        >;
 
-    return call_typeclass_method(
-      implementation.arr<from, to>,
-      dictionary,
-      fn,
-    );
+      return call_typeclass_method(
+        implementation.arr<from, to>,
+        dictionary,
+        fn,
+      );
+    },
+
+    first<dictionary extends ArrowDefinition, to, extra>(
+      arrow: Data<dictionary, to>,
+    ): Data<
+      AppliedData<
+        CategoryContextOf<dictionary>,
+        readonly [CategoryInput<dictionary>, extra]
+      >,
+      readonly [to, extra]
+    > {
+      const implementation =
+        arrow[arrow_typeclass] as unknown as ArrowImplementation<dictionary>;
+
+      return call_typeclass_method(
+        implementation.first<to, extra>,
+        arrow,
+      );
+    },
+
+    second<dictionary extends ArrowDefinition, to, extra>(
+      arrow: Data<dictionary, to>,
+    ): Data<
+      AppliedData<
+        CategoryContextOf<dictionary>,
+        readonly [extra, CategoryInput<dictionary>]
+      >,
+      readonly [extra, to]
+    > {
+      const implementation =
+        arrow[arrow_typeclass] as unknown as ArrowImplementation<dictionary>;
+
+      return call_typeclass_method(
+        implementation.second<to, extra>,
+        arrow,
+      );
+    },
   },
-
-  first<dictionary extends ArrowDefinition, to, extra>(
-    arrow: Data<dictionary, to>,
-  ): Data<
-    AppliedData<
-      CategoryContextOf<dictionary>,
-      readonly [CategoryInput<dictionary>, extra]
-    >,
-    readonly [to, extra]
-  > {
-    const implementation =
-      arrow[arrow_typeclass] as unknown as ArrowImplementation<dictionary>;
-
-    return call_typeclass_method(
-      implementation.first<to, extra>,
-      arrow,
-    );
-  },
-
-  second<dictionary extends ArrowDefinition, to, extra>(
-    arrow: Data<dictionary, to>,
-  ): Data<
-    AppliedData<
-      CategoryContextOf<dictionary>,
-      readonly [extra, CategoryInput<dictionary>]
-    >,
-    readonly [extra, to]
-  > {
-    const implementation =
-      arrow[arrow_typeclass] as unknown as ArrowImplementation<dictionary>;
-
-    return call_typeclass_method(
-      implementation.second<to, extra>,
-      arrow,
-    );
-  },
-});
+);

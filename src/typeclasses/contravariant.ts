@@ -8,7 +8,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Contravariant typeclass. */
-export const contravariant_typeclass = Symbol("Contravariant");
+export const contravariant_typeclass = /* @__PURE__ */ Symbol("Contravariant");
 
 /** Dictionary capability for contravariant input mapping. */
 export interface Contravariant<dictionary extends Dictionary>
@@ -33,7 +33,7 @@ export type ContravariantTypeclass = Typeclass<typeof contravariant_typeclass, {
 }>;
 
 /** Operations for mapping inputs through Contravariant dictionaries. */
-export const Contravariant: ContravariantTypeclass = typeclass(
+export const Contravariant: ContravariantTypeclass = /* @__PURE__ */ typeclass(
   contravariant_typeclass,
   {
     contramap<

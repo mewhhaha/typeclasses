@@ -8,7 +8,7 @@ import {
 } from "../typeclass.ts";
 
 /** Runtime token for the Eq typeclass. */
-export const eq_typeclass = Symbol("Eq");
+export const eq_typeclass = /* @__PURE__ */ Symbol("Eq");
 
 /** Dictionary capability for equality comparisons. */
 export interface Eq<dictionary extends Dictionary> extends
@@ -32,7 +32,7 @@ export type EqTypeclass = Typeclass<typeof eq_typeclass, {
 }>;
 
 /** Operations for comparing values through their Eq dictionaries. */
-export const Eq: EqTypeclass = typeclass(eq_typeclass, {
+export const Eq: EqTypeclass = /* @__PURE__ */ typeclass(eq_typeclass, {
   eq<
     dictionary extends Eq<dictionary>,
     item,

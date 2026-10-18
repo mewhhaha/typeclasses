@@ -1,9 +1,15 @@
 import { traverse_items } from "../traversal.ts";
 import {
+  type As,
   call_typeclass_method,
   type Data,
   type Dictionary,
+  dictionary_of,
+  type dictionary_type,
+  type IsUnion,
   kind,
+  type type_data,
+  type type_item,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -12,9 +18,11 @@ import { append_item } from "../internal.ts";
 import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
 
 /** Runtime token for the Applicative typeclass. */
-export const applicative_typeclass = Symbol("Applicative");
+export const applicative_typeclass = /* @__PURE__ */ Symbol("Applicative");
 /** Optional instance hook for optimized multi-value lifting. */
-export const applicative_lift_method = Symbol("Applicative.lift");
+export const applicative_lift_method = /* @__PURE__ */ Symbol(
+  "Applicative.lift",
+);
 
 /** @ignore */
 export type ApplicativeImplementation<dictionary extends Dictionary> = {
@@ -77,7 +85,7 @@ export type ApplicativeTypeclass =
   };
 
 /** Operations for constructing, applying, and lifting Applicative values. */
-export const Applicative: ApplicativeTypeclass = typeclass(
+export const Applicative: ApplicativeTypeclass = /* @__PURE__ */ typeclass(
   applicative_typeclass,
   {
     derive<dictionary extends Applicative<dictionary>>(
@@ -222,6 +230,41 @@ function applicative_lift<
   });
 }
 
+interface CollectRuntime
+  extends As<CollectRuntime, unknown>, Applicative<CollectRuntime> {
+  readonly [type_data]: this[typeof type_item];
+}
+
+/** @ignore */
+type CollectedDictionary<values> = values[keyof values] extends infer value
+  ? value extends
+    { readonly [dictionary_type]?: infer dictionary extends Dictionary }
+    ? dictionary
+  : never
+  : never;
+/** @ignore */
+type CollectedShape<values> = {
+  readonly [key in keyof values]: values[key] extends {
+    [Symbol.iterator](): Generator<unknown, infer item, unknown>;
+  } ? item
+    : never;
+};
+/** @ignore */
+type InferCollect<values> = [keyof values] extends [never] ? never
+  : [CollectedDictionary<values>] extends [never] ? never
+  : true extends IsUnion<CollectedDictionary<values>> ? never
+  : CollectedDictionary<values> extends Applicative<CollectedDictionary<values>>
+    ? unknown
+  : never;
+
+/** Infer the dictionary from a nonempty tuple or record of contextual values. */
+export function collect<
+  const values extends
+    | readonly unknown[]
+    | Readonly<Record<PropertyKey, unknown>>,
+>(
+  values: values & InferCollect<values>,
+): Data<CollectedDictionary<values>, CollectedShape<values>>;
 /** Collect a tuple or record using an explicit context, including empty shapes. */
 export function collect<
   dictionary extends Applicative<dictionary>,
@@ -231,23 +274,40 @@ export function collect<
   values: {
     readonly [key in keyof shape]: Data<NoInfer<dictionary>, shape[key]>;
   },
-): Data<dictionary, shape> {
-  const selected = dictionary as dictionary;
+): Data<dictionary, shape>;
+export function collect(
+  dictionary_or_values: unknown,
+  explicit_values?: unknown,
+): unknown {
+  let values = explicit_values as Record<
+    PropertyKey,
+    Data<CollectRuntime, unknown>
+  >;
+  let selected = dictionary_or_values as CollectRuntime;
+  if (explicit_values === undefined) {
+    values = dictionary_or_values as typeof values;
+    const first = Reflect.ownKeys(values).find((key) =>
+      Object.prototype.propertyIsEnumerable.call(values, key)
+    );
+    if (first === undefined) {
+      throw new TypeError("Empty collect requires a dictionary");
+    }
+    selected = dictionary_of(values[first]) as CollectRuntime;
+  }
   const keys = Reflect.ownKeys(values).filter((key) =>
     Object.prototype.propertyIsEnumerable.call(values, key)
   );
   const tuple = Array.isArray(values);
   let length = 0;
-  if (tuple) length = values.length;
+  if (tuple) length = (values as unknown as readonly unknown[]).length;
   return traverse_items(keys, selected, (key) => {
-    const value =
-      (values as Record<PropertyKey, Data<dictionary, unknown>>)[key];
+    const value = values[key];
     if (value[kind] !== selected[kind]) {
       throw new TypeError(
         "collect requires values from the selected dictionary",
       );
     }
-    return value.map((item) => [key, item] as const);
+    return Functor.map(value, (item) => [key, item] as const);
   }).map((entries) => {
     if (tuple) {
       const out: unknown[] = new Array(length);
@@ -259,8 +319,8 @@ export function collect<
           writable: true,
         });
       }
-      return out as unknown as shape;
+      return out;
     }
-    return Object.fromEntries(entries) as shape;
+    return Object.fromEntries(entries);
   });
 }

@@ -1,10 +1,11 @@
+import type { Matchable } from "./data_value.ts";
 import { ArrayBufferT, type AsArrayBuffer } from "./array_buffer.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import { DataViewT } from "./data_view.ts";
 import { Right } from "./either.ts";
 import { sum_values } from "./examples.ts";
 import { type FormDataEntry, FormDataT } from "./form_data.ts";
-import { Just, Maybe, type MaybeValue } from "./maybe.ts";
+import { Just, Maybe } from "./maybe.ts";
 import { elem, foldl, product, sum, to_array } from "./prelude.ts";
 import {
   $slot,
@@ -22,9 +23,9 @@ import { type AsTypedArray, TypedArrayT } from "./typed_array.ts";
 import { URLSearchParamsT } from "./url_search_params.ts";
 
 const symbol_tag = Symbol("SymbolVariant");
-declare const numeric_identity: unique symbol;
+const numeric_identity: unique symbol = Symbol("numeric_identity");
 
-interface AsNumeric extends As<AsNumeric, typeof numeric_identity> {
+interface AsNumeric extends As<AsNumeric, typeof numeric_identity>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]:
     | readonly [0]
@@ -34,6 +35,7 @@ interface AsNumeric extends As<AsNumeric, typeof numeric_identity> {
 
 Deno.test("union constructors preserve numeric and symbol tags", () => {
   const Numeric = data<AsNumeric>(
+    numeric_identity,
     union([0], [1, $slot], [symbol_tag, $slot]),
   );
 
@@ -80,7 +82,7 @@ Deno.test("optimized applicative lifting rejects mixed dictionary values", () =>
           return left + right;
         },
         Just(1),
-        Right(2) as unknown as MaybeValue<number>,
+        Right(2) as unknown as Maybe<number>,
       ),
     "same dictionary",
   );

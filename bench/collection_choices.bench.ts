@@ -1,12 +1,16 @@
 import { ArrayT } from "../src/array.ts";
-import { from_array, List, type List as RawList } from "../src/list.ts";
+import { from_array, List, type RawList } from "../src/list.ts";
 import {
   from_array as iterable_from_array,
   to_array,
 } from "../src/iterable.ts";
 import { Applicative, Functor } from "../src/typeclasses.ts";
 import { data } from "../src/typeclass.ts";
-import { type AsIdentity, Identity } from "../src/identity.ts";
+import {
+  type AsIdentity,
+  Identity,
+  identity_identity,
+} from "../src/identity.ts";
 import { traverse_items } from "../src/traversal.ts";
 
 // Isolated alternatives, not a historical library comparison. Every benchmark
@@ -75,7 +79,7 @@ for (const width of [1, 4, 64, 1024]) {
 
 // Same instances, separate runtime dictionary: intentionally omit registration
 // of the specialization to retain a reproducible generic counterfactual.
-const generic_identity: AsIdentity = data<AsIdentity>();
+const generic_identity: AsIdentity = data<AsIdentity>(identity_identity);
 Functor.instance(generic_identity)(Functor.instance_for(Identity));
 Applicative.instance(generic_identity)(Applicative.instance_for(Identity));
 Deno.bench({

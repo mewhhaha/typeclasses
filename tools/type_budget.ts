@@ -1,8 +1,8 @@
 import ts from "typescript";
 import { resolve } from "node:path";
 
-const root = resolve(Deno.args[0] ?? ".");
-const source = `
+const root = resolve(Deno.args.find((arg) => !arg.startsWith("--")) ?? ".");
+const baseline_source = `
 import { Just, Maybe, Right, Either, Identity, Functor, Do, Program, Effect, type Data, type AsMaybe } from "${root}/src/mod.ts";
 import { ArrayT } from "${root}/src/array.ts";
 import { traverse } from "${root}/src/prelude.ts";
@@ -16,6 +16,33 @@ const program = Program(function* () { return yield* Effect.pure(1); });
 const typed: Data<AsMaybe, number> = mapped;
 void [generic,result,items,block,program,typed,Either,Identity];
 `;
+const feature = Deno.args.find((arg) => arg.startsWith("--feature="))?.slice(
+  10,
+);
+const feature_sources: Record<string, string> = {
+  core:
+    'import type { As, Data } from "./src/typeclass.ts"; export type Core = As<never, never> | Data<never, never>;',
+  maybe: 'import { Just } from "./src/maybe.ts"; export const value = Just(1);',
+  fluent:
+    'import { Just } from "./src/maybe.ts"; export const value = Just(1).map(n => String(n)).bind(s => Just(s.length));',
+  generic:
+    'import { Just } from "./src/maybe.ts"; import { Functor } from "./src/typeclasses/functor.ts"; export const value = Functor.map(Just(1), n => n + 1);',
+  generator:
+    'import { Just, Maybe } from "./src/maybe.ts"; import { Do } from "./src/typeclasses/monad.ts"; export const value = Do(Maybe, function* () { return (yield* Just(1)) + (yield* Just(2)); });',
+  effect:
+    'import { Program, Effect } from "./src/effects.ts"; export const value = Program(function* () { return yield* Effect.pure(1); });',
+  collect:
+    'import { Just } from "./src/maybe.ts"; import { collect } from "./src/typeclasses/applicative.ts"; export const value = collect({ id: Just(1), label: Just("x") });',
+  schema:
+    'import { define_data, $slot, field } from "./src/typeclass.ts"; const token = Symbol("Box"); const Box = define_data(token, { item: $slot, label: field<string>() }); export const value = Box({item:1,label:"x"});',
+};
+let source = baseline_source;
+if (feature !== undefined) {
+  if (!(feature in feature_sources)) {
+    throw new Error("Unknown feature: " + feature);
+  }
+  source = feature_sources[feature];
+}
 const filename = resolve(root, "__type_budget__.ts");
 const options: ts.CompilerOptions = {
   strict: true,
@@ -51,6 +78,42 @@ const stats = program as ts.Program & {
   getTypeCount(): number;
   getInstantiationCount(): number;
 };
+if (feature !== undefined) {
+  const encoder = new TextEncoder();
+  const hash = async (text: string) =>
+    Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest("SHA-256", encoder.encode(text)),
+      ),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+  const files = program.getSourceFiles().filter((file) =>
+    file.fileName.startsWith(root + "/src/")
+  );
+  console.log(
+    JSON.stringify(
+      {
+        feature,
+        compiler: ts.version,
+        runtime: Deno.version,
+        check_ms,
+        instantiations: stats.getInstantiationCount(),
+        types: stats.getTypeCount(),
+        modules: files.length,
+        workload_sha256: await hash(source),
+        source_sha256: await hash(
+          files.map((file) =>
+            file.fileName.slice(root.length) + "\n" + file.text
+          ).sort().join("\n"),
+        ),
+        memory: Deno.memoryUsage(),
+      },
+      null,
+      2,
+    ),
+  );
+  Deno.exit(0);
+}
 const service = ts.createLanguageService({
   getCompilationSettings: () => options,
   getScriptFileNames: () => [filename],

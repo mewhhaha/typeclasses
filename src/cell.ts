@@ -2,7 +2,6 @@ import {
   data,
   type Dictionary,
   type IsUnion,
-  kind,
   type type_identity,
 } from "./typeclass.ts";
 import type { Lift } from "./effects.ts";
@@ -72,7 +71,7 @@ export function cell_dictionary<dictionary extends Dictionary>(
     identity = Symbol(String(key));
     keys.set(key, identity);
   }
-  const dictionary = data<dictionary>();
-  dictionary[kind] = identity;
-  return dictionary;
+  return data<dictionary>(
+    identity as dictionary[typeof type_identity] & symbol,
+  );
 }

@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import {
   type As,
   type Data,
@@ -19,38 +20,41 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const fn_identity: unique symbol;
+export const fn_identity: unique symbol = /* @__PURE__ */ Symbol("fn_identity");
 
 /** A unary function from an input to an output item. */
-export type Fn<input, item> = (value: input) => item;
+export type RawFn<input, item> = (value: input) => item;
 
 /** @ignore */
 export interface FnContext extends ArrowContext, ProfunctorContext {
   readonly [type_data]: AsFn<this[typeof type_item]>;
 }
 
+/** @ignore */
+export interface AsFnLambda<input = unknown> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawFn<input, this[typeof type_item]>;
+}
+
 /** The callable function dictionary for a fixed input type. */
 export interface AsFn<input = unknown>
   extends
-    As<AsFn<input>, typeof fn_identity>,
+    As<AsFnLambda<input>, typeof fn_identity>,
     Show<AsFn<input>>,
     Monad<AsFn<input>>,
     Profunctor<AsFn<input>, input, FnContext>,
     Arrow<AsFn<input>, input, FnContext>,
-    Parse<AsFn<input>> {
-  /** The output supplied when applying this data type. */
-  readonly [type_item]: unknown;
-  /** The raw function shape produced for the selected output. */
-  readonly [type_data]: Fn<input, this[typeof type_item]>;
+    Parse<AsFn<input>>,
+    Runnable {
 }
 
 /** A wrapped function with its typeclass instances attached. */
-export type FnValue<input, item> = Data<AsFn<input>, item>;
+export type Fn<input, item> = Data<AsFn<input>, item>;
 
 /** @ignore */
 export type FnConstructor =
   & {
-    <input, item>(value: Fn<input, item>): FnValue<input, item>;
+    <input, item>(value: RawFn<input, item>): Fn<input, item>;
     with_input<input>(): AsFn<input>;
   }
   & {
@@ -58,7 +62,7 @@ export type FnConstructor =
   };
 
 /** The shared callable dictionary for wrapped functions. */
-export const Fn = data<AsFn<unknown>>() as FnConstructor;
+export const Fn = data<AsFn<unknown>>(fn_identity) as FnConstructor;
 
 Object.defineProperty(Fn, "with_input", {
   value: fn_with_input,
@@ -69,14 +73,14 @@ function fn_with_input<input>(): AsFn<input> {
 }
 
 /** Wrap a unary function with the Fn dictionary. */
-export function fn<input, item>(value: Fn<input, item>): FnValue<input, item> {
+export function fn<input, item>(value: RawFn<input, item>): Fn<input, item> {
   return Fn(value);
 }
 
 /** Lift a unary function into the function Arrow. */
 export function arr<input, item>(
-  value: Fn<input, item>,
-): FnValue<input, item> {
+  value: RawFn<input, item>,
+): Fn<input, item> {
   return fn(value);
 }
 

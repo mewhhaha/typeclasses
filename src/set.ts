@@ -1,5 +1,6 @@
 import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -16,50 +17,52 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const set_identity: unique symbol;
+export const set_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "set_identity",
+);
 
 /** The read-only set representation wrapped by the `SetT` dictionary. */
-export type SetT<item> = ReadonlySet<item>;
+export type RawSetT<item> = ReadonlySet<item>;
+
+/** @ignore */
+export interface AsSetLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawSetT<this[typeof type_item]>;
+}
 
 /** Dictionary type for sets and their value-wise typeclass instances. */
 export interface AsSet
   extends
-    As<AsSet, typeof set_identity>,
+    As<AsSetLambda, typeof set_identity>,
     Show<AsSet>,
     Eq<AsSet>,
     Functor<AsSet>,
     Monoid<AsSet>,
     Foldable<AsSet> {
-  /** Higher-kinded slot for the set element type. */
-  readonly [type_item]: unknown;
-  /** Read-only set representation at the selected element type. */
-  readonly [type_data]: SetT<this[typeof type_item]>;
 }
 
-/** @ignore */
-export type SetValue<item> = Data<AsSet, item>;
+/** A wrapped SetT value with its dictionary operations. */
+export type SetT<item> = Data<AsSet, item>;
 
 /** Callable set dictionary that defensively copies sets when wrapping them. */
-export const SetT: AsSet = data<AsSet>(
-  function (set) {
-    return this.data(new Set(set));
-  },
-);
+export const SetT: AsSet = data<AsSet>(set_identity, function (set) {
+  return this.data(new Set(set));
+});
 
 /** Wrap a defensive copy of a read-only set. */
-export function from_set<item>(set: ReadonlySet<item>): SetValue<item> {
+export function from_set<item>(set: ReadonlySet<item>): SetT<item> {
   return SetT(set);
 }
 
 /** Collect an iterable into a wrapped set. */
 export function from_iterable<item>(
   items: Iterable<item>,
-): SetValue<item> {
-  return SetT(new Set(items));
+): SetT<item> {
+  return as_data(SetT, new Set(items));
 }
 
 /** Copy a wrapped set into a mutable JavaScript `Set`. */
-export function to_set<item>(set: SetValue<item>): Set<item> {
+export function to_set<item>(set: SetT<item>): Set<item> {
   return new Set(set.value());
 }
 
@@ -96,7 +99,7 @@ Functor.instance(SetT)({
       out.add(fn(item));
     }
 
-    return SetT(out);
+    return as_data(SetT, out);
   },
 });
 
@@ -108,13 +111,13 @@ Semigroup.instance(SetT)({
       out.add(item);
     }
 
-    return SetT(out);
+    return as_data(SetT, out);
   },
 });
 
 Monoid.instance(SetT)({
   empty() {
-    return SetT(new Set());
+    return as_data(SetT, new Set());
   },
 });
 

@@ -1,5 +1,11 @@
 import { assert_equals } from "./assert.ts";
-import { type AsEither, Either, Left, Right } from "./either.ts";
+import {
+  type AsEither,
+  Either,
+  either_identity,
+  Left,
+  Right,
+} from "./either.ts";
 import { data, kind } from "./typeclass.ts";
 import { same_context } from "./internal.ts";
 import { from_fn, Task } from "./task.ts";
@@ -103,7 +109,7 @@ Deno.test("runtime Do converts a rethrown error through the yielded dictionary",
 });
 
 Deno.test("runtime Do propagates errors through the yielded value's own dictionary", () => {
-  const Errors = data<AsEither<string>>();
+  const Errors = data<AsEither<string>>(either_identity);
   const raised: string[] = [];
   Monad.derive(Errors)({
     pure(value) {

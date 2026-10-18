@@ -32,30 +32,59 @@ export type TaggedMatchCases<value extends TaggedValue, result> = {
   ) => result;
 };
 
+/** Type-only owner, independent of the raw shape lambda. */
+export declare const dictionary_type: unique symbol;
+
 /** @ignore */
 export type WrappedDataBase<dictionary, value, item> = {
   readonly [data_value]: value;
+  readonly [dictionary_type]?: dictionary;
   [Symbol.iterator]: () => Generator<
     WrappedData<dictionary, value, item>,
     item,
     unknown
   >;
-  run: DataRunner<value>;
   value: () => value;
   /** Render the value through its `Show` instance, or structurally. */
   toString: () => string;
   /** Serialize to the raw value, so `JSON.stringify` keeps the tag. */
   toJSON: () => value;
-  /** Eliminate a tagged value with exhaustive, payload-aware handlers. */
-  match<result>(
-    cases: [value] extends [TaggedValue]
-      ? TaggedMatchCases<Extract<value, TaggedValue>, result>
-      : never,
-  ): result;
 };
 
-type DataRunner<value> = value extends (...args: infer args) => infer result
-  ? (...args: args) => result
+/** @ignore */
+export declare const runnable: unique symbol;
+/** @ignore */
+export declare const matchable: unique symbol;
+/** Explicit capability annotation for dictionaries of deferred functions. */
+export interface Runnable {
+  /** @ignore */
+  readonly [runnable]: true;
+}
+/** Explicit capability annotation for dictionaries of tagged values. */
+export interface Matchable {
+  /** @ignore */
+  readonly [matchable]: true;
+}
+/** @ignore */
+export type RunKey<dictionary, value> = dictionary extends Runnable ? "run"
+  : [value] extends [(...args: never[]) => unknown] ? "run"
+  : never;
+/** @ignore */
+export type MatchKey<dictionary, value> = dictionary extends Matchable ? "match"
+  : [value] extends [TaggedValue] ? "match"
+  : never;
+/** @ignore */
+export type Capabilities<dictionary, value> = {
+  [method in RunKey<dictionary, value> | MatchKey<dictionary, value>]:
+    method extends "run" ? DataRunner<value>
+      : <result>(
+        cases: TaggedMatchCases<Extract<value, TaggedValue>, result>,
+      ) => result;
+};
+
+/** @ignore */
+export type DataRunner<value> = value extends
+  (...args: infer args) => infer result ? (...args: args) => result
   : never;
 
 /** @ignore */
@@ -66,7 +95,8 @@ export type DictionaryMembers<dictionary> = {
 /** A raw value wrapped with its dictionary's methods and eliminators. */
 export type WrappedData<dictionary, value, item = unknown> =
   & WrappedDataBase<dictionary, value, item>
-  & DictionaryMembers<dictionary>;
+  & DictionaryMembers<dictionary>
+  & Capabilities<dictionary, value>;
 
 type WrappedDataTarget<value> = {
   [data_value]: value;

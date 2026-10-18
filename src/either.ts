@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import {
   $slot,
   type As,
@@ -28,12 +29,14 @@ import {
   Show,
   Traversable,
 } from "./typeclasses.ts";
-import { Just, type MaybeValue, Nothing } from "./maybe.ts";
+import { Just, type Maybe, Nothing } from "./maybe.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep } from "./loop.ts";
 
 /** @ignore */
-export declare const either_identity: unique symbol;
+export const either_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "either_identity",
+);
 
 /** A raw result containing either a left error or a right success value. */
 export type RawEither<left, right> =
@@ -54,33 +57,36 @@ export interface EitherBifunctorContext extends BifunctorContext {
   readonly [type_data]: AsEither<this[typeof type_item]>;
 }
 
+/** @ignore */
+export interface AsEitherLambda<left = AnyLeft> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawEither<left, this[typeof type_item]>;
+}
+
 /** The callable Either dictionary for a fixed left type. */
 export interface AsEither<left = AnyLeft>
   extends
-    As<AsEither<left>, typeof either_identity>,
+    As<AsEitherLambda<left>, typeof either_identity>,
     Show<AsEither<left>>,
     MonadError<AsEither<left>, left>,
     MonadRec<AsEither<left>>,
     Traversable<AsEither<left>>,
     Bifunctor<AsEither<left>, left, EitherBifunctorContext>,
-    Ord<AsEither<left>> {
-  /** The right value supplied when applying this data type. */
-  readonly [type_item]: unknown;
-  /** The raw Either shape produced for the selected right value. */
-  readonly [type_data]: RawEither<left, this[typeof type_item]>;
+    Ord<AsEither<left>>,
+    Matchable {
 }
 
 /** A wrapped Either value with instances attached. */
-export type EitherValue<left, right> = [left] extends [never] ? (
+export type Either<left, right> = [left] extends [never] ? (
     & {
       map<next>(
-        this: EitherValue<never, right>,
+        this: Either<never, right>,
         fn: (value: right) => next,
-      ): EitherValue<never, next>;
-      bind<result extends EitherValue<AnyLeft, unknown>>(
-        this: EitherValue<never, right>,
+      ): Either<never, next>;
+      bind<result extends Either<AnyLeft, unknown>>(
+        this: Either<never, right>,
         fn: (value: right) => result,
-      ): EitherValue<
+      ): Either<
         EitherLeft<ReturnType<result["value"]>>,
         EitherRight<ReturnType<result["value"]>>
       >;
@@ -104,9 +110,9 @@ export type EitherConstructor =
     /** Infer both branches while wrapping a raw Either value. */
     <value extends RawEither<AnyLeft, AnyLeft>>(
       value: value,
-    ): EitherValue<EitherLeft<value>, EitherRight<value>>;
+    ): Either<EitherLeft<value>, EitherRight<value>>;
     /** Wrap a raw Either value with explicit branch types. */
-    <left, right>(value: RawEither<left, right>): EitherValue<left, right>;
+    <left, right>(value: RawEither<left, right>): Either<left, right>;
     /** View the shared dictionary at a particular left type. */
     with_left<left>(): EitherDictionary<left>;
     /** Construct or recognize a left branch. */
@@ -120,7 +126,7 @@ export type EitherConstructor =
 
 /** A type guard that recognizes raw left branches. */
 export type LeftGuard = {
-  <value extends EitherValue<AnyLeft, unknown>>(
+  <value extends Either<AnyLeft, unknown>>(
     value: value,
   ): value is { value(): Left<EitherLeft<ReturnType<value["value"]>>> } & value;
   /** Narrow a known Either to its left branch. */
@@ -135,7 +141,7 @@ export type LeftGuard = {
 
 /** A type guard that recognizes raw right branches. */
 export type RightGuard = {
-  <value extends EitherValue<AnyLeft, unknown>>(
+  <value extends Either<AnyLeft, unknown>>(
     value: value,
   ): value is
     & { value(): Right<EitherRight<ReturnType<value["value"]>>> }
@@ -155,7 +161,7 @@ export type LeftConstructor = {
   /** Wrap an error value in the left branch. */
   <left = string, right = never>(
     value: left,
-  ): EitherValue<left, NoInfer<right>>;
+  ): Either<left, NoInfer<right>>;
   /** Test whether a raw value is a left branch. */
   readonly is: LeftGuard;
 };
@@ -163,33 +169,27 @@ export type LeftConstructor = {
 /** Construct a wrapped right branch. */
 export type RightConstructor = {
   /** Wrap a success value with a polymorphic left type. */
-  <right>(value: right): EitherValue<never, right>;
+  <right>(value: right): Either<never, right>;
   /** Wrap a success value with an explicit left type. */
-  <left, right>(value: right): EitherValue<left, right>;
+  <left, right>(value: right): Either<left, right>;
   /** Test whether a raw value is a right branch. */
   readonly is: RightGuard;
 };
 
 /** The shared Either dictionary with left and right constructors. */
-export const Either = data<AsEither<unknown>>(
-  union(["Left", $slot], ["Right", $slot]),
-) as unknown as EitherConstructor;
-
-Object.defineProperty(Either, "with_left", {
-  value: either_with_left,
-});
+export const Either: EitherConstructor = /* @__PURE__ */ create_either();
 
 /** Construct a wrapped right value. */
-export const Right: RightConstructor = Either.Right;
+export const Right: RightConstructor = /* @__PURE__ */ (() => Either.Right)();
 /** Construct a wrapped left value. */
-export const Left: LeftConstructor = Either.Left;
+export const Left: LeftConstructor = /* @__PURE__ */ (() => Either.Left)();
 
 function either_with_left<left>(): EitherDictionary<left> {
   return Either as unknown as EitherDictionary<left>;
 }
 
 /** Narrow a raw Either value to its left branch. */
-export function is_left<value extends EitherValue<AnyLeft, unknown>>(
+export function is_left<value extends Either<AnyLeft, unknown>>(
   value: value,
 ): value is { value(): Left<EitherLeft<ReturnType<value["value"]>>> } & value;
 /** Test a raw Either for its Left variant. */
@@ -218,7 +218,7 @@ export function is_left<left, right>(
 }
 
 /** Narrow a raw Either value to its right branch. */
-export function is_right<value extends EitherValue<AnyLeft, unknown>>(
+export function is_right<value extends Either<AnyLeft, unknown>>(
   value: value,
 ): value is { value(): Right<EitherRight<ReturnType<value["value"]>>> } & value;
 /** Test a raw Either for its Right variant. */
@@ -247,7 +247,7 @@ export function is_right<left, right>(
 }
 
 /** Accept a finite number or return a descriptive left value. */
-export function from_number(value: number): EitherValue<string, number> {
+export function from_number(value: number): Either<string, number> {
   if (Number.isFinite(value)) {
     return Right<string, number>(value);
   }
@@ -259,7 +259,7 @@ export function from_number(value: number): EitherValue<string, number> {
 export function either<left, right, result>(
   on_left: (value: left) => result,
   on_right: (value: right) => result,
-  value: EitherValue<left, right>,
+  value: Either<left, right>,
 ): result {
   const [tag, payload] = value.value();
 
@@ -274,7 +274,7 @@ export function either<left, right, result>(
 /** Haskell `fromLeft :: a -> Either a b -> a`. */
 export function from_left<left, right>(
   fallback: left,
-  value: EitherValue<left, right>,
+  value: Either<left, right>,
 ): left {
   return either((error) => error, () => fallback, value);
 }
@@ -282,23 +282,23 @@ export function from_left<left, right>(
 /** Haskell `fromRight :: b -> Either a b -> b`. */
 export function from_right<left, right>(
   fallback: right,
-  value: EitherValue<left, right>,
+  value: Either<left, right>,
 ): right {
   return either(() => fallback, (item) => item, value);
 }
 
 /** Haskell `hush :: Either a b -> Maybe b`. */
 export function hush<left, right>(
-  value: EitherValue<left, right>,
-): MaybeValue<right> {
+  value: Either<left, right>,
+): Maybe<right> {
   return either(() => Nothing<right>(), (item) => Just(item), value);
 }
 
 /** Haskell `note :: e -> Maybe a -> Either e a`. */
 export function note<left, right>(
   error: left,
-  value: MaybeValue<right>,
-): EitherValue<left, right> {
+  value: Maybe<right>,
+): Either<left, right> {
   const [tag, payload] = value.value();
 
   switch (tag) {
@@ -308,230 +308,6 @@ export function note<left, right>(
       return Left<left, right>(error);
   }
 }
-
-Show.instance(Either)({
-  show() {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Right":
-        return "Right(" + inspect(payload) + ")";
-      case "Left":
-        return "Left(" + inspect(payload) + ")";
-    }
-  },
-});
-
-Eq.instance(Either)({
-  eq(right) {
-    const [left_tag, left_payload] = this.value();
-    const [right_tag, right_payload] = right.value();
-
-    switch (left_tag) {
-      case "Left":
-        if (right_tag === "Left") {
-          return Object.is(left_payload, right_payload);
-        }
-
-        return false;
-      case "Right":
-        if (right_tag === "Left") {
-          return false;
-        }
-
-        return Object.is(left_payload, right_payload);
-    }
-  },
-});
-
-Ord.instance(Either)({
-  compare(right) {
-    const [left_tag, left_payload] = this.value();
-    const [right_tag, right_payload] = right.value();
-
-    switch (left_tag) {
-      case "Left":
-        if (right_tag === "Left") {
-          return compare_unknown(left_payload, right_payload);
-        }
-
-        return "lt";
-      case "Right":
-        if (right_tag === "Left") {
-          return "gt";
-        }
-
-        return compare_unknown(left_payload, right_payload);
-    }
-  },
-});
-
-Bifunctor.instance(Either)({
-  bimap<right, next_left, next_right>(
-    this: Data<AsEither<unknown>, right>,
-    map_left: (value: unknown) => next_left,
-    map_right: (value: right) => next_right,
-  ) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return Either.with_left<next_left>().Left<next_right>(
-          map_left(payload),
-        );
-      case "Right":
-        return Either.with_left<next_left>().Right(
-          map_right(payload),
-        );
-    }
-  },
-});
-
-Functor.instance(Either)({
-  map(fn) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return same_context(this);
-      case "Right":
-        return Right(fn(payload));
-    }
-  },
-});
-
-Applicative.instance(Either)({
-  pure(value) {
-    return Right(value);
-  },
-
-  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
-  [applicative_lift_method](fn, rest) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return same_context(this);
-      case "Right":
-        return lift_right(fn, payload, rest);
-    }
-  },
-
-  ap(value) {
-    const [fn_tag, fn] = this.value();
-
-    switch (fn_tag) {
-      case "Left":
-        return same_context(this);
-      case "Right": {
-        const [either_tag, either] = value.value();
-
-        switch (either_tag) {
-          case "Left":
-            return same_context(value);
-          case "Right":
-            return Right(fn(either));
-        }
-      }
-    }
-  },
-});
-
-Monad.instance(Either)({
-  bind(fn) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return same_context(this);
-      case "Right":
-        return fn(payload);
-    }
-  },
-});
-
-MonadRec.instance(Either)({
-  tail_rec_m<state, output>(
-    initial: state,
-    step: (
-      state: state,
-    ) => Data<AsEither<unknown>, LoopStep<state, output>>,
-  ): Data<AsEither<unknown>, output> {
-    let state = initial;
-
-    while (true) {
-      const current = step(state);
-      const [either_tag, loop_step] = current.value();
-
-      switch (either_tag) {
-        case "Left":
-          return Either<unknown, output>(["Left", loop_step]);
-        case "Right": {
-          const [loop_tag, value] = loop_step;
-
-          switch (loop_tag) {
-            case loop_done:
-              return Right(value);
-            case loop_rec:
-              state = value;
-              break;
-          }
-          break;
-        }
-      }
-    }
-  },
-});
-
-MonadError.instance(Either)({
-  throw_error<item>(
-    this: AsEither<unknown>,
-    error: unknown,
-  ): Data<AsEither<unknown>, item> {
-    return Left<unknown, item>(error);
-  },
-
-  catch_error(handler) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return handler(payload);
-      case "Right":
-        return same_context(this);
-    }
-  },
-});
-
-Foldable.instance(Either)({
-  fold(initial, fn) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return initial;
-      case "Right":
-        return fn(initial, payload);
-    }
-  },
-});
-
-Traversable.instance(Either)({
-  traverse<applicative extends Applicative<applicative>, from, to>(
-    this: Data<AsEither<unknown>, from>,
-    applicative: applicative,
-    fn: (value: from) => Data<applicative, to>,
-  ): Data<applicative, Data<AsEither<unknown>, to>> {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "Left":
-        return Applicative.pure(applicative, Left<unknown, to>(payload));
-      case "Right":
-        return Functor.map(fn(payload), (value) => Right<unknown, to>(value));
-    }
-  },
-});
 
 function lift_right<result>(
   fn: (...values: unknown[]) => result,
@@ -570,23 +346,20 @@ function lift_right<result>(
   return Right(fn(...values));
 }
 
-/** The public fluent Either value. */
-export type Either<left, right> = EitherValue<left, right>;
-
 /** Chain results while explicitly allowing the error type to grow. */
 export function bind_widen<
   left,
   item,
-  result extends EitherValue<AnyLeft, unknown>,
+  result extends Either<AnyLeft, unknown>,
 >(
-  value: EitherValue<left, item>,
+  value: Either<left, item>,
   fn: (item: item) => result,
-): EitherValue<
+): Either<
   left | EitherLeft<ReturnType<result["value"]>>,
   EitherRight<ReturnType<result["value"]>>
 > {
   const raw = value.value();
-  type Output = EitherValue<
+  type Output = Either<
     left | EitherLeft<ReturnType<result["value"]>>,
     EitherRight<ReturnType<result["value"]>>
   >;
@@ -604,4 +377,241 @@ export function recover_or_else<error, item, fallback>(
   fallback: (error: error) => fallback,
 ): item | fallback {
   return either(fallback, (item): item | fallback => item, value);
+}
+
+// Keep dictionary construction and instance installation in one removable unit.
+function create_either(): EitherConstructor {
+  const Either = data<AsEither<unknown>>(
+    either_identity,
+    union(["Left", $slot], ["Right", $slot]),
+  ) as unknown as EitherConstructor;
+
+  Object.defineProperty(Either, "with_left", {
+    value: either_with_left,
+  });
+
+  Show.instance(Either)({
+    show() {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Right":
+          return "Right(" + inspect(payload) + ")";
+        case "Left":
+          return "Left(" + inspect(payload) + ")";
+      }
+    },
+  });
+
+  Eq.instance(Either)({
+    eq(right) {
+      const [left_tag, left_payload] = this.value();
+      const [right_tag, right_payload] = right.value();
+
+      switch (left_tag) {
+        case "Left":
+          if (right_tag === "Left") {
+            return Object.is(left_payload, right_payload);
+          }
+
+          return false;
+        case "Right":
+          if (right_tag === "Left") {
+            return false;
+          }
+
+          return Object.is(left_payload, right_payload);
+      }
+    },
+  });
+
+  Ord.instance(Either)({
+    compare(right) {
+      const [left_tag, left_payload] = this.value();
+      const [right_tag, right_payload] = right.value();
+
+      switch (left_tag) {
+        case "Left":
+          if (right_tag === "Left") {
+            return compare_unknown(left_payload, right_payload);
+          }
+
+          return "lt";
+        case "Right":
+          if (right_tag === "Left") {
+            return "gt";
+          }
+
+          return compare_unknown(left_payload, right_payload);
+      }
+    },
+  });
+
+  Bifunctor.instance(Either)({
+    bimap<right, next_left, next_right>(
+      this: Data<AsEither<unknown>, right>,
+      map_left: (value: unknown) => next_left,
+      map_right: (value: right) => next_right,
+    ) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return Either.with_left<next_left>().Left<next_right>(
+            map_left(payload),
+          );
+        case "Right":
+          return Either.with_left<next_left>().Right(
+            map_right(payload),
+          );
+      }
+    },
+  });
+
+  Functor.instance(Either)({
+    map(fn) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return same_context(this);
+        case "Right":
+          return Right(fn(payload));
+      }
+    },
+  });
+
+  Applicative.instance(Either)({
+    pure(value) {
+      return Right(value);
+    },
+
+    // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
+    [applicative_lift_method](fn, rest) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return same_context(this);
+        case "Right":
+          return lift_right(fn, payload, rest);
+      }
+    },
+
+    ap(value) {
+      const [fn_tag, fn] = this.value();
+
+      switch (fn_tag) {
+        case "Left":
+          return same_context(this);
+        case "Right": {
+          const [either_tag, either] = value.value();
+
+          switch (either_tag) {
+            case "Left":
+              return same_context(value);
+            case "Right":
+              return Right(fn(either));
+          }
+        }
+      }
+    },
+  });
+
+  Monad.instance(Either)({
+    bind(fn) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return same_context(this);
+        case "Right":
+          return fn(payload);
+      }
+    },
+  });
+
+  MonadRec.instance(Either)({
+    tail_rec_m<state, output>(
+      initial: state,
+      step: (
+        state: state,
+      ) => Data<AsEither<unknown>, LoopStep<state, output>>,
+    ): Data<AsEither<unknown>, output> {
+      let state = initial;
+
+      while (true) {
+        const current = step(state);
+        const [either_tag, loop_step] = current.value();
+
+        switch (either_tag) {
+          case "Left":
+            return Either<unknown, output>(["Left", loop_step]);
+          case "Right": {
+            const [loop_tag, value] = loop_step;
+
+            switch (loop_tag) {
+              case loop_done:
+                return Right(value);
+              case loop_rec:
+                state = value;
+                break;
+            }
+            break;
+          }
+        }
+      }
+    },
+  });
+
+  MonadError.instance(Either)({
+    throw_error<item>(
+      this: AsEither<unknown>,
+      error: unknown,
+    ): Data<AsEither<unknown>, item> {
+      return Left<unknown, item>(error);
+    },
+
+    catch_error(handler) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return handler(payload);
+        case "Right":
+          return same_context(this);
+      }
+    },
+  });
+
+  Foldable.instance(Either)({
+    fold(initial, fn) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return initial;
+        case "Right":
+          return fn(initial, payload);
+      }
+    },
+  });
+
+  Traversable.instance(Either)({
+    traverse<applicative extends Applicative<applicative>, from, to>(
+      this: Data<AsEither<unknown>, from>,
+      applicative: applicative,
+      fn: (value: from) => Data<applicative, to>,
+    ): Data<applicative, Data<AsEither<unknown>, to>> {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "Left":
+          return Applicative.pure(applicative, Left<unknown, to>(payload));
+        case "Right":
+          return Functor.map(fn(payload), (value) => Right<unknown, to>(value));
+      }
+    },
+  });
+  return Either;
 }

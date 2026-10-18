@@ -8,33 +8,37 @@ import {
 import { Eq, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const weak_set_identity: unique symbol;
+export const weak_set_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "weak_set_identity",
+);
 
 /** The object-only weak set wrapped by the `WeakSetT` dictionary. */
-export type WeakSetT<item = object> = WeakSet<object>;
+export type RawWeakSetT<item = object> = WeakSet<object>;
+
+/** @ignore */
+export interface AsWeakSetLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawWeakSetT<this[typeof type_item]>;
+}
 
 /** Dictionary type for object-only weak sets. */
 export interface AsWeakSet
   extends
-    As<AsWeakSet, typeof weak_set_identity>,
+    As<AsWeakSetLambda, typeof weak_set_identity>,
     Show<AsWeakSet>,
     Eq<AsWeakSet> {
-  /** Higher-kinded slot for the object type. */
-  readonly [type_item]: unknown;
-  /** Weak-set representation at the selected object type. */
-  readonly [type_data]: WeakSetT<this[typeof type_item]>;
 }
 
-/** @ignore */
-export type WeakSetValue<item extends object> = Data<AsWeakSet, item>;
+/** A wrapped WeakSetT value with its dictionary operations. */
+export type WeakSetT<item extends object> = Data<AsWeakSet, item>;
 
 /** Callable dictionary for wrapping weak sets by reference. */
-export const WeakSetT: AsWeakSet = data<AsWeakSet>();
+export const WeakSetT: AsWeakSet = data<AsWeakSet>(weak_set_identity);
 
 /** Build a wrapped weak set from an iterable of objects. */
 export function from_iterable<item extends object>(
   items: Iterable<item>,
-): WeakSetValue<item> {
+): WeakSetT<item> {
   return WeakSetT(new WeakSet<object>(items));
 }
 

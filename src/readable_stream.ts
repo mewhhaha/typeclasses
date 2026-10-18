@@ -9,33 +9,39 @@ import {
 import { Eq, Show } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const readable_stream_identity: unique symbol;
+export const readable_stream_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "readable_stream_identity",
+);
 
 /** The web stream wrapped by the `ReadableStreamT` dictionary. */
-export type ReadableStreamT<item> = ReadableStream<item>;
+export type RawReadableStreamT<item> = ReadableStream<item>;
+
+/** @ignore */
+export interface AsReadableStreamLambda {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawReadableStreamT<this[typeof type_item]>;
+}
 
 /** Dictionary type for web `ReadableStream` values. */
 export interface AsReadableStream
   extends
-    As<AsReadableStream, typeof readable_stream_identity>,
+    As<AsReadableStreamLambda, typeof readable_stream_identity>,
     Show<AsReadableStream>,
     Eq<AsReadableStream> {
-  /** Higher-kinded slot for the stream chunk type. */
-  readonly [type_item]: unknown;
-  /** Web stream representation at the selected chunk type. */
-  readonly [type_data]: ReadableStreamT<this[typeof type_item]>;
 }
 
-/** @ignore */
-export type ReadableStreamValue<item> = Data<AsReadableStream, item>;
+/** A wrapped ReadableStreamT value with its dictionary operations. */
+export type ReadableStreamT<item> = Data<AsReadableStream, item>;
 
 /** Callable dictionary for wrapping web streams by reference. */
-export const ReadableStreamT: AsReadableStream = data<AsReadableStream>();
+export const ReadableStreamT: AsReadableStream = data<AsReadableStream>(
+  readable_stream_identity,
+);
 
 /** Wrap a web stream without reading or cloning it. */
 export function from_readable_stream<item>(
   stream: ReadableStream<item>,
-): ReadableStreamValue<item> {
+): ReadableStreamT<item> {
   return ReadableStreamT(stream);
 }
 
@@ -44,7 +50,7 @@ export function from_readable_stream<item>(
  * preventCancel to release the reader while preserving unread chunks.
  */
 export function to_async_iterable<item>(
-  stream: ReadableStreamValue<item>,
+  stream: ReadableStreamT<item>,
   options: { readonly preventCancel?: boolean } = {},
 ): Data<AsAsyncIterable, item> {
   const source = stream.value();

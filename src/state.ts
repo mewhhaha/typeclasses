@@ -1,3 +1,4 @@
+import type { Runnable } from "./data_value.ts";
 import { bind_computation, map_computation } from "./computation.ts";
 import {
   type As,
@@ -34,29 +35,34 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const state_identity: unique symbol;
+export const state_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "state_identity",
+);
 
 /** A computation that produces an item while threading state. */
-export type State<state, item> = (state: state) => readonly [item, state];
+export type RawState<state, item> = (state: state) => readonly [item, state];
+
+/** @ignore */
+export interface AsStateLambda<state> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawState<state, this[typeof type_item]>;
+}
 
 /** The callable State dictionary for one state type. */
 export interface AsState<state>
   extends
-    As<AsState<state>, typeof state_identity>,
+    As<AsStateLambda<state>, typeof state_identity>,
     Show<AsState<state>>,
-    Monad<AsState<state>> {
-  /** The item produced by a State value. */
-  readonly [type_item]: unknown;
-  /** The stateful computation represented by a State value. */
-  readonly [type_data]: State<state, this[typeof type_item]>;
+    Monad<AsState<state>>,
+    Runnable {
   /** Wraps a stateful computation. */
-  <item>(value: State<state, item>): StateValue<state, item>;
+  <item>(value: RawState<state, item>): State<state, item>;
 }
 
 /** A State computation wrapped with its typeclass dictionary. */
-export type StateValue<state, item> = WrappedData<
+export type State<state, item> = WrappedData<
   AsState<state>,
-  State<state, item>,
+  RawState<state, item>,
   item
 >;
 
@@ -64,13 +70,13 @@ export type StateValue<state, item> = WrappedData<
 export type StateConstructor =
   & AsState<unknown>
   & {
-    <state, item>(value: State<state, item>): StateValue<state, item>;
+    <state, item>(value: RawState<state, item>): State<state, item>;
     /** Selects the state type for pure values and generic operations. */
     with_state<state>(): AsState<state>;
   };
 
 /** The State dictionary and constructor. */
-export const State = data<AsState<unknown>>() as StateConstructor;
+export const State = data<AsState<unknown>>(state_identity) as StateConstructor;
 const state_kind = State[kind];
 
 Object.defineProperty(State, "with_state", {
@@ -78,27 +84,33 @@ Object.defineProperty(State, "with_state", {
 });
 
 /** Reads the current state. */
-export function get<state>(): StateValue<state, state> {
+export function get<state>(): State<state, state> {
   return State((state: state) => [state, state]);
 }
 
 /** Replaces the current state. */
-export function put<state>(state: state): StateValue<state, void> {
+export function put<state>(state: state): State<state, void> {
   return State((_previous: state) => [undefined, state]);
 }
 
 /** Updates the current state with a pure function. */
 export function modify<state>(
   fn: (state: state) => state,
-): StateValue<state, void> {
+): State<state, void> {
   return State((state: state) => [undefined, fn(state)]);
 }
 
 /** Selects an item from the current state without changing it. */
 export function gets<state, item>(
   fn: (state: state) => item,
-): StateValue<state, item> {
+): State<state, item> {
   return State((state: state) => [fn(state), state]);
+}
+
+/** @ignore */
+export interface AsCellLambda<state> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawState<state, this[typeof type_item]>;
 }
 
 /**
@@ -110,15 +122,12 @@ export function gets<state, item>(
  */
 export interface AsCell<key extends PropertyKey, state>
   extends
-    As<AsCell<key, state>, CellIdentity<typeof state_identity, key>>,
+    As<AsCellLambda<state>, CellIdentity<typeof state_identity, key>>,
     Show<AsCell<key, state>>,
-    Monad<AsCell<key, state>> {
-  /** The item produced by a cell value. */
-  readonly [type_item]: unknown;
-  /** The stateful computation represented by a cell value. */
-  readonly [type_data]: State<state, this[typeof type_item]>;
+    Monad<AsCell<key, state>>,
+    Runnable {
   /** Wraps a stateful computation addressed to this cell. */
-  <item>(value: State<state, item>): CellValue<key, state, item>;
+  <item>(value: RawState<state, item>): CellValue<key, state, item>;
   /** Reads this cell. */
   get(): CellValue<key, state, state>;
   /** Replaces this cell. */
@@ -132,7 +141,7 @@ export interface AsCell<key extends PropertyKey, state>
 /** A State computation wrapped with its cell's dictionary. */
 export type CellValue<key extends PropertyKey, state, item> = WrappedData<
   AsCell<key, state>,
-  State<state, item>,
+  RawState<state, item>,
   item
 >;
 
@@ -238,7 +247,7 @@ function make_state_cell<key extends PropertyKey, state>(
   return dictionary;
 
   function wrap<item>(
-    value: State<state, item>,
+    value: RawState<state, item>,
   ): CellValue<key, state, item> {
     return dictionary(value);
   }
@@ -373,7 +382,7 @@ export type TerminalStateItem<requirements> =
 
 /** Runs one State value or an effect containing only State lifts. */
 export function run_state_terminal<state, item>(
-  stateful: StateValue<state, item>,
+  stateful: State<state, item>,
   state: state,
 ): readonly [item, state];
 /** Runs an effect containing only State lifts. */
@@ -384,7 +393,7 @@ export function run_state_terminal<requirements, item>(
 /** Runs a State value or an effect containing only State lifts. */
 export function run_state_terminal<requirements, state, item>(
   value:
-    | StateValue<state, item>
+    | State<state, item>
     | Effect<requirements, item>,
   state: state & TerminalStateItem<requirements>,
 ): readonly [item, state];
@@ -408,7 +417,7 @@ export function run_state_terminal<
 export function run_state_terminal(
   ...args:
     | readonly [
-      StateValue<unknown, unknown> | Effect<unknown, unknown>,
+      State<unknown, unknown> | Effect<unknown, unknown>,
       unknown,
     ]
     | readonly [
@@ -434,7 +443,7 @@ export function run_state_terminal(
 
 function run_state_kind(
   effect:
-    | StateValue<unknown, unknown>
+    | State<unknown, unknown>
     | CellValue<PropertyKey, unknown, unknown>
     | Effect<unknown, unknown>,
   runtime_kind: AsState<unknown>[typeof kind],
@@ -445,7 +454,7 @@ function run_state_kind(
       throw new TypeError("Unhandled effect operation: lift");
     }
 
-    const [value, next] = (effect as StateValue<unknown, unknown>)
+    const [value, next] = (effect as State<unknown, unknown>)
       .value()(initial);
 
     return [value, next];

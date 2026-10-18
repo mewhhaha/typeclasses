@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import { ArrayT, type AsArray, to_array } from "./array.ts";
 import { assert_equals, assert_true } from "./assert.ts";
 import { Either } from "./either.ts";
@@ -33,27 +34,27 @@ import { Applicative, Eq, MonadError, Parse } from "./typeclasses.ts";
 
 type Box<item> = readonly ["Box", item];
 
-declare const first_identity: unique symbol;
-declare const second_identity: unique symbol;
+const first_identity: unique symbol = Symbol("first_identity");
+const second_identity: unique symbol = Symbol("second_identity");
 
-interface AsFirst extends As<AsFirst, typeof first_identity> {
+interface AsFirst extends As<AsFirst, typeof first_identity>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
-interface AsSecond extends As<AsSecond, typeof second_identity> {
+interface AsSecond extends As<AsSecond, typeof second_identity>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
 // @ts-expect-error every dictionary family requires an explicit identity token
-interface AsUnidentified extends As<AsUnidentified> {
+interface AsUnidentified extends As<AsUnidentified>, Matchable {
   readonly [type_item]: unknown;
   readonly [type_data]: Box<this[typeof type_item]>;
 }
 
-const First = data<AsFirst>();
-const Second = data<AsSecond>();
+const First = data<AsFirst>(first_identity);
+const Second = data<AsSecond>(second_identity);
 
 type Config = { readonly url: string };
 type Database = { readonly pool: string };

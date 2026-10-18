@@ -1,10 +1,10 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { Effect, run } from "./effects.ts";
 import { Either } from "./either.ts";
-import { fn, type FnValue } from "./fn.ts";
-import { Identity, identity, type IdentityValue } from "./identity.ts";
-import { Just, Maybe, type MaybeValue, Nothing } from "./maybe.ts";
-import { predicate, type PredicateValue } from "./predicate.ts";
+import { type Fn, fn } from "./fn.ts";
+import { Identity, identity } from "./identity.ts";
+import { Just, Maybe, Nothing } from "./maybe.ts";
+import { type Predicate, predicate } from "./predicate.ts";
 import {
   alternative_laws,
   applicative_laws,
@@ -167,15 +167,15 @@ Deno.test("Maybe satisfies the reusable typeclass laws", () => {
     (value: number) => -value,
   ]));
   const monadic_functions = arbitrary(element([
-    (value: number): MaybeValue<number> => Just(value),
-    (value: number): MaybeValue<number> =>
+    (value: number): Maybe<number> => Just(value),
+    (value: number): Maybe<number> =>
       value % 2 === 0 ? Just(value / 2) : Nothing(),
   ]));
   const values = maybe_arbitrary(integers);
   const function_values = maybe_arbitrary(functions);
   const equals = (
-    left: MaybeValue<number>,
-    right: MaybeValue<number>,
+    left: Maybe<number>,
+    right: Maybe<number>,
   ): boolean => left.eq(right);
 
   const reports = check_laws([
@@ -211,7 +211,7 @@ Deno.test("advanced typeclasses satisfy their reusable laws", () => {
   ]));
   const maybe_values = maybe_arbitrary(integers);
   const either_values = either_arbitrary(string_arbitrary(), integers);
-  const predicates = arbitrary(element<PredicateValue<number>>([
+  const predicates = arbitrary(element<Predicate<number>>([
     predicate((value) => value >= 0),
     predicate((value) => value % 2 === 0),
     predicate(() => true),
@@ -224,18 +224,18 @@ Deno.test("advanced typeclasses satisfy their reusable laws", () => {
   const identity_values = map_arbitrary(
     integers,
     identity,
-    (value: IdentityValue<number>) => value.value(),
+    (value: Identity<number>) => value.value(),
   );
   const function_equals = (
-    left: FnValue<number, number>,
-    right: FnValue<number, number>,
+    left: Fn<number, number>,
+    right: Fn<number, number>,
   ) =>
     [-5, -1, 0, 1, 5].every((value) =>
       Object.is(left.run(value), right.run(value))
     );
   const predicate_equals = (
-    left: PredicateValue<number>,
-    right: PredicateValue<number>,
+    left: Predicate<number>,
+    right: Predicate<number>,
   ) => [-5, -1, 0, 1, 5].every((value) => left.run(value) === right.run(value));
   const Strings = Either.with_left<string>();
 
@@ -327,8 +327,8 @@ Deno.test("advanced typeclasses satisfy their reusable laws", () => {
     ...comonad_laws({
       values: identity_values,
       functions: arbitrary(element([
-        (value: IdentityValue<number>) => value.value(),
-        (value: IdentityValue<number>) => value.value() + 1,
+        (value: Identity<number>) => value.value(),
+        (value: Identity<number>) => value.value() + 1,
       ])),
       extract: (value) => value.extract(),
       extend: (value, extend) => value.extend(extend),
@@ -349,7 +349,7 @@ Deno.test("advanced typeclasses satisfy their reusable laws", () => {
 
   assert_equals(reports.length, 28);
 
-  function identity_arrow(): FnValue<number, number> {
+  function identity_arrow(): Fn<number, number> {
     return fn((value: number) => value);
   }
 });

@@ -11,7 +11,7 @@ import type { Foldable as FoldableDictionary } from "./foldable.ts";
 import type { Functor as FunctorDictionary } from "./functor.ts";
 
 /** Runtime token for the Traversable typeclass. */
-export const traversable_typeclass = Symbol("Traversable");
+export const traversable_typeclass = /* @__PURE__ */ Symbol("Traversable");
 
 /** Foldable functor capability for applicative traversal. */
 export interface Traversable<dictionary extends Dictionary>
@@ -75,7 +75,7 @@ export type TraversableTypeclass = Typeclass<typeof traversable_typeclass, {
 }>;
 
 /** Operations for traversing and sequencing contextual values. */
-export const Traversable: TraversableTypeclass = typeclass(
+export const Traversable: TraversableTypeclass = /* @__PURE__ */ typeclass(
   traversable_typeclass,
   {
     traverse<

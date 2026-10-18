@@ -1,3 +1,4 @@
+import type { Matchable } from "./data_value.ts";
 import {
   $slot,
   type As,
@@ -11,7 +12,7 @@ import {
   type UnionDictionary,
   type WrappedData,
 } from "./typeclass.ts";
-import { configured_dictionary, same_context } from "./internal.ts";
+import { same_context } from "./internal.ts";
 import { inspect } from "./inspect.ts";
 import {
   Applicative,
@@ -26,7 +27,9 @@ import {
 } from "./typeclasses.ts";
 
 /** @ignore */
-export declare const validation_identity: unique symbol;
+export const validation_identity: unique symbol = /* @__PURE__ */ Symbol(
+  "validation_identity",
+);
 
 /** An accumulating validation represented by a valid or invalid tagged tuple. */
 export type RawValidation<error, item> =
@@ -67,23 +70,26 @@ let next_validation_semigroup_id = 1;
 // deno-lint-ignore no-explicit-any -- a bare Valid is polymorphic in its error type
 export type AnyError = any;
 
+/** @ignore */
+export interface AsValidationLambda<error = AnyError> {
+  readonly [type_item]: unknown;
+  readonly [type_data]: RawValidation<error, this[typeof type_item]>;
+}
+
 /** Dictionary type for Validation with a fixed error payload type. */
 export interface AsValidation<error = AnyError>
   extends
-    As<AsValidation<error>, typeof validation_identity>,
+    As<AsValidationLambda<error>, typeof validation_identity>,
     Show<AsValidation<error>>,
     Eq<AsValidation<error>>,
     Applicative<AsValidation<error>>,
     Traversable<AsValidation<error>>,
-    Ord<AsValidation<error>> {
-  /** Higher-kinded slot for the successful value type. */
-  readonly [type_item]: unknown;
-  /** Validation representation at the selected successful value type. */
-  readonly [type_data]: RawValidation<error, this[typeof type_item]>;
+    Ord<AsValidation<error>>,
+    Matchable {
 }
 
 /** A Validation tuple wrapped with fluent typeclass methods. */
-export type ValidationValue<error, item> = [error] extends [never]
+export type Validation<error, item> = [error] extends [never]
   ? WrappedData<AsValidation<AnyError>, Valid<item>, item>
   : Data<AsValidation<error>, item>;
 
@@ -95,11 +101,11 @@ export type ValidationDictionary<error> = UnionDictionary<
 /** A Validation dictionary whose failure constructor carries one semigroup. */
 export type ConfiguredValidationDictionary<error> = AsValidation<error> & {
   readonly Invalid: {
-    <item = never>(error: error): ValidationValue<error, item>;
+    <item = never>(error: error): Validation<error, item>;
     readonly is: InvalidGuard;
   };
   readonly Valid: {
-    <item>(value: item): ValidationValue<error, item>;
+    <item>(value: item): Validation<error, item>;
     readonly is: ValidGuard;
   };
 };
@@ -113,10 +119,10 @@ export type ValidationConstructor =
   & {
     <value extends RawValidation<AnyError, AnyError>>(
       value: value,
-    ): ValidationValue<ValidationError<value>, ValidationItem<value>>;
+    ): Validation<ValidationError<value>, ValidationItem<value>>;
     <error, item>(
       value: RawValidation<error, item>,
-    ): ValidationValue<error, item>;
+    ): Validation<error, item>;
     with_error<error>(): ValidationDictionary<error>;
     with_semigroup<error>(
       semigroup: ValidationSemigroup<error>,
@@ -131,8 +137,8 @@ export type ValidationConstructor =
 /** Runtime predicate for correctly shaped valid tuples. */
 export type ValidGuard = {
   <error, item>(
-    value: ValidationValue<error, item>,
-  ): value is { value(): Valid<item> } & ValidationValue<error, item>;
+    value: Validation<error, item>,
+  ): value is { value(): Valid<item> } & Validation<error, item>;
   <error, item>(value: RawValidation<error, item>): value is Valid<item>;
   (
     value: unknown,
@@ -144,8 +150,8 @@ export type ValidGuard = {
 /** Runtime predicate for invalid tuples with a usable semigroup. */
 export type InvalidGuard = {
   <error, item>(
-    value: ValidationValue<error, item>,
-  ): value is { value(): Invalid<error> } & ValidationValue<error, item>;
+    value: Validation<error, item>,
+  ): value is { value(): Invalid<error> } & Validation<error, item>;
   <error, item>(value: RawValidation<error, item>): value is Invalid<error>;
   (
     value: unknown,
@@ -156,7 +162,7 @@ export type InvalidGuard = {
 
 /** Constructor and guard for successful Validation values. */
 export type ValidConstructor = {
-  <item>(value: item): ValidationValue<never, item>;
+  <item>(value: item): Validation<never, item>;
   readonly is: ValidGuard;
 };
 
@@ -165,12 +171,13 @@ export type InvalidConstructor = {
   <error, item = never>(
     error: error,
     semigroup: ValidationSemigroup<error>,
-  ): ValidationValue<error, item>;
+  ): Validation<error, item>;
   readonly is: InvalidGuard;
 };
 
 /** Callable Validation dictionary with configurable error accumulation. */
 export const Validation = data<AsValidation<unknown>>(
+  validation_identity,
   union(["valid", $slot], ["invalid", $slot, $slot]),
 ) as unknown as ValidationConstructor;
 
@@ -198,9 +205,8 @@ function validation_with_error<error>(): ValidationDictionary<error> {
 function validation_with_semigroup<error>(
   semigroup: ValidationSemigroup<error>,
 ): ConfiguredValidationDictionary<error> {
-  const dictionary = configured_dictionary(
-    Validation,
-    data<AsValidation<error>>(),
+  const dictionary = data<AsValidation<error>>(
+    validation_identity,
   ) as ConfiguredValidationDictionary<error>;
 
   Object.setPrototypeOf(dictionary, Validation);
@@ -209,12 +215,12 @@ function validation_with_semigroup<error>(
       value: Object.assign(
         function construct_configured_invalid<item = never>(
           error: error,
-        ): ValidationValue<error, item> {
+        ): Validation<error, item> {
           return dictionary<item>([
             "invalid",
             error,
             semigroup,
-          ]) as ValidationValue<error, item>;
+          ]) as Validation<error, item>;
         },
         { is: Invalid.is },
       ),
@@ -223,11 +229,11 @@ function validation_with_semigroup<error>(
       value: Object.assign(
         function construct_configured_valid<item>(
           item: item,
-        ): ValidationValue<error, item> {
+        ): Validation<error, item> {
           return dictionary<item>([
             "valid",
             item,
-          ]) as ValidationValue<error, item>;
+          ]) as Validation<error, item>;
         },
         { is: Valid.is },
       ),
@@ -241,7 +247,7 @@ function validation_with_semigroup<error>(
 export function InvalidMessages<item = never>(
   first: string,
   ...rest: string[]
-): ValidationValue<readonly string[], item> {
+): Validation<readonly string[], item> {
   return Messages.Invalid([first, ...rest]);
 }
 
@@ -249,10 +255,10 @@ const Messages = validation_with_semigroup(array_semigroup<string>());
 
 /** Map a validation error while explicitly selecting the target semigroup. */
 export function map_error<error, next_error, item>(
-  validation: ValidationValue<error, item>,
+  validation: Validation<error, item>,
   fn: (error: error) => next_error,
   semigroup: ValidationSemigroup<next_error>,
-): ValidationValue<next_error, item> {
+): Validation<next_error, item> {
   const [tag, payload] = validation.value();
   const configured = validation_with_semigroup(semigroup);
 
@@ -265,8 +271,8 @@ export function map_error<error, next_error, item>(
 }
 
 function is_invalid<error, item>(
-  value: ValidationValue<error, item>,
-): value is { value(): Invalid<error> } & ValidationValue<error, item>;
+  value: Validation<error, item>,
+): value is { value(): Invalid<error> } & Validation<error, item>;
 function is_invalid<error, item>(
   value: RawValidation<error, item>,
 ): value is Invalid<error>;
@@ -306,7 +312,7 @@ function is_invalid<error, item>(
 function construct_invalid<error, item = never>(
   error: error,
   semigroup: ValidationSemigroup<error>,
-): ValidationValue<error, item> {
+): Validation<error, item> {
   return Validation<error, item>([
     "invalid",
     error,
@@ -467,15 +473,15 @@ Traversable.instance(Validation)({
 function invalid_from_error<error, item = never>(
   error: error,
   semigroup: ValidationSemigroup<error>,
-): ValidationValue<error, item> {
+): Validation<error, item> {
   return Invalid(error, semigroup);
 }
 
 function lift_validation_valid<result>(
   fn: (...values: unknown[]) => result,
   first: unknown,
-  rest: readonly ValidationValue<unknown, unknown>[],
-): ValidationValue<unknown, result> {
+  rest: readonly Validation<unknown, unknown>[],
+): Validation<unknown, result> {
   switch (rest.length) {
     case 0:
       return Valid(fn(first));
@@ -524,8 +530,8 @@ function lift_validation_valid<result>(
 function lift_validation_invalid<result>(
   first: unknown,
   semigroup: ValidationSemigroup<unknown>,
-  rest: readonly ValidationValue<unknown, unknown>[],
-): ValidationValue<unknown, result> {
+  rest: readonly Validation<unknown, unknown>[],
+): Validation<unknown, result> {
   let error = first;
 
   for (const current of rest) {
@@ -613,6 +619,3 @@ function compare_errors(left: unknown, right: unknown) {
 
   return compare_unknown(left, right);
 }
-
-/** The public fluent Validation value. */
-export type Validation<error, item> = ValidationValue<error, item>;

@@ -1,20 +1,7 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { Effect } from "./effects.ts";
-import {
-  ask,
-  asks,
-  Reader,
-  type ReaderValue,
-  run_reader_terminal,
-} from "./reader.ts";
-import {
-  get,
-  gets,
-  modify,
-  run_state_terminal,
-  State,
-  type StateValue,
-} from "./state.ts";
+import { ask, asks, Reader, run_reader_terminal } from "./reader.ts";
+import { get, gets, modify, run_state_terminal, State } from "./state.ts";
 import { kind } from "./typeclass.ts";
 import { Do } from "./typeclasses.ts";
 
@@ -22,8 +9,8 @@ type Config = { readonly port: number };
 
 Deno.test("Reader environment views support pure, fluent bind, and explicit Do", () => {
   const ConfigReader = Reader.with_environment<Config>();
-  const pure: ReaderValue<Config, number> = ConfigReader.pure(1);
-  const incremented: ReaderValue<Config, number> = pure.bind((value) =>
+  const pure: Reader<Config, number> = ConfigReader.pure(1);
+  const incremented: Reader<Config, number> = pure.bind((value) =>
     asks((config: Config) => value + config.port)
   );
   const program = Do(ConfigReader, function* () {
@@ -48,8 +35,8 @@ Deno.test("Reader environment views support pure, fluent bind, and explicit Do",
 
 Deno.test("State type views support pure, fluent bind, and explicit Do", () => {
   const NumberState = State.with_state<number>();
-  const pure: StateValue<number, number> = NumberState.pure(1);
-  const incremented: StateValue<number, number> = pure.bind((value) =>
+  const pure: State<number, number> = NumberState.pure(1);
+  const incremented: State<number, number> = pure.bind((value) =>
     gets((current: number) => current + value)
   );
   const program = Do(NumberState, function* () {

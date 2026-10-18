@@ -75,7 +75,9 @@ export type UrlPatternList<item> = {
   match(context: RouteContext): RouteResult<item>;
 };
 
-declare const url_pattern_list_identity: unique symbol;
+const url_pattern_list_identity: unique symbol = Symbol(
+  "url_pattern_list_identity",
+);
 
 export interface AsUrlPatternList
   extends
@@ -90,7 +92,7 @@ export interface AsUrlPatternList
 
 export type UrlPatternListValue<item> = Data<AsUrlPatternList, item>;
 
-export const UrlPatternList = data<AsUrlPatternList>();
+export const UrlPatternList = data<AsUrlPatternList>(url_pattern_list_identity);
 
 Show.instance(UrlPatternList)({
   show() {
