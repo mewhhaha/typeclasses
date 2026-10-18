@@ -36,7 +36,7 @@ export interface AsPredicate
 export type Predicate<item> = Data<AsPredicate, item>;
 
 /** Callable Predicate dictionary and the source of its instances. */
-export const Predicate: AsPredicate = data<AsPredicate>(predicate_identity);
+export const Predicate: AsPredicate = /* @__PURE__ */ create_predicate();
 
 /** Wrap a predicate function. */
 export function predicate<item>(
@@ -53,39 +53,44 @@ export function test<item>(
   return value.run(item);
 }
 
-Show.instance(Predicate)({
-  show() {
-    return "Predicate(?)";
-  },
-});
+function create_predicate(): AsPredicate {
+  const Predicate: AsPredicate = data<AsPredicate>(predicate_identity);
+  Show.instance(Predicate)({
+    show() {
+      return "Predicate(?)";
+    },
+  });
 
-Contravariant.instance(Predicate)({
-  contramap(fn) {
-    const test = this.value();
+  Contravariant.instance(Predicate)({
+    contramap(fn) {
+      const test = this.value();
 
-    return predicate((value) => {
-      return test(fn(value));
-    });
-  },
-});
+      return predicate((value) => {
+        return test(fn(value));
+      });
+    },
+  });
 
-Semigroup.instance(Predicate)({
-  concat(right) {
-    const left = this.value();
-    const right_value = right.value();
+  Semigroup.instance(Predicate)({
+    concat(right) {
+      const left = this.value();
+      const right_value = right.value();
 
-    return predicate((value) => {
-      if (!left(value)) {
-        return false;
-      }
+      return predicate((value) => {
+        if (!left(value)) {
+          return false;
+        }
 
-      return right_value(value);
-    });
-  },
-});
+        return right_value(value);
+      });
+    },
+  });
 
-Monoid.instance(Predicate)({
-  empty() {
-    return predicate(() => true);
-  },
-});
+  Monoid.instance(Predicate)({
+    empty() {
+      return predicate(() => true);
+    },
+  });
+
+  return Predicate;
+}

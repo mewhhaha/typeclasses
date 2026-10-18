@@ -1,0 +1,38 @@
+--- a/src/effects.ts
++++ b/src/effects.ts
+@@ -1357,17 +1357,25 @@
+             index = instruction.next;
+             break;
+           }
+-          const suspended_state = state;
+-          return bind(
+-            effect,
+-            (value) =>
+-              execute(
+-                instruction.next,
+-                instruction.resume(suspended_state, value),
+-              ),
+-          );
++          return continue_step(effect, state, instruction);
+         }
+       }
+     }
+   }
+-}
++  function continue_step(
++    effect: Effect<requirements, unknown>,
++    state: state,
++    instruction: Extract<
++      EffectPlanInstruction<requirements, state, result>,
++      { tag: "step" }
++    >,
++  ): Effect<requirements, result> {
++    if (effect[0] === "pure") {
++      return execute(instruction.next, instruction.resume(state, effect[1]));
++    }
++    return suspend(
++      effect[1],
++      (value) => continue_step(effect[2](value), state, instruction),
++    );
++  }
++}

@@ -378,13 +378,60 @@ function data_match(
   return match_tagged(value as unknown as TaggedValue, cases);
 }
 
-function* data_iterator<dictionary, value, item>(
+function data_iterator<dictionary, value, item>(
   this: WrappedData<dictionary, value, item>,
 ): Generator<
   WrappedData<dictionary, value, item>,
   item,
   unknown
 > {
-  const item = yield this;
-  return item as item;
+  return yield_data(this);
+}
+
+class DataYield<yielded, item> extends Iterator<yielded, item, unknown> {
+  #current: yielded | undefined;
+  #state = 0;
+  constructor(value: yielded) {
+    super();
+    this.#current = value;
+  }
+  next(...args: [] | [unknown]): IteratorResult<yielded, item> {
+    switch (this.#state) {
+      case 0: {
+        const value = this.#current!;
+        this.#current = undefined;
+        this.#state = 1;
+        return { done: false, value };
+      }
+      case 1:
+        this.#state = 2;
+        return { done: true, value: args[0] as item };
+      default:
+        return { done: true, value: undefined as item };
+    }
+  }
+  override return(value: item): IteratorResult<yielded, item> {
+    this.#current = undefined;
+    this.#state = 2;
+    return { done: true, value };
+  }
+  override throw(error: unknown): IteratorResult<yielded, item> {
+    this.#current = undefined;
+    this.#state = 2;
+    throw error;
+  }
+  override [Symbol.iterator](): DataYield<yielded, item> {
+    return this;
+  }
+  override [Symbol.dispose](): void {
+    this.#current = undefined;
+    this.#state = 2;
+  }
+}
+
+/** @ignore Single-yield iterator used by wrapped values. */
+export function yield_data<yielded, item>(
+  value: yielded,
+): Generator<yielded, item, unknown> {
+  return new DataYield(value);
 }

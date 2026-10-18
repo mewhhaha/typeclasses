@@ -1,6 +1,7 @@
 import {
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -43,13 +44,18 @@ export const Functor: FunctorTypeclass = /* @__PURE__ */ typeclass(
       value: Data<dictionary, from>,
       fn: (value: from) => to,
     ): Data<dictionary, to> {
-      // The normal path needs one dictionary lookup and one call. Keep the
-      // descriptive missing-instance error on the cold path.
-      let implementation = value[functor_typeclass];
-      if (implementation === undefined) {
-        implementation = this.instance_for(value);
-      }
-      return (implementation.map<from, to>).call(value, fn);
+      return functor_map(value, fn);
     },
   },
 );
+
+/** @ignore Mapping primitive for implementations that do not need the whole definition. */
+export function functor_map<dictionary extends Functor<dictionary>, from, to>(
+  value: Data<dictionary, from>,
+  fn: (value: from) => to,
+): Data<dictionary, to> {
+  return (instance_for_token(functor_typeclass, value).map<from, to>).call(
+    value,
+    fn,
+  );
+}

@@ -35,6 +35,16 @@ export type ParallelOptions = {
   readonly batch_size?: number;
   /** Maximum outstanding map requests; new requests reject at this limit. */
   readonly max_pending_requests?: number;
+  /** Maximum admitted input items across active and queued requests. */
+  readonly max_pending_items?: number;
+  /** Maximum admitted bytes, measured with `input_bytes`. */
+  readonly max_pending_bytes?: number;
+  /** Estimates retained input bytes; required with max_pending_bytes. */
+  readonly input_bytes?: (input: unknown) => number;
+  /** Defaults to shared batch metadata when the worker advertises support. */
+  readonly protocol?: "legacy" | "range";
+  /** Allows cooperative cancellation before replacing an unresponsive worker. */
+  readonly abort_grace_ms?: number;
   /** The maximum number of workers to create. */
   readonly workers?: number;
   /** Cancels worker creation or active work when aborted. */
@@ -72,6 +82,11 @@ export type WorkerPool<input, output> = {
     inputs: readonly input[],
     options?: WorkerMapOptions<input>,
   ): Promise<readonly output[]>;
+  /** Lazily submits one bounded window at a time, preserving input order. */
+  stream(
+    inputs: Iterable<input>,
+    options?: WorkerMapOptions<input> & { readonly window_size?: number },
+  ): AsyncIterable<output>;
   /** Aborts active work and terminates every worker. */
   close(): void;
   /** Closes the pool when used with explicit resource management. */
@@ -184,16 +199,17 @@ export function run_parallel_with_pool<requirements, item>(
 
   if (operation[0] === "parallel.map") {
     const [, map] = effect[1] as ParallelMap<unknown, unknown>;
-    let task = worker_map(map.worker, map.inputs, {
-      workers: map.workers,
-      batch_size: map.batch_size,
-      signal: map.signal,
-    });
-
+    let task: Data<AsTask, readonly unknown[]>;
     if (map.worker === pool.worker) {
       task = worker_pool_map(pool, map.inputs, {
         signal: map.signal,
         batch_size: map.batch_size,
+      });
+    } else {
+      task = worker_map(map.worker, map.inputs, {
+        workers: map.workers,
+        batch_size: map.batch_size,
+        signal: map.signal,
       });
     }
 
@@ -227,6 +243,30 @@ export function create_worker_pool<input, output>(
     );
   }
 
+  const item_limit = options.max_pending_items ?? Infinity;
+  const byte_limit = options.max_pending_bytes ?? Infinity;
+  for (const limit of [item_limit, byte_limit]) {
+    if (limit !== Infinity && (!Number.isSafeInteger(limit) || limit < 1)) {
+      throw new RangeError(
+        "Worker admission limits must be positive safe integers",
+      );
+    }
+  }
+  if (byte_limit !== Infinity && options.input_bytes === undefined) {
+    throw new TypeError("Worker max_pending_bytes requires input_bytes");
+  }
+  if (
+    options.abort_grace_ms !== undefined &&
+    (!Number.isFinite(options.abort_grace_ms) || options.abort_grace_ms < 0)
+  ) {
+    throw new RangeError(
+      "Worker abort_grace_ms must be finite and nonnegative",
+    );
+  }
+  let pending_items = 0;
+  let pending_bytes = 0;
+  const cancellations = new Map<Worker, ReturnType<typeof setTimeout>>();
+
   try {
     for (let index = 0; index < worker_count; index += 1) {
       workers.push(new Worker(worker_href_value, { type: "module" }));
@@ -241,6 +281,8 @@ export function create_worker_pool<input, output>(
 
   type Request = {
     readonly batch: number;
+    readonly bytes: number;
+    readonly items: number;
     readonly inputs: readonly input[];
     readonly options: WorkerMapOptions<input>;
     readonly results: output[];
@@ -250,17 +292,23 @@ export function create_worker_pool<input, output>(
     next: number;
     completed: number;
     settled: boolean;
+    active: number;
+    released: boolean;
     previous?: Request;
     following?: Request;
   };
   type Assignment = {
     readonly request: Request;
-    readonly ids: readonly number[];
+    readonly start: number;
+    readonly count: number;
+    readonly range: boolean;
   };
   const requests = new Set<Request>();
   const assignments = new Map<Worker, Assignment>();
   const idle = [...workers];
   const worker_members = new Set(workers);
+  const range_workers = new Set<Worker>();
+  const cooperative_workers = new Set<Worker>();
   let ready_request: Request | undefined;
   let closed_reason: Error | undefined;
   let resolve_ready!: () => void;
@@ -299,26 +347,62 @@ export function create_worker_pool<input, output>(
     request.previous = undefined;
     request.following = undefined;
   }
-  function reclaim(request: Request): void {
+  function release(request: Request): void {
+    if (!request.settled || request.active !== 0 || request.released) return;
+    request.released = true;
+    requests.delete(request);
+    pending_items -= request.items;
+    pending_bytes -= request.bytes;
+  }
+  function release_assignment(worker: Worker): void {
+    const assignment = assignments.get(worker);
+    if (assignment === undefined) return;
+    assignments.delete(worker);
+    assignment.request.active -= 1;
+    release(assignment.request);
+  }
+  function replace_worker(worker: Worker): void {
+    const timer = cancellations.get(worker);
+    if (timer !== undefined) clearTimeout(timer);
+    cancellations.delete(worker);
+    worker.terminate();
+    release_assignment(worker);
+    worker_members.delete(worker);
+    range_workers.delete(worker);
+    cooperative_workers.delete(worker);
+    ready_workers.delete(worker);
+    const index = workers.indexOf(worker);
+    const replacement = new Worker(worker_href_value, { type: "module" });
+    workers[index] = replacement;
+    worker_members.add(replacement);
+    install(replacement);
+    idle.push(replacement);
+  }
+  function reclaim(request: Request, cooperative = false): void {
     for (const [worker, assignment] of assignments) {
       if (assignment.request !== request) continue;
-      assignments.delete(worker);
-      worker.terminate();
-      worker_members.delete(worker);
-      ready_workers.delete(worker);
-      const index = workers.indexOf(worker);
-      const replacement = new Worker(worker_href_value, { type: "module" });
-      workers[index] = replacement;
-      worker_members.add(replacement);
-      install(replacement);
-      idle.push(replacement);
+      if (
+        cooperative && options.abort_grace_ms !== undefined &&
+        cooperative_workers.has(worker)
+      ) {
+        worker.postMessage(["cancel", request.batch]);
+        const timer = setTimeout(() => {
+          try {
+            replace_worker(worker);
+            dispatch();
+          } catch (cause) {
+            close_with(error_with_context("Could not replace worker", cause));
+          }
+        }, options.abort_grace_ms);
+        cancellations.set(worker, timer);
+      } else replace_worker(worker);
     }
   }
   function settle(request: Request, error?: { readonly cause: unknown }): void {
     if (request.settled) return;
     request.settled = true;
     request.options.signal?.removeEventListener("abort", request.abort);
-    requests.delete(request);
+    release(request);
     remove_ready(request);
     if (error !== undefined) request.reject(error.cause);
     else request.resolve(request.results);
@@ -329,6 +413,9 @@ export function create_worker_pool<input, output>(
     reject_ready(reason);
     for (const request of [...requests]) settle(request, { cause: reason });
     close_workers(workers);
+    for (const worker of assignments.keys()) release_assignment(worker);
+    for (const timer of cancellations.values()) clearTimeout(timer);
+    cancellations.clear();
     options.signal?.removeEventListener("abort", close_from_signal);
   }
   function close(): void {
@@ -345,40 +432,57 @@ export function create_worker_pool<input, output>(
       const request = ready_request;
       ready_request = request.following;
       const size = request.options.batch_size ?? options.batch_size ?? 1;
-      const ids: number[] = [];
-      const jobs: WorkerJob<input>[1][] = [];
+      const start = request.next;
+      const end = Math.min(start + size, request.items);
+      request.next = end;
+      if (end === request.items) remove_ready(request);
       const transfer: Transferable[] = [];
-      while (jobs.length < size && request.next < request.inputs.length) {
-        const id = request.next++;
-        ids.push(id);
-        jobs.push({ batch: request.batch, id, input: request.inputs[id] });
-      }
-      if (request.next === request.inputs.length) remove_ready(request);
       try {
-        for (const id of ids) {
-          transfer.push(
-            ...(request.options.transfer?.(request.inputs[id], id) ?? []),
-          );
-          if (request.settled || closed_reason !== undefined) break;
+        if (request.options.transfer !== undefined) {
+          for (let id = start; id < end; id += 1) {
+            for (
+              const item of request.options.transfer(request.inputs[id], id)
+            ) {
+              transfer.push(item);
+            }
+            if (request.settled || closed_reason !== undefined) break;
+          }
         }
-        // Transfer callbacks are user code and may synchronously abort or close.
-        // This worker is reserved locally until an assignment is posted.
         if (closed_reason !== undefined) return;
         if (request.settled) {
           idle.push(worker);
           continue;
         }
-        assignments.set(worker, { request, ids });
-        if (size === 1) worker.postMessage(["job", jobs[0]], transfer);
-        else worker.postMessage(["jobs", jobs], transfer);
+        const range = options.protocol === "range" ||
+          (options.protocol === undefined && range_workers.has(worker));
+        assignments.set(worker, { request, start, count: end - start, range });
+        request.active += 1;
+        if (range && end - start > 1) {
+          worker.postMessage([
+            "range",
+            request.batch,
+            start,
+            request.inputs.slice(start, end),
+          ], transfer);
+        } else if (end - start === 1) {
+          worker.postMessage(["job", {
+            batch: request.batch,
+            id: start,
+            input: request.inputs[start],
+          }], transfer);
+        } else {
+          const jobs: WorkerJob<input>[1][] = [];
+          for (let id = start; id < end; id += 1) {
+            jobs.push({ batch: request.batch, id, input: request.inputs[id] });
+          }
+          worker.postMessage(["jobs", jobs], transfer);
+        }
       } catch (cause) {
-        assignments.delete(worker);
+        release_assignment(worker);
         idle.push(worker);
         settle(request, {
           cause: error_with_context(
-            `Could not send input ${
-              ids[0]
-            } to ${worker_href_value} in batch ${request.batch}`,
+            `Could not send input ${start} to ${worker_href_value} in batch ${request.batch}`,
             cause,
           ),
         });
@@ -391,10 +495,39 @@ export function create_worker_pool<input, output>(
     }
   }
 
+  function accept(
+    request: Request,
+    reply: WorkerReply<output>,
+    id: number,
+  ): void {
+    const [tag, payload] = reply;
+    if (payload.batch !== request.batch || payload.id !== id) {
+      throw new Error("Worker reply does not match its assignment");
+    }
+    if (request.settled) return;
+    switch (tag) {
+      case "done":
+        request.results[id] = payload.output;
+        request.completed += 1;
+        break;
+      case "failed":
+        settle(request, {
+          cause: worker_error(payload.error, {
+            worker: worker_href_value,
+            batch: request.batch,
+          }, id),
+        });
+        reclaim(request);
+        break;
+    }
+  }
   function install(worker: Worker): void {
     worker.onmessage = (event) => {
       if (closed_reason !== undefined || !worker_members.has(worker)) return;
       if (Array.isArray(event.data) && event.data[0] === "ready") {
+        const capabilities = event.data[1];
+        if (capabilities?.range === true) range_workers.add(worker);
+        if (capabilities?.cooperative === true) cooperative_workers.add(worker);
         mark_ready(worker);
         return;
       }
@@ -403,41 +536,83 @@ export function create_worker_pool<input, output>(
         if (assignment === undefined) {
           throw new Error("Reply without an active assignment");
         }
-        let replies: unknown[] = [event.data];
-        if (Array.isArray(event.data) && event.data[0] === "results") {
-          replies = event.data[1];
+        const message = event.data;
+        if (cancellations.has(worker)) {
+          if (
+            !Array.isArray(message) || message[0] !== "cancelled" ||
+            message[1] !== assignment.request.batch
+          ) return;
+          clearTimeout(cancellations.get(worker));
+          cancellations.delete(worker);
+          release_assignment(worker);
+          idle.push(worker);
+          dispatch();
+          return;
         }
-        if (
-          !Array.isArray(replies) || replies.length !== assignment.ids.length
-        ) throw new Error("Wrong worker reply count");
-        const parsed = replies.map((reply) =>
-          parse_worker_reply<output>(reply)
-        );
-        assignments.delete(worker);
+        const { request, start, count } = assignment;
+        // Validate the complete envelope before publishing results or releasing
+        // this worker. Single replies avoid wrapper and parsed-reply arrays.
+        if (count === 1) {
+          const reply = parse_worker_reply<output>(message);
+          release_assignment(worker);
+          accept(request, reply, start);
+        } else if (Array.isArray(message) && message[0] === "range-results") {
+          if (
+            !assignment.range || message[1] !== request.batch ||
+            message[2] !== start || !Array.isArray(message[3]) ||
+            message[3].length !== count
+          ) throw new Error("Invalid range reply");
+          const values = message[3];
+          for (const entry of values) {
+            if (
+              !Array.isArray(entry) || entry.length !== 2 ||
+              (entry[0] !== "done" && entry[0] !== "failed")
+            ) {
+              throw new Error("Invalid range result");
+            }
+            if (entry[0] === "failed") {
+              parse_worker_reply(["failed", {
+                batch: request.batch,
+                id: start,
+                error: entry[1],
+              }]);
+            }
+          }
+          release_assignment(worker);
+          for (let offset = 0; offset < count; offset += 1) {
+            const entry = values[offset];
+            if (entry[0] === "done") {
+              if (!request.settled) {
+                request.results[start + offset] = entry[1];
+                request.completed += 1;
+              }
+            } else {
+              accept(request, ["failed", {
+                batch: request.batch,
+                id: start + offset,
+                error: entry[1],
+              }], start + offset);
+            }
+          }
+        } else {
+          if (
+            !Array.isArray(message) || message[0] !== "results" ||
+            !Array.isArray(message[1]) || message[1].length !== count
+          ) {
+            throw new Error("Wrong worker reply count");
+          }
+          const replies = message[1];
+          for (let offset = 0; offset < count; offset += 1) {
+            parse_worker_reply<output>(replies[offset]);
+          }
+          release_assignment(worker);
+          for (let offset = 0; offset < count; offset += 1) {
+            accept(request, replies[offset], start + offset);
+          }
+        }
         mark_ready(worker);
-        for (let index = 0; index < parsed.length; index += 1) {
-          const [tag, payload] = parsed[index];
-          const { request, ids } = assignment;
-          if (payload.batch !== request.batch || payload.id !== ids[index]) {
-            throw new Error("Worker reply does not match its assignment");
-          }
-          if (request.settled) continue;
-          switch (tag) {
-            case "done":
-              request.results[payload.id] = payload.output;
-              request.completed += 1;
-              if (request.completed === request.inputs.length) settle(request);
-              break;
-            case "failed":
-              settle(request, {
-                cause: worker_error(payload.error, {
-                  worker: worker_href_value,
-                  batch: request.batch,
-                }, payload.id),
-              });
-              reclaim(request);
-              break;
-          }
+        if (!request.settled && request.completed === request.items) {
+          settle(request);
         }
         idle.push(worker);
         dispatch();
@@ -494,9 +669,53 @@ export function create_worker_pool<input, output>(
           new RangeError("Worker pool pending request limit reached"),
         );
       }
+      if (inputs.length > item_limit - pending_items) {
+        return Promise.reject(
+          new RangeError("Worker pool pending item limit reached"),
+        );
+      }
+      let bytes = 0;
+      if (byte_limit !== Infinity) {
+        try {
+          for (const value of inputs) {
+            const size = options.input_bytes!(value);
+            if (!Number.isSafeInteger(size) || size < 0) {
+              throw new RangeError(
+                "Worker input byte size must be a nonnegative safe integer",
+              );
+            }
+            bytes += size;
+            if (bytes > byte_limit - pending_bytes) {
+              throw new RangeError("Worker pool pending byte limit reached");
+            }
+          }
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+      }
+      // Size callbacks may synchronously close the pool or submit other maps.
+      if (closed_reason !== undefined) return Promise.reject(closed_reason);
+      if (
+        requests.size >= pending_limit ||
+        inputs.length > item_limit - pending_items ||
+        bytes > byte_limit - pending_bytes
+      ) {
+        return Promise.reject(
+          new RangeError("Worker pool admission limit reached"),
+        );
+      }
+      if (map_options.signal?.aborted) {
+        return Promise.reject(
+          worker_abort_error(worker_href_value, undefined, map_options.signal),
+        );
+      }
+      pending_items += inputs.length;
+      pending_bytes += bytes;
       return new Promise<readonly output[]>((resolve, reject) => {
         const request: Request = {
           batch: next_worker_batch(),
+          bytes,
+          items: inputs.length,
           inputs,
           options: map_options,
           results: new Array(inputs.length),
@@ -505,6 +724,8 @@ export function create_worker_pool<input, output>(
           next: 0,
           completed: 0,
           settled: false,
+          active: 0,
+          released: false,
           abort() {
             settle(request, {
               cause: worker_abort_error(
@@ -514,7 +735,7 @@ export function create_worker_pool<input, output>(
               ),
             });
             try {
-              reclaim(request);
+              reclaim(request, true);
             } catch (cause) {
               close_with(error_with_context("Could not replace worker", cause));
             }
@@ -528,6 +749,67 @@ export function create_worker_pool<input, output>(
         });
         dispatch();
       });
+    },
+    async *stream(inputs, stream_options = {}) {
+      const window_size = stream_options.window_size ?? worker_count *
+          (stream_options.batch_size ?? options.batch_size ?? 1);
+      if (!Number.isSafeInteger(window_size) || window_size < 1) {
+        throw new RangeError(
+          "Worker window_size must be a positive safe integer",
+        );
+      }
+      if (closed_reason !== undefined) throw closed_reason;
+      if (stream_options.signal?.aborted) {
+        throw worker_abort_error(
+          worker_href_value,
+          undefined,
+          stream_options.signal,
+        );
+      }
+      const iterator = inputs[Symbol.iterator]();
+      let exhausted = false;
+      try {
+        let window: input[] = [];
+        while (true) {
+          if (closed_reason !== undefined) throw closed_reason;
+          if (stream_options.signal?.aborted) {
+            throw worker_abort_error(
+              worker_href_value,
+              undefined,
+              stream_options.signal,
+            );
+          }
+          const next = iterator.next();
+          if (next.done) {
+            exhausted = true;
+            break;
+          }
+          window.push(next.value);
+          if (window.length === window_size) {
+            yield* await this.map(window, stream_options);
+            window = [];
+          }
+        }
+        if (window.length > 0) yield* await this.map(window, stream_options);
+      } catch (error) {
+        if (!exhausted) {
+          exhausted = true;
+          try {
+            iterator.return?.();
+          } catch (cleanup_error) {
+            throw new AggregateError(
+              [error, cleanup_error],
+              "Worker stream and iterator cleanup both failed",
+            );
+          }
+        }
+        throw error;
+      } finally {
+        if (!exhausted) {
+          exhausted = true;
+          iterator.return?.();
+        }
+      }
     },
     close,
     [Symbol.dispose]: close,
@@ -580,11 +862,13 @@ type WorkerRun = { readonly worker: string; readonly batch: number };
 
 /** Installs the worker protocol, optionally transferring output buffers. */
 export function serve_worker<input, output>(
-  handler: (input: input) => output | Promise<output>,
+  handler: (input: input, signal: AbortSignal) => output | Promise<output>,
   options: {
     readonly transfer?: (output: output) => Transferable[];
     /** Independent asynchronous jobs per message; defaults to one. */
     readonly concurrency?: number;
+    /** Enables abort signals and cancellation acknowledgements. */
+    readonly cooperative?: boolean;
   } = {},
 ): void {
   const concurrency = options.concurrency ?? 1;
@@ -592,73 +876,115 @@ export function serve_worker<input, output>(
     throw new RangeError("Worker concurrency must be a positive integer");
   }
   const scope = self as unknown as {
-    onmessage:
-      | ((
-        event: MessageEvent<
-          readonly [string, WorkerJob<input>[1] | WorkerJob<input>[1][]]
-        >,
-      ) => void)
-      | null;
+    onmessage: ((event: MessageEvent<unknown[]>) => void) | null;
     postMessage(message: unknown, transfer: Transferable[]): void;
   };
+  const active = new Map<number, AbortController>();
+  const never_aborted = new AbortController().signal;
   scope.onmessage = async (event) => {
     const [tag, payload] = event.data;
-    let jobs: WorkerJob<input>[1][];
-    if (tag === "jobs") jobs = payload as WorkerJob<input>[1][];
-    else if (tag === "job") jobs = [payload as WorkerJob<input>[1]];
-    else throw new TypeError("Unknown worker request");
-    const replies: WorkerReply<output>[] = [];
-    const transfers: Transferable[] = [];
-    if (concurrency === 1) {
-      for (const job of jobs) {
-        try {
-          const output = await handler(job.input);
-          transfers.push(...(options.transfer?.(output) ?? []));
-          replies.push(["done", { batch: job.batch, id: job.id, output }]);
-        } catch (error) {
-          replies.push(["failed", {
-            batch: job.batch,
-            id: job.id,
-            error: serialize_error(error),
-          }]);
-        }
+    if (tag === "cancel") {
+      const controller = active.get(payload as number);
+      if (controller !== undefined) controller.abort();
+      else if (options.cooperative) {
+        scope.postMessage(["cancelled", payload], []);
       }
-    } else {
-      const output_transfers: Transferable[][] = new Array(jobs.length);
-      let next = 0;
-      const run = async (): Promise<void> => {
-        while (next < jobs.length) {
-          const index = next++;
-          const job = jobs[index];
-          try {
-            const output = await handler(job.input);
-            output_transfers[index] = options.transfer?.(output) ?? [];
-            replies[index] = ["done", { batch: job.batch, id: job.id, output }];
-          } catch (error) {
-            output_transfers[index] = [];
-            replies[index] = ["failed", {
-              batch: job.batch,
-              id: job.id,
-              error: serialize_error(error),
-            }];
-          }
+      return;
+    }
+    let batch: number;
+    let start = 0;
+    let count = 1;
+    let jobs: WorkerJob<input>[1][] | undefined;
+    let inputs: input[] | undefined;
+    let single: WorkerJob<input>[1] | undefined;
+    switch (tag) {
+      case "range":
+        batch = payload as number;
+        start = event.data[2] as number;
+        inputs = event.data[3] as input[];
+        count = inputs.length;
+        break;
+      case "jobs":
+        jobs = payload as WorkerJob<input>[1][];
+        batch = jobs[0].batch;
+        count = jobs.length;
+        break;
+      case "job":
+        single = payload as WorkerJob<input>[1];
+        batch = single.batch;
+        break;
+      default:
+        throw new TypeError("Unknown worker request");
+    }
+    let controller: AbortController | undefined;
+    let signal = never_aborted;
+    if (options.cooperative) {
+      controller = new AbortController();
+      signal = controller.signal;
+      active.set(batch, controller);
+    }
+    let replies: unknown[] | undefined;
+    if (tag !== "job") replies = [];
+    let single_reply: unknown;
+    const transfers: Transferable[] = [];
+    let next = 0;
+    const run = async (): Promise<void> => {
+      while (next < count && !signal.aborted) {
+        const index = next++;
+        let id = start + index;
+        let input: input;
+        if (inputs !== undefined) input = inputs[index];
+        else {
+          let job = single!;
+          if (jobs !== undefined) job = jobs[index];
+          id = job.id;
+          input = job.input;
         }
-      };
+        let reply: unknown;
+        try {
+          const pending = handler(input, signal);
+          let output: output;
+          if (
+            (typeof pending === "object" && pending !== null) ||
+            typeof pending === "function"
+          ) {
+            output = await pending;
+          } else output = pending as output;
+          if (options.transfer !== undefined) {
+            for (const transfer of options.transfer(output)) {
+              transfers.push(transfer);
+            }
+          }
+          if (tag === "range") reply = ["done", output];
+          else reply = ["done", { batch, id, output }];
+        } catch (error) {
+          const failure = serialize_error(error);
+          if (tag === "range") reply = ["failed", failure];
+          else reply = ["failed", { batch, id, error: failure }];
+        }
+        if (replies === undefined) single_reply = reply;
+        else replies[index] = reply;
+      }
+    };
+    if (concurrency === 1) await run();
+    else {
       const pending: Promise<void>[] = [];
-      for (
-        let index = 0;
-        index < concurrency && index < jobs.length;
-        index += 1
-      ) {
+      for (let index = 0; index < concurrency && index < count; index += 1) {
         pending.push(run());
       }
       await Promise.all(pending);
-      transfers.push(...output_transfers.flat());
     }
-    if (tag === "job") scope.postMessage(replies[0], transfers);
-    else scope.postMessage(["results", replies], transfers);
+    if (controller !== undefined) active.delete(batch);
+    if (signal.aborted) scope.postMessage(["cancelled", batch], []);
+    else if (tag === "job") scope.postMessage(single_reply, transfers);
+    else if (tag === "range") {
+      scope.postMessage(["range-results", batch, start, replies], transfers);
+    } else scope.postMessage(["results", replies], transfers);
   };
-  scope.postMessage(["ready"], []);
+  scope.postMessage(["ready", {
+    range: true,
+    cooperative: options.cooperative === true,
+  }], []);
 }
 
 function normalize_worker_count(
@@ -787,10 +1113,7 @@ function parse_worker_reply<output>(value: unknown): WorkerReply<output> {
       throw new TypeError("Worker done reply is missing output");
     }
 
-    return [
-      "done",
-      { batch: reply.batch, id: reply.id, output: reply.output as output },
-    ];
+    return value as unknown as WorkerReply<output>;
   }
 
   if (typeof reply.error !== "object" || reply.error === null) {
@@ -811,18 +1134,7 @@ function parse_worker_reply<output>(value: unknown): WorkerReply<output> {
     throw new TypeError("Worker failed reply has an invalid error stack");
   }
 
-  return [
-    "failed",
-    {
-      batch: reply.batch,
-      id: reply.id,
-      error: {
-        name: failure.name,
-        message: failure.message,
-        stack: failure.stack,
-      },
-    },
-  ];
+  return value as unknown as WorkerReply<output>;
 }
 
 function is_job_number(value: unknown): value is number {

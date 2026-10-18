@@ -41,6 +41,7 @@
     "./reader": "./src/reader.ts",
     "./state": "./src/state.ts",
     "./writer": "./src/writer.ts",
+    "./chunk_log": "./src/chunk_log.ts",
     "./list": "./src/list.ts",
     "./tagged": "./src/tagged.ts",
     "./loop": "./src/loop.ts",
@@ -126,7 +127,7 @@
     "example": "deno run --allow-read=examples,src examples/main.ts",
     "learn": "deno run learn_you_a_typeclasses_for_greater_good/main.ts",
     "test": "deno test --clean --coverage=/var/tmp/typeclasses-coverage --coverage-threshold=70 src examples case_studies",
-    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts tools/transform_iterable_maps_checks.ts tools/transform_optimization_checks.ts tools/transform_round2_checks.ts",
+    "test:transformer": "deno test --allow-env --allow-ffi --allow-read --allow-run --allow-write tools/transform_do_program_checks.ts tools/transform_plugin_checks.ts tools/transform_iterable_maps_checks.ts tools/transform_optimization_checks.ts tools/transform_round2_checks.ts tools/round3_transform_checks.ts",
     "test:benchmarks": "deno bench --allow-env --allow-read --allow-write=/tmp,/var/tmp --filter '/$a/' bench/algorithm_contexts.bench.ts bench/iterable_pipeline.bench.ts bench/scaling.bench.ts bench/do_vs_program.bench.ts bench/case_studies_transformer.bench.ts bench/large_chains_comparison.bench.ts",
     "verify": "deno task fmt:check && deno task check && deno lint && deno task doc:check && deno task check:docs && deno task test && deno task test:experiments && deno task test:tools && deno task test:mutations && deno task test:transformer && deno task test:benchmarks && deno task check:portability && deno task test:entrypoints && deno task test:package && deno task test:node && deno task test:bun && deno task test:browser && deno task test:workerd && deno task example && deno task learn && deno task case-study",
     "prepublish": "deno task verify && deno task publish:dry-run",
@@ -142,7 +143,8 @@
     "dev:watch": "deno run --allow-read --allow-run tools/dev_watch.ts --watch",
     "test:package": "deno run --allow-env --allow-read --allow-run --allow-write=/tmp,/var/tmp tools/package_consumer.ts",
     "check:affected": "deno run --allow-read --allow-run tools/dev_watch.ts",
-    "test:tools": "deno test --allow-env --allow-read --allow-run tools/dev_watch.test.ts tools/round2_qualification_checks.ts tools/bundle_round2_checks.ts",
-    "test:experiments": "deno test bench/experiments"
+    "test:tools": "deno test --allow-env --allow-read --allow-run tools/dev_watch.test.ts tools/round2_qualification_checks.ts tools/bundle_round2_checks.ts tools/round3_core_checks.ts",
+    "test:experiments": "deno test bench/experiments",
+    "profile:allocation": "node --experimental-strip-types tools/allocation_profile.ts"
   }
 }

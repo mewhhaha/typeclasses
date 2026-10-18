@@ -1,5 +1,7 @@
 import type { Data } from "./typeclass.ts";
-import { Applicative, Functor, Monad } from "./typeclasses.ts";
+import { Applicative } from "./typeclasses/applicative.ts";
+import { Functor } from "./typeclasses/functor.ts";
+import { Monad } from "./typeclasses/monad.ts";
 
 type TraverseItems<dictionary extends Applicative<dictionary>> = <
   from,

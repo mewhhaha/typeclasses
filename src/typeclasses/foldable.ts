@@ -13,6 +13,11 @@ export const foldable_typeclass = /* @__PURE__ */ Symbol("Foldable");
 /** @ignore Optional resource-aware short-circuit implementation. */
 export const fold_while_method = /* @__PURE__ */ Symbol("Foldable.fold_while");
 
+/** @ignore Direct predicate hooks avoid control tuples on collection instances. */
+export const some_method = /* @__PURE__ */ Symbol("Foldable.some");
+/** @ignore */
+export const find_method = /* @__PURE__ */ Symbol("Foldable.find");
+
 /** Dictionary capability for reducing contextual values. */
 export interface Foldable<dictionary extends Dictionary>
   extends
@@ -25,6 +30,14 @@ export interface Foldable<dictionary extends Dictionary>
           initial: result,
           fn: (state: result, item: DataItem<dictionary, item>) => result,
         ) => result;
+        [some_method]?: <item>(
+          this: Data<dictionary, item>,
+          predicate: (item: DataItem<dictionary, item>) => boolean,
+        ) => boolean;
+        [find_method]?: <item>(
+          this: Data<dictionary, item>,
+          predicate: (item: DataItem<dictionary, item>) => boolean,
+        ) => DataItem<dictionary, item> | undefined;
         [fold_while_method]?: <item, result>(
           this: Data<dictionary, item>,
           initial: result,
@@ -116,6 +129,10 @@ export const Foldable: FoldableTypeclass = /* @__PURE__ */ typeclass(
       value: Data<dictionary, item>,
       predicate: (item: DataItem<dictionary, item>) => boolean,
     ): boolean {
+      const specialized = this.instance_for(value)[some_method];
+      if (specialized !== undefined) {
+        return call_typeclass_method(specialized, value, predicate);
+      }
       return this.fold_while(value, false, (_, item) => {
         if (predicate(item)) return ["Done", true];
         return ["Continue", false];
@@ -125,6 +142,10 @@ export const Foldable: FoldableTypeclass = /* @__PURE__ */ typeclass(
       value: Data<dictionary, item>,
       predicate: (item: DataItem<dictionary, item>) => boolean,
     ): DataItem<dictionary, item> | undefined {
+      const specialized = this.instance_for(value)[find_method];
+      if (specialized !== undefined) {
+        return call_typeclass_method(specialized, value, predicate);
+      }
       return this.fold_while<
         dictionary,
         item,

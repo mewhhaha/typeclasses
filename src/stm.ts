@@ -25,6 +25,7 @@ export const tvar_brand: unique symbol = /* @__PURE__ */ Symbol("TVar.brand");
 const tvar_id = Symbol("TVar.id");
 const tvar_value = Symbol("TVar.value");
 const tvar_immutable = Symbol("TVar.immutable");
+const tvar_shape = Symbol("TVar.shape");
 let next_tvar_id = 0;
 let transaction_depth = 0;
 const immutable_values = new WeakSet<object>();
@@ -38,6 +39,7 @@ type TVarBox<item> = TVar<item> & {
   readonly [tvar_id]: number;
   [tvar_value]: item;
   readonly [tvar_immutable]?: boolean;
+  readonly [tvar_shape]?: SnapshotShape;
 };
 
 /** @ignore */
@@ -152,15 +154,32 @@ export class StmRetry extends Error {
   }
 }
 
+/** A checked fast snapshot shape. Values outside the shape use structuredClone. */
+export type SnapshotShape =
+  | "number"
+  | "string"
+  | "boolean"
+  | "null"
+  | { readonly array: SnapshotShape }
+  | { readonly record: Readonly<Record<string, SnapshotShape>> };
+
 /** Creates a TVar whose structured-clone-safe values are isolated by transaction. */
-export function new_tvar<item>(value: item): TVar<item> {
+export function new_tvar<item>(
+  value: item,
+  options: { readonly shape?: SnapshotShape } = {},
+): TVar<item> {
   const id = next_tvar_id;
   next_tvar_id += 1;
 
   const variable: TVarBox<item> = {
     [tvar_brand]: undefined as unknown as (item: item) => item,
     [tvar_id]: id,
-    [tvar_value]: isolate_value(value, `initial value for TVar ${id}`),
+    [tvar_value]: snapshot_value(
+      value,
+      `initial value for TVar ${id}`,
+      options.shape,
+    ),
+    [tvar_shape]: options.shape,
   };
 
   return variable;
@@ -355,20 +374,33 @@ function commit_journal(journal: StmJournal): void {
   const storage = storage_of(journal);
   // Private staged clones have never escaped. Only exposed snapshots need a
   // second clone. Prepare every clone before publishing any TVar value.
+  if (storage !== undefined && !storage.escaped) {
+    // Preparation can reuse the private map: it cannot be retained by callbacks.
+    for (const [variable, value] of writes) {
+      if (storage.exposed?.has(variable)) {
+        writes.set(
+          variable,
+          isolate_tvar(
+            variable,
+            value,
+            `commit value for TVar ${read_tvar_id(variable)}`,
+          ),
+        );
+      }
+    }
+    for (const [variable, value] of writes) write_current(variable, value);
+    return;
+  }
   const commits: [TVar<unknown>, unknown][] = [];
   for (const [variable, value] of writes) {
-    if (
-      storage === undefined || storage.escaped || storage.exposed?.has(variable)
-    ) {
-      commits.push([
+    commits.push([
+      variable,
+      isolate_tvar(
         variable,
-        isolate_tvar(
-          variable,
-          value,
-          `commit value for TVar ${read_tvar_id(variable)}`,
-        ),
-      ]);
-    } else commits.push([variable, value]);
+        value,
+        `commit value for TVar ${read_tvar_id(variable)}`,
+      ),
+    ]);
   }
   for (const [variable, value] of commits) write_current(variable, value);
 }
@@ -533,7 +565,163 @@ function isolate_tvar<item>(
     freeze_immutable(isolated, new WeakSet());
     return isolated;
   }
+  return snapshot_value(
+    value,
+    operation,
+    (variable as TVarBox<item>)[tvar_shape],
+  );
+}
+
+const shape_mismatch = Symbol("snapshot shape mismatch");
+function snapshot_value<item>(
+  value: item,
+  operation: string,
+  shape?: SnapshotShape,
+): item {
+  if (shape !== undefined) {
+    const copy = clone_shape(value, shape, new Map());
+    if (copy !== shape_mismatch) return copy as item;
+  }
   return isolate_value(value, operation);
+}
+
+function clone_shape(
+  value: unknown,
+  shape: SnapshotShape,
+  copies: Map<object, unknown>,
+): unknown {
+  if (typeof shape === "string") {
+    switch (shape) {
+      case "null":
+        if (value === null) return null;
+        break;
+      case "number":
+        if (typeof value === "number") return value;
+        break;
+      case "string":
+        if (typeof value === "string") return value;
+        break;
+      case "boolean":
+        if (typeof value === "boolean") return value;
+        break;
+    }
+    return shape_mismatch;
+  }
+  if (typeof value !== "object" || value === null) return shape_mismatch;
+  if (copies.has(value)) return copies.get(value);
+  if ("array" in shape) {
+    if (!Array.isArray(value)) return shape_mismatch;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1) return shape_mismatch;
+    const copy: unknown[] = new Array(value.length);
+    copies.set(value, copy);
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        descriptor === undefined || !descriptor.enumerable ||
+        !("value" in descriptor)
+      ) {
+        return shape_mismatch;
+      }
+      const child = clone_shape(descriptor.value, shape.array, copies);
+      if (child === shape_mismatch) return shape_mismatch;
+      copy[index] = child;
+    }
+    return copy;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return shape_mismatch;
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== Object.keys(shape.record).length) return shape_mismatch;
+  const copy: Record<string, unknown> = {};
+  copies.set(value, copy);
+  for (const key of keys) {
+    if (typeof key !== "string" || !Object.hasOwn(shape.record, key)) {
+      return shape_mismatch;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      return shape_mismatch;
+    }
+    const child = clone_shape(descriptor.value, shape.record[key], copies);
+    if (child === shape_mismatch) return shape_mismatch;
+    if (key === "__proto__") {
+      Object.defineProperty(copy, key, {
+        value: child,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } else copy[key] = child;
+  }
+  return copy;
+}
+
+/** Updates one path in a deeply frozen plain-data TVar, sharing other branches.
+ * The callback receives a frozen value. Its replacement is isolated before use.
+ */
+export function update_immutable_path<item>(
+  variable: TVar<item>,
+  path: readonly (string | number)[],
+  update: (value: unknown) => unknown,
+): Stm<item> {
+  if (!(variable as TVarBox<item>)[tvar_immutable]) {
+    throw new StmError("Path updates require an immutable TVar");
+  }
+  return trusted_stm((journal) => {
+    const current = read_journal(journal, variable);
+    const replace = (value: unknown, depth: number): unknown => {
+      if (depth === path.length) {
+        return isolate_tvar(
+          variable as TVar<unknown>,
+          update(value),
+          "immutable path update",
+        );
+      }
+      if (typeof value !== "object" || value === null) {
+        throw new StmError("Immutable path crosses a non-container value");
+      }
+      const key = path[depth];
+      if (
+        !Object.hasOwn(value, key) || (Array.isArray(value) && key === "length")
+      ) {
+        throw new StmError("Immutable path does not exist or is array length");
+      }
+      const child = replace(
+        (value as Record<string | number, unknown>)[key],
+        depth + 1,
+      );
+      if (child === (value as Record<string | number, unknown>)[key]) {
+        return value;
+      }
+      let copy: Record<string | number, unknown> | unknown[];
+      if (Array.isArray(value)) {
+        copy = new Array(value.length);
+        for (const key of Object.keys(value)) {
+          Object.defineProperty(copy, key, {
+            value: (value as unknown as Record<string, unknown>)[key],
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
+      } else copy = { ...value };
+      Object.defineProperty(copy, key, {
+        value: child,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      Object.freeze(copy);
+      immutable_values.add(copy);
+      return copy;
+    };
+    const next = replace(current, 0) as item;
+    write_journal(journal, variable, next);
+    return next;
+  });
 }
 
 function validate_immutable(value: unknown, seen: WeakSet<object>): void {

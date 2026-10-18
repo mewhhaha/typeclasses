@@ -43,11 +43,20 @@ export const parallel_task_identity: unique symbol = /* @__PURE__ */ Symbol(
 const task_cancellation = Symbol("Task cancellation");
 const protected_promises = new WeakMap<Promise<unknown>, AbortSignal>();
 const completed_tasks = new WeakMap<RawTask<unknown>, unknown>();
+const completed_undefined = Symbol("Task.completed.undefined");
+function completed_item(value: unknown): unknown {
+  if (value === completed_undefined) return undefined;
+  return value;
+}
 type TaskStep =
-  | { readonly tag: "map"; readonly apply: (value: unknown) => unknown }
+  | {
+    readonly tag: "map";
+    readonly apply: (value: unknown) => unknown;
+    readonly operation: string;
+  }
   | {
     readonly tag: "bind";
-    readonly apply: (value: unknown) => RawTask<unknown>;
+    readonly apply: (value: unknown) => Task<unknown>;
   };
 type TaskPlan = TaskStep & { source: RawTask<unknown> };
 const task_plan = Symbol("Task.plan");
@@ -267,8 +276,9 @@ export async function run_task<
     if (options.signal?.aborted) {
       throw task_abort_error("run_task", options.signal);
     }
-    if (completed_tasks.has(task)) {
-      return completed_tasks.get(task) as RunTaskItem<value>;
+    const completed = completed_tasks.get(task);
+    if (completed !== undefined) {
+      return completed_item(completed) as RunTaskItem<value>;
     }
     return await start_task(
       task,
@@ -298,7 +308,8 @@ export async function run_task<
             throw task_abort_error("run_task", options.signal);
           }
           let value: unknown;
-          if (completed_tasks.has(task)) value = completed_tasks.get(task);
+          const completed = completed_tasks.get(task);
+          if (completed !== undefined) value = completed_item(completed);
           else {value = await start_task(
               task,
               options.signal,
@@ -401,7 +412,8 @@ Functor.instance(Task)({
   map(fn) {
     return Task(compose_task(this.value(), {
       tag: "map",
-      apply: (value) => task_item(fn(value), "Task.map"),
+      apply: fn,
+      operation: "Task.map",
     }));
   },
 });
@@ -443,19 +455,15 @@ Functor.instance(ParallelTask)({
   map(fn) {
     return ParallelTask(compose_task(this.value(), {
       tag: "map",
-      apply: (value) => task_item(fn(value), "ParallelTask.map"),
+      apply: fn,
+      operation: "ParallelTask.map",
     }));
   },
 });
 
 Applicative.instance(ParallelTask)({
   pure(value) {
-    const resolved = task_item(value, "ParallelTask.pure");
-    return ParallelTask((signal) =>
-      signal?.aborted
-        ? Promise.reject(task_abort_error("ParallelTask.pure", signal))
-        : Promise.resolve(resolved)
-    );
+    return ParallelTask(completed_raw_task(value, "ParallelTask.pure"));
   },
 
   [applicative_lift_method](fn, rest) {
@@ -478,9 +486,11 @@ Applicative.instance(ParallelTask)({
     this: Data<AsParallelTask, (value: NoInfer<from>) => to>,
     value: Data<AsParallelTask, from>,
   ): Data<AsParallelTask, to> {
+    const first = this.value() as RawTask<unknown>;
+    const second = value.value() as RawTask<unknown>;
     return ParallelTask((signal) => {
       return run_concurrently(
-        [this.value() as RawTask<unknown>, value.value() as RawTask<unknown>],
+        [first, second],
         signal,
         "ParallelTask.ap",
       ).then(([fn, item]) => {
@@ -497,7 +507,7 @@ Monad.instance(Task)({
   bind(fn) {
     return Task(compose_task(this.value(), {
       tag: "bind",
-      apply: (value) => fn(value).value(),
+      apply: fn,
     }));
   },
 });
@@ -511,8 +521,9 @@ MonadRec.instance(Task)({
         const task = step(state).value();
         if (signal?.aborted) throw task_abort_error("Task.tail_rec_m", signal);
         let instruction: Awaited<ReturnType<typeof task>>;
-        if (completed_tasks.has(task)) {
-          instruction = completed_tasks.get(task) as typeof instruction;
+        const completed = completed_tasks.get(task);
+        if (completed !== undefined) {
+          instruction = completed_item(completed) as typeof instruction;
         } else instruction = await start_task(task, signal, "Task.tail_rec_m");
         const [tag, value] = instruction;
 
@@ -578,6 +589,12 @@ function start_task<item>(
 }
 
 function succeed_task<item>(value: item, operation: string): Task<item> {
+  return Task(completed_raw_task(value, operation));
+}
+function completed_raw_task<item>(
+  value: item,
+  operation: string,
+): RawTask<item> {
   const resolved = task_item(value, operation);
   const task: RawTask<item> = (signal) => {
     if (signal?.aborted) {
@@ -585,8 +602,10 @@ function succeed_task<item>(value: item, operation: string): Task<item> {
     }
     return Promise.resolve(resolved);
   };
-  completed_tasks.set(task as RawTask<unknown>, resolved);
-  return Task(task);
+  let stored: unknown = resolved;
+  if (stored === undefined) stored = completed_undefined;
+  completed_tasks.set(task as RawTask<unknown>, stored);
+  return task;
 }
 
 function run_concurrently(
@@ -594,6 +613,16 @@ function run_concurrently(
   signal: AbortSignal | undefined,
   operation: string,
 ): Promise<readonly unknown[]> {
+  if (signal?.aborted) {
+    return Promise.reject(task_abort_error(operation, signal));
+  }
+  const values: unknown[] = [];
+  for (const task of tasks) {
+    const completed = completed_tasks.get(task);
+    if (completed === undefined) break;
+    values.push(completed_item(completed));
+  }
+  if (values.length === tasks.length) return Promise.resolve(values);
   const controller = new AbortController();
   const abort_from_parent = () => controller.abort(signal?.reason);
 
@@ -750,6 +779,12 @@ export function traverse_task<input, output>(
   fn: (input: input, index: number) => Task<output>,
   options: RunTaskOptions = {},
 ): Task<readonly output[]> {
+  if (
+    options.yield_every !== undefined &&
+    (!Number.isInteger(options.yield_every) || options.yield_every < 1)
+  ) {
+    throw new RangeError("Task yield_every must be a positive integer");
+  }
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new RangeError(
       "Task traversal concurrency must be a positive integer",
@@ -767,11 +802,18 @@ export function traverse_task<input, output>(
   async function traverse(
     parent_signal: AbortSignal | undefined,
   ): Promise<readonly output[]> {
-    const signals: AbortSignal[] = [];
-    if (parent_signal !== undefined) signals.push(parent_signal);
-    if (options.signal !== undefined) signals.push(options.signal);
     const controller = new AbortController();
-    const signal = AbortSignal.any([...signals, controller.signal]);
+    let signal = controller.signal;
+    if (
+      parent_signal !== undefined && options.signal !== undefined &&
+      parent_signal !== options.signal
+    ) {
+      signal = AbortSignal.any([parent_signal, options.signal, signal]);
+    } else if (parent_signal !== undefined) {
+      signal = AbortSignal.any([parent_signal, signal]);
+    } else if (options.signal !== undefined) {
+      signal = AbortSignal.any([options.signal, signal]);
+    }
     if (signal.aborted) throw task_abort_error("Task.traverse", signal);
     const iterator = inputs[Symbol.iterator]();
     const results: output[] = [];
@@ -789,10 +831,16 @@ export function traverse_task<input, output>(
           }
           const index = next_index++;
           const task = fn(next.value, index).value();
-          if (completed_tasks.has(task)) {
-            results[index] = completed_tasks.get(task) as output;
+          const completed = completed_tasks.get(task);
+          if (completed !== undefined) {
+            results[index] = completed_item(completed) as output;
           } else {
-            results[index] = await start_task(task, signal, "Task.traverse");
+            results[index] = await start_task(
+              task,
+              signal,
+              "Task.traverse",
+              options,
+            );
           }
         } catch (error) {
           if (!failed) {
@@ -841,12 +889,16 @@ function compose_task<from, to>(
   source: RawTask<from>,
   step: {
     readonly tag: "bind";
-    readonly apply: (value: TaskItem<from>) => RawTask<to>;
+    readonly apply: (value: TaskItem<from>) => Task<to>;
   },
 ): RawTask<to>;
 function compose_task<from, to>(
   source: RawTask<from>,
-  step: { readonly tag: "map"; readonly apply: (value: TaskItem<from>) => to },
+  step: {
+    readonly tag: "map";
+    readonly apply: (value: TaskItem<from>) => to;
+    readonly operation: string;
+  },
 ): RawTask<to>;
 function compose_task(
   source: RawTask<unknown>,
@@ -863,44 +915,88 @@ function compose_task(
   return task;
 }
 
+type CompiledTask = {
+  readonly source: RawTask<unknown>;
+  readonly frames: readonly TaskStep[];
+};
+const compiled_tasks = new Map<TaskPlan, CompiledTask>();
+let compiled_task_frames = 0;
+function compile_task(plan: TaskPlan): CompiledTask {
+  const cached = compiled_tasks.get(plan);
+  if (cached !== undefined) return cached;
+  const frames: TaskStep[] = [plan];
+  let source = plan.source;
+  let nested = plan_of(source);
+  while (nested !== undefined) {
+    frames.push(nested);
+    source = nested.source;
+    nested = plan_of(source);
+  }
+  frames.reverse();
+  const segment = { source, frames };
+  if (frames.length <= 4096) {
+    compiled_tasks.set(plan, segment);
+    compiled_task_frames += frames.length;
+    while (compiled_task_frames > 4096) {
+      const [oldest, cached] = compiled_tasks.entries().next().value!;
+      compiled_tasks.delete(oldest);
+      compiled_task_frames -= cached.frames.length;
+    }
+  }
+  return segment;
+}
 async function evaluate_task(
   plan: TaskPlan,
   signal: AbortSignal | undefined,
   options: RunTaskOptions,
 ): Promise<unknown> {
-  const frames: TaskStep[] = [plan];
-  let current = plan.source;
+  let segment = compile_task(plan);
+  const pending: { segment: CompiledTask; index: number }[] = [];
+  let index = 0;
   let steps = 0;
+  let current = segment.source;
+  let value: unknown;
   while (true) {
-    let nested = plan_of(current);
-    while (nested !== undefined) {
-      frames.push(nested);
-      current = nested.source;
-      nested = plan_of(current);
-    }
     if (signal?.aborted) throw task_abort_error("Task plan", signal);
-    let value: unknown;
-    if (completed_tasks.has(current)) value = completed_tasks.get(current);
+    const completed = completed_tasks.get(current);
+    if (completed !== undefined) value = completed_item(completed);
     else value = await start_task(current, signal, "Task plan");
     while (true) {
       if (signal?.aborted) throw task_abort_error("Task plan", signal);
-      const step = frames.pop();
-      if (step === undefined) return value;
+      if (index === segment.frames.length) {
+        const previous = pending.pop();
+        if (previous === undefined) return value;
+        segment = previous.segment;
+        index = previous.index;
+        continue;
+      }
+      const step = segment.frames[index++];
       if (options.yield_every !== undefined && ++steps >= options.yield_every) {
         steps = 0;
-        let pending: Promise<void>;
-        if (options.schedule !== undefined) pending = options.schedule();
-        else pending = new Promise((resolve) => setTimeout(resolve, 0));
-        await await_with_signal(pending, signal, "Task scheduler");
+        let scheduled: Promise<void>;
+        if (options.schedule !== undefined) scheduled = options.schedule();
+        else scheduled = new Promise((resolve) => setTimeout(resolve, 0));
+        await await_with_signal(scheduled, signal, "Task scheduler");
         if (signal?.aborted) throw task_abort_error("Task plan", signal);
       }
       switch (step.tag) {
-        case "map":
-          value = step.apply(value);
+        case "map": {
+          const apply = step.apply;
+          value = task_item(apply(value), step.operation);
           break;
-        case "bind":
-          current = step.apply(value);
+        }
+        case "bind": {
+          const apply = step.apply;
+          current = apply(value).value();
+          const nested = plan_of(current);
+          if (nested !== undefined) {
+            pending.push({ segment, index });
+            segment = compile_task(nested);
+            index = 0;
+            current = segment.source;
+          }
           break;
+        }
       }
       if (step.tag === "bind") break;
     }

@@ -66,6 +66,17 @@ import { fail, run_except } from "@mewhhaha/typeclasses/except";
 Use the same import style as the surrounding application. Do not import internal
 files, symbols marked `@ignore`, or implementation details from this repository.
 
+For measured hot paths, see `docs/hills-131-210.md`. Supported explicit APIs
+include chunked Writer logs (`./chunk_log`), prepared handlers (`./handlers`),
+`compile_effect_plan` (`./effects`), `concat_many` (`./list`),
+`iterable.compile_fold`, and trusted synchronous/chunk sources
+(`./async_iterable`). Trusted synchronous stages do not await intermediate
+values. Effect-plan state must remain immutable across repeated resumes. Worker
+`pool.stream` applies ordered window backpressure; item/declared-byte admission
+limits and cooperative cancellation are configurable in `./parallel`.
+`update_immutable_path` in `./stm` shares untouched immutable branches. These
+paths have workload-specific tradeoffs; do not promise universal speedups.
+
 ## Wrapped values and dictionaries
 
 Each context has a callable dictionary such as `Maybe`, `Either`, `Task`, or

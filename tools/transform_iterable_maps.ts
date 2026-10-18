@@ -21,6 +21,7 @@ export function might_contain_iterable_maps(source: string): boolean {
 export function create_iterable_map_fusion(
   source: ts.SourceFile,
   library_specifiers: readonly string[] = [],
+  analysis?: ReturnType<typeof create_binding_analysis>,
 ) {
   const functions = new Set<string>();
   const namespaces = new Set<string>();
@@ -63,7 +64,7 @@ export function create_iterable_map_fusion(
 
   const immutable = new Map<string, ts.VariableDeclaration>();
   const callbacks = new Map<string, ts.FunctionLikeDeclaration>();
-  const bindings = create_binding_analysis(source);
+  const bindings = analysis ?? create_binding_analysis(source);
   for (const statement of source.statements) {
     if (
       ts.isVariableStatement(statement) &&

@@ -1075,6 +1075,10 @@ result.diagnostics; // skipped unsupported patterns
 result.transformed; // number of rewritten sites
 ```
 
+Pass `{ source_map: false }` as the third argument when the consumer does not
+need a source map. Maps remain enabled by default; the transform cache keeps
+these modes separate.
+
 The transformer is meant for bundlers, build scripts, or local workflows that
 want the ergonomic `Do(function* () { ... })`, explicit
 `Do(dictionary, function* () { ... })`, and `Program(function* () { ... })`
@@ -2692,6 +2696,33 @@ Larger repository-only application-shaped demos live in `case_studies/`:
   preserving input order in reports.
 
 ## Benchmarks
+
+The [131–210 performance ledger](docs/hills-131-210.md) records measurements,
+rejected experiments and workload limits. New explicit paths include:
+
+| Need                                      | API and constraint                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Append many Writer log chunks             | `ChunkLog`, `chunk_log`, `flatten_chunk_log` from `./chunk_log`; flatten once at the boundary.               |
+| Reuse handler setup                       | `prepare_operations` and `prepare_cells` from `./handlers`; preparation snapshots the supplied table.        |
+| Run an explicit effect graph              | `compile_effect_plan` from `./effects`; keep state immutable for repeated resumes.                           |
+| Combine finite lists                      | `concat_many` from `./list`; copies each element once.                                                       |
+| Compile a known lazy terminal             | `iterable.compile_fold`; specializes map/filter/take, with a general fallback.                               |
+| Consume synchronous values asynchronously | `map_sync` and `from_sync_factory` from `./async_iterable`; these trust synchronous intermediate values.     |
+| Consume asynchronous chunks               | `from_chunks` from `./async_iterable`; direct materialization avoids scalar iteration.                       |
+| Stream worker results with bounded input  | `pool.stream(source, { window_size })`; ordered windows provide backpressure and local transfer indexes.     |
+| Bound worker admission                    | `max_pending_items`, or `max_pending_bytes` with `input_bytes`; byte limits use the caller's estimate.       |
+| Cancel workers cooperatively              | `serve_worker(handler, { cooperative: true })` and pool `abort_grace_ms`; unresponsive workers are replaced. |
+| Update immutable transactional trees      | `update_immutable_path` from `./stm`; existing paths only, with untouched branches shared.                   |
+
+`array.flat_map_streaming` keeps one callback chunk active at a time but can be
+slower than ordinary bind. `new_tvar(value, { shape })` accepts a checked
+`SnapshotShape`; flat records benefit in the measured workload, while arrays can
+regress. Choose these paths using representative measurements.
+
+`deno task profile:allocation WORKLOAD.ts OUTPUT.json` samples Node allocation
+traffic, GC pauses and p99 latency. `profile_budget_failures` accepts explicit
+relative budgets for matching workload/runtime/sample settings; sampled bytes
+include the harness and are not exact object counts.
 
 Benchmark timing runs separately from the correctness gate. Fixture equivalence
 and scaling preflights also run through `deno task test:benchmarks`. Run every

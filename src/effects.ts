@@ -276,7 +276,7 @@ type MutableEffectInterpreterTarget = {
 };
 
 /** Builds effects with generator syntax. */
-export const Program = Object.assign(program, {
+export const Program = /* @__PURE__ */ Object.assign(program, {
   scope,
 }) as ProgramConstructor;
 
@@ -326,11 +326,12 @@ function PureEffect(this: PureEffectTarget, value: unknown) {
   this[1] = value;
 }
 
-PureEffect.prototype = EffectPrototype;
-
-const NewPureEffect = PureEffect as unknown as {
-  new <item>(value: item): Effect<never, item>;
-};
+const NewPureEffect = /* @__PURE__ */ (() => {
+  PureEffect.prototype = EffectPrototype;
+  return PureEffect as unknown as {
+    new <item>(value: item): Effect<never, item>;
+  };
+})();
 
 function ImpureEffect(
   this: ImpureEffectTarget,
@@ -347,16 +348,17 @@ function ImpureEffect(
   this[effect_queue] = queue;
 }
 
-ImpureEffect.prototype = EffectPrototype;
-
-const NewImpureEffect = ImpureEffect as unknown as {
-  new <requirements, item>(
-    operation: requirements,
-    resume: (value: unknown) => Effect<requirements, item>,
-    frames?: EffectFrame,
-    queue?: EffectQueue,
-  ): Effect<requirements, item>;
-};
+const NewImpureEffect = /* @__PURE__ */ (() => {
+  ImpureEffect.prototype = EffectPrototype;
+  return ImpureEffect as unknown as {
+    new <requirements, item>(
+      operation: requirements,
+      resume: (value: unknown) => Effect<requirements, item>,
+      frames?: EffectFrame,
+      queue?: EffectQueue,
+    ): Effect<requirements, item>;
+  };
+})();
 
 function EffectInterpreterValue(
   this: MutableEffectInterpreterTarget,
@@ -365,13 +367,14 @@ function EffectInterpreterValue(
   this.effect = effect;
 }
 
-EffectInterpreterValue.prototype = EffectInterpreterPrototype;
-
-const NewEffectInterpreter = EffectInterpreterValue as unknown as {
-  new <requirements, item>(
-    effect: Effect<requirements, item>,
-  ): EffectInterpreter<requirements, item>;
-};
+const NewEffectInterpreter = /* @__PURE__ */ (() => {
+  EffectInterpreterValue.prototype = EffectInterpreterPrototype;
+  return EffectInterpreterValue as unknown as {
+    new <requirements, item>(
+      effect: Effect<requirements, item>,
+    ): EffectInterpreter<requirements, item>;
+  };
+})();
 
 /** Creates an effect that has already produced `value`. */
 export function pure<item>(value: item): Effect<never, item> {
@@ -790,7 +793,10 @@ export function handle_operation<
   while (true) {
     switch (current[0]) {
       case "pure":
-        return pure(current[1] as item);
+        return current as Effect<
+          WithoutOperation<requirements, selected> | handled_requirements,
+          item
+        >;
       case "impure": {
         const suspended = current;
 
@@ -1179,9 +1185,16 @@ function remaining_chunk(
     : { ...chunk, index: chunk.index + 1 };
 }
 
+// Bound cached arrays by total slots. WeakRef would keep every newly flattened
+// prefix alive until the current job ends, producing quadratic transient memory.
+const ordered_effect_frames = new Map<EffectFrame, EffectResume[]>();
+let ordered_frame_count = 0;
 function effect_frames_in_order(
   frames: EffectFrame,
 ): ((value: unknown) => Effect<unknown, unknown>)[] {
+  if (frames.previous === undefined) return [frames.resume];
+  const cached = ordered_effect_frames.get(frames);
+  if (cached !== undefined) return cached;
   let length = 0;
 
   for (
@@ -1206,6 +1219,15 @@ function effect_frames_in_order(
     index -= 1;
   }
 
+  if (ordered.length >= 16 && ordered.length <= 4096) {
+    ordered_effect_frames.set(frames, ordered);
+    ordered_frame_count += ordered.length;
+    while (ordered_frame_count > 4096) {
+      const [oldest, array] = ordered_effect_frames.entries().next().value!;
+      ordered_effect_frames.delete(oldest);
+      ordered_frame_count -= array.length;
+    }
+  }
   return ordered;
 }
 
@@ -1279,4 +1301,76 @@ function* effect_iterator<requirements, item>(
 ): Generator<Effect<requirements, item>, item, unknown> {
   const item = yield this;
   return item as item;
+}
+
+/** Explicit reusable control-flow instructions. Keep state immutable when resuming a suspension more than once. */
+export type EffectPlanInstruction<requirements, state, result> =
+  | { readonly tag: "done"; readonly finish: (state: state) => result }
+  | { readonly tag: "branch"; readonly select: (state: state) => number }
+  | {
+    readonly tag: "operation";
+    readonly operation: (state: state) => requirements;
+    readonly resume: (state: state, value: unknown) => state;
+    readonly next: number;
+  }
+  | {
+    readonly tag: "step";
+    readonly effect: (state: state) => Effect<requirements, unknown>;
+    readonly resume: (state: state, value: unknown) => state;
+    readonly next: number;
+  };
+
+/** Compiles an explicit effect graph with branches and dynamic effect continuations. */
+export function compile_effect_plan<requirements, state, result>(
+  instructions: readonly EffectPlanInstruction<requirements, state, result>[],
+  entry = 0,
+): (initial: state) => Effect<requirements, result> {
+  const plan = instructions.map((instruction) => ({ ...instruction }));
+  return (initial) => execute(entry, initial);
+  function execute(index: number, state: state): Effect<requirements, result> {
+    while (true) {
+      const instruction = plan[index];
+      if (instruction === undefined) {
+        throw new RangeError(`Invalid effect plan instruction: ${index}`);
+      }
+      switch (instruction.tag) {
+        case "done":
+          return pure(instruction.finish(state));
+        case "branch":
+          index = instruction.select(state);
+          break;
+        case "operation": {
+          const suspended_state = state;
+          return suspend(
+            instruction.operation(state),
+            (value) =>
+              execute(
+                instruction.next,
+                instruction.resume(suspended_state, value),
+              ),
+          );
+        }
+        case "step": {
+          const effect = instruction.effect(state);
+          if (!is_effect(effect)) {
+            throw new TypeError("Effect plan step returned an invalid effect");
+          }
+          if (effect[0] === "pure") {
+            state = instruction.resume(state, effect[1]);
+            index = instruction.next;
+            break;
+          }
+          const suspended_state = state;
+          return bind(
+            effect,
+            (value) =>
+              execute(
+                instruction.next,
+                instruction.resume(suspended_state, value),
+              ),
+          );
+        }
+      }
+    }
+  }
 }

@@ -1,5 +1,8 @@
 import type { Runnable } from "./data_value.ts";
-import { bind_computation, map_computation } from "./computation.ts";
+import {
+  bind_state_computation,
+  map_state_computation,
+} from "./computation.ts";
 import {
   type As,
   type Data,
@@ -186,9 +189,9 @@ function make_state_cell<key extends PropertyKey, state>(
       const stateful = this.value();
 
       return wrap(
-        map_computation(
+        map_state_computation(
           stateful,
-          ([value, next]) => [fn(value), next] as const,
+          fn,
         ),
       );
     },
@@ -203,6 +206,29 @@ function make_state_cell<key extends PropertyKey, state>(
       const first = this.value();
       const stateful_values = rest.map((current) => current.value());
 
+      if (stateful_values.length === 0) {
+        return wrap((current: state) => {
+          const [value, next] = first(current);
+          return [fn(value), next] as const;
+        });
+      }
+      if (stateful_values.length === 1) {
+        const second = stateful_values[0];
+        return wrap((current: state) => {
+          const [a, next] = first(current);
+          const [b, final] = second(next);
+          return [fn(a, b), final] as const;
+        });
+      }
+      if (stateful_values.length === 2) {
+        const [second, third] = stateful_values;
+        return wrap((current: state) => {
+          const [a, next] = first(current);
+          const [b, after] = second(next);
+          const [c, final] = third(after);
+          return [fn(a, b, c), final] as const;
+        });
+      }
       return wrap((current: state) => {
         const [first_value, first_state] = first(current);
         const values = [first_value];
@@ -236,9 +262,9 @@ function make_state_cell<key extends PropertyKey, state>(
       const stateful = this.value();
 
       return wrap(
-        bind_computation(
+        bind_state_computation(
           stateful,
-          ([value, next]) => [fn(value).value(), next],
+          (value) => fn(value).value(),
         ),
       );
     },
@@ -518,9 +544,9 @@ Show.instance(State)({
 Functor.instance(State)({
   map(fn) {
     return State(
-      map_computation(
+      map_state_computation(
         this.value(),
-        ([value, next]) => [fn(value), next] as const,
+        fn,
       ),
     );
   },
@@ -535,6 +561,29 @@ Applicative.instance(State)({
     const first = this.value();
     const stateful_values = rest.map((current) => current.value());
 
+    if (stateful_values.length === 0) {
+      return State((state: unknown) => {
+        const [value, next] = first(state);
+        return [fn(value), next] as const;
+      });
+    }
+    if (stateful_values.length === 1) {
+      const second = stateful_values[0];
+      return State((state: unknown) => {
+        const [a, next] = first(state);
+        const [b, final] = second(next);
+        return [fn(a, b), final] as const;
+      });
+    }
+    if (stateful_values.length === 2) {
+      const [second, third] = stateful_values;
+      return State((state: unknown) => {
+        const [a, next] = first(state);
+        const [b, after] = second(next);
+        const [c, final] = third(after);
+        return [fn(a, b, c), final] as const;
+      });
+    }
     return State((state: unknown) => {
       const [first_value, first_state] = first(state);
       const values = [first_value];
@@ -551,9 +600,11 @@ Applicative.instance(State)({
   },
 
   ap(value) {
+    const first = this.value();
+    const second = value.value();
     return State((state: unknown) => {
-      const [fn, next] = this.value()(state);
-      const [item, final] = value.value()(next);
+      const [fn, next] = first(state);
+      const [item, final] = second(next);
 
       return [fn(item), final];
     });
@@ -563,9 +614,9 @@ Applicative.instance(State)({
 Monad.instance(State)({
   bind(fn) {
     return State(
-      bind_computation(
+      bind_state_computation(
         this.value(),
-        ([value, next]) => [fn(value).value(), next],
+        (value) => fn(value).value(),
       ),
     );
   },

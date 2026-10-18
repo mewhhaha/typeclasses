@@ -1,3 +1,4 @@
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import type { Matchable } from "./data_value.ts";
 import {
   $slot,
@@ -70,14 +71,12 @@ export type List<item> = Data<AsList, item>;
 export type ListConstructor = UnionDictionary<AsList>;
 
 /** Callable list dictionary with `Cons` and `Nil` branch constructors. */
-export const List: ListConstructor = data<AsList>(
-  list_identity,
-  union(["Cons", $slot, $slot], ["Nil"]),
-);
+export const List: ListConstructor = /* @__PURE__ */ create_list();
 /** Construct or recognize the non-empty `Cons` branch. */
-export const Cons: ListConstructor["Cons"] = List.Cons;
+export const Cons: ListConstructor["Cons"] =
+  /* @__PURE__ */ (() => List.Cons)();
 /** Construct or recognize the empty `Nil` branch. */
-export const Nil: ListConstructor["Nil"] = List.Nil;
+export const Nil: ListConstructor["Nil"] = /* @__PURE__ */ (() => List.Nil)();
 
 /** Convert an array into an immutable recursive list. */
 export function from_array<item>(items: readonly item[]): List<item> {
@@ -100,239 +99,9 @@ function list_from_array<item>(items: readonly item[]): RawList<item> {
   return list;
 }
 
-Show.instance(List)({
-  show() {
-    const items: string[] = [];
-    for (const item of list_items(this.value())) items.push(inspect(item));
-    return "[" + items.join(", ") + "]";
-  },
-});
-
-Eq.instance(List)({
-  eq(right) {
-    let left_rest = this.value();
-    let right_rest = right.value();
-
-    while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-      const [, left_head, left_tail] = left_rest;
-      const [, right_head, right_tail] = right_rest;
-
-      if (!Object.is(left_head, right_head)) {
-        return false;
-      }
-
-      left_rest = left_tail;
-      right_rest = right_tail;
-    }
-
-    return left_rest[0] === "Nil" && right_rest[0] === "Nil";
-  },
-});
-
-Ord.instance(List)({
-  compare(right) {
-    let left_rest = this.value();
-    let right_rest = right.value();
-
-    while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-      const [, left_head, left_tail] = left_rest;
-      const [, right_head, right_tail] = right_rest;
-      const order = compare_unknown(left_head, right_head);
-
-      switch (order) {
-        case "eq":
-          break;
-        case "lt":
-        case "gt":
-          return order;
-      }
-
-      left_rest = left_tail;
-      right_rest = right_tail;
-    }
-
-    const [left_tag] = left_rest;
-    const [right_tag] = right_rest;
-
-    if (left_tag === right_tag) {
-      return "eq";
-    }
-
-    switch (left_tag) {
-      case "Nil":
-        return "lt";
-      case "Cons":
-        return "gt";
-    }
-  },
-});
-
-Functor.instance(List)({
-  map<from, to>(
-    this: Data<AsList, from>,
-    fn: (value: from) => to,
-  ): Data<AsList, to> {
-    let source = this.value();
-    const out = list_builder<to>();
-
-    while (source[0] === "Cons") {
-      const [, head, tail] = source;
-      out.push(fn(head));
-      source = tail;
-    }
-
-    return List(out.finish());
-  },
-});
-
-Applicative.instance(List)({
-  pure(value) {
-    return List(list_cons(value, list_nil()));
-  },
-
-  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
-  [applicative_lift_method](fn, rest) {
-    const first = this.value();
-
-    switch (rest.length) {
-      case 0:
-        return lift_list_one(fn, first);
-      case 1:
-        return lift_list_two(fn, first, rest[0].value());
-      case 2:
-        return lift_list_three(fn, first, rest[0].value(), rest[1].value());
-      default:
-        return lift_list_many(fn, first, rest);
-    }
-  },
-
-  ap<from, to>(
-    this: Data<AsList, (value: NoInfer<from>) => to>,
-    values: Data<AsList, from>,
-  ): Data<AsList, to> {
-    const items = values.value();
-    let fns = this.value();
-    const out = list_builder<to>();
-
-    while (fns[0] === "Cons") {
-      const [, fn, fn_tail] = fns;
-      let rest = items;
-
-      while (rest[0] === "Cons") {
-        const [, item, item_tail] = rest;
-        out.push(fn(item));
-        rest = item_tail;
-      }
-
-      fns = fn_tail;
-    }
-
-    return List(out.finish());
-  },
-});
-
-Semigroup.instance(List)({
-  concat(right) {
-    return List(list_append(this.value(), right.value()));
-  },
-});
-
-Monoid.instance(List)({
-  empty: empty_list,
-});
-
-Alternative.instance(List)({
-  empty: empty_list,
-
-  alt(right) {
-    return List(list_append(this.value(), right.value()));
-  },
-});
-
 function empty_list<item>(this: AsList): Data<AsList, item> {
   return Nil();
 }
-
-Monad.instance(List)({
-  bind<from, to>(
-    this: Data<AsList, from>,
-    fn: (value: from) => Data<AsList, to>,
-  ): Data<AsList, to> {
-    let source = this.value();
-    const out = list_builder<to>();
-
-    while (source[0] === "Cons") {
-      const [, head, tail] = source;
-      let bound = fn(head).value();
-
-      while (bound[0] === "Cons") {
-        const [, bound_head, bound_tail] = bound;
-        out.push(bound_head);
-        bound = bound_tail;
-      }
-
-      source = tail;
-    }
-
-    return List(out.finish());
-  },
-});
-
-MonadRec.instance(List)({
-  tail_rec_m<state, output>(
-    initial: state,
-    step: (state: state) => Data<AsList, LoopStep<state, output>>,
-  ): Data<AsList, output> {
-    const pending: LoopStep<state, output>[] = [rec(initial)];
-    const output: output[] = [];
-
-    while (pending.length > 0) {
-      const [tag, value] = pending.pop()!;
-
-      switch (tag) {
-        case loop_done:
-          output.push(value);
-          break;
-        case loop_rec: {
-          const next = to_array(step(value));
-
-          for (let index = next.length - 1; index >= 0; index -= 1) {
-            pending.push(next[index]);
-          }
-          break;
-        }
-      }
-    }
-
-    return from_array(output);
-  },
-});
-
-Foldable.instance(List)({
-  fold(initial, fn) {
-    let state = initial;
-    let rest = this.value();
-
-    while (rest[0] === "Cons") {
-      const [, head, tail] = rest;
-      state = fn(state, head);
-      rest = tail;
-    }
-
-    return state;
-  },
-});
-
-Traversable.instance(List)({
-  traverse(applicative, fn) {
-    return traverse_items_into(
-      list_items(this.value()),
-      applicative,
-      fn,
-      list_from_items,
-    );
-  },
-});
 
 const empty: Nil = Object.freeze(["Nil"]);
 function list_nil<item>(): RawList<item> {
@@ -503,4 +272,271 @@ function list_from_items<item>(items: Iterable<item>): List<item> {
   const out = list_builder<item>();
   for (const item of items) out.push(item);
   return List(out.finish());
+}
+
+/** Concatenate finite lists in one pass, copying each element once. */
+export function concat_many<item>(lists: Iterable<List<item>>): List<item> {
+  const out = list_builder<item>();
+  for (const list of lists) {
+    let current = list.value();
+    while (current[0] === "Cons") {
+      out.push(current[1]);
+      current = current[2];
+    }
+  }
+  return List(out.finish());
+}
+
+function create_list(): ListConstructor {
+  const List: ListConstructor = data<AsList>(
+    list_identity,
+    union(["Cons", $slot, $slot], ["Nil"]),
+  );
+  Show.instance(List)({
+    show() {
+      const items: string[] = [];
+      for (const item of list_items(this.value())) items.push(inspect(item));
+      return "[" + items.join(", ") + "]";
+    },
+  });
+
+  Eq.instance(List)({
+    eq(right) {
+      let left_rest = this.value();
+      let right_rest = right.value();
+
+      while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
+        const [, left_head, left_tail] = left_rest;
+        const [, right_head, right_tail] = right_rest;
+
+        if (!Object.is(left_head, right_head)) {
+          return false;
+        }
+
+        left_rest = left_tail;
+        right_rest = right_tail;
+      }
+
+      return left_rest[0] === "Nil" && right_rest[0] === "Nil";
+    },
+  });
+
+  Ord.instance(List)({
+    compare(right) {
+      let left_rest = this.value();
+      let right_rest = right.value();
+
+      while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
+        const [, left_head, left_tail] = left_rest;
+        const [, right_head, right_tail] = right_rest;
+        const order = compare_unknown(left_head, right_head);
+
+        switch (order) {
+          case "eq":
+            break;
+          case "lt":
+          case "gt":
+            return order;
+        }
+
+        left_rest = left_tail;
+        right_rest = right_tail;
+      }
+
+      const [left_tag] = left_rest;
+      const [right_tag] = right_rest;
+
+      if (left_tag === right_tag) {
+        return "eq";
+      }
+
+      switch (left_tag) {
+        case "Nil":
+          return "lt";
+        case "Cons":
+          return "gt";
+      }
+    },
+  });
+
+  Functor.instance(List)({
+    map<from, to>(
+      this: Data<AsList, from>,
+      fn: (value: from) => to,
+    ): Data<AsList, to> {
+      let source = this.value();
+      const out = list_builder<to>();
+
+      while (source[0] === "Cons") {
+        const [, head, tail] = source;
+        out.push(fn(head));
+        source = tail;
+      }
+
+      return List(out.finish());
+    },
+  });
+
+  Applicative.instance(List)({
+    pure(value) {
+      return List(list_cons(value, list_nil()));
+    },
+
+    // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
+    [applicative_lift_method](fn, rest) {
+      const first = this.value();
+
+      switch (rest.length) {
+        case 0:
+          return lift_list_one(fn, first);
+        case 1:
+          return lift_list_two(fn, first, rest[0].value());
+        case 2:
+          return lift_list_three(fn, first, rest[0].value(), rest[1].value());
+        default:
+          return lift_list_many(fn, first, rest);
+      }
+    },
+
+    ap<from, to>(
+      this: Data<AsList, (value: NoInfer<from>) => to>,
+      values: Data<AsList, from>,
+    ): Data<AsList, to> {
+      const items = values.value();
+      let fns = this.value();
+      const out = list_builder<to>();
+
+      while (fns[0] === "Cons") {
+        const [, fn, fn_tail] = fns;
+        let rest = items;
+
+        while (rest[0] === "Cons") {
+          const [, item, item_tail] = rest;
+          out.push(fn(item));
+          rest = item_tail;
+        }
+
+        fns = fn_tail;
+      }
+
+      return List(out.finish());
+    },
+  });
+
+  Semigroup.instance(List)({
+    concat(right) {
+      return List(list_append(this.value(), right.value()));
+    },
+  });
+
+  Monoid.instance(List)({
+    empty: empty_list,
+  });
+
+  Alternative.instance(List)({
+    empty: empty_list,
+
+    alt(right) {
+      return List(list_append(this.value(), right.value()));
+    },
+  });
+
+  Monad.instance(List)({
+    bind<from, to>(
+      this: Data<AsList, from>,
+      fn: (value: from) => Data<AsList, to>,
+    ): Data<AsList, to> {
+      let source = this.value();
+      const out = list_builder<to>();
+
+      while (source[0] === "Cons") {
+        const [, head, tail] = source;
+        let bound = fn(head).value();
+
+        while (bound[0] === "Cons") {
+          const [, bound_head, bound_tail] = bound;
+          out.push(bound_head);
+          bound = bound_tail;
+        }
+
+        source = tail;
+      }
+
+      return List(out.finish());
+    },
+  });
+
+  MonadRec.instance(List)({
+    tail_rec_m<state, output>(
+      initial: state,
+      step: (state: state) => Data<AsList, LoopStep<state, output>>,
+    ): Data<AsList, output> {
+      const pending: RawList<LoopStep<state, output>>[] = [];
+      const out = list_builder<output>();
+      let current: RawList<LoopStep<state, output>> = list_cons(
+        rec(initial),
+        list_nil(),
+      );
+      while (true) {
+        if (current[0] === "Nil") {
+          const next = pending.pop();
+          if (next === undefined) break;
+          current = next;
+          continue;
+        }
+        const [, [tag, value], tail] = current;
+        switch (tag) {
+          case loop_done:
+            out.push(value);
+            current = tail;
+            break;
+          case loop_rec:
+            if (tail[0] === "Cons") pending.push(tail);
+            current = step(value).value();
+            break;
+        }
+      }
+      return List(out.finish());
+    },
+  });
+
+  Foldable.instance(List)({
+    [some_method](predicate) {
+      for (const item of list_items(this.value())) {
+        if (predicate(item)) return true;
+      }
+      return false;
+    },
+    [find_method](predicate) {
+      for (const item of list_items(this.value())) {
+        if (predicate(item)) return item;
+      }
+      return undefined;
+    },
+
+    fold(initial, fn) {
+      let state = initial;
+      let rest = this.value();
+
+      while (rest[0] === "Cons") {
+        const [, head, tail] = rest;
+        state = fn(state, head);
+        rest = tail;
+      }
+
+      return state;
+    },
+  });
+
+  Traversable.instance(List)({
+    traverse(applicative, fn) {
+      return traverse_items_into(
+        list_items(this.value()),
+        applicative,
+        fn,
+        list_from_items,
+      );
+    },
+  });
+  return List;
 }

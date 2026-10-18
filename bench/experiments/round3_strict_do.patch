@@ -1,0 +1,225 @@
+--- a/src/maybe.ts
++++ b/src/maybe.ts
+@@ -1,3 +1,4 @@
++import { register_strict_do } from "./typeclasses/monad.ts";
+ import type { Matchable } from "./data_value.ts";
+ import {
+   $slot,
+@@ -481,5 +482,18 @@
+       }
+     },
+   });
++  register_strict_do<AsMaybe>(Maybe, (iterator, first, context) => {
++    let current = first;
++    const history: unknown[] = [];
++    while (true) {
++      if (!context.valid(current)) return context.fallback(current, history);
++      const raw = current.value();
++      if (raw[0] === "Nothing") return current;
++      history.push("next", raw[1]);
++      const next = iterator.next(raw[1]);
++      if (next.done) return Maybe.pure(next.value);
++      current = next.value;
++    }
++  });
+   return Maybe;
+ }
+--- a/src/either.ts
++++ b/src/either.ts
+@@ -1,3 +1,4 @@
++import { register_strict_do } from "./typeclasses/monad.ts";
+ import type { Matchable } from "./data_value.ts";
+ import {
+   $slot,
+@@ -611,5 +612,27 @@
+       }
+     },
+   });
++  register_strict_do<AsEither<unknown>>(Either, (iterator, first, context) => {
++    let current = first;
++    const history: unknown[] = [];
++    while (true) {
++      if (!context.valid(current)) return context.fallback(current, history);
++      const raw = current.value();
++      let next: ReturnType<typeof iterator.next>;
++      try {
++        if (raw[0] === "Left") {
++          history.push("throw", raw[1]);
++          next = iterator.throw(raw[1]);
++        } else {
++          history.push("next", raw[1]);
++          next = iterator.next(raw[1]);
++        }
++      } catch (error) {
++        return Left(error);
++      }
++      if (next.done) return Either.pure(next.value);
++      current = next.value;
++    }
++  });
+   return Either;
+ }
+--- a/src/identity.ts
++++ b/src/identity.ts
+@@ -1,3 +1,4 @@
++import { register_strict_do } from "./typeclasses/monad.ts";
+ import { register_traversal } from "./traversal.ts";
+ import {
+   type As,
+@@ -162,5 +163,17 @@
+     return Identity(build(out));
+   });
+
++  register_strict_do(Identity, (iterator, first, context) => {
++    let current = first;
++    const history: unknown[] = [];
++    while (true) {
++      if (!context.valid(current)) return context.fallback(current, history);
++      const value = current.value();
++      history.push("next", value);
++      const next = iterator.next(value);
++      if (next.done) return Identity.pure(next.value);
++      current = next.value;
++    }
++  });
+   return Identity;
+ }
+--- a/src/typeclasses/monad.ts
++++ b/src/typeclasses/monad.ts
+@@ -1,6 +1,7 @@
+ import {
+   type Data,
+   type Dictionary,
++  kind,
+   type Typeclass,
+   typeclass,
+   type TypeclassDictionary,
+@@ -8,8 +9,9 @@
+ import {
+   Applicative,
+   type Applicative as ApplicativeDictionary,
++  applicative_typeclass,
+ } from "./applicative.ts";
+-import { Functor } from "./functor.ts";
++import { Functor, functor_typeclass } from "./functor.ts";
+ import { monad_error_typeclass } from "./monad_error.ts";
+
+ /** Runtime token for the Monad typeclass. */
+@@ -79,6 +81,85 @@
+     error: unknown,
+   ): Data<dictionary, item>;
+ };
++
++/** @ignore Internal strict runner mutation and generic replay boundary. */
++export type StrictDoContext<dictionary extends Monad<dictionary>> = {
++  readonly valid: (current: Data<dictionary, unknown>) => boolean;
++  readonly fallback: (
++    current: Data<dictionary, unknown>,
++    history: readonly unknown[],
++  ) => Data<dictionary, unknown>;
++};
++type StrictDo = (
++  iterator: Generator<unknown, unknown, unknown>,
++  first: unknown,
++  context: unknown,
++) => unknown;
++type StrictMethods = {
++  execute: StrictDo;
++  bind: unknown;
++  map: unknown;
++  pure: unknown;
++  catch_error: unknown;
++  throw_error: unknown;
++  bind_method: unknown;
++  map_method: unknown;
++  pure_method: unknown;
++  catch_error_method: unknown;
++  throw_error_method: unknown;
++};
++const strict_do = new Map<unknown, StrictMethods>();
++
++/** @ignore Register a strict, single-resume dictionary's generator runner. */
++export function register_strict_do<dictionary extends Monad<dictionary>>(
++  dictionary: dictionary,
++  execute: (
++    iterator: DoGenerator<dictionary, unknown>,
++    first: Data<dictionary, unknown>,
++    context: StrictDoContext<dictionary>,
++  ) => Data<dictionary, unknown>,
++): void {
++  const errors =
++    (dictionary as unknown as Record<symbol, DoErrorMethods<dictionary>>)[
++      monad_error_typeclass
++    ];
++  const direct = dictionary as unknown as Record<string, unknown>;
++  strict_do.set(dictionary[kind], {
++    execute: execute as unknown as StrictDo,
++    bind: dictionary[monad_typeclass].bind,
++    map: dictionary[functor_typeclass].map,
++    pure: dictionary[applicative_typeclass].pure,
++    catch_error: errors?.catch_error,
++    throw_error: errors?.throw_error,
++    bind_method: direct.bind,
++    map_method: direct.map,
++    pure_method: direct.pure,
++    catch_error_method: direct.catch_error,
++    throw_error_method: direct.throw_error,
++  });
++}
++function valid_strict_methods<dictionary extends Monad<dictionary>>(
++  current: Data<dictionary, unknown>,
++  snapshot: StrictMethods,
++  runtime_kind: unknown,
++): boolean {
++  const errors =
++    (current as unknown as Record<symbol, DoErrorMethods<dictionary>>)[
++      monad_error_typeclass
++    ];
++  const direct = current as unknown as Record<string, unknown>;
++  return current[kind] === runtime_kind &&
++    current[monad_typeclass].bind === snapshot.bind &&
++    current[functor_typeclass].map === snapshot.map &&
++    current[applicative_typeclass].pure === snapshot.pure &&
++    errors?.catch_error === snapshot.catch_error &&
++    errors?.throw_error === snapshot.throw_error &&
++    direct.bind === snapshot.bind_method &&
++    direct.map === snapshot.map_method &&
++    direct.pure === snapshot.pure_method &&
++    direct.catch_error === snapshot.catch_error_method &&
++    direct.throw_error === snapshot.throw_error_method;
++}
+
+ /** Operations for sequencing values through Monad dictionaries. */
+ export const Monad: MonadTypeclass = /* @__PURE__ */ typeclass(
+@@ -161,6 +242,31 @@
+     throw new TypeError("Do requires at least one yielded value");
+   }
+
++  const runtime_kind = first.next.value[kind];
++  const execute = strict_do.get(runtime_kind);
++  if (
++    execute !== undefined &&
++    valid_strict_methods(first.next.value, execute, runtime_kind)
++  ) {
++    const context: StrictDoContext<dictionary> = {
++      valid: (current) => valid_strict_methods(current, execute, runtime_kind),
++      fallback: (current, history) => {
++        let path: DoPath | undefined;
++        for (let index = 0; index < history.length; index += 2) {
++          path = append_do_path(path, {
++            tag: history[index] as "next" | "throw",
++            value: history[index + 1],
++          });
++        }
++        return step(path, current, first.iterator);
++      },
++    };
++    return execute.execute(
++      first.iterator,
++      first.next.value,
++      context,
++    ) as Data<dictionary, result>;
++  }
+   return step(undefined, first.next.value, first.iterator);
+
+   function run_with(

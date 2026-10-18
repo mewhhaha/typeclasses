@@ -176,27 +176,15 @@ export type InvalidConstructor = {
 };
 
 /** Callable Validation dictionary with configurable error accumulation. */
-export const Validation = data<AsValidation<unknown>>(
-  validation_identity,
-  union(["valid", $slot], ["invalid", $slot, $slot]),
-) as unknown as ValidationConstructor;
-
-Object.defineProperty(Validation, "with_error", {
-  value: validation_with_error,
-});
-
-Object.defineProperty(Validation, "with_semigroup", {
-  value: validation_with_semigroup,
-});
+export const Validation: ValidationConstructor =
+  /* @__PURE__ */ create_validation();
 
 /** Construct or match a successful Validation value. */
-export const Valid: ValidConstructor = Validation.Valid;
+export const Valid: ValidConstructor =
+  /* @__PURE__ */ (() => Validation.Valid)();
 /** Construct or match a failed Validation value with an explicit semigroup. */
-export const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
-  is: is_invalid,
-});
-
-Object.defineProperty(Validation, "Invalid", { value: Invalid });
+export const Invalid: InvalidConstructor =
+  /* @__PURE__ */ (() => Validation.Invalid)();
 
 function validation_with_error<error>(): ValidationDictionary<error> {
   return Validation as unknown as ValidationDictionary<error>;
@@ -251,7 +239,9 @@ export function InvalidMessages<item = never>(
   return Messages.Invalid([first, ...rest]);
 }
 
-const Messages = validation_with_semigroup(array_semigroup<string>());
+const Messages =
+  /* @__PURE__ */ (() =>
+    validation_with_semigroup(array_semigroup<string>()))();
 
 /** Map a validation error while explicitly selecting the target semigroup. */
 export function map_error<error, next_error, item>(
@@ -319,156 +309,6 @@ function construct_invalid<error, item = never>(
     semigroup,
   ]);
 }
-
-Show.instance(Validation)({
-  show() {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "valid":
-        return "Valid(" + inspect(payload) + ")";
-      case "invalid":
-        return "Invalid(" + inspect(payload) + ")";
-    }
-  },
-});
-
-Eq.instance(Validation)({
-  eq(right) {
-    const [left_tag, left_payload] = this.value();
-    const [right_tag, right_payload] = right.value();
-
-    switch (left_tag) {
-      case "valid":
-        if (right_tag === "valid") {
-          return Object.is(left_payload, right_payload);
-        }
-
-        return false;
-      case "invalid":
-        if (right_tag === "valid") {
-          return false;
-        }
-
-        return errors_equal(left_payload, right_payload);
-    }
-  },
-});
-
-Ord.instance(Validation)({
-  compare(right) {
-    const [left_tag, left_payload] = this.value();
-    const [right_tag, right_payload] = right.value();
-
-    switch (left_tag) {
-      case "invalid":
-        if (right_tag === "valid") {
-          return "lt";
-        }
-
-        return compare_errors(left_payload, right_payload);
-      case "valid":
-        if (right_tag === "invalid") {
-          return "gt";
-        }
-
-        return compare_unknown(left_payload, right_payload);
-    }
-  },
-});
-
-Functor.instance(Validation)({
-  map(fn) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "invalid":
-        return same_context(this);
-      case "valid":
-        return Valid(fn(payload));
-    }
-  },
-});
-
-Applicative.instance(Validation)({
-  pure(value) {
-    return Valid(value);
-  },
-
-  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
-  [applicative_lift_method](fn, rest) {
-    const validation = this.value();
-    const [tag, payload, semigroup] = validation;
-
-    switch (tag) {
-      case "invalid":
-        return lift_validation_invalid(payload, semigroup, rest);
-      case "valid":
-        return lift_validation_valid(fn, payload, rest);
-    }
-  },
-
-  ap(value) {
-    const fn = this.value();
-    const validation = value.value();
-    const [fn_tag, fn_payload, fn_semigroup] = fn;
-    const [validation_tag, validation_payload, validation_semigroup] =
-      validation;
-
-    switch (fn_tag) {
-      case "invalid":
-        if (validation_tag === "invalid") {
-          return invalid_from_error(
-            concat_errors(fn, validation),
-            fn_semigroup,
-          );
-        }
-
-        return invalid_from_error(fn_payload, fn_semigroup);
-      case "valid":
-        if (validation_tag === "invalid") {
-          return invalid_from_error(
-            validation_payload,
-            validation_semigroup,
-          );
-        }
-
-        return Valid(fn_payload(validation_payload));
-    }
-  },
-});
-
-Foldable.instance(Validation)({
-  fold(initial, fn) {
-    const [tag, payload] = this.value();
-
-    switch (tag) {
-      case "invalid":
-        return initial;
-      case "valid":
-        return fn(initial, payload);
-    }
-  },
-});
-
-Traversable.instance(Validation)({
-  traverse(applicative, fn) {
-    const [tag, payload, semigroup] = this.value();
-
-    switch (tag) {
-      case "invalid":
-        return Applicative.pure(
-          applicative,
-          invalid_from_error(
-            payload,
-            semigroup,
-          ),
-        );
-      case "valid":
-        return Functor.map(fn(payload), (value) => Valid(value));
-    }
-  },
-});
 
 function invalid_from_error<error, item = never>(
   error: error,
@@ -618,4 +458,175 @@ function compare_errors(left: unknown, right: unknown) {
   }
 
   return compare_unknown(left, right);
+}
+
+function create_validation(): ValidationConstructor {
+  const Validation = data<AsValidation<unknown>>(
+    validation_identity,
+    union(["valid", $slot], ["invalid", $slot, $slot]),
+  ) as unknown as ValidationConstructor;
+
+  Object.defineProperty(Validation, "with_error", {
+    value: validation_with_error,
+  });
+
+  Object.defineProperty(Validation, "with_semigroup", {
+    value: validation_with_semigroup,
+  });
+
+  const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
+    is: is_invalid,
+  });
+  Object.defineProperty(Validation, "Invalid", { value: Invalid });
+  Show.instance(Validation)({
+    show() {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "valid":
+          return "Valid(" + inspect(payload) + ")";
+        case "invalid":
+          return "Invalid(" + inspect(payload) + ")";
+      }
+    },
+  });
+
+  Eq.instance(Validation)({
+    eq(right) {
+      const [left_tag, left_payload] = this.value();
+      const [right_tag, right_payload] = right.value();
+
+      switch (left_tag) {
+        case "valid":
+          if (right_tag === "valid") {
+            return Object.is(left_payload, right_payload);
+          }
+
+          return false;
+        case "invalid":
+          if (right_tag === "valid") {
+            return false;
+          }
+
+          return errors_equal(left_payload, right_payload);
+      }
+    },
+  });
+
+  Ord.instance(Validation)({
+    compare(right) {
+      const [left_tag, left_payload] = this.value();
+      const [right_tag, right_payload] = right.value();
+
+      switch (left_tag) {
+        case "invalid":
+          if (right_tag === "valid") {
+            return "lt";
+          }
+
+          return compare_errors(left_payload, right_payload);
+        case "valid":
+          if (right_tag === "invalid") {
+            return "gt";
+          }
+
+          return compare_unknown(left_payload, right_payload);
+      }
+    },
+  });
+
+  Functor.instance(Validation)({
+    map(fn) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "invalid":
+          return same_context(this);
+        case "valid":
+          return Valid(fn(payload));
+      }
+    },
+  });
+
+  Applicative.instance(Validation)({
+    pure(value) {
+      return Valid(value);
+    },
+
+    // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
+    [applicative_lift_method](fn, rest) {
+      const validation = this.value();
+      const [tag, payload, semigroup] = validation;
+
+      switch (tag) {
+        case "invalid":
+          return lift_validation_invalid(payload, semigroup, rest);
+        case "valid":
+          return lift_validation_valid(fn, payload, rest);
+      }
+    },
+
+    ap(value) {
+      const fn = this.value();
+      const validation = value.value();
+      const [fn_tag, fn_payload, fn_semigroup] = fn;
+      const [validation_tag, validation_payload, validation_semigroup] =
+        validation;
+
+      switch (fn_tag) {
+        case "invalid":
+          if (validation_tag === "invalid") {
+            return invalid_from_error(
+              concat_errors(fn, validation),
+              fn_semigroup,
+            );
+          }
+
+          return invalid_from_error(fn_payload, fn_semigroup);
+        case "valid":
+          if (validation_tag === "invalid") {
+            return invalid_from_error(
+              validation_payload,
+              validation_semigroup,
+            );
+          }
+
+          return Valid(fn_payload(validation_payload));
+      }
+    },
+  });
+
+  Foldable.instance(Validation)({
+    fold(initial, fn) {
+      const [tag, payload] = this.value();
+
+      switch (tag) {
+        case "invalid":
+          return initial;
+        case "valid":
+          return fn(initial, payload);
+      }
+    },
+  });
+
+  Traversable.instance(Validation)({
+    traverse(applicative, fn) {
+      const [tag, payload, semigroup] = this.value();
+
+      switch (tag) {
+        case "invalid":
+          return Applicative.pure(
+            applicative,
+            invalid_from_error(
+              payload,
+              semigroup,
+            ),
+          );
+        case "valid":
+          return Functor.map(fn(payload), (value) => Valid(value));
+      }
+    },
+  });
+
+  return Validation;
 }

@@ -53,109 +53,114 @@ export interface AsIdentity
 export type Identity<item> = Data<AsIdentity, item>;
 
 /** Callable Identity dictionary and the source of its instances. */
-export const Identity: AsIdentity = data<AsIdentity>(identity_identity);
+export const Identity: AsIdentity = /* @__PURE__ */ create_identity();
 
 /** Wrap a value in the Identity context. */
 export function identity<item>(value: item): Identity<item> {
   return Identity(value);
 }
 
-Show.instance(Identity)({
-  show() {
-    return "Identity(" + inspect(this.value()) + ")";
-  },
-});
+function create_identity(): AsIdentity {
+  const Identity: AsIdentity = data<AsIdentity>(identity_identity);
+  Show.instance(Identity)({
+    show() {
+      return "Identity(" + inspect(this.value()) + ")";
+    },
+  });
 
-Eq.instance(Identity)({
-  eq(right) {
-    return Object.is(this.value(), right.value());
-  },
-});
+  Eq.instance(Identity)({
+    eq(right) {
+      return Object.is(this.value(), right.value());
+    },
+  });
 
-Ord.instance(Identity)({
-  compare(right) {
-    return compare_unknown(this.value(), right.value());
-  },
-});
+  Ord.instance(Identity)({
+    compare(right) {
+      return compare_unknown(this.value(), right.value());
+    },
+  });
 
-Functor.instance(Identity)({
-  map(fn) {
-    return identity(fn(this.value()));
-  },
-});
+  Functor.instance(Identity)({
+    map(fn) {
+      return identity(fn(this.value()));
+    },
+  });
 
-Applicative.instance(Identity)({
-  pure(value) {
-    return identity(value);
-  },
+  Applicative.instance(Identity)({
+    pure(value) {
+      return identity(value);
+    },
 
-  [applicative_lift_method](fn, rest) {
-    const values = [this.value()];
+    [applicative_lift_method](fn, rest) {
+      const values = [this.value()];
 
-    for (const current of rest) {
-      values.push(current.value());
-    }
-
-    return identity(fn(...values));
-  },
-
-  ap(value) {
-    return identity(this.value()(value.value()));
-  },
-});
-
-Monad.instance(Identity)({
-  bind(fn) {
-    return fn(this.value());
-  },
-});
-
-MonadRec.instance(Identity)({
-  tail_rec_m(initial, step) {
-    let state = initial;
-
-    while (true) {
-      const [tag, value] = step(state).value();
-
-      switch (tag) {
-        case loop_done:
-          return identity(value);
-        case loop_rec:
-          state = value;
-          break;
+      for (const current of rest) {
+        values.push(current.value());
       }
-    }
-  },
-});
 
-Foldable.instance(Identity)({
-  fold(initial, fn) {
-    return fn(initial, this.value());
-  },
-});
+      return identity(fn(...values));
+    },
 
-Traversable.instance(Identity)({
-  traverse(_applicative, fn) {
-    return Functor.map(fn(this.value()), identity);
-  },
-});
+    ap(value) {
+      return identity(this.value()(value.value()));
+    },
+  });
 
-Comonad.instance(Identity)({
-  extract() {
-    return this.value();
-  },
+  Monad.instance(Identity)({
+    bind(fn) {
+      return fn(this.value());
+    },
+  });
 
-  extend(fn) {
-    return identity(fn(this));
-  },
-});
+  MonadRec.instance(Identity)({
+    tail_rec_m(initial, step) {
+      let state = initial;
 
-register_traversal(Identity, <from, to, result>(
-  items: Iterable<from>,
-  fn: (item: from) => Data<AsIdentity, to>,
-  build: (items: Iterable<to>) => result,
-): Data<AsIdentity, result> => {
-  const out: to[] = [];
-  for (const item of items) out.push(fn(item).value());
-  return Identity(build(out));
-});
+      while (true) {
+        const [tag, value] = step(state).value();
+
+        switch (tag) {
+          case loop_done:
+            return identity(value);
+          case loop_rec:
+            state = value;
+            break;
+        }
+      }
+    },
+  });
+
+  Foldable.instance(Identity)({
+    fold(initial, fn) {
+      return fn(initial, this.value());
+    },
+  });
+
+  Traversable.instance(Identity)({
+    traverse(_applicative, fn) {
+      return Functor.map(fn(this.value()), identity);
+    },
+  });
+
+  Comonad.instance(Identity)({
+    extract() {
+      return this.value();
+    },
+
+    extend(fn) {
+      return identity(fn(this));
+    },
+  });
+
+  register_traversal(Identity, <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsIdentity, to>,
+    build: (items: Iterable<to>) => result,
+  ): Data<AsIdentity, result> => {
+    const out: to[] = [];
+    for (const item of items) out.push(fn(item).value());
+    return Identity(build(out));
+  });
+
+  return Identity;
+}

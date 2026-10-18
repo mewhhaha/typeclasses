@@ -94,11 +94,18 @@ export async function to_array<item>(
   iterable: AsyncIterableT<item>,
 ): Promise<item[]> {
   const items: item[] = [];
-
-  for await (const item of iterable.value()()) {
-    items.push(item);
+  const factory = iterable.value();
+  const chunks = chunk_sources.get(factory);
+  if (chunks !== undefined) {
+    for await (const chunk of chunks()) {
+      for (const item of chunk) {
+        if (is_promise_like(item)) items.push(await item as item);
+        else items.push(item as item);
+      }
+    }
+    return items;
   }
-
+  for await (const item of factory()) items.push(item);
   return items;
 }
 
@@ -369,7 +376,10 @@ export function map_concurrent<from, to>(
     type Outcome =
       | { readonly ok: true; readonly value: to }
       | { readonly ok: false; readonly error: unknown };
-    const pending: Promise<Outcome>[] = [];
+    const pending: (Promise<Outcome> | undefined)[] = [];
+    let pending_head = 0;
+    let pending_count = 0;
+    const waiter = traversal_waiter(signal);
     let source: AsyncIterator<from> | undefined;
     let index = 0;
     let ended = false;
@@ -380,19 +390,19 @@ export function map_concurrent<from, to>(
       source = iterable.value()()[Symbol.asyncIterator]();
       while (true) {
         while (
-          !ended && pending.length < concurrency && failure === undefined
+          !ended && pending_count < concurrency && failure === undefined
         ) {
           signal.throwIfAborted();
-          const next = await wait_for(source.next(), signal);
+          const next = await waiter.wait(source.next());
           signal.throwIfAborted();
           if (next.done) {
             ended = true;
             break;
           }
           const task_index = index++;
-          const task = Promise.resolve().then(async () => {
+          const task = Promise.resolve().then(() => {
             signal.throwIfAborted();
-            return await fn(next.value, task_index, signal);
+            return fn(next.value, task_index, signal);
           }).then(
             (value): Outcome => ({ ok: true, value }),
             (error): Outcome => {
@@ -401,11 +411,16 @@ export function map_concurrent<from, to>(
               return { ok: false, error };
             },
           );
-          pending.push(task);
+          pending[(pending_head + pending_count) % concurrency] = task;
+          pending_count += 1;
         }
         if (failure !== undefined) throw failure.error;
-        if (pending.length === 0) return;
-        const outcome = await wait_for(pending.shift()!, signal);
+        if (pending_count === 0) return;
+        const task = pending[pending_head]!;
+        pending[pending_head] = undefined;
+        pending_head = (pending_head + 1) % concurrency;
+        pending_count -= 1;
+        const outcome = await waiter.wait(task);
         if (!outcome.ok) throw outcome.error;
         signal.throwIfAborted();
         yield outcome.value;
@@ -415,36 +430,53 @@ export function map_concurrent<from, to>(
       throw error;
     } finally {
       controller.abort();
+      waiter.close();
       external?.removeEventListener("abort", abort);
       if (!ended) await close_concurrent_source(source, primary_failure);
     }
   });
 }
 
-function wait_for<item>(
-  operation: PromiseLike<item>,
-  signal: AbortSignal,
-): Promise<item> {
-  return new Promise((resolve, reject) => {
-    const abort = () => {
+// One cancellation listener per traversal. Each operation still has both
+// continuations attached so cancellation cannot leave a late rejection unobserved.
+function traversal_waiter(signal: AbortSignal) {
+  const waiting = new Set<(reason: unknown) => void>();
+  const abort = () => {
+    for (const reject of waiting) reject(signal.reason);
+    waiting.clear();
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  return {
+    wait<item>(operation: PromiseLike<item>): Promise<item> {
+      return new Promise((resolve, reject) => {
+        waiting.add(reject);
+        Promise.resolve(operation).then(
+          (value) => {
+            waiting.delete(reject);
+            resolve(value);
+          },
+          (error) => {
+            waiting.delete(reject);
+            reject(error);
+          },
+        );
+        if (signal.aborted) abort();
+      });
+    },
+    notification(register: (resolve: () => void) => void): Promise<void> {
+      return new Promise((resolve, reject) => {
+        waiting.add(reject);
+        register(() => {
+          waiting.delete(reject);
+          resolve();
+        });
+        if (signal.aborted) abort();
+      });
+    },
+    close() {
       signal.removeEventListener("abort", abort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    // Both continuations remain attached even after cancellation, observing late
-    // failures from user callbacks and upstream reads.
-    Promise.resolve(operation).then(
-      (value) => {
-        signal.removeEventListener("abort", abort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", abort);
-        reject(error);
-      },
-    );
-    if (signal.aborted) abort();
-  });
+    },
+  };
 }
 
 /** Reduce until Done, closing the source before resolving. */
@@ -488,7 +520,14 @@ export async function some<item>(
 }
 
 type Stage =
-  | { readonly tag: "map"; readonly fn: (item: unknown) => unknown }
+  | {
+    readonly tag: "map" | "map_sync";
+    readonly fn: (item: unknown) => unknown;
+  }
+  | {
+    readonly tag: "filter_map";
+    readonly fn: (item: unknown) => Maybe<unknown>;
+  }
   | {
     readonly tag: "filter";
     readonly fn: (item: unknown) => boolean | PromiseLike<boolean>;
@@ -501,6 +540,14 @@ type Pipeline = {
   ordered?: readonly Stage[];
 };
 const pipelines = new WeakMap<RawAsyncIterableT<unknown>, Pipeline>();
+const sync_sources = new WeakMap<
+  RawAsyncIterableT<unknown>,
+  () => Iterable<unknown>
+>();
+const chunk_sources = new WeakMap<
+  RawAsyncIterableT<unknown>,
+  () => AsyncIterable<readonly unknown[]>
+>();
 
 function pipeline<from, to = from>(
   value: AsyncIterableT<from>,
@@ -526,37 +573,70 @@ function pipeline<from, to = from>(
       plan.ordered = ordered.reverse();
     }
     const ordered = plan.ordered;
-    const remaining = ordered.map((stage) => {
-      if (stage.tag === "take") return stage.count;
-      return Infinity;
-    });
-    if (remaining.includes(0)) return;
-    for await (const input of source()) {
-      let item = input;
-      let keep = true;
-      let stop = false;
-      for (let index = 0; index < ordered.length; index += 1) {
-        const operation = ordered[index];
-        switch (operation.tag) {
-          case "map":
-            item = operation.fn(item);
-            if (is_promise_like(item)) item = await item;
-            break;
-          case "filter": {
-            const result = operation.fn(item);
-            if (is_promise_like(result)) keep = await result;
-            else keep = result;
-            break;
-          }
-          case "take":
-            remaining[index] -= 1;
-            if (remaining[index] === 0) stop = true;
-            break;
+    let remaining: number[] | undefined;
+    if (ordered.some((stage) => stage.tag === "take")) {
+      remaining = ordered.map((stage) => {
+        if (stage.tag === "take") return stage.count;
+        return Infinity;
+      });
+      if (remaining.includes(0)) return;
+    }
+    const synchronous = sync_sources.get(source);
+    let sync: Iterator<unknown> | undefined;
+    let async: AsyncIterator<unknown> | undefined;
+    if (synchronous !== undefined) sync = synchronous()[Symbol.iterator]();
+    else async = source()[Symbol.asyncIterator]();
+    let ended = false;
+    let failed = false;
+    try {
+      while (true) {
+        let next: IteratorResult<unknown>;
+        if (sync !== undefined) next = sync.next();
+        else next = await async!.next();
+        if (next.done) {
+          ended = true;
+          return;
         }
-        if (!keep) break;
+        let item = next.value;
+        let keep = true;
+        let stop = false;
+        for (let index = 0; index < ordered.length; index += 1) {
+          const operation = ordered[index];
+          switch (operation.tag) {
+            case "map":
+              item = operation.fn(item);
+              if (is_promise_like(item)) item = await item;
+              break;
+            case "filter": {
+              const result = operation.fn(item);
+              if (is_promise_like(result)) keep = await result;
+              else keep = result;
+              break;
+            }
+            case "take":
+              remaining![index] -= 1;
+              if (remaining![index] === 0) stop = true;
+              break;
+            case "map_sync":
+              item = operation.fn(item);
+              break;
+            case "filter_map": {
+              const [tag, value] = operation.fn(item).value();
+              if (tag === "Nothing") keep = false;
+              else item = value;
+              break;
+            }
+          }
+          if (!keep) break;
+        }
+        if (keep) yield item as to;
+        if (stop) return;
       }
-      if (keep) yield item as to;
-      if (stop) return;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (!ended) await close_pipeline_source(sync, async, failed);
     }
   };
   pipelines.set(factory, plan);
@@ -592,7 +672,10 @@ export function map_concurrent_unordered<from, to>(
     const abort = () => controller.abort(external?.reason);
     external?.addEventListener("abort", abort, { once: true });
     if (external?.aborted) abort();
-    const ready: to[] = [];
+    const ready: (to | undefined)[] = [];
+    let ready_head = 0;
+    let ready_count = 0;
+    const waiter = traversal_waiter(signal);
     let wake: (() => void) | undefined;
     let admitted = 0;
     let index = 0;
@@ -625,7 +708,8 @@ export function map_concurrent_unordered<from, to>(
               return fn(next.value, id, signal);
             }).then(
               (value) => {
-                ready.push(value);
+                ready[(ready_head + ready_count) % concurrency] = value;
+                ready_count += 1;
                 wake?.();
               },
               fail,
@@ -649,18 +733,19 @@ export function map_concurrent_unordered<from, to>(
             fail,
           );
         }
-        if (ready.length > 0) {
+        if (ready_count > 0) {
           admitted -= 1;
-          yield ready.shift()!;
+          const value = ready[ready_head]!;
+          ready[ready_head] = undefined;
+          ready_head = (ready_head + 1) % concurrency;
+          ready_count -= 1;
+          yield value;
           continue;
         }
         if (ended && admitted === 0) return;
-        await wait_for(
-          new Promise<void>((resolve) => {
-            wake = resolve;
-          }),
-          signal,
-        );
+        await waiter.notification((resolve) => {
+          wake = resolve;
+        });
         wake = undefined;
       }
     } catch (error) {
@@ -668,6 +753,7 @@ export function map_concurrent_unordered<from, to>(
       throw error;
     } finally {
       controller.abort();
+      waiter.close();
       external?.removeEventListener("abort", abort);
       if (!ended) await close_concurrent_source(source, primary_failure);
     }
@@ -704,4 +790,61 @@ async function close_iterators(
     }
   }
   if (!failed && failure !== undefined) throw failure.error;
+}
+
+/** Trust a synchronous source: values are read without an await per input. */
+export function from_sync_factory<item>(
+  factory: () => Iterable<item>,
+): AsyncIterableT<item> {
+  const source = async function* () {
+    yield* factory();
+  };
+  sync_sources.set(source, factory);
+  return AsyncIterableT(source);
+}
+
+/** Map without inspecting or awaiting intermediate callback results. */
+export function map_sync<from, to>(
+  iterable: AsyncIterableT<from>,
+  fn: (item: from) => to,
+): AsyncIterableT<to> {
+  return pipeline(iterable, {
+    tag: "map_sync",
+    fn: fn as (item: unknown) => unknown,
+  });
+}
+
+/** Keep and transform synchronously in one stage; Nothing drops it. */
+export function filter_map<from, to>(
+  iterable: AsyncIterableT<from>,
+  fn: (item: from) => Maybe<to>,
+): AsyncIterableT<to> {
+  return pipeline(iterable, {
+    tag: "filter_map",
+    fn: fn as (item: unknown) => Maybe<unknown>,
+  });
+}
+
+/** Accept finite chunks. Direct materialization awaits once per chunk. */
+export function from_chunks<item>(
+  factory: () => AsyncIterable<readonly item[]>,
+): AsyncIterableT<Awaited<item>> {
+  const source = async function* () {
+    for await (const chunk of factory()) yield* chunk;
+  };
+  chunk_sources.set(source, factory);
+  return AsyncIterableT(source);
+}
+
+async function close_pipeline_source(
+  sync: Iterator<unknown> | undefined,
+  async: AsyncIterator<unknown> | undefined,
+  failed: boolean,
+): Promise<void> {
+  try {
+    if (sync !== undefined) sync.return?.();
+    else await async!.return?.();
+  } catch (error) {
+    if (!failed) throw error;
+  }
 }

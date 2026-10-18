@@ -53,6 +53,8 @@ export type TransformReport = TransformDiagnostic & {
 
 /** Module specifiers the transformer should recognize as library entrypoints. */
 export type TransformConfig = {
+  /** Skip source-map printing when the caller does not consume maps. */
+  readonly source_map?: boolean;
   /** Collect optimization decisions without treating missed opportunities as errors. */
   readonly explain?: boolean;
   /** Disable individual passes for debugging and reproducible comparisons. */
@@ -64,7 +66,8 @@ export type TransformConfig = {
       | "interpreter"
       | "iterable_map"
       | "loop"
-      | "flatten",
+      | "flatten"
+      | "candidate_scan",
       boolean
     >
   >;
@@ -226,6 +229,19 @@ export function transform_do_program_source(
     });
   }
   const imports = collect_imports(source_file, config);
+  if (
+    config.optimizations?.candidate_scan !== false &&
+    !(config.optimizations?.iterable_map !== false &&
+      might_contain_iterable_maps(source)) &&
+    !has_transform_candidate_call(source_file, imports)
+  ) {
+    return unchanged_transform_result(source);
+  }
+  let binding_analysis: ReturnType<typeof create_binding_analysis> | undefined;
+  function get_bindings() {
+    binding_analysis ??= create_binding_analysis(source_file);
+    return binding_analysis;
+  }
   let iterable_maps: ReturnType<typeof create_iterable_map_fusion> | undefined;
   if (
     config.optimizations?.iterable_map !== false &&
@@ -234,6 +250,7 @@ export function transform_do_program_source(
     iterable_maps = create_iterable_map_fusion(
       source_file,
       config.library_specifiers,
+      get_bindings(),
     );
   }
 
@@ -244,11 +261,6 @@ export function transform_do_program_source(
     return unchanged_transform_result(source);
   }
 
-  let binding_analysis: ReturnType<typeof create_binding_analysis> | undefined;
-  function get_bindings() {
-    binding_analysis ??= create_binding_analysis(source_file);
-    return binding_analysis;
-  }
   const bindings = {
     resolve: (identifier: ts.Identifier) => get_bindings().resolve(identifier),
     imported: (identifier: ts.Identifier) =>
@@ -283,6 +295,7 @@ export function transform_do_program_source(
     );
   }
   const fused_named_programs = new Set<string>();
+  const flat_dictionaries = new Map<string, ts.Expression | null>();
   let transformed = 0;
   let needs_program_helpers = false;
   let loop_support: ReturnType<typeof collect_loop_support> = {
@@ -443,6 +456,12 @@ export function transform_do_program_source(
                     !ts.isIdentifier(value.expression) ||
                     !bindings.imported(value.expression)
                   ) return undefined;
+                  const cached_dictionary = flat_dictionaries.get(
+                    value.expression.text,
+                  );
+                  if (cached_dictionary !== undefined) {
+                    return cached_dictionary ?? undefined;
+                  }
                   for (const statement of source_file.statements) {
                     if (
                       !ts.isImportDeclaration(statement) ||
@@ -492,6 +511,10 @@ export function transform_do_program_source(
                         };
                         flat_imports.set(key, request);
                       }
+                      flat_dictionaries.set(
+                        value.expression.text,
+                        request.name,
+                      );
                       return request.name;
                     }
                   }
@@ -721,7 +744,15 @@ export function transform_do_program_source(
     }
 
     const output = result.transformed[0];
-    const printed = print_transformed_source(output, source, file_name);
+    let printed: { code: string; map: TransformSourceMap | null };
+    if (config.source_map === false) {
+      printed = {
+        code: ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(
+          output,
+        ),
+        map: null,
+      };
+    } else printed = print_transformed_source(output, source, file_name);
 
     return {
       code: printed.code,
@@ -3404,6 +3435,46 @@ function has_imported_transform_target(imports: ImportedBindings): boolean {
     imports.primitive_namespaces.size > 0;
 }
 
+// A conservative call-head index can reject unused imports without building
+// lexical scopes or running the rewriting visitor. Canonical diagnostic targets
+// are included even when they are unanchored or shadowed.
+function has_transform_candidate_call(
+  source: ts.SourceFile,
+  imports: ImportedBindings,
+): boolean {
+  const names = new Set([
+    "Do",
+    "Program",
+    ...imports.do_names,
+    ...imports.program_names,
+    ...imports.effect_names,
+    ...imports.namespaces,
+    ...imports.terminal_functions.keys(),
+    ...imports.terminal_namespaces.keys(),
+    ...imports.primitive_functions.keys(),
+    ...imports.primitive_namespaces.keys(),
+  ]);
+  function visit(node: ts.Node): boolean {
+    if (ts.isImportDeclaration(node)) return false;
+    if (ts.isCallExpression(node)) {
+      let callee = unwrap_parentheses(node.expression);
+      while (
+        ts.isPropertyAccessExpression(callee) ||
+        ts.isElementAccessExpression(callee)
+      ) {
+        if (
+          ts.isPropertyAccessExpression(callee) &&
+          (callee.name.text === "Do" || callee.name.text === "Program")
+        ) return true;
+        callee = unwrap_parentheses(callee.expression);
+      }
+      if (ts.isIdentifier(callee) && names.has(callee.text)) return true;
+    }
+    return ts.forEachChild(node, visit) ?? false;
+  }
+  return visit(source);
+}
+
 const all_terminal_functions: ReadonlySet<TerminalFunctionName> = new Set([
   "run",
   "run_reader",
@@ -5472,7 +5543,7 @@ if (import.meta.main) {
 }
 
 /** Compiler and transform revision included in every cache key. */
-export const transform_cache_version: string = "3:" + ts.version;
+export const transform_cache_version: string = "4:" + ts.version;
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {
@@ -5491,6 +5562,30 @@ export type TransformCache = {
     max_bytes: number;
   };
 };
+
+/** A bounded LRU cache. Source text and all semantic config are part of the key. */
+function transform_result_bytes(key: string, result: TransformResult): number {
+  let characters = key.length + result.code.length;
+  const map = result.map;
+  if (map !== null) {
+    characters += map.file.length + map.sourceRoot.length + map.mappings.length;
+    for (const text of map.sources) characters += text.length;
+    for (const text of map.sourcesContent ?? []) {
+      characters += text?.length ?? 0;
+    }
+    for (const text of map.names) characters += text.length;
+  }
+  for (const item of result.diagnostics) {
+    characters += item.file_name.length + item.message.length;
+  }
+  for (const item of result.reports) {
+    characters += item.file_name.length + item.message.length;
+  }
+  // Conservative UTF-16 string storage plus fixed container estimates. This is
+  // a retention budget, not a measurement of the engine's object layout.
+  return characters * 2 + 512 + result.diagnostics.length * 128 +
+    result.reports.length * 160;
+}
 
 /** A bounded LRU cache. Source text and all semantic config are part of the key. */
 export function create_transform_cache(
@@ -5527,6 +5622,7 @@ export function create_transform_cache(
         config.library_specifiers ?? [],
         config.terminal_library_specifiers ?? [],
         config.explain ?? false,
+        config.source_map ?? true,
         config.optimizations ?? {},
       ]) + "\0" + source;
       const cached = entries.get(key);
@@ -5538,7 +5634,7 @@ export function create_transform_cache(
       }
       misses += 1;
       const result = transform_do_program_source(source, file_name, config);
-      const entry_bytes = 2 * (key.length + JSON.stringify(result).length);
+      const entry_bytes = transform_result_bytes(key, result);
       if (capacity > 0 && entry_bytes <= max_bytes) {
         while (entries.size >= capacity || bytes + entry_bytes > max_bytes) {
           const oldest = entries.keys().next().value!;

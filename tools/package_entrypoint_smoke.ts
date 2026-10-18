@@ -80,6 +80,7 @@ const expected_entrypoints: Readonly<Record<string, readonly string[]>> = {
   "./reader": ["Reader", "ask", "run_reader"],
   "./state": ["State", "get", "run_state"],
   "./writer": ["Writer", "run_writer", "tell"],
+  "./chunk_log": ["ChunkLog", "chunk_log", "flatten_chunk_log"],
   "./list": ["Cons", "List", "Nil"],
   "./tagged": ["match"],
   "./loop": ["done", "loop", "rec"],

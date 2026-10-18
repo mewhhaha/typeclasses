@@ -67,6 +67,64 @@ export function handle_operations<
   >;
 }
 
+type PreparedEffect<pending, item, table> =
+  & Effect<pending, item>
+  & (table extends OperationTable<NoInfer<pending>> ? unknown : {
+    readonly ERROR:
+      "prepared operation handler output must match its operation";
+  });
+
+/** Snapshot an operation table once for reuse. Later source-table mutation is isolated. */
+export function prepare_operations<
+  const table extends Readonly<Record<string, unknown>>,
+>(
+  handlers: table,
+): <pending, item>(effect: PreparedEffect<pending, item, table>) => Effect<
+  | Exclude<pending, Selected<pending, HandledTags<table>>>
+  | HandledRequirements<table>,
+  item
+> {
+  type SelectedOperation = TaggedOperation & Operation<unknown>;
+  const entries = new Map<
+    string,
+    (operation: SelectedOperation) => Effect<unknown, unknown>
+  >();
+  for (const tag of Object.keys(handlers)) {
+    const handle = (handlers as Record<string, unknown>)[tag];
+    if (typeof handle === "function") {
+      entries.set(
+        tag,
+        handle as (operation: SelectedOperation) => Effect<unknown, unknown>,
+      );
+    }
+  }
+  return function prepared<pending, item>(
+    effect: PreparedEffect<pending, item, table>,
+  ): Effect<
+    | Exclude<pending, Selected<pending, HandledTags<table>>>
+    | HandledRequirements<table>,
+    item
+  > {
+    if (entries.size === 0) {
+      return effect as Effect<
+        | Exclude<pending, Selected<pending, HandledTags<table>>>
+        | HandledRequirements<table>,
+        item
+      >;
+    }
+    return handle_operation(
+      effect,
+      (operation): operation is SelectedOperation =>
+        Array.isArray(operation) && entries.has(operation[0]),
+      (operation) => entries.get(operation[0])!.call(handlers, operation),
+    ) as Effect<
+      | Exclude<pending, Selected<pending, HandledTags<table>>>
+      | HandledRequirements<table>,
+      item
+    >;
+  };
+}
+
 declare const binding_requirements: unique symbol;
 declare const binding_value: unique symbol;
 type Family = "reader" | "state" | "writer";
@@ -155,29 +213,66 @@ export function run_cells<requirements, item, const bindings extends Bindings>(
   readonly states: NamedValues<bindings, "state">;
   readonly logs: NamedValues<bindings, "writer">;
 } {
+  return prepare_cells(bindings)(effect);
+}
+
+/** Snapshot cell names, order, families and handlers once; each run gets fresh state. */
+export function prepare_cells<const bindings extends Bindings>(
+  bindings: bindings,
+): <requirements, item>(
+  effect:
+    & Effect<requirements, item>
+    & ([Exclude<requirements, BoundRequirements<bindings>>] extends [never]
+      ? unknown
+      : {
+        readonly ERROR: "run_cells requires a binding for every capability";
+      }),
+) => {
+  readonly result: item;
+  readonly states: NamedValues<bindings, "state">;
+  readonly logs: NamedValues<bindings, "writer">;
+} {
   const ordered = Reflect.ownKeys(bindings)
     .filter((key) => Object.prototype.propertyIsEnumerable.call(bindings, key))
-    .map((key) => [key, bindings[key]] as const);
-  let current = effect as Effect<unknown, unknown>;
-  for (const [, binding] of ordered) current = binding.handle(current);
-  let result = run(current as Effect<never, unknown>);
-  const states: Record<PropertyKey, unknown> = {};
-  const logs: Record<PropertyKey, unknown> = {};
-  for (let index = ordered.length - 1; index >= 0; index--) {
-    const [name, binding] = ordered[index];
-    if (binding.family === "reader") continue;
-    const [value, final] = result as readonly [unknown, unknown];
-    result = value;
-    let destination = states;
-    if (binding.family === "writer") destination = logs;
-    Object.defineProperty(destination, name, {
-      value: final,
-      enumerable: true,
-    });
-  }
-  return {
-    result: result as item,
-    states: states as NamedValues<bindings, "state">,
-    logs: logs as NamedValues<bindings, "writer">,
+    .map((key) => ({
+      name: key,
+      family: bindings[key].family,
+      handle: bindings[key].handle,
+    }));
+  return function prepared<requirements, item>(
+    effect:
+      & Effect<requirements, item>
+      & ([Exclude<requirements, BoundRequirements<bindings>>] extends [never]
+        ? unknown
+        : {
+          readonly ERROR: "run_cells requires a binding for every capability";
+        }),
+  ): {
+    readonly result: item;
+    readonly states: NamedValues<bindings, "state">;
+    readonly logs: NamedValues<bindings, "writer">;
+  } {
+    let current = effect as Effect<unknown, unknown>;
+    for (const binding of ordered) current = binding.handle(current);
+    let result = run(current as Effect<never, unknown>);
+    const states: Record<PropertyKey, unknown> = {};
+    const logs: Record<PropertyKey, unknown> = {};
+    for (let index = ordered.length - 1; index >= 0; index--) {
+      const { name, family } = ordered[index];
+      if (family === "reader") continue;
+      const [value, final] = result as readonly [unknown, unknown];
+      result = value;
+      let destination = states;
+      if (family === "writer") destination = logs;
+      Object.defineProperty(destination, name, {
+        value: final,
+        enumerable: true,
+      });
+    }
+    return {
+      result: result as item,
+      states: states as NamedValues<bindings, "state">,
+      logs: logs as NamedValues<bindings, "writer">,
+    };
   };
 }

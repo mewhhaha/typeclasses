@@ -14,28 +14,25 @@ import { same_context } from "./internal.ts";
 import {
   type Alternative,
   alternative_typeclass,
-  Applicative,
+} from "./typeclasses/alternative.ts";
+import {
   applicative_lift_method,
+  applicative_pure,
   applicative_typeclass,
-  compare_unknown,
-  eq_typeclass,
-  foldable_typeclass,
-  Functor,
-  functor_typeclass,
-  type Monad,
-  monad_rec_typeclass,
-  monad_typeclass,
-  type MonadRec,
-  type Monoid,
-  monoid_typeclass,
-  type Ord,
-  ord_typeclass,
-  semigroup_typeclass,
-  type Show,
-  show_typeclass,
+} from "./typeclasses/applicative.ts";
+import { compare_unknown, type Ord, ord_typeclass } from "./typeclasses/ord.ts";
+import { eq_typeclass } from "./typeclasses/eq.ts";
+import { foldable_typeclass } from "./typeclasses/foldable.ts";
+import { functor_map, functor_typeclass } from "./typeclasses/functor.ts";
+import { type Monad, monad_typeclass } from "./typeclasses/monad.ts";
+import { monad_rec_typeclass, type MonadRec } from "./typeclasses/monad_rec.ts";
+import { type Monoid, monoid_typeclass } from "./typeclasses/monoid.ts";
+import { semigroup_typeclass } from "./typeclasses/semigroup.ts";
+import { type Show, show_typeclass } from "./typeclasses/show.ts";
+import {
   type Traversable,
   traversable_typeclass,
-} from "./typeclasses.ts";
+} from "./typeclasses/traversable.ts";
 import { type Either, Left, Right } from "./either.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec } from "./loop.ts";
@@ -471,16 +468,16 @@ function create_maybe(): MaybeConstructor {
   instance(traversable_typeclass)({
     traverse(applicative, fn) {
       if (is_Nothing_value(this)) {
-        return Applicative.pure(applicative, nothing_value());
+        return applicative_pure(applicative, nothing_value());
       }
 
       const [tag, payload] = this.value();
 
       switch (tag) {
         case "Nothing":
-          return Applicative.pure(applicative, nothing_value());
+          return applicative_pure(applicative, nothing_value());
         case "Just":
-          return Functor.map(fn(payload), (value) => Just(value));
+          return functor_map(fn(payload), (value) => Just(value));
       }
     },
   });

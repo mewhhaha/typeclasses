@@ -1,0 +1,141 @@
+--- a/src/quickcheck.ts
++++ b/src/quickcheck.ts
+@@ -234,12 +234,16 @@
+
+ /** Generates one constant value. */
+ export function constant<item>(value: item): Gen<item> {
+-  return Gen((state) => [value, state]);
++  const source: RawGen<item> = (state) => [value, state];
++  gen_primitives.set(source, { tag: "constant", value });
++  return Gen(source);
+ }
+
+ /** Generates an integer in an inclusive range. */
+ export function integer(options: IntegerOptions = {}): Gen<number> {
+-  return Gen((state) => draw_integer(options, state));
++  const source: RawGen<number> = (state) => draw_integer(options, state);
++  gen_primitives.set(source, { tag: "integer", options });
++  return Gen(source);
+ }
+
+ /** Generates a boolean with equal probability. */
+@@ -1285,25 +1289,51 @@
+   },
+ });
+
+-type GenPlan = {
+-  readonly source: RawGen<unknown>;
+-  readonly bind: (item: unknown) => Gen<unknown>;
+-};
++type GenPlan =
++  | {
++    readonly tag: "bind";
++    readonly source: RawGen<unknown>;
++    readonly fn: (item: unknown) => Gen<unknown>;
++  }
++  | {
++    readonly tag: "map";
++    readonly source: RawGen<unknown>;
++    readonly fn: (item: unknown) => unknown;
++  };
+ const gen_plans = new WeakMap<RawGen<unknown>, GenPlan>();
+-
+-Monad.derive(Gen)({
+-  pure(value) {
+-    return constant(value);
++type GenPrimitive =
++  | { readonly tag: "constant"; readonly value: unknown }
++  | { readonly tag: "integer"; readonly options: IntegerOptions };
++const gen_primitives = new WeakMap<RawGen<unknown>, GenPrimitive>();
++
++function planned(plan: GenPlan): Gen<unknown> {
++  const execute: RawGen<unknown> = (state) => run_plan(execute, state);
++  gen_plans.set(execute, plan);
++  return Gen(execute);
++}
++
++Monad.instance(Gen)({
++  bind(fn) {
++    return planned({
++      tag: "bind",
++      source: this.value(),
++      fn: fn as (item: unknown) => Gen<unknown>,
++    }) as ReturnType<typeof fn>;
+   },
+-
+-  bind(fn) {
+-    const source = this.value();
+-    const execute: RawGen<unknown> = (state) => run_plan(execute, state);
+-    gen_plans.set(execute, {
+-      source,
+-      bind: fn as (item: unknown) => Gen<unknown>,
+-    });
+-    return Gen(execute) as ReturnType<typeof fn>;
++});
++Functor.instance(Gen)({
++  map<from, to>(this: Gen<from>, fn: (value: from) => to): Gen<to> {
++    return planned({
++      tag: "map",
++      source: this.value(),
++      fn: fn as (item: unknown) => unknown,
++    }) as Gen<to>;
++  },
++});
++Applicative.instance(Gen)({
++  pure: constant,
++  ap(value) {
++    return this.bind((fn) => value.map(fn));
+   },
+ });
+
+@@ -1313,6 +1343,8 @@
+ ): readonly [unknown, GenState] {
+   const pending: GenPlan[] = [];
+   let current = source;
++  let seed = state.seed;
++  let size = state.size;
+   while (true) {
+     const plan = gen_plans.get(current);
+     if (plan !== undefined) {
+@@ -1320,10 +1352,36 @@
+       current = plan.source;
+       continue;
+     }
+-    const [value, next] = current(state);
+-    state = next;
+-    const continuation = pending.pop();
+-    if (continuation === undefined) return [value, state];
+-    current = continuation.bind(value).value();
++    const primitive = gen_primitives.get(current);
++    let value: unknown;
++    if (primitive === undefined) {
++      const result = current({ seed, size });
++      value = result[0];
++      seed = result[1].seed;
++      size = result[1].size;
++    } else {
++      switch (primitive.tag) {
++        case "constant":
++          value = primitive.value;
++          break;
++        case "integer": {
++          const bounds = integer_bounds(primitive.options, size);
++          seed = (seed + 0x6d2b79f5) >>> 0;
++          const unit = random_unit(seed);
++          value = bounds.min + Math.floor(unit * (bounds.max - bounds.min + 1));
++          break;
++        }
++      }
++    }
++    while (true) {
++      const continuation = pending.pop();
++      if (continuation === undefined) return [value, { seed, size }];
++      if (continuation.tag === "map") {
++        value = continuation.fn(value);
++        continue;
++      }
++      current = continuation.fn(value).value();
++      break;
++    }
+   }
+ }

@@ -77,18 +77,26 @@ export function create_binding_analysis(source: ts.SourceFile) {
     ts.forEachChild(node, (child) => visit(child, scope, function_scope));
   }
   visit(source, root, root);
-  return {
-    resolve(identifier: ts.Identifier): ts.Node | undefined {
-      let scope = scopes.get(identifier);
-      while (scope !== undefined) {
-        const declaration = scope.bindings.get(identifier.text);
-        if (declaration !== undefined) return declaration;
-        scope = scope.parent;
+  const resolved = new WeakMap<ts.Identifier, ts.Node | null>();
+  function resolve(identifier: ts.Identifier): ts.Node | undefined {
+    const cached = resolved.get(identifier);
+    if (cached !== undefined) return cached ?? undefined;
+    let scope = scopes.get(identifier);
+    while (scope !== undefined) {
+      const declaration = scope.bindings.get(identifier.text);
+      if (declaration !== undefined) {
+        resolved.set(identifier, declaration);
+        return declaration;
       }
-      return undefined;
-    },
+      scope = scope.parent;
+    }
+    resolved.set(identifier, null);
+    return undefined;
+  }
+  return {
+    resolve,
     imported(identifier: ts.Identifier): boolean {
-      const declaration = this.resolve(identifier);
+      const declaration = resolve(identifier);
       return declaration !== undefined && ts.isImportDeclaration(declaration);
     },
   };

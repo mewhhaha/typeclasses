@@ -62,15 +62,7 @@ export type FnConstructor =
   };
 
 /** The shared callable dictionary for wrapped functions. */
-export const Fn = data<AsFn<unknown>>(fn_identity) as FnConstructor;
-
-Object.defineProperty(Fn, "with_input", {
-  value: fn_with_input,
-});
-
-function fn_with_input<input>(): AsFn<input> {
-  return Fn as unknown as AsFn<input>;
-}
+export const Fn: FnConstructor = /* @__PURE__ */ create_fn();
 
 /** Wrap a unary function with the Fn dictionary. */
 export function fn<input, item>(value: RawFn<input, item>): Fn<input, item> {
@@ -84,100 +76,114 @@ export function arr<input, item>(
   return fn(value);
 }
 
-Show.instance(Fn)({
-  show() {
-    return "Fn(?)";
-  },
-});
+function create_fn(): FnConstructor {
+  const Fn = data<AsFn<unknown>>(fn_identity) as FnConstructor;
 
-Monad.derive(Fn.with_input<unknown>())({
-  pure(value) {
-    return Fn((_input: unknown) => value);
-  },
+  Object.defineProperty(Fn, "with_input", {
+    value: fn_with_input,
+  });
 
-  bind(fn) {
-    const run = this.value();
+  function fn_with_input<input>(): AsFn<input> {
+    return Fn as unknown as AsFn<input>;
+  }
 
-    return Fn((input: unknown) => {
-      return fn(run(input)).value()(input);
-    });
-  },
-});
+  Show.instance(Fn)({
+    show() {
+      return "Fn(?)";
+    },
+  });
 
-Functor.instance(Fn)({
-  map(output) {
-    const run = this.value();
+  Monad.derive(Fn.with_input<unknown>())({
+    pure(value) {
+      return Fn((_input: unknown) => value);
+    },
 
-    return Fn((value: unknown) => {
-      return output(run(value));
-    });
-  },
-});
+    bind(fn) {
+      const run = this.value();
 
-Profunctor.instance(Fn)({
-  dimap<to, next_input, next_to>(
-    this: Data<AsFn<unknown>, to>,
-    input: (value: next_input) => unknown,
-    output: (value: to) => next_to,
-  ) {
-    const run = this.value();
+      return Fn((input: unknown) => {
+        return fn(run(input)).value()(input);
+      });
+    },
+  });
 
-    return Fn((value: next_input) => {
-      return output(run(input(value)));
-    });
-  },
-});
+  Functor.instance(Fn)({
+    map(output) {
+      const run = this.value();
 
-Category.instance(Fn)({
-  id<item>(this: AsFn<unknown>) {
-    return Fn((value: item) => {
-      return value;
-    });
-  },
+      return Fn((value: unknown) => {
+        return output(run(value));
+      });
+    },
+  });
 
-  compose<to, next_input>(
-    this: Data<AsFn<unknown>, to>,
-    before: Data<AsFn<next_input>, unknown>,
-  ) {
-    const after_run = this.value();
-    const before_run = before.value();
+  Profunctor.instance(Fn)({
+    dimap<to, next_input, next_to>(
+      this: Data<AsFn<unknown>, to>,
+      input: (value: next_input) => unknown,
+      output: (value: to) => next_to,
+    ) {
+      const run = this.value();
 
-    return Fn((value: next_input) => {
-      return after_run(before_run(value));
-    });
-  },
-});
+      return Fn((value: next_input) => {
+        return output(run(input(value)));
+      });
+    },
+  });
 
-Arrow.instance(Fn)({
-  arr<from, to>(
-    this: AsFn<unknown>,
-    fn: (value: from) => to,
-  ) {
-    return Fn(fn);
-  },
+  Category.instance(Fn)({
+    id<item>(this: AsFn<unknown>) {
+      return Fn((value: item) => {
+        return value;
+      });
+    },
 
-  first<to, extra>(this: Data<AsFn<unknown>, to>) {
-    const run = this.value();
+    compose<to, next_input>(
+      this: Data<AsFn<unknown>, to>,
+      before: Data<AsFn<next_input>, unknown>,
+    ) {
+      const after_run = this.value();
+      const before_run = before.value();
 
-    return Fn((pair: readonly [unknown, extra]) => {
-      return [run(pair[0]), pair[1]] as const;
-    });
-  },
+      return Fn((value: next_input) => {
+        return after_run(before_run(value));
+      });
+    },
+  });
 
-  second<to, extra>(this: Data<AsFn<unknown>, to>) {
-    const run = this.value();
+  Arrow.instance(Fn)({
+    arr<from, to>(
+      this: AsFn<unknown>,
+      fn: (value: from) => to,
+    ) {
+      return Fn(fn);
+    },
 
-    return Fn((pair: readonly [extra, unknown]) => {
-      return [pair[0], run(pair[1])] as const;
-    });
-  },
-});
+    first<to, extra>(this: Data<AsFn<unknown>, to>) {
+      const run = this.value();
 
-Parse.instance(Fn)({
-  parse<item>(
-    this: WrappedData<AsFn<unknown>, (input: string) => item, item>,
-    input: string,
-  ) {
-    return this.value()(input);
-  },
-});
+      return Fn((pair: readonly [unknown, extra]) => {
+        return [run(pair[0]), pair[1]] as const;
+      });
+    },
+
+    second<to, extra>(this: Data<AsFn<unknown>, to>) {
+      const run = this.value();
+
+      return Fn((pair: readonly [extra, unknown]) => {
+        return [pair[0], run(pair[1])] as const;
+      });
+    },
+  });
+
+  Parse.instance(Fn)({
+    parse<item>(
+      this: WrappedData<AsFn<unknown>, (input: string) => item, item>,
+      input: string,
+    ) {
+      return this.value()(input);
+    },
+  });
+
+  return Fn;
+}

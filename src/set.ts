@@ -45,9 +45,7 @@ export interface AsSet
 export type SetT<item> = Data<AsSet, item>;
 
 /** Callable set dictionary that defensively copies sets when wrapping them. */
-export const SetT: AsSet = data<AsSet>(set_identity, function (set) {
-  return this.data(new Set(set));
-});
+export const SetT: AsSet = /* @__PURE__ */ create_set();
 
 /** Wrap a defensive copy of a read-only set. */
 export function from_set<item>(set: ReadonlySet<item>): SetT<item> {
@@ -66,69 +64,75 @@ export function to_set<item>(set: SetT<item>): Set<item> {
   return new Set(set.value());
 }
 
-Show.instance(SetT)({
-  show() {
-    return inspect(this.value());
-  },
-});
+function create_set(): AsSet {
+  const SetT: AsSet = data<AsSet>(set_identity, function (set) {
+    return this.data(new Set(set));
+  });
+  Show.instance(SetT)({
+    show() {
+      return inspect(this.value());
+    },
+  });
 
-Eq.instance(SetT)({
-  eq(right) {
-    const left = this.value();
-    const right_value = right.value();
+  Eq.instance(SetT)({
+    eq(right) {
+      const left = this.value();
+      const right_value = right.value();
 
-    if (left.size !== right_value.size) {
-      return false;
-    }
-
-    for (const value of left) {
-      if (!right_value.has(value)) {
+      if (left.size !== right_value.size) {
         return false;
       }
-    }
 
-    return true;
-  },
-});
+      for (const value of left) {
+        if (!right_value.has(value)) {
+          return false;
+        }
+      }
 
-Functor.instance(SetT)({
-  map(fn) {
-    const out = new Set<ReturnType<typeof fn>>();
+      return true;
+    },
+  });
 
-    for (const item of this.value()) {
-      out.add(fn(item));
-    }
+  Functor.instance(SetT)({
+    map(fn) {
+      const out = new Set<ReturnType<typeof fn>>();
 
-    return as_data(SetT, out);
-  },
-});
+      for (const item of this.value()) {
+        out.add(fn(item));
+      }
 
-Semigroup.instance(SetT)({
-  concat(right) {
-    const out = new Set(this.value());
+      return as_data(SetT, out);
+    },
+  });
 
-    for (const item of right.value()) {
-      out.add(item);
-    }
+  Semigroup.instance(SetT)({
+    concat(right) {
+      const out = new Set(this.value());
 
-    return as_data(SetT, out);
-  },
-});
+      for (const item of right.value()) {
+        out.add(item);
+      }
 
-Monoid.instance(SetT)({
-  empty() {
-    return as_data(SetT, new Set());
-  },
-});
+      return as_data(SetT, out);
+    },
+  });
 
-Foldable.instance(SetT)({
-  fold(initial, fn) {
-    let state = initial;
+  Monoid.instance(SetT)({
+    empty() {
+      return as_data(SetT, new Set());
+    },
+  });
 
-    for (const item of this.value()) {
-      state = fn(state, item);
-    }
+  Foldable.instance(SetT)({
+    fold(initial, fn) {
+      let state = initial;
 
-    return state;
-  },
-});
+      for (const item of this.value()) {
+        state = fn(state, item);
+      }
+
+      return state;
+    },
+  });
+  return SetT;
+}

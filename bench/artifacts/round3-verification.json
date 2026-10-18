@@ -1,0 +1,69 @@
+{
+  "verified_at": "2026-10-18T21:34:33.125617+00:00",
+  "baseline_commit": "206840892732e7780edaadb49e65df956e62e6fd",
+  "source_sha256": "eea67f4df9640166888831438d4fd326e00f62f832ce1fa0965286fdb93d4e1f",
+  "source_changes_since_final_capture": [],
+  "commands": [
+    {
+      "command": "npm exec --yes --package=bun@1.4.3 -- deno task verify",
+      "exit_code": 0
+    },
+    {
+      "command": "deno test",
+      "exit_code": 0,
+      "passed": 401,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "command": "npm exec --yes --package=bun@1.4.3 -- deno task check:toolchains",
+      "exit_code": 0
+    },
+    {
+      "command": "deno task check:budgets",
+      "exit_code": 0,
+      "limits_review": "docs/hills-131-210.md#reviewed-budget-changes"
+    },
+    {
+      "command": "deno task publish:dry-run",
+      "exit_code": 0
+    }
+  ],
+  "verify_suites": {
+    "source_examples_case_studies": 389,
+    "experiments": 10,
+    "tools": 16,
+    "transformer": 97,
+    "ignored": 1
+  },
+  "coverage_percent": {
+    "line": 80.0,
+    "branch": 87.8,
+    "function": 82.6
+  },
+  "mutation_probes_killed": 3,
+  "portability": [
+    "Deno",
+    "Node",
+    "Bun",
+    "Chromium",
+    "workerd"
+  ],
+  "toolchains": {
+    "deno": "2.9.7",
+    "deno_typescript": "6.0.3",
+    "typescript": "5.9.3",
+    "node": "24.12.0",
+    "bun": "1.4.3"
+  },
+  "log_sha256": {
+    "verify": "28cea5e30c07490ef13e403fa5f30b1b467ac30b41687512796074d9fa367d0f",
+    "plain_tests_budgets_publish": "2cc6a8e19eec9d5cc8a1539781f4a09733338e507c022e806c8bf34b3ff03b3e",
+    "toolchains": "10c8a7b37e2ec61110d0dfffafb48e123bd07597df700958ab37a5f3f6d40867"
+  },
+  "limits": [
+    "One pre-existing ignored test remains.",
+    "The package consumer uses publish-selected staged local source; no registry artifact was produced.",
+    "Timing hypotheses and unmet budgets have separate decisions in the ledger."
+  ]
+}

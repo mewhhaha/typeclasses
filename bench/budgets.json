@@ -1,15 +1,15 @@
 {
   "compiler": "5.9.3",
   "tolerance": 0.05,
-  "baseline": "round2 final; original revision 6c9751e",
+  "baseline": "round3 reviewed; baseline revision 2068408; namespace +7.10% and instantiations +2.81% accepted for supported API growth, see docs/hills-131-210.md",
   "values": {
-    "instantiations": 243852,
-    "root_namespace": 50251,
-    "root_just": 39050,
-    "maybe_just": 16569
+    "instantiations": 250695,
+    "root_namespace": 53817,
+    "root_just": 14542,
+    "maybe_just": 14396
   },
   "evidence": {
-    "types": "bench/artifacts/round2-types-final.json",
-    "imports": "bench/artifacts/round2-import-final.json"
+    "types": "bench/artifacts/round3-types-final.json",
+    "imports": "bench/artifacts/round3-import-final.json"
   }
 }

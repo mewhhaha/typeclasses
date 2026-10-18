@@ -116,17 +116,7 @@ export type TupleConstructor =
   };
 
 /** Callable tuple dictionary with fixed-left and monoidal-left configurations. */
-export const Tuple = data<AsTuple<unknown>>(
-  tuple_identity,
-) as unknown as TupleConstructor;
-
-Object.defineProperty(Tuple, "with_left", {
-  value: tuple_with_left,
-});
-
-Object.defineProperty(Tuple, "with_monoid", {
-  value: tuple_with_monoid,
-});
+export const Tuple: TupleConstructor = /* @__PURE__ */ create_tuple();
 
 function tuple_with_left<left>(): TupleDictionary<left> {
   return Tuple as unknown as TupleDictionary<left>;
@@ -204,89 +194,105 @@ export function swap<left, right>(
   return tuple(right, left);
 }
 
-Show.instance(Tuple)({
-  show() {
-    const [left, right] = this.value();
+function create_tuple(): TupleConstructor {
+  const Tuple = data<AsTuple<unknown>>(
+    tuple_identity,
+  ) as unknown as TupleConstructor;
 
-    return "Tuple(" + inspect(left) + ", " + inspect(right) + ")";
-  },
-});
+  Object.defineProperty(Tuple, "with_left", {
+    value: tuple_with_left,
+  });
 
-Eq.instance(Tuple)({
-  eq(right) {
-    const [left_first, left_second] = this.value();
-    const [right_first, right_second] = right.value();
+  Object.defineProperty(Tuple, "with_monoid", {
+    value: tuple_with_monoid,
+  });
 
-    if (!Object.is(left_first, right_first)) {
-      return false;
-    }
+  Show.instance(Tuple)({
+    show() {
+      const [left, right] = this.value();
 
-    return Object.is(left_second, right_second);
-  },
-});
+      return "Tuple(" + inspect(left) + ", " + inspect(right) + ")";
+    },
+  });
 
-Ord.instance(Tuple)({
-  compare(right) {
-    const [left_first, left_second] = this.value();
-    const [right_first, right_second] = right.value();
-    const first_order = compare_unknown(left_first, right_first);
+  Eq.instance(Tuple)({
+    eq(right) {
+      const [left_first, left_second] = this.value();
+      const [right_first, right_second] = right.value();
 
-    switch (first_order) {
-      case "eq":
-        return compare_unknown(left_second, right_second);
-      case "lt":
-      case "gt":
-        return first_order;
-    }
-  },
-});
+      if (!Object.is(left_first, right_first)) {
+        return false;
+      }
 
-Bifunctor.instance(Tuple)({
-  bimap<right, next_left, next_right>(
-    this: Data<AsTuple<unknown>, right>,
-    map_left: (value: unknown) => next_left,
-    map_right: (value: right) => next_right,
-  ) {
-    const [left, right] = this.value();
+      return Object.is(left_second, right_second);
+    },
+  });
 
-    return tuple(map_left(left), map_right(right));
-  },
-});
+  Ord.instance(Tuple)({
+    compare(right) {
+      const [left_first, left_second] = this.value();
+      const [right_first, right_second] = right.value();
+      const first_order = compare_unknown(left_first, right_first);
 
-Functor.instance(Tuple)({
-  map(fn) {
-    const [left, right] = this.value();
+      switch (first_order) {
+        case "eq":
+          return compare_unknown(left_second, right_second);
+        case "lt":
+        case "gt":
+          return first_order;
+      }
+    },
+  });
 
-    return tuple(left, fn(right));
-  },
-});
+  Bifunctor.instance(Tuple)({
+    bimap<right, next_left, next_right>(
+      this: Data<AsTuple<unknown>, right>,
+      map_left: (value: unknown) => next_left,
+      map_right: (value: right) => next_right,
+    ) {
+      const [left, right] = this.value();
 
-Foldable.instance(Tuple)({
-  fold(initial, fn) {
-    const [_left, right] = this.value();
+      return tuple(map_left(left), map_right(right));
+    },
+  });
 
-    return fn(initial, right);
-  },
-});
+  Functor.instance(Tuple)({
+    map(fn) {
+      const [left, right] = this.value();
 
-Traversable.instance(Tuple)({
-  traverse(_applicative, fn) {
-    const [left, right] = this.value();
+      return tuple(left, fn(right));
+    },
+  });
 
-    return Functor.map(fn(right), (value) => tuple(left, value));
-  },
-});
+  Foldable.instance(Tuple)({
+    fold(initial, fn) {
+      const [_left, right] = this.value();
 
-Comonad.instance(Tuple)({
-  extract() {
-    const [_left, right] = this.value();
+      return fn(initial, right);
+    },
+  });
 
-    return right;
-  },
+  Traversable.instance(Tuple)({
+    traverse(_applicative, fn) {
+      const [left, right] = this.value();
 
-  extend(fn) {
-    const [left] = this.value();
+      return Functor.map(fn(right), (value) => tuple(left, value));
+    },
+  });
 
-    return tuple(left, fn(this));
-  },
-});
+  Comonad.instance(Tuple)({
+    extract() {
+      const [_left, right] = this.value();
+
+      return right;
+    },
+
+    extend(fn) {
+      const [left] = this.value();
+
+      return tuple(left, fn(this));
+    },
+  });
+
+  return Tuple;
+}

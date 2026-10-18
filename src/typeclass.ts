@@ -15,6 +15,7 @@ import {
   is_data as raw_is_data,
   mark_data_prototype as raw_mark_data_prototype,
   wrap_data as raw_as_data,
+  yield_data as raw_yield_data,
 } from "./data_value.ts";
 import type { TaggedMatchCases, WrappedData } from "./data_value.ts";
 
@@ -430,7 +431,8 @@ const same_dictionary_methods = new Set<PropertyKey>([
   "concat",
   "eq",
 ]);
-const runtime_kind_ids = new Map<unknown, number>();
+const runtime_kind_ids = new WeakMap<WeakKey, number>();
+let next_runtime_kind_id = 0;
 
 type TaggedDataDictionary<dictionary extends object> = object & {
   [tagged_data_constructor_cache]?: Map<
@@ -1075,15 +1077,14 @@ function tagged_data_run(this: { value(): unknown }, ...args: unknown[]) {
   return Reflect.apply(value, undefined, args);
 }
 
-function* tagged_data_iterator<dictionary, value, item>(
+function tagged_data_iterator<dictionary, value, item>(
   this: WrappedData<dictionary, value, item>,
 ): Generator<
   WrappedData<dictionary, value, item>,
   item,
   unknown
 > {
-  const item = yield this;
-  return item as item;
+  return raw_yield_data(this);
 }
 
 /** A data dictionary extended with one installed typeclass instance. */
@@ -1253,11 +1254,27 @@ function describe_property_key(key: PropertyKey): string {
 }
 
 function describe_runtime_kind(runtime_kind: unknown): string {
-  let identifier = runtime_kind_ids.get(runtime_kind);
+  if (typeof runtime_kind === "symbol") {
+    const registered = Symbol.keyFor(runtime_kind);
+    if (registered !== undefined) {
+      return `dictionary Symbol.for(${JSON.stringify(registered)})`;
+    }
+  }
+  const weak = (typeof runtime_kind === "object" && runtime_kind !== null) ||
+    typeof runtime_kind === "function" ||
+    typeof runtime_kind === "symbol";
+  if (!weak) {
+    let description = String(runtime_kind);
+    if (typeof runtime_kind === "string") {
+      description = JSON.stringify(runtime_kind);
+    }
+    return `dictionary ${typeof runtime_kind} ${description}`;
+  }
+  let identifier = runtime_kind_ids.get(runtime_kind as WeakKey);
 
   if (identifier === undefined) {
-    identifier = runtime_kind_ids.size + 1;
-    runtime_kind_ids.set(runtime_kind, identifier);
+    identifier = ++next_runtime_kind_id;
+    runtime_kind_ids.set(runtime_kind as WeakKey, identifier);
   }
 
   return `dictionary #${identifier.toString()}`;
@@ -1371,19 +1388,28 @@ export const TypeclassDefinition: TypeclassDefinitionPrototype = {
     this: TypeclassDefinitionReceiver<token>,
     receiver: receiver,
   ): TypeclassInstance<token, receiver> {
-    const instance = receiver?.[this.token];
-
-    if (instance === undefined) {
-      throw new TypeError(
-        `Missing ${describe_property_key(this.token)} instance on ${
-          describe_instance_receiver(receiver)
-        }`,
-      );
-    }
-
-    return instance;
+    return instance_for_token(this.token, receiver);
   },
 };
+
+/** @ignore Shared dispatch without retaining a complete typeclass definition. */
+export function instance_for_token<
+  token extends PropertyKey,
+  receiver extends { [key in token]: object },
+>(
+  token: token,
+  receiver: receiver,
+): receiver[token] {
+  const instance = receiver?.[token];
+  if (instance === undefined) {
+    throw new TypeError(
+      `Missing ${describe_property_key(token)} instance on ${
+        describe_instance_receiver(receiver)
+      }`,
+    );
+  }
+  return instance;
+}
 
 function describe_instance_receiver(receiver: unknown): string {
   if (

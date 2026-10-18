@@ -1,3 +1,4 @@
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import {
   type As,
   as_data,
@@ -175,6 +176,22 @@ Monoid.instance(RecordT)({
 });
 
 Foldable.instance(RecordT)({
+  [some_method](predicate) {
+    const record = this.value();
+    for (const key of Object.keys(record)) {
+      if (predicate(record[key])) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    const record = this.value();
+    for (const key of Object.keys(record)) {
+      const item = record[key];
+      if (predicate(item)) return item;
+    }
+    return undefined;
+  },
+
   fold(initial, fn) {
     const record = this.value();
     let state = initial;

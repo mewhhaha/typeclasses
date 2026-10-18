@@ -1,3 +1,5 @@
+import type { Maybe } from "./maybe.ts";
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import type { Runnable } from "./data_value.ts";
 import {
   type As,
@@ -66,7 +68,7 @@ export interface AsIterable
 export type IterableT<item> = Data<AsIterable, item>;
 
 /** Callable iterable dictionary with lazy list-like typeclass instances. */
-export const IterableT: AsIterable = data<AsIterable>(iterable_identity);
+export const IterableT: AsIterable = /* @__PURE__ */ create_iterable();
 
 /** Wrap a factory whose iterable is requested for each traversal. */
 export function from_factory<item>(
@@ -79,7 +81,9 @@ export function from_factory<item>(
 export function from_array<item>(
   items: readonly item[],
 ): IterableT<item> {
-  return IterableT(() => items);
+  const factory = () => items;
+  known_sizes.set(factory, { items, limit: Infinity });
+  return IterableT(factory);
 }
 
 /** Snapshot an iterable so the wrapped value can be traversed repeatedly. */
@@ -87,12 +91,22 @@ export function from_iterable<item>(
   iterable: Iterable<item>,
 ): IterableT<item> {
   const items = [...iterable];
-  return IterableT(() => items);
+  const factory = () => items;
+  known_sizes.set(factory, { items, limit: Infinity });
+  return IterableT(factory);
 }
 
 /** Materialize a wrapped iterable into a mutable array. */
 export function to_array<item>(iterable: IterableT<item>): item[] {
-  return [...iterable.value()()];
+  const factory = iterable.value();
+  const size = known_sizes.get(factory);
+  if (size === undefined) return [...factory()];
+  if (size.limit === 0) return [];
+  const out = new Array<item>(Math.min(size.items.length, size.limit));
+  let index = 0;
+  for (const item of factory()) out[index++] = item;
+  out.length = index;
+  return out;
 }
 
 /** Lazily keep matching items, preserving type-guard narrowing. */
@@ -144,184 +158,9 @@ function filter_method<item>(
   return filter(this, predicate);
 }
 
-IterableT.filter = filter_method;
-IterableT.take = function <item>(
-  this: IterableT<item>,
-  count: number,
-): IterableT<item> {
-  return take(this, count);
-};
-
-Show.instance(IterableT)({
-  show() {
-    const items = preview(this, 100);
-    if (items.length === 100) return inspect(items) + " (preview limit 100)";
-    return inspect(items);
-  },
-});
-
-Eq.instance(IterableT)({
-  eq(right) {
-    const left_iterator = this.value()()[Symbol.iterator]();
-    let right_iterator: Iterator<unknown> | undefined;
-
-    let left_done = false;
-    let right_done = false;
-
-    try {
-      right_iterator = right.value()()[Symbol.iterator]();
-      while (true) {
-        const left = left_iterator.next();
-        left_done = left.done === true;
-        const right = right_iterator.next();
-        right_done = right.done === true;
-
-        if (left_done || right_done) {
-          return left_done === right_done;
-        }
-
-        if (!Object.is(left.value, right.value)) {
-          return false;
-        }
-      }
-    } finally {
-      try {
-        if (!left_done) left_iterator.return?.();
-      } finally {
-        if (!right_done) right_iterator?.return?.();
-      }
-    }
-  },
-});
-
-Functor.instance(IterableT)({
-  map(fn) {
-    return pipeline(this, { tag: "map", fn: fn as (item: unknown) => unknown });
-  },
-});
-
-Applicative.instance(IterableT)({
-  pure(value) {
-    return IterableT(function* () {
-      yield value;
-    });
-  },
-
-  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
-  [applicative_lift_method](fn, rest) {
-    const first = this.value();
-
-    switch (rest.length) {
-      case 0:
-        return IterableT(function* () {
-          for (const value of first()) {
-            yield fn(value);
-          }
-        });
-      case 1:
-        return lift_iterable_two(fn, first, rest[0].value());
-      case 2:
-        return lift_iterable_three(
-          fn,
-          first,
-          rest[0].value(),
-          rest[1].value(),
-        );
-      default:
-        return lift_iterable_many(fn, first, rest);
-    }
-  },
-
-  ap(values) {
-    const fns = this.value();
-    const items = values.value();
-
-    return IterableT(function* () {
-      for (const fn of fns()) {
-        for (const item of items()) {
-          yield fn(item);
-        }
-      }
-    });
-  },
-});
-
-Semigroup.instance(IterableT)({
-  concat(right) {
-    const left = this.value();
-    const right_value = right.value();
-
-    return IterableT(function* () {
-      yield* left();
-      yield* right_value();
-    });
-  },
-});
-
-Monoid.instance(IterableT)({
-  empty: empty_iterable,
-});
-
-Alternative.instance(IterableT)({
-  empty: empty_iterable,
-
-  alt(right) {
-    const left = this.value();
-    const right_value = right.value();
-
-    return IterableT(function* () {
-      yield* left();
-      yield* right_value();
-    });
-  },
-});
-
 function empty_iterable<item>(this: AsIterable): Data<AsIterable, item> {
   return IterableT(function* () {});
 }
-
-Monad.instance(IterableT)({
-  bind(fn) {
-    const source = this.value();
-
-    return IterableT(function* () {
-      for (const item of source()) {
-        yield* fn(item).value()();
-      }
-    });
-  },
-});
-
-Foldable.instance(IterableT)({
-  [fold_while_method](initial, fn) {
-    let state = initial;
-    for (const item of this.value()()) {
-      const [tag, next] = fn(state, item);
-      state = next;
-      if (tag === "Done") return state;
-    }
-    return state;
-  },
-
-  fold(initial, fn) {
-    let state = initial;
-
-    for (const item of this.value()()) {
-      state = fn(state, item);
-    }
-
-    return state;
-  },
-});
-
-Traversable.instance(IterableT)({
-  traverse(applicative, fn) {
-    return Functor.map(
-      traverse_items(this.value()(), applicative, fn),
-      (items) => IterableT(() => items),
-    );
-  },
-});
 
 function lift_iterable_two<output>(
   fn: (...values: unknown[]) => output,
@@ -406,7 +245,11 @@ function* iterate_iterable_product<output>(
 type Stage =
   | { readonly tag: "map"; readonly fn: (item: unknown) => unknown }
   | { readonly tag: "filter"; readonly fn: (item: unknown) => boolean }
-  | { readonly tag: "take"; readonly count: number };
+  | { readonly tag: "take"; readonly count: number }
+  | {
+    readonly tag: "filter_map";
+    readonly fn: (item: unknown) => Maybe<unknown>;
+  };
 type Stages = { readonly stage: Stage; readonly previous?: Stages };
 type Pipeline = {
   readonly source: RawIterableT<unknown>;
@@ -414,6 +257,10 @@ type Pipeline = {
   ordered?: readonly Stage[];
 };
 const pipelines = new WeakMap<RawIterableT<unknown>, Pipeline>();
+const known_sizes = new WeakMap<RawIterableT<unknown>, {
+  readonly items: readonly unknown[];
+  readonly limit: number;
+}>();
 
 // One generator owns the source. Plans share immutable links; counters belong
 // to each traversal, so replay and interleaved consumers remain independent.
@@ -432,11 +279,24 @@ function pipeline<from, to = from>(
   const plan: Pipeline = { source, stages };
   const factory = function* (): Generator<to> {
     const ordered = ordered_stages(plan);
-    const remaining = ordered.map((stage) => {
-      if (stage.tag === "take") return stage.count;
-      return Infinity;
-    });
-    if (remaining.includes(0)) return;
+    if (ordered.every((stage) => stage.tag === "map")) {
+      const functions = ordered.map((stage) =>
+        (stage as Extract<Stage, { tag: "map" }>).fn
+      );
+      for (let item of source()) {
+        for (const fn of functions) item = fn(item);
+        yield item as to;
+      }
+      return;
+    }
+    let remaining: number[] | undefined;
+    if (ordered.some((stage) => stage.tag === "take")) {
+      remaining = ordered.map((stage) => {
+        if (stage.tag === "take") return stage.count;
+        return Infinity;
+      });
+      if (remaining.includes(0)) return;
+    }
     for (const input of source()) {
       let item = input;
       let keep = true;
@@ -451,9 +311,15 @@ function pipeline<from, to = from>(
             keep = operation.fn(item);
             break;
           case "take":
-            remaining[index] -= 1;
-            if (remaining[index] === 0) stop = true;
+            remaining![index] -= 1;
+            if (remaining![index] === 0) stop = true;
             break;
+          case "filter_map": {
+            const [tag, value] = operation.fn(item).value();
+            if (tag === "Nothing") keep = false;
+            else item = value;
+            break;
+          }
         }
         if (!keep) break;
       }
@@ -462,6 +328,20 @@ function pipeline<from, to = from>(
     }
   };
   pipelines.set(factory, plan);
+  const size = known_sizes.get(current);
+  if (size !== undefined) {
+    switch (stage.tag) {
+      case "map":
+        known_sizes.set(factory, size);
+        break;
+      case "take":
+        known_sizes.set(factory, {
+          items: size.items,
+          limit: Math.min(size.limit, stage.count),
+        });
+        break;
+    }
+  }
   return IterableT(factory);
 }
 
@@ -504,4 +384,241 @@ function close_iterators(
     }
   }
   if (!failed && failure !== undefined) throw failure.error;
+}
+
+/** Keep and transform a value in one stage; Nothing drops it. */
+export function filter_map<from, to>(
+  iterable: IterableT<from>,
+  fn: (item: from) => Maybe<to>,
+): IterableT<to> {
+  return pipeline(iterable, {
+    tag: "filter_map",
+    fn: fn as (item: unknown) => Maybe<unknown>,
+  });
+}
+
+/**
+ * Prepare a reusable terminal loop. A known map/filter/take pipeline lowers to
+ * its three callbacks without stage dispatch, counters arrays or yielded values.
+ * Other plans retain ordinary iteration and IteratorClose behavior.
+ */
+export function compile_fold<item>(iterable: IterableT<item>): <state>(
+  initial: state,
+  reduce: (state: state, item: item) => state,
+) => state {
+  const factory = iterable.value();
+  const plan = pipelines.get(factory);
+  if (plan !== undefined) {
+    const stages = ordered_stages(plan);
+    const [map, filter, take] = stages;
+    if (
+      stages.length === 3 && map.tag === "map" && filter.tag === "filter" &&
+      take.tag === "take"
+    ) {
+      return (initial, reduce) => {
+        let state = initial;
+        let remaining = take.count;
+        if (remaining === 0) return state;
+        for (const input of plan.source()) {
+          const item = map.fn(input);
+          if (!filter.fn(item)) continue;
+          state = reduce(state, item as item);
+          remaining -= 1;
+          if (remaining === 0) break;
+        }
+        return state;
+      };
+    }
+  }
+  return (initial, reduce) => {
+    let state = initial;
+    for (const item of factory()) state = reduce(state, item);
+    return state;
+  };
+}
+
+function create_iterable(): AsIterable {
+  const IterableT: AsIterable = data<AsIterable>(iterable_identity);
+  IterableT.filter = filter_method;
+
+  IterableT.take = function <item>(
+    this: IterableT<item>,
+    count: number,
+  ): IterableT<item> {
+    return take(this, count);
+  };
+
+  Show.instance(IterableT)({
+    show() {
+      const items = preview(this, 100);
+      if (items.length === 100) return inspect(items) + " (preview limit 100)";
+      return inspect(items);
+    },
+  });
+
+  Eq.instance(IterableT)({
+    eq(right) {
+      const left_iterator = this.value()()[Symbol.iterator]();
+      let right_iterator: Iterator<unknown> | undefined;
+
+      let left_done = false;
+      let right_done = false;
+
+      try {
+        right_iterator = right.value()()[Symbol.iterator]();
+        while (true) {
+          const left = left_iterator.next();
+          left_done = left.done === true;
+          const right = right_iterator.next();
+          right_done = right.done === true;
+
+          if (left_done || right_done) {
+            return left_done === right_done;
+          }
+
+          if (!Object.is(left.value, right.value)) {
+            return false;
+          }
+        }
+      } finally {
+        try {
+          if (!left_done) left_iterator.return?.();
+        } finally {
+          if (!right_done) right_iterator?.return?.();
+        }
+      }
+    },
+  });
+
+  Functor.instance(IterableT)({
+    map(fn) {
+      return pipeline(this, {
+        tag: "map",
+        fn: fn as (item: unknown) => unknown,
+      });
+    },
+  });
+
+  Applicative.instance(IterableT)({
+    pure(value) {
+      return IterableT(function* () {
+        yield value;
+      });
+    },
+
+    // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
+    [applicative_lift_method](fn, rest) {
+      const first = this.value();
+
+      switch (rest.length) {
+        case 0:
+          return IterableT(function* () {
+            for (const value of first()) {
+              yield fn(value);
+            }
+          });
+        case 1:
+          return lift_iterable_two(fn, first, rest[0].value());
+        case 2:
+          return lift_iterable_three(
+            fn,
+            first,
+            rest[0].value(),
+            rest[1].value(),
+          );
+        default:
+          return lift_iterable_many(fn, first, rest);
+      }
+    },
+
+    ap(values) {
+      const fns = this.value();
+      const items = values.value();
+
+      return IterableT(function* () {
+        for (const fn of fns()) {
+          for (const item of items()) {
+            yield fn(item);
+          }
+        }
+      });
+    },
+  });
+
+  Semigroup.instance(IterableT)({
+    concat(right) {
+      const left = this.value();
+      const right_value = right.value();
+
+      return IterableT(function* () {
+        yield* left();
+        yield* right_value();
+      });
+    },
+  });
+
+  Monoid.instance(IterableT)({
+    empty: empty_iterable,
+  });
+
+  Alternative.instance(IterableT)({
+    empty: empty_iterable,
+
+    alt(right) {
+      const left = this.value();
+      const right_value = right.value();
+
+      return IterableT(function* () {
+        yield* left();
+        yield* right_value();
+      });
+    },
+  });
+
+  Monad.instance(IterableT)({
+    bind(fn) {
+      const source = this.value();
+
+      return IterableT(function* () {
+        for (const item of source()) {
+          yield* fn(item).value()();
+        }
+      });
+    },
+  });
+
+  Foldable.instance(IterableT)({
+    [some_method](predicate) {
+      for (const item of this.value()()) if (predicate(item)) return true;
+      return false;
+    },
+    [find_method](predicate) {
+      for (const item of this.value()()) if (predicate(item)) return item;
+      return undefined;
+    },
+
+    [fold_while_method](initial, fn) {
+      let state = initial;
+      for (const item of this.value()()) {
+        const [tag, next] = fn(state, item);
+        state = next;
+        if (tag === "Done") return state;
+      }
+      return state;
+    },
+
+    fold(initial, fn) {
+      return compile_fold(this)(initial, fn);
+    },
+  });
+
+  Traversable.instance(IterableT)({
+    traverse(applicative, fn) {
+      return Functor.map(
+        traverse_items(this.value()(), applicative, fn),
+        (items) => IterableT(() => items),
+      );
+    },
+  });
+  return IterableT;
 }

@@ -1,0 +1,65 @@
+{
+  "root": "/tmp/typeclasses-round3-core-final",
+  "runtime": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "workload": "import { Just, Maybe } from \"/tmp/typeclasses-round3-core-final/src/maybe.ts\";\nimport { Right } from \"/tmp/typeclasses-round3-core-final/src/either.ts\";\nimport { collect } from \"/tmp/typeclasses-round3-core-final/src/typeclasses/applicative.ts\";\nimport { Do } from \"/tmp/typeclasses-round3-core-final/src/typeclasses/monad.ts\";\nconst value = Just(1).map(n=>String(n)).bind(s=>Just(s.length));\nconst output = collect({id: value, name: Just(\"Ada\")});\nconst explicit = collect(Maybe, {id: value, name: Just(\"Ada\")});\nconst block = Do(Maybe, function*(){return (yield* value)+1});\nconst result = Right(1).bind(n=>Right(String(n)));\nvoid [output, explicit, block, result];",
+  "results": [
+    {
+      "variant": "current",
+      "compiler": "5.9.3",
+      "elapsed_ms": 1699.348051,
+      "instantiations": 105451,
+      "types": 32762,
+      "errors": []
+    },
+    {
+      "variant": "pick-members",
+      "compiler": "5.9.3",
+      "elapsed_ms": 1156.161927,
+      "instantiations": 108048,
+      "types": 32847,
+      "errors": []
+    },
+    {
+      "variant": "drop-item-slots",
+      "compiler": "5.9.3",
+      "elapsed_ms": 1122.4726490000003,
+      "instantiations": 114748,
+      "types": 33459,
+      "errors": [
+        "The 'this' context of type 'Data<dictionary, from>' is not assignable to method's 'this' of type 'dictionary'.\n  'dictionary' could be instantiated with an arbitrary type which could be unrelated to 'Data<dictionary, from>'.",
+        "The 'this' context of type 'Data<dictionary, from>' is not assignable to method's 'this' of type 'dictionary'.\n  'dictionary' could be instantiated with an arbitrary type which could be unrelated to 'Data<dictionary, from>'.",
+        "The 'this' context of type 'Data<dictionary, (value: NoInfer<from>) => to>' is not assignable to method's 'this' of type 'dictionary'.\n  'dictionary' could be instantiated with an arbitrary type which could be unrelated to 'Data<dictionary, (value: NoInfer<from>) => to>'.",
+        "The 'this' context of type 'Data<dictionary, unknown>' is not assignable to method's 'this' of type 'dictionary'.\n  'dictionary' could be instantiated with an arbitrary type which could be unrelated to 'Data<dictionary, unknown>'.",
+        "The 'this' context of type 'Data<dictionary, unknown>' is not assignable to method's 'this' of type 'dictionary'.\n  'dictionary' could be instantiated with an arbitrary type which could be unrelated to 'Data<dictionary, unknown>'."
+      ]
+    },
+    {
+      "variant": "nondistributive-capabilities",
+      "compiler": "5.9.3",
+      "elapsed_ms": 1053.5188600000001,
+      "instantiations": 106570,
+      "types": 32919,
+      "errors": []
+    },
+    {
+      "variant": "mapped-collect",
+      "compiler": "5.9.3",
+      "elapsed_ms": 1098.38872,
+      "instantiations": 105514,
+      "types": 32769,
+      "errors": []
+    },
+    {
+      "variant": "declaration-facade",
+      "compiler": "5.9.3",
+      "elapsed_ms": 382.27000099999987,
+      "instantiations": 29576,
+      "types": 11584,
+      "errors": []
+    }
+  ]
+}

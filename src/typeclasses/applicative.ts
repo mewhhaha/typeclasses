@@ -1,4 +1,4 @@
-import { traverse_items } from "../traversal.ts";
+import { traverse_items_into } from "../traversal.ts";
 import {
   type As,
   call_typeclass_method,
@@ -6,6 +6,7 @@ import {
   type Dictionary,
   dictionary_of,
   type dictionary_type,
+  instance_for_token,
   type IsUnion,
   kind,
   type type_data,
@@ -14,7 +15,6 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
-import { append_item } from "../internal.ts";
 import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
 
 /** Runtime token for the Applicative typeclass. */
@@ -115,11 +115,7 @@ export const Applicative: ApplicativeTypeclass = /* @__PURE__ */ typeclass(
       witness: dictionary | Data<dictionary, unknown>,
       item: item,
     ): Data<dictionary, item> {
-      return call_typeclass_method(
-        this.instance_for(witness).pure<item>,
-        witness as dictionary,
-        item,
-      );
+      return applicative_pure<dictionary, item>(witness, item);
     },
 
     lift: applicative_lift,
@@ -141,6 +137,20 @@ export const Applicative: ApplicativeTypeclass = /* @__PURE__ */ typeclass(
     },
   },
 );
+
+/** @ignore Lifting primitive that does not retain unrelated Applicative operations. */
+export function applicative_pure<
+  dictionary extends Applicative<dictionary>,
+  item,
+>(
+  witness: dictionary | Data<dictionary, unknown>,
+  item: item,
+): Data<dictionary, item> {
+  return (instance_for_token(applicative_typeclass, witness).pure<item>).call(
+    witness as dictionary,
+    item,
+  );
+}
 
 function applicative_lift<
   dictionary extends Applicative<dictionary>,
@@ -214,18 +224,21 @@ function applicative_lift<
     return combined.ap(values[1]).ap(values[2]);
   }
 
-  let combined = values[0].map((value) => [value] as unknown[]);
-
+  type Prefix = { readonly item: unknown; readonly previous?: Prefix };
+  let combined = values[0].map((item): Prefix => ({ item }));
   for (let index = 1; index < values.length; index += 1) {
-    const current = values[index];
-    const append = combined.map((items) => {
-      return (item: unknown) => append_item(items, item);
+    const append = combined.map((previous) => {
+      return (item: unknown): Prefix => ({ item, previous });
     });
-
-    combined = append.ap(current);
+    combined = append.ap(values[index]);
   }
-
-  return Functor.map(combined, (items) => {
+  return Functor.map(combined, (prefix) => {
+    const items = new Array<unknown>(values.length);
+    let current: Prefix | undefined = prefix;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      items[index] = current!.item;
+      current = current!.previous;
+    }
     return apply(...items);
   });
 }
@@ -286,41 +299,41 @@ export function collect(
   let selected = dictionary_or_values as CollectRuntime;
   if (explicit_values === undefined) {
     values = dictionary_or_values as typeof values;
-    const first = Reflect.ownKeys(values).find((key) =>
-      Object.prototype.propertyIsEnumerable.call(values, key)
-    );
+  }
+  const keys = Reflect.ownKeys(values).filter((key) =>
+    Object.prototype.propertyIsEnumerable.call(values, key)
+  );
+  if (explicit_values === undefined) {
+    const first = keys[0];
     if (first === undefined) {
       throw new TypeError("Empty collect requires a dictionary");
     }
     selected = dictionary_of(values[first]) as CollectRuntime;
   }
-  const keys = Reflect.ownKeys(values).filter((key) =>
-    Object.prototype.propertyIsEnumerable.call(values, key)
-  );
   const tuple = Array.isArray(values);
   let length = 0;
   if (tuple) length = (values as unknown as readonly unknown[]).length;
-  return traverse_items(keys, selected, (key) => {
+  return traverse_items_into(keys, selected, (key) => {
     const value = values[key];
     if (value[kind] !== selected[kind]) {
       throw new TypeError(
         "collect requires values from the selected dictionary",
       );
     }
-    return Functor.map(value, (item) => [key, item] as const);
-  }).map((entries) => {
+    return value;
+  }, (items) => {
+    let out: Record<PropertyKey, unknown> | unknown[] = Object.create(null);
+    let prototype: object = Object.prototype;
     if (tuple) {
-      const out: unknown[] = new Array(length);
-      for (const [key, value] of entries) {
-        Object.defineProperty(out, key, {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      return out;
+      out = new Array(length);
+      Object.setPrototypeOf(out, null);
+      prototype = Array.prototype;
     }
-    return Object.fromEntries(entries);
+    let index = 0;
+    for (const value of items) {
+      (out as Record<PropertyKey, unknown>)[keys[index++]] = value;
+    }
+    Object.setPrototypeOf(out, prototype);
+    return out;
   });
 }

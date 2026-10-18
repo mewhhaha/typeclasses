@@ -200,6 +200,21 @@ function make_reader_cell<key extends PropertyKey, environment>(
       const first = this.value();
       const reads = rest.map((current) => current.value());
 
+      if (reads.length === 0) {
+        return wrap((environment: environment) => fn(first(environment)));
+      }
+      if (reads.length === 1) {
+        const second = reads[0];
+        return wrap((environment: environment) =>
+          fn(first(environment), second(environment))
+        );
+      }
+      if (reads.length === 2) {
+        const [second, third] = reads;
+        return wrap((environment: environment) =>
+          fn(first(environment), second(environment), third(environment))
+        );
+      }
       return wrap((environment: environment) =>
         fn(first(environment), ...reads.map((read) => read(environment)))
       );
@@ -477,6 +492,21 @@ Applicative.instance(Reader)({
     const first = this.value();
     const readers = rest.map((current) => current.value());
 
+    if (readers.length === 0) {
+      return Reader((environment: unknown) => fn(first(environment)));
+    }
+    if (readers.length === 1) {
+      const second = readers[0];
+      return Reader((environment: unknown) =>
+        fn(first(environment), second(environment))
+      );
+    }
+    if (readers.length === 2) {
+      const [second, third] = readers;
+      return Reader((environment: unknown) =>
+        fn(first(environment), second(environment), third(environment))
+      );
+    }
     return Reader((environment: unknown) => {
       const values = [first(environment)];
 
@@ -489,10 +519,11 @@ Applicative.instance(Reader)({
   },
 
   ap(value) {
-    return Reader((environment: unknown) => {
-      const fn = this.value()(environment);
-      return fn(value.value()(environment));
-    });
+    const read = this.value();
+    const applied = value.value();
+    return Reader((environment: unknown) =>
+      read(environment)(applied(environment))
+    );
   },
 });
 

@@ -1,0 +1,99 @@
+{
+  "version": {
+    "deno": "2.9.7",
+    "v8": "15.0.245.2-rusty",
+    "typescript": "6.0.3"
+  },
+  "cpu": 16,
+  "results": {
+    "Frames/linked-build-read10000": {
+      "median_ms": 0.06365069000000005,
+      "samples_ms": [
+        0.08505896999999976,
+        0.09993815999999982,
+        0.06365069000000005,
+        0.051750959999999964,
+        0.08190127000000018,
+        0.05430160999999998,
+        0.051574329999999974
+      ],
+      "iterations": 100
+    },
+    "Frames/chunk32-build-read10000": {
+      "median_ms": 0.5749003399999998,
+      "samples_ms": [
+        0.6283736799999997,
+        0.5553589999999997,
+        0.5636540600000001,
+        0.5749003399999998,
+        0.59099063,
+        0.6984407599999998,
+        0.5467542400000002
+      ],
+      "iterations": 100
+    },
+    "Handlers/separate-pure100": {
+      "median_ms": 0.043830782,
+      "samples_ms": [
+        0.04970572800000002,
+        0.04406450499999994,
+        0.04320874800000001,
+        0.04329089500000009,
+        0.043830782,
+        0.04407608800000003,
+        0.04344566899999995
+      ],
+      "iterations": 1000
+    },
+    "Handlers/fused-pure100": {
+      "median_ms": 0.03384969999999998,
+      "samples_ms": [
+        0.03440210999999999,
+        0.033674216,
+        0.033680879000000004,
+        0.03411850000000004,
+        0.034211377000000084,
+        0.03384969999999998,
+        0.03364759600000002
+      ],
+      "iterations": 1000
+    },
+    "Handlers/unmatched-empty-table1000": {
+      "median_ms": 0.1662170399999991,
+      "samples_ms": [
+        0.18515844000000015,
+        0.1629728699999987,
+        0.16411575000000084,
+        0.1684277300000008,
+        0.16500723999999992,
+        0.1662170399999991,
+        0.16941160000000083
+      ],
+      "iterations": 100
+    },
+    "Handlers/prepared-empty1000": {
+      "median_ms": 0.003263200000001234,
+      "samples_ms": [
+        0.00407453999999916,
+        0.0037830899999994473,
+        0.003911630000000059,
+        0.003263200000001234,
+        0.0008478100000002087,
+        0.0007874999999989995,
+        0.0008725600000002487
+      ],
+      "iterations": 100
+    }
+  },
+  "semantics": {
+    "persistent_chunks": true,
+    "automatic_fusion_emitted_operation_counterexample": true,
+    "unmatched_forwarding_loses_selected_suffix": true
+  },
+  "files": {
+    "/home/jacobt/src/typeclasses/bench/experiments/runtime_round3/attempts.ts": "d4fb00b69cffe4ca36cbd98d0c3eee658825404c8f03d8e011edec5f578f1eac",
+    "/home/jacobt/src/typeclasses/bench/experiments/runtime_round3/prototypes.ts": "1ca96f7dab1d784dea73033066991ca94286cb1aa97860345e0b9b3cd4009837",
+    "/home/jacobt/src/typeclasses/src/effects.ts": "a947e955c1c5150879cda0187c7d95d32825748ec4ed00825c4d50d152322e49",
+    "/home/jacobt/src/typeclasses/src/handlers.ts": "c1800b30adbf99aeeb30b26be7fdf195cba6a5ca25bd4805e69341ada1454faf"
+  }
+}

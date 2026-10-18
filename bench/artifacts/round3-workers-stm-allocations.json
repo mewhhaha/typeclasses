@@ -1,0 +1,12 @@
+{
+  "/tmp/typeclasses-round3-baseline-2068408": {
+    "interpretations": 1000,
+    "from_fn_calls": 2000,
+    "instrumentation": "One counter increment at Task.from_fn entry; no Tasks executed; only worker equality is used on the deferred pool stub"
+  },
+  "/tmp/typeclasses-round3-workers-stm-isolated": {
+    "interpretations": 1000,
+    "from_fn_calls": 1000,
+    "instrumentation": "One counter increment at Task.from_fn entry; no Tasks executed; only worker equality is used on the deferred pool stub"
+  }
+}

@@ -16,19 +16,17 @@ import { same_context } from "./internal.ts";
 import {
   Applicative,
   applicative_lift_method,
-  Bifunctor,
-  type BifunctorContext,
-  compare_unknown,
-  Eq,
-  Foldable,
-  Functor,
-  Monad,
-  MonadError,
-  MonadRec,
-  Ord,
-  Show,
-  Traversable,
-} from "./typeclasses.ts";
+} from "./typeclasses/applicative.ts";
+import { Bifunctor, type BifunctorContext } from "./typeclasses/bifunctor.ts";
+import { compare_unknown, Ord } from "./typeclasses/ord.ts";
+import { Eq } from "./typeclasses/eq.ts";
+import { Foldable } from "./typeclasses/foldable.ts";
+import { Functor } from "./typeclasses/functor.ts";
+import { Monad } from "./typeclasses/monad.ts";
+import { MonadError } from "./typeclasses/monad_error.ts";
+import { MonadRec } from "./typeclasses/monad_rec.ts";
+import { Show } from "./typeclasses/show.ts";
+import { Traversable } from "./typeclasses/traversable.ts";
 import { Just, type Maybe, Nothing } from "./maybe.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep } from "./loop.ts";

@@ -1,0 +1,226 @@
+# Measured core prototype before rejecting tagged metadata access and arity wrappers.
+# Includes neighboring accepted changes; see round3-core-initial.json for source fingerprints.
+diff --git a/src/maybe.ts b/src/maybe.ts
+index 030091f..83893ef 100644
+--- a/src/maybe.ts
++++ b/src/maybe.ts
+@@ -5,6 +5,8 @@ import {
+   type Data,
+   data,
+   install_instance,
++  native_tagged_tag,
++  read_tagged_payload,
+   type type_data,
+   type type_item,
+   union,
+@@ -14,28 +16,25 @@ import { same_context } from "./internal.ts";
+ import {
+   type Alternative,
+   alternative_typeclass,
++} from "./typeclasses/alternative.ts";
++import {
+   Applicative,
+   applicative_lift_method,
+   applicative_typeclass,
+-  compare_unknown,
+-  eq_typeclass,
+-  foldable_typeclass,
+-  Functor,
+-  functor_typeclass,
+-  type Monad,
+-  monad_rec_typeclass,
+-  monad_typeclass,
+-  type MonadRec,
+-  type Monoid,
+-  monoid_typeclass,
+-  type Ord,
+-  ord_typeclass,
+-  semigroup_typeclass,
+-  type Show,
+-  show_typeclass,
++} from "./typeclasses/applicative.ts";
++import { compare_unknown, type Ord, ord_typeclass } from "./typeclasses/ord.ts";
++import { eq_typeclass } from "./typeclasses/eq.ts";
++import { foldable_typeclass } from "./typeclasses/foldable.ts";
++import { Functor, functor_typeclass } from "./typeclasses/functor.ts";
++import { type Monad, monad_typeclass } from "./typeclasses/monad.ts";
++import { monad_rec_typeclass, type MonadRec } from "./typeclasses/monad_rec.ts";
++import { type Monoid, monoid_typeclass } from "./typeclasses/monoid.ts";
++import { semigroup_typeclass } from "./typeclasses/semigroup.ts";
++import { type Show, show_typeclass } from "./typeclasses/show.ts";
++import {
+   type Traversable,
+   traversable_typeclass,
+-} from "./typeclasses.ts";
++} from "./typeclasses/traversable.ts";
+ import { type Either, Left, Right } from "./either.ts";
+ import { inspect } from "./inspect.ts";
+ import { loop_done, loop_rec } from "./loop.ts";
+@@ -306,6 +305,10 @@ function create_maybe(): MaybeConstructor {
+         return same_context(this);
+       }
+
++      if (native_tagged_tag(this) === "Just") {
++        return Just(fn(read_tagged_payload(this)));
++      }
++
+       const [tag, payload] = this.value();
+
+       switch (tag) {
+diff --git a/src/typeclass.ts b/src/typeclass.ts
+index 02f94f9..32cee05 100644
+--- a/src/typeclass.ts
++++ b/src/typeclass.ts
+@@ -14,6 +14,7 @@ import {
+   detach_function_prototype as raw_detach_function_prototype,
+   is_data as raw_is_data,
+   mark_data_prototype as raw_mark_data_prototype,
++  yield_data as raw_yield_data,
+   wrap_data as raw_as_data,
+ } from "./data_value.ts";
+ import type { TaggedMatchCases, WrappedData } from "./data_value.ts";
+@@ -421,6 +422,7 @@ const tagged_data_singleton_tags = Symbol("Data.tagged_singleton_tags");
+ const tagged_payload = Symbol("Data.tagged_payload");
+ const tagged_first_payload = Symbol("Data.tagged_first_payload");
+ const tagged_second_payload = Symbol("Data.tagged_second_payload");
++const tagged_shape = Symbol("Data.tagged_shape");
+ const instance_method_owners = Symbol("Data.instance_method_owners");
+ const same_dictionary_methods = new Set<PropertyKey>([
+   "alt",
+@@ -430,7 +432,44 @@ const same_dictionary_methods = new Set<PropertyKey>([
+   "concat",
+   "eq",
+ ]);
+-const runtime_kind_ids = new Map<unknown, number>();
++const runtime_kind_ids = new WeakMap<WeakKey, number>();
++const primitive_kind_ids = new Map<unknown, number>();
++let next_runtime_kind_id = 0;
++
++type TaggedShape = {
++  readonly tag: PropertyKey;
++  readonly arity: number;
++  readonly value: () => TaggedData;
++};
++
++/** @ignore Native shape access never evaluates an overridden raw conversion. */
++export function native_tagged_tag(value: { value(): unknown }): PropertyKey | undefined {
++  const shape = (value as { [tagged_shape]?: TaggedShape })[tagged_shape];
++  if (shape !== undefined && value.value === shape.value) return shape.tag;
++}
++
++/** @ignore Read built-in tags without materializing their public raw tuple. */
++export function read_tagged_tag<raw extends TaggedData>(value: { value(): raw }): raw[0] {
++  const shape = (value as { [tagged_shape]?: TaggedShape })[tagged_shape];
++  if (shape !== undefined && value.value === shape.value) return shape.tag;
++  return value.value()[0];
++}
++
++type FirstTaggedPayload<raw> = raw extends readonly [PropertyKey, infer payload, ...unknown[]] ? payload : never;
++
++/** @ignore Read the first tagged payload while retaining custom value overrides. */
++export function read_tagged_payload<raw extends TaggedData>(value: { value(): raw }): FirstTaggedPayload<raw> {
++  const shape = (value as { [tagged_shape]?: TaggedShape })[tagged_shape];
++  if (shape !== undefined && value.value === shape.value) {
++    switch (shape.arity) {
++      case 0: return undefined as FirstTaggedPayload<raw>;
++      case 1: return (value as unknown as TaggedOnePayload)[tagged_payload] as FirstTaggedPayload<raw>;
++      case 2: return (value as unknown as TaggedTwoPayload)[tagged_first_payload] as FirstTaggedPayload<raw>;
++      default: return (value as unknown as TaggedManyPayload)[tagged_payload][0] as FirstTaggedPayload<raw>;
++    }
++  }
++  return value.value()[1] as FirstTaggedPayload<raw>;
++}
+
+ type TaggedDataDictionary<dictionary extends object> = object & {
+   [tagged_data_constructor_cache]?: Map<
+@@ -834,6 +873,11 @@ function tagged_guard(
+       if ((value as unknown as Dictionary)[kind] !== dictionary[kind]) {
+         return false;
+       }
++      const wrapped = value as unknown as { value(): TaggedData; [tagged_shape]?: TaggedShape };
++      const shape = wrapped[tagged_shape];
++      if (shape !== undefined && wrapped.value === shape.value && shape.arity >= 0) {
++        return shape.arity + 1 === expected_length && shape.tag === tag;
++      }
+       value = value.value();
+       if (!Array.isArray(value)) return false;
+     }
+@@ -917,6 +961,12 @@ function create_tagged_variant_factory<dictionary extends object>(
+     },
+   );
+
++  for (const [prototype, arity] of [[empty_prototype, 0], [one_prototype, 1], [two_prototype, 2], [many_prototype, -1]] as const) {
++    Object.defineProperty(prototype, tagged_shape, {
++      value: { tag, arity, value: (prototype as { value(): TaggedData }).value },
++    });
++  }
++
+   function TaggedOne(this: TaggedOnePayload, payload: unknown) {
+     this[tagged_payload] = payload;
+   }
+@@ -1075,15 +1125,14 @@ function tagged_data_run(this: { value(): unknown }, ...args: unknown[]) {
+   return Reflect.apply(value, undefined, args);
+ }
+
+-function* tagged_data_iterator<dictionary, value, item>(
++function tagged_data_iterator<dictionary, value, item>(
+   this: WrappedData<dictionary, value, item>,
+ ): Generator<
+   WrappedData<dictionary, value, item>,
+   item,
+   unknown
+ > {
+-  const item = yield this;
+-  return item as item;
++  return raw_yield_data(this);
+ }
+
+ /** A data dictionary extended with one installed typeclass instance. */
+@@ -1224,8 +1273,7 @@ function same_dictionary_method(
+   method: (...args: unknown[]) => unknown,
+   name: PropertyKey,
+ ): (...args: unknown[]) => unknown {
+-  return function (this: Dictionary, ...args: unknown[]): unknown {
+-    const right = args[0];
++  return function (this: Dictionary, right?: unknown, second?: unknown): unknown {
+
+     if (
+       typeof right === "object" && right !== null && kind in right &&
+@@ -1240,7 +1288,12 @@ function same_dictionary_method(
+       );
+     }
+
+-    return method.apply(this, args);
++    switch (arguments.length) {
++      case 0: return method.call(this);
++      case 1: return method.call(this, right);
++      case 2: return method.call(this, right, second);
++      default: return method.apply(this, arguments as unknown as unknown[]);
++    }
+   };
+ }
+
+@@ -1253,11 +1306,20 @@ function describe_property_key(key: PropertyKey): string {
+ }
+
+ function describe_runtime_kind(runtime_kind: unknown): string {
+-  let identifier = runtime_kind_ids.get(runtime_kind);
++  const weak = (typeof runtime_kind === "object" && runtime_kind !== null) ||
++    typeof runtime_kind === "function" ||
++    (typeof runtime_kind === "symbol" && Symbol.keyFor(runtime_kind) === undefined);
++  let identifier: number | undefined;
++  if (weak) identifier = runtime_kind_ids.get(runtime_kind as WeakKey);
++  else identifier = primitive_kind_ids.get(runtime_kind);
+
+   if (identifier === undefined) {
+-    identifier = runtime_kind_ids.size + 1;
+-    runtime_kind_ids.set(runtime_kind, identifier);
++    identifier = ++next_runtime_kind_id;
++    if (weak) runtime_kind_ids.set(runtime_kind as WeakKey, identifier);
++    else {
++      if (primitive_kind_ids.size >= 256) primitive_kind_ids.delete(primitive_kind_ids.keys().next().value);
++      primitive_kind_ids.set(runtime_kind, identifier);
++    }
+   }
+
+   return `dictionary #${identifier.toString()}`;

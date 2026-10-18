@@ -234,19 +234,16 @@ export function sample<item>(
 
 /** Generates one constant value. */
 export function constant<item>(value: item): Gen<item> {
-  return Gen((state) => [value, state]);
+  const source: RawGen<item> = (state) => [value, state];
+  gen_primitives.set(source, { tag: "constant", value });
+  return Gen(source);
 }
 
 /** Generates an integer in an inclusive range. */
 export function integer(options: IntegerOptions = {}): Gen<number> {
-  return Gen((state) => {
-    const bounds = integer_bounds(options, state.size);
-    const [unit, next] = next_random(state);
-    const value = bounds.min +
-      Math.floor(unit * (bounds.max - bounds.min + 1));
-
-    return [value, next];
-  });
+  const source: RawGen<number> = (state) => draw_integer(options, state);
+  gen_primitives.set(source, { tag: "integer", options });
+  return Gen(source);
 }
 
 /** Generates a boolean with equal probability. */
@@ -267,12 +264,11 @@ export function element<item>(
 export function one_of<item>(
   values: readonly [Gen<item>, ...Gen<item>[]],
 ): Gen<item> {
+  const bounds = { min: 0, max: values.length - 1 };
+  const select = integer(bounds).value();
   return Gen((state) => {
-    const [index, selected_state] = integer({
-      min: 0,
-      max: values.length - 1,
-    }).value()(state);
-
+    bounds.max = values.length - 1;
+    const [index, selected_state] = select(state);
     return values[index].value()(selected_state);
   });
 }
@@ -308,10 +304,7 @@ export function array_of<item>(
 ): Gen<readonly item[]> {
   return Gen((state) => {
     const bounds = collection_bounds(options, state.size);
-    const [length, length_state] = integer({
-      min: bounds.min,
-      max: bounds.max,
-    }).value()(state);
+    const [length, length_state] = draw_integer(bounds, state);
     const items: item[] = [];
     let current = length_state;
 
@@ -1296,25 +1289,51 @@ Show.instance(Gen)({
   },
 });
 
-type GenPlan = {
-  readonly source: RawGen<unknown>;
-  readonly bind: (item: unknown) => Gen<unknown>;
-};
+type GenPlan =
+  | {
+    readonly tag: "bind";
+    readonly source: RawGen<unknown>;
+    readonly fn: (item: unknown) => Gen<unknown>;
+  }
+  | {
+    readonly tag: "map";
+    readonly source: RawGen<unknown>;
+    readonly fn: (item: unknown) => unknown;
+  };
 const gen_plans = new WeakMap<RawGen<unknown>, GenPlan>();
+type GenPrimitive =
+  | { readonly tag: "constant"; readonly value: unknown }
+  | { readonly tag: "integer"; readonly options: IntegerOptions };
+const gen_primitives = new WeakMap<RawGen<unknown>, GenPrimitive>();
 
-Monad.derive(Gen)({
-  pure(value) {
-    return constant(value);
-  },
+function planned(plan: GenPlan): Gen<unknown> {
+  const execute: RawGen<unknown> = (state) => run_plan(execute, state);
+  gen_plans.set(execute, plan);
+  return Gen(execute);
+}
 
+Monad.instance(Gen)({
   bind(fn) {
-    const source = this.value();
-    const execute: RawGen<unknown> = (state) => run_plan(execute, state);
-    gen_plans.set(execute, {
-      source,
-      bind: fn as (item: unknown) => Gen<unknown>,
-    });
-    return Gen(execute) as ReturnType<typeof fn>;
+    return planned({
+      tag: "bind",
+      source: this.value(),
+      fn: fn as (item: unknown) => Gen<unknown>,
+    }) as ReturnType<typeof fn>;
+  },
+});
+Functor.instance(Gen)({
+  map<from, to>(this: Gen<from>, fn: (value: from) => to): Gen<to> {
+    return planned({
+      tag: "map",
+      source: this.value(),
+      fn: fn as (item: unknown) => unknown,
+    }) as Gen<to>;
+  },
+});
+Applicative.instance(Gen)({
+  pure: constant,
+  ap(value) {
+    return this.bind((fn) => value.map(fn));
   },
 });
 
@@ -1324,6 +1343,8 @@ function run_plan(
 ): readonly [unknown, GenState] {
   const pending: GenPlan[] = [];
   let current = source;
+  let seed = state.seed;
+  let size = state.size;
   while (true) {
     const plan = gen_plans.get(current);
     if (plan !== undefined) {
@@ -1331,22 +1352,62 @@ function run_plan(
       current = plan.source;
       continue;
     }
-    const [value, next] = current(state);
-    state = next;
-    const continuation = pending.pop();
-    if (continuation === undefined) return [value, state];
-    current = continuation.bind(value).value();
+    const primitive = gen_primitives.get(current);
+    let value: unknown;
+    if (primitive === undefined) {
+      const result = current({ seed, size });
+      value = result[0];
+      seed = result[1].seed;
+      size = result[1].size;
+    } else {
+      switch (primitive.tag) {
+        case "constant":
+          value = primitive.value;
+          break;
+        case "integer": {
+          const bounds = integer_bounds(primitive.options, size);
+          seed = (seed + 0x6d2b79f5) >>> 0;
+          const unit = random_unit(seed);
+          value = bounds.min + Math.floor(unit * (bounds.max - bounds.min + 1));
+          break;
+        }
+      }
+    }
+    while (true) {
+      const continuation = pending.pop();
+      if (continuation === undefined) return [value, { seed, size }];
+      if (continuation.tag === "map") {
+        value = continuation.fn(value);
+        continue;
+      }
+      current = continuation.fn(value).value();
+      break;
+    }
   }
+}
+
+function draw_integer(
+  options: IntegerOptions,
+  state: GenState,
+): readonly [number, GenState] {
+  const bounds = integer_bounds(options, state.size);
+  const [unit, next] = next_random(state);
+  const value = bounds.min +
+    Math.floor(unit * (bounds.max - bounds.min + 1));
+
+  return [value, next];
 }
 
 function next_random(state: GenState): readonly [number, GenState] {
   const seed = (state.seed + 0x6d2b79f5) >>> 0;
+  return [random_unit(seed), { seed, size: state.size }];
+}
+
+function random_unit(seed: number): number {
   let mixed = seed;
   mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
   mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
-  const value = ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
-
-  return [value, { seed, size: state.size }];
+  return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
 }
 
 function normalize_state(state: GenState): GenState {
@@ -1452,10 +1513,24 @@ function* shrink_integer(
 }
 
 function* shrink_string(value: string, minimum: number): Iterable<string> {
+  const offsets = [0];
+  let offset = 0;
+  for (const character of value) {
+    offset += character.length;
+    offsets.push(offset);
+  }
+  const length = offsets.length - 1;
+  if (length > minimum) yield value.slice(0, offsets[minimum]);
   for (
-    const characters of shrink_array(Array.from(value), no_shrink, minimum)
+    let width = Math.floor(length / 2);
+    width > 0;
+    width = Math.floor(width / 2)
   ) {
-    yield characters.join("");
+    for (let start = 0; start + width <= length; start += width) {
+      if (length - width < minimum) continue;
+      yield value.slice(0, offsets[start]) +
+        value.slice(offsets[start + width]);
+    }
   }
 }
 
@@ -1477,7 +1552,14 @@ function* shrink_array<item>(
   ) {
     for (let start = 0; start + width <= values.length; start += width) {
       if (values.length - width < minimum) continue;
-      yield [...values.slice(0, start), ...values.slice(start + width)];
+      const candidate = new Array<item>(values.length - width);
+      for (let index = 0; index < start; index += 1) {
+        candidate[index] = values[index];
+      }
+      for (let index = start; index < candidate.length; index += 1) {
+        candidate[index] = values[index + width];
+      }
+      yield candidate;
     }
   }
 

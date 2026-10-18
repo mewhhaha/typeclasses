@@ -1,0 +1,15 @@
+{
+  "limits": {
+    "allocation_ratio": 1.2,
+    "p99_ratio": 1.2,
+    "gc_pause_ratio": 1.2
+  },
+  "baseline": "bench/artifacts/round3-allocation-baseline.json",
+  "candidate": "bench/artifacts/round3-allocation-candidate.json",
+  "baseline_source_sha256": "ff551cc78339fd9014725effe68d369c4d4beed04ce10778db653cf26537d309",
+  "candidate_source_sha256": "5e55a4beaf13c040934cba1d15e21a4a3571ee22418c6ef14bfd43eb4c103dab",
+  "failures": [
+    "GC pause: 8.5415940284729 exceeds 5.704153060913086 × 1.2"
+  ],
+  "limitations": "Illustrative relative-budget evaluation of one statistical capture per side; GC regression is recorded, and this noisy observation is not a correctness gate."
+}

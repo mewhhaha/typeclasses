@@ -1,3 +1,4 @@
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import {
   type As,
   type Data,
@@ -56,7 +57,7 @@ export interface AsArray
 export type ArrayT<item> = Data<AsArray, item>;
 
 /** Callable immutable-array dictionary with fluent typeclass methods. */
-export const ArrayT: AsArray = data<AsArray>(array_identity);
+export const ArrayT: AsArray = /* @__PURE__ */ create_array();
 
 /** Snapshot an array. All positions, including holes, become explicit values. */
 export function from_array<item>(items: readonly item[]): ArrayT<item> {
@@ -106,210 +107,13 @@ export function map_into<from, to>(
   }
 }
 
-Show.instance(ArrayT)({
-  show() {
-    const array = this.value();
-    return inspect(array);
-  },
-});
-
-Eq.instance(ArrayT)({
-  eq(right) {
-    const left = this.value();
-    const right_value = right.value();
-
-    if (left.length !== right_value.length) {
-      return false;
-    }
-
-    for (let index = 0; index < left.length; index += 1) {
-      if (!Object.is(left[index], right_value[index])) {
-        return false;
-      }
-    }
-
-    return true;
-  },
-});
-
-Ord.instance(ArrayT)({
-  compare(right) {
-    const left = this.value();
-    const right_value = right.value();
-    const length = Math.min(left.length, right_value.length);
-
-    for (let index = 0; index < length; index += 1) {
-      const order = compare_unknown(left[index], right_value[index]);
-
-      switch (order) {
-        case "eq":
-          break;
-        case "lt":
-        case "gt":
-          return order;
-      }
-    }
-
-    return compare_unknown(left.length, right_value.length);
-  },
-});
-
-Functor.instance(ArrayT)({
-  map(fn) {
-    const array = this.value();
-    const out = new Array<ReturnType<typeof fn>>(array.length);
-    for (let index = 0; index < array.length; index += 1) {
-      out[index] = fn(array[index]);
-    }
-    return ArrayT(out);
-  },
-});
-
-Applicative.instance(ArrayT)({
-  pure(value) {
-    return ArrayT([value]);
-  },
-
-  // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
-  [applicative_lift_method](fn, rest) {
-    const first = this.value();
-
-    switch (rest.length) {
-      case 0:
-        return Functor.map(this, fn);
-      case 1:
-        return lift_array_two(fn, first, rest[0].value());
-      case 2:
-        return lift_array_three(fn, first, rest[0].value(), rest[1].value());
-      default:
-        return lift_array_many(fn, first, rest);
-    }
-  },
-
-  ap<from, to>(
-    this: Data<AsArray, (value: NoInfer<from>) => to>,
-    values: Data<AsArray, from>,
-  ): Data<AsArray, to> {
-    const fns = this.value();
-    const items = values.value();
-    const out = new Array<to>(fns.length * items.length);
-    let index = 0;
-
-    for (const fn of fns) {
-      for (const item of items) {
-        out[index] = fn(item);
-        index += 1;
-      }
-    }
-
-    return ArrayT(out);
-  },
-});
-
-Semigroup.instance(ArrayT)({
-  concat(right) {
-    const left = this.value();
-    return ArrayT([...left, ...right.value()]);
-  },
-});
-
 /** @ignore Canonical implementation identity for specialized accumulators. */
-export const array_concat_method: AsArray["concat"] = ArrayT.concat;
-
-Monoid.instance(ArrayT)({
-  empty: empty_array,
-});
-
-Alternative.instance(ArrayT)({
-  empty: empty_array,
-
-  alt(right) {
-    const left = this.value();
-    return ArrayT([...left, ...right.value()]);
-  },
-});
+export const array_concat_method: AsArray["concat"] =
+  /* @__PURE__ */ (() => ArrayT.concat)();
 
 function empty_array<item>(this: AsArray): Data<AsArray, item> {
   return ArrayT([]);
 }
-
-Monad.instance(ArrayT)({
-  bind<from, to>(
-    this: Data<AsArray, from>,
-    fn: (value: from) => Data<AsArray, to>,
-  ): Data<AsArray, to> {
-    const array = this.value();
-    const chunks = new Array<readonly to[]>(array.length);
-    let length = 0;
-
-    for (let index = 0; index < array.length; index += 1) {
-      const chunk = fn(array[index]).value();
-      chunks[index] = chunk;
-      length += chunk.length;
-    }
-
-    const out = new Array<to>(length);
-    let out_index = 0;
-
-    for (const chunk of chunks) {
-      for (const item of chunk) {
-        out[out_index] = item;
-        out_index += 1;
-      }
-    }
-
-    return ArrayT(out);
-  },
-});
-
-MonadRec.instance(ArrayT)({
-  tail_rec_m<state, output>(
-    initial: state,
-    step: (state: state) => Data<AsArray, LoopStep<state, output>>,
-  ): Data<AsArray, output> {
-    const pending: LoopStep<state, output>[] = [rec(initial)];
-    const output: output[] = [];
-
-    while (pending.length > 0) {
-      const [tag, value] = pending.pop()!;
-
-      switch (tag) {
-        case loop_done:
-          output.push(value);
-          break;
-        case loop_rec: {
-          const next = step(value).value();
-
-          for (let index = next.length - 1; index >= 0; index -= 1) {
-            pending.push(next[index]);
-          }
-          break;
-        }
-      }
-    }
-
-    return ArrayT(output);
-  },
-});
-
-Foldable.instance(ArrayT)({
-  fold(initial, fn) {
-    const array = this.value();
-    let state = initial;
-
-    for (const item of array) {
-      state = fn(state, item);
-    }
-
-    return state;
-  },
-});
-
-Traversable.instance(ArrayT)({
-  traverse(applicative, fn) {
-    return Functor.map(traverse_items(this.value(), applicative, fn), ArrayT);
-  },
-});
 
 function lift_array_two<result>(
   fn: (...values: unknown[]) => result,
@@ -367,12 +171,21 @@ function lift_array_many<result>(
 ): ArrayT<result> {
   const sources = [first, ...rest.map((value) => value.value())];
   const values: unknown[] = [];
-  const out: result[] = [];
+  if (sources.some((source) => source.length === 0)) return ArrayT([]);
+  let length = 1;
+  for (const source of sources) {
+    length *= source.length;
+    if (!Number.isSafeInteger(length) || length > 0xffff_ffff) {
+      throw new RangeError("Array product exceeds maximum array length");
+    }
+  }
+  const out = new Array<result>(length);
+  let out_index = 0;
   const positions = new Array<number>(sources.length).fill(0);
   let depth = 0;
   while (depth >= 0) {
     if (depth === sources.length) {
-      out.push(fn(...values));
+      out[out_index++] = fn(...values);
       depth -= 1;
       continue;
     }
@@ -386,6 +199,7 @@ function lift_array_many<result>(
     positions[depth] += 1;
     depth += 1;
   }
+  out.length = out_index;
   return ArrayT(out);
 }
 
@@ -408,4 +222,227 @@ export function indexed<item>(
     out[index] = [index, source[index]];
   }
   return ArrayT(out);
+}
+
+/** Flatten each callback result immediately, without retaining result chunks. */
+export function flat_map_streaming<from, to>(
+  array: ArrayT<from>,
+  fn: (item: from) => Iterable<to>,
+): ArrayT<to> {
+  const out: to[] = [];
+  for (const item of array.value()) {
+    for (const value of fn(item)) out.push(value);
+  }
+  return ArrayT(out);
+}
+
+function create_array(): AsArray {
+  const ArrayT: AsArray = data<AsArray>(array_identity);
+  Show.instance(ArrayT)({
+    show() {
+      const array = this.value();
+      return inspect(array);
+    },
+  });
+
+  Eq.instance(ArrayT)({
+    eq(right) {
+      const left = this.value();
+      const right_value = right.value();
+
+      if (left.length !== right_value.length) {
+        return false;
+      }
+
+      for (let index = 0; index < left.length; index += 1) {
+        if (!Object.is(left[index], right_value[index])) {
+          return false;
+        }
+      }
+
+      return true;
+    },
+  });
+
+  Ord.instance(ArrayT)({
+    compare(right) {
+      const left = this.value();
+      const right_value = right.value();
+      const length = Math.min(left.length, right_value.length);
+
+      for (let index = 0; index < length; index += 1) {
+        const order = compare_unknown(left[index], right_value[index]);
+
+        switch (order) {
+          case "eq":
+            break;
+          case "lt":
+          case "gt":
+            return order;
+        }
+      }
+
+      return compare_unknown(left.length, right_value.length);
+    },
+  });
+
+  Functor.instance(ArrayT)({
+    map(fn) {
+      const array = this.value();
+      const out = new Array<ReturnType<typeof fn>>(array.length);
+      for (let index = 0; index < array.length; index += 1) {
+        out[index] = fn(array[index]);
+      }
+      return ArrayT(out);
+    },
+  });
+
+  Applicative.instance(ArrayT)({
+    pure(value) {
+      return ArrayT([value]);
+    },
+
+    // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
+    [applicative_lift_method](fn, rest) {
+      const first = this.value();
+
+      switch (rest.length) {
+        case 0:
+          return Functor.map(this, fn);
+        case 1:
+          return lift_array_two(fn, first, rest[0].value());
+        case 2:
+          return lift_array_three(fn, first, rest[0].value(), rest[1].value());
+        default:
+          return lift_array_many(fn, first, rest);
+      }
+    },
+
+    ap<from, to>(
+      this: Data<AsArray, (value: NoInfer<from>) => to>,
+      values: Data<AsArray, from>,
+    ): Data<AsArray, to> {
+      const fns = this.value();
+      const items = values.value();
+      const out = new Array<to>(fns.length * items.length);
+      let index = 0;
+
+      for (const fn of fns) {
+        for (const item of items) {
+          out[index] = fn(item);
+          index += 1;
+        }
+      }
+
+      return ArrayT(out);
+    },
+  });
+
+  Semigroup.instance(ArrayT)({
+    concat(right) {
+      const left = this.value();
+      return ArrayT([...left, ...right.value()]);
+    },
+  });
+
+  Monoid.instance(ArrayT)({
+    empty: empty_array,
+  });
+
+  Alternative.instance(ArrayT)({
+    empty: empty_array,
+
+    alt(right) {
+      const left = this.value();
+      return ArrayT([...left, ...right.value()]);
+    },
+  });
+
+  Monad.instance(ArrayT)({
+    bind<from, to>(
+      this: Data<AsArray, from>,
+      fn: (value: from) => Data<AsArray, to>,
+    ): Data<AsArray, to> {
+      const array = this.value();
+      const chunks = new Array<readonly to[]>(array.length);
+      let length = 0;
+
+      for (let index = 0; index < array.length; index += 1) {
+        const chunk = fn(array[index]).value();
+        chunks[index] = chunk;
+        length += chunk.length;
+      }
+
+      const out = new Array<to>(length);
+      let out_index = 0;
+
+      for (const chunk of chunks) {
+        for (const item of chunk) {
+          out[out_index] = item;
+          out_index += 1;
+        }
+      }
+
+      return ArrayT(out);
+    },
+  });
+
+  MonadRec.instance(ArrayT)({
+    tail_rec_m<state, output>(
+      initial: state,
+      step: (state: state) => Data<AsArray, LoopStep<state, output>>,
+    ): Data<AsArray, output> {
+      const pending: LoopStep<state, output>[] = [rec(initial)];
+      const output: output[] = [];
+
+      while (pending.length > 0) {
+        const [tag, value] = pending.pop()!;
+
+        switch (tag) {
+          case loop_done:
+            output.push(value);
+            break;
+          case loop_rec: {
+            const next = step(value).value();
+
+            for (let index = next.length - 1; index >= 0; index -= 1) {
+              pending.push(next[index]);
+            }
+            break;
+          }
+        }
+      }
+
+      return ArrayT(output);
+    },
+  });
+
+  Foldable.instance(ArrayT)({
+    [some_method](predicate) {
+      for (const item of this.value()) if (predicate(item)) return true;
+      return false;
+    },
+    [find_method](predicate) {
+      for (const item of this.value()) if (predicate(item)) return item;
+      return undefined;
+    },
+
+    fold(initial, fn) {
+      const array = this.value();
+      let state = initial;
+
+      for (const item of array) {
+        state = fn(state, item);
+      }
+
+      return state;
+    },
+  });
+
+  Traversable.instance(ArrayT)({
+    traverse(applicative, fn) {
+      return Functor.map(traverse_items(this.value(), applicative, fn), ArrayT);
+    },
+  });
+  return ArrayT;
 }

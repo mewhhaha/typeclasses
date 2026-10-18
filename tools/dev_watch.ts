@@ -5,20 +5,39 @@ export function affected_files(
   sources: ReadonlyMap<string, string>,
   changed: readonly string[],
 ): string[] {
-  // A nonliteral dynamic import can reference any module; check the whole graph.
-  if (
-    [...sources.values()].some((source) => /import\s*\(\s*[^\s"']/.test(source))
-  ) {
-    return [...sources.keys()].sort();
-  }
+  return create_dependency_graph(sources).affected(changed);
+}
+
+/** Incremental import graph; updating a file reparses only that file. */
+export function create_dependency_graph(
+  initial: ReadonlyMap<string, string> = new Map(),
+) {
+  const sources = new Map<string, string>();
   const reverse = new Map<string, Set<string>>();
-  for (const [file, source] of sources) {
+  const dependencies = new Map<string, Set<string>>();
+  const dynamic = new Set<string>();
+  function update(file: string, source?: string): void {
+    for (const imported of dependencies.get(file) ?? []) {
+      const consumers = reverse.get(imported);
+      consumers?.delete(file);
+      if (consumers?.size === 0) reverse.delete(imported);
+    }
+    dependencies.delete(file);
+    dynamic.delete(file);
+    if (source === undefined) {
+      sources.delete(file);
+      return;
+    }
+    sources.set(file, source);
+    if (/import\s*\(\s*[^\s"']/.test(source)) dynamic.add(file);
+    const imports = new Set<string>();
     for (
       const match of source.matchAll(
         /(?:from\s*|import\s*\(\s*|import\s*)["'](\.[^"']+\.ts)["']/g,
       )
     ) {
       const imported = new URL(match[1], "file://" + file).pathname;
+      imports.add(imported);
       let consumers = reverse.get(imported);
       if (consumers === undefined) {
         consumers = new Set();
@@ -26,12 +45,18 @@ export function affected_files(
       }
       consumers.add(file);
     }
+    dependencies.set(file, imports);
   }
-  const selected = new Set(changed);
-  for (const file of selected) {
-    for (const consumer of reverse.get(file) ?? []) selected.add(consumer);
+  function affected(changed: readonly string[]): string[] {
+    if (dynamic.size > 0) return [...sources.keys()].sort();
+    const selected = new Set(changed);
+    for (const file of selected) {
+      for (const consumer of reverse.get(file) ?? []) selected.add(consumer);
+    }
+    return [...selected].filter((file) => sources.has(file)).sort();
   }
-  return [...selected].filter((file) => sources.has(file)).sort();
+  for (const [file, source] of initial) update(file, source);
+  return { sources, update, affected };
 }
 
 async function source_files(
@@ -51,9 +76,11 @@ async function source_files(
 async function check(
   changed: readonly string[],
   plan: boolean,
+  graph?: ReturnType<typeof create_dependency_graph>,
 ): Promise<boolean> {
-  const sources = await source_files(resolve("src"));
-  let selected = affected_files(sources, changed);
+  graph ??= create_dependency_graph(await source_files(resolve("src")));
+  const sources = graph.sources;
+  let selected = graph.affected(changed);
   if (changed.some((path) => !path.endsWith(".ts") || !sources.has(path))) {
     selected = [...sources.keys()];
   }
@@ -111,6 +138,7 @@ if (import.meta.main) {
     );
     if (!await check(changed, Deno.args.includes("--plan"))) Deno.exit(1);
   } else {
+    let graph = create_dependency_graph(await source_files(resolve("src")));
     const pending = new Set<string>();
     let running = false;
     let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +150,21 @@ if (import.meta.main) {
           const paths = [...pending];
           pending.clear();
           try {
-            await check(paths, false);
+            if (paths.some((path) => !path.endsWith(".ts"))) {
+              graph = create_dependency_graph(
+                await source_files(resolve("src")),
+              );
+            } else {
+              for (const path of paths) {
+                try {
+                  graph.update(path, await Deno.readTextFile(path));
+                } catch (error) {
+                  if (!(error instanceof Deno.errors.NotFound)) throw error;
+                  graph.update(path);
+                }
+              }
+            }
+            await check(paths, false, graph);
           } catch (error) {
             console.error(error);
           }
