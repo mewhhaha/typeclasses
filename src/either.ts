@@ -585,8 +585,6 @@ function create_either(): EitherConstructor {
     },
   });
 
-  register_fast_do(Either, 1, Either.Right, Either.Left);
-
   MonadRec.instance(Either)({
     tail_rec_m<state, output>(
       initial: state,
@@ -639,6 +637,8 @@ function create_either(): EitherConstructor {
       }
     },
   });
+
+  register_fast_do(Either, 1, Either.Right, Either.Left);
 
   Foldable.instance(Either)({
     fold(initial, fn) {
