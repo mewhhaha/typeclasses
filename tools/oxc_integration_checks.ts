@@ -368,3 +368,199 @@ Deno.test("keyed cell terminal fusion lowers Reader, State, and Writer cells wit
   assert_equals(mod.s, [19, 8]);
   assert_equals([mod.w[0], mod.w[1].value()], [11, ["a", "b"]]);
 });
+
+Deno.test("round-2 post-plugin fusion covers control-flow terminals, multi-cell runners, Reader/State Do, and Either Do", async () => {
+  const root = new URL("../src/", import.meta.url).href;
+  const source = [
+    `import { Do } from ${JSON.stringify(root + "typeclasses.ts")};`,
+    `import { Either, Left, Right } from ${
+      JSON.stringify(root + "either.ts")
+    };`,
+    `import { Program, run } from ${JSON.stringify(root + "effects.ts")};`,
+    `import { ask, asks, Reader, reader, run_reader } from ${
+      JSON.stringify(root + "reader.ts")
+    };`,
+    `import { get, modify, State, state, run_state } from ${
+      JSON.stringify(root + "state.ts")
+    };`,
+    `import { writer_cell } from ${JSON.stringify(root + "writer.ts")};`,
+    `import { ArrayT } from ${JSON.stringify(root + "array.ts")};`,
+    `import { prepare_cells, run_cells, provide_reader, provide_state, provide_writer } from ${
+      JSON.stringify(root + "handlers.ts")
+    };`,
+    'const cfg = reader<{ step: number }>()("cfg");',
+    'const cnt = state<number>()("cnt");',
+    'const log = writer_cell("log", ArrayT<number>([]));',
+    "export let init_count = 0;",
+    "const shared_env = () => { init_count += 1; return { step: 3 }; };",
+    "const run3 = prepare_cells({",
+    "  cfg: provide_reader(cfg, shared_env()),",
+    "  cnt: provide_state(cnt, 0),",
+    "  log: provide_writer(log),",
+    "});",
+    // P1: control-flow terminal with for loop, continue, break, and early return
+    "export function loop_state(limit: number) {",
+    "  return run(run_state(cnt, Program(function* () {",
+    "    for (let i = 0; i < limit; i += 1) {",
+    "      if (i % 2 === 0) continue;",
+    "      if (i > 7) break;",
+    "      yield* cnt.modify((n) => n + i);",
+    "    }",
+    "    const total = yield* cnt.get();",
+    "    if (total > 10) return total * 2;",
+    "    return total;",
+    "  }), 0));",
+    "}",
+    // P2: prepare_cells fused call (plus dynamic fallback and once-only init)
+    "export function run3_fused() {",
+    "  return run3(Program(function* () {",
+    "    const c = yield* cfg.ask();",
+    "    for (let i = 0; i < 3; i += 1) {",
+    "      yield* cnt.modify((n) => n + c.step);",
+    "      yield* log.tell(ArrayT([i]));",
+    "    }",
+    "    return c;",
+    "  }));",
+    "}",
+    "export function run3_dynamic() {",
+    "  const eff = cnt.modify((n) => n + 5);",
+    "  return run3(Program(function* () { yield* eff; return yield* cnt.get(); }));",
+    "}",
+    // P2: inline run_cells with duplicate cell key (first wins)
+    "export function run_cells_dup() {",
+    "  return run_cells(Program(function* () {",
+    "    yield* cnt.modify((n) => n + 4);",
+    "    return yield* cnt.get();",
+    "  }), {",
+    "    first: provide_state(cnt, 10),",
+    "    second: provide_state(cnt, 99),",
+    "  });",
+    "}",
+    // P2: stacked run_reader + run_state
+    "export function stacked(step: number, init: number) {",
+    "  return run(run_reader(cfg, run_state(cnt, Program(function* () {",
+    "    const c = yield* cfg.ask();",
+    "    yield* cnt.modify((n) => n + c.step);",
+    "    return yield* cnt.get();",
+    "  }), init), { step }));",
+    "}",
+    // P3: Reader & State Do.run() and reusable Do(Reader, ...)
+    "export function reader_do(step: number) {",
+    "  return Do(function* () {",
+    "    const a = yield* ask<{ step: number }>();",
+    "    const b = yield* asks<{ step: number }, number>((x) => x.step * 2);",
+    "    return a.step + b;",
+    "  }).run({ step });",
+    "}",
+    "export function state_do(init: number) {",
+    "  return Do(function* () {",
+    "    const a = yield* get<number>();",
+    "    yield* modify((n: number) => n + 5);",
+    "    const b = yield* get<number>();",
+    "    return a + b;",
+    "  }).run(init);",
+    "}",
+    "export const reusable_reader = Do(Reader, function* () {",
+    "  const a = yield* ask<number>();",
+    "  return a * 3;",
+    "});",
+    // P4: direct Either Do lowering with heterogeneous Left union
+    'function f_a(n: number): Either<"a", number> { return n > 0 ? Right(n + 1) : Left("a"); }',
+    'function f_b(n: number): Either<"b", number> { return n < 10 ? Right(n * 2) : Left("b"); }',
+    "export function either_do(n: number) {",
+    "  return Do(Either, function* () {",
+    "    const x = yield* Right(n);",
+    "    const a = yield* f_a(x);",
+    "    const b = yield* f_b(a);",
+    "    return a + b;",
+    "  });",
+    "}",
+    "export const either_mapped = either_do(2).map((x) => x + 1);",
+    // P4: named keyed Program
+    "export function named_keyed(step: number) {",
+    "  const p = Program(function* () {",
+    "    const c = yield* cfg.ask();",
+    "    return c.step * 4;",
+    "  });",
+    "  return run(run_reader(cfg, p, { step }));",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round2_fusion.ts");
+  assert_equals(result.diagnostics, []);
+  assert_true(
+    !result.code.includes("run_state_terminal") &&
+      !result.code.includes("run_reader_terminal"),
+    "expected control-flow, stacked, and named keyed terminals to fuse\n\n" +
+      result.code,
+  );
+  assert_true(
+    !result.code.includes(".bind(") && !result.code.includes("Do("),
+    "expected Reader/State/Either Do blocks to fuse without .bind\n\n" +
+      result.code,
+  );
+  assert_true(
+    result.code.includes("prepared_cell_0"),
+    "expected prepare_cells initializers to hoist once\n\n" + result.code,
+  );
+
+  // Strict TypeScript check on generated code!
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round2-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Runtime execution verification!
+  const compiled = executable_typescript(result.code, "round2_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  assert_equals(mod.init_count, 1);
+  assert_equals(mod.loop_state(10), [32, 16]);
+  assert_equals(mod.loop_state(4), [4, 4]);
+  const r1 = mod.run3_fused();
+  const r2 = mod.run3_fused();
+  assert_equals(mod.init_count, 1);
+  assert_true(
+    r1.result === r2.result,
+    "prepare_cells fusion must preserve shared object identity",
+  );
+  assert_equals(r1.states, { cnt: 9 });
+  assert_equals(r1.logs.log.value(), [0, 1, 2]);
+  assert_equals(mod.run3_dynamic().states, { cnt: 5 });
+  const dup = mod.run_cells_dup();
+  assert_equals(dup.result, 14);
+  assert_equals(dup.states, { first: 14, second: 99 });
+  assert_equals(mod.stacked(4, 10), [14, 14]);
+  assert_equals(mod.reader_do(5), 15);
+  assert_equals(mod.state_do(10), [25, 15]);
+  assert_equals(mod.reusable_reader.run(7), 21);
+  assert_equals(mod.either_do(2).value(), ["Right", 9]);
+  assert_equals(mod.either_do(0).value(), ["Left", "a"]);
+  assert_equals(mod.either_do(10).value(), ["Left", "b"]);
+  assert_equals(mod.either_mapped.value(), ["Right", 10]);
+  assert_equals(mod.named_keyed(6), 24);
+
+  // T2: source_map: false omits map cleanly
+  const unmapped = transform_do_program_source(source, "round2_fusion.ts", {
+    source_map: false,
+  });
+  assert_equals(unmapped.map, null);
+  assert_equals(unmapped.code, result.code);
+});

@@ -14,7 +14,9 @@ import {
 import {
   handle_cells,
   handle_operations,
+  prepare_cells,
   prepare_handle_cells,
+  prepare_operations,
   provide_reader,
   provide_state,
   provide_writer,
@@ -483,4 +485,169 @@ Deno.test("fused multi-cell handlers and buffered run_writer preserve replay iso
   assert_equals(compile_fold(never_open)(0, (a, b) => a + b), 0);
   assert_equals(Foldable.some(never_open, () => true), false);
   assert_equals(opened, 0);
+});
+
+Deno.test("round-2 runtime hills preserve operation table, STM journal, and multi-cell invariants", async () => {
+  const {
+    Stm,
+    atomically,
+    new_tvar,
+    or_else,
+    read_tvar,
+    retry,
+    write_tvar,
+  } = await import("./stm.ts");
+  const { run_reader, run_reader_terminal } = await import("./reader.ts");
+
+  // 1. Direct handle_operations & prepare_operations loops preserve isolation,
+  // replay, `this` binding, and invalid handler return errors.
+  const Add = Effect.operation<number, number>()("add");
+  const AskExt = Effect.operation<number, null>()("ask_ext");
+  let offset = 10;
+  const table = {
+    add: (op: readonly ["add", number]): Effect<never, number> =>
+      Effect.pure(op[1] + offset),
+  };
+  const prepared = prepare_operations(table);
+  offset = 100;
+  table.add = (op: readonly ["add", number]) => Effect.pure(op[1] + 999);
+  const eff_ops = Program(function* () {
+    const x = yield* AskExt.send(null);
+    return yield* Add.send(x);
+  });
+  const suspended_prepared = prepared(eff_ops);
+  assert_true(
+    suspended_prepared[0] === "impure",
+    "unmatched op must remain suspended",
+  );
+  if (suspended_prepared[0] === "impure") {
+    assert_equals(run(suspended_prepared[2](5) as Effect<never, number>), 105);
+    assert_equals(run(suspended_prepared[2](7) as Effect<never, number>), 107);
+  }
+  const live = handle_operations(Add.send(5), table);
+  assert_equals(run(live), 1004);
+
+  let threw_invalid = false;
+  try {
+    prepare_operations({
+      add: () => "not-an-effect" as unknown as Effect<never, number>,
+    })(Add.send(1));
+  } catch (error) {
+    threw_invalid = error instanceof TypeError;
+  }
+  assert_true(threw_invalid, "invalid handler return must throw TypeError");
+
+  // 2. Tuple-free run_reader preserves replay isolation on non-terminal suspension.
+  const rcell = reader<number>()("r_replay");
+  const r_prog = Program(function* () {
+    const a = yield* rcell.ask();
+    const b = yield* AskExt.send(null);
+    const c = yield* rcell.ask();
+    return a + b + c;
+  });
+  const r_susp = run_reader(rcell, r_prog, 10);
+  assert_true(r_susp[0] === "impure", "unmatched op must stay suspended");
+  if (r_susp[0] === "impure") {
+    assert_equals(run(r_susp[2](3) as Effect<never, number>), 23);
+    assert_equals(run(r_susp[2](4) as Effect<never, number>), 24);
+  }
+  assert_equals(
+    run_reader_terminal(
+      rcell,
+      Program(function* () {
+        const x = yield* rcell.ask();
+        const y = yield* rcell.asks((n) => n * 2);
+        return x + y;
+      }),
+      7,
+    ),
+    21,
+  );
+
+  // 3. Inline STM journal handles 1-TVar, 2..8 TVars, >8 TVar Map promotion,
+  // nested or_else rollback/merge, and escaped journal reads/writes getters.
+  const tv1 = new_tvar(1);
+  assert_equals(
+    atomically(
+      read_tvar(tv1).bind((n) => write_tvar(tv1, n + 4).map(() => n + 4)),
+    ),
+    5,
+  );
+  assert_equals(atomically(read_tvar(tv1)), 5);
+
+  const tvars = Array.from({ length: 12 }, (_, i) => new_tvar(i));
+  const sum_12 = atomically(
+    tvars.reduce(
+      (acc, tv, idx) =>
+        acc.bind((total) =>
+          read_tvar(tv).bind((v) =>
+            write_tvar(tv, v + idx).map(() => total + v + idx)
+          )
+        ),
+      Stm.pure(0),
+    ),
+  );
+  assert_equals(sum_12, 132);
+  assert_equals(atomically(read_tvar(tvars[11])), 22);
+
+  const tv_obj = new_tvar({ count: 1 });
+  const leaked = atomically(
+    or_else(
+      read_tvar(tv_obj).bind((o) =>
+        write_tvar(tv_obj, { count: o.count + 50 }).bind(() =>
+          retry<{ count: number }>()
+        )
+      ),
+      read_tvar(tv_obj).bind((o) =>
+        write_tvar(tv_obj, { count: o.count + 2 }).bind(() => read_tvar(tv_obj))
+      ),
+    ),
+  );
+  leaked.count = 999; // Mutating exposed read after commit must not corrupt TVar.
+  assert_equals(atomically(read_tvar(tv_obj)), { count: 3 });
+
+  const escaped_ok = atomically(
+    read_tvar(tv1).bind((before) =>
+      Stm((journal) => {
+        const key = tv1 as unknown as typeof tv1 & {
+          readonly [k: symbol]: (x: unknown) => unknown;
+        };
+        assert_true(
+          journal.reads.get(key as never) === before,
+          "escaped journal.reads must materialize inline reads",
+        );
+        journal.writes.set(key as never, before + 10);
+        return journal.writes.size;
+      })
+    ),
+  );
+  assert_equals(escaped_ok, 1);
+  assert_equals(atomically(read_tvar(tv1)), 15);
+
+  // 4. Multi-cell inline dispatch (<=3 cells) and Map fallback (5 cells).
+  const c1 = reader<number>()("c1");
+  const c2 = state<number>()("c2");
+  const c3 = state<number>()("c3");
+  const c4 = state<number>()("c4");
+  const c5 = writer_cell("c5", ArrayT<number>([]));
+  const run5 = prepare_cells({
+    c1: provide_reader(c1, 2),
+    c2: provide_state(c2, 10),
+    c3: provide_state(c3, 20),
+    c4: provide_state(c4, 30),
+    c5: provide_writer(c5),
+  });
+  const out5 = run5(
+    Program(function* () {
+      const k = yield* c1.ask();
+      yield* c2.modify((n) => n + k);
+      yield* c3.modify((n) => n + k);
+      yield* c4.modify((n) => n + k);
+      yield* c5.tell(ArrayT([k]));
+      return (yield* c2.get()) + (yield* c3.get()) + (yield* c4.get());
+    }),
+  );
+  assert_equals(out5.result, 66);
+  assert_equals(out5.states, { c2: 12, c3: 22, c4: 32 });
+  assert_equals(out5.logs.c5.value(), [2]);
 });

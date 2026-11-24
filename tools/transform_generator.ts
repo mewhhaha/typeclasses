@@ -1026,6 +1026,264 @@ function direct_maybe(
   return { block: block(emitted), yielded: true };
 }
 
+function direct_either(
+  body: BlockStatement | FunctionBody,
+  state: State,
+): Result | undefined {
+  if (
+    state.kind !== "do" ||
+    state.dictionary?.type !== "Identifier" ||
+    !state.services.imports.direct_either_dictionaries?.has(
+      state.dictionary.name,
+    ) ||
+    body.body.length >= 128
+  ) return undefined;
+  const dictionary = state.dictionary;
+  const right_names = state.services.imports.right_constructors;
+  const right_name = right_names !== undefined && right_names.size > 0
+    ? right_names.values().next().value
+    : undefined;
+  const right_callee = (): Expression =>
+    right_name !== undefined ? id(right_name) : member(dictionary, "Right");
+  const emitted: Statement[] = [];
+  const checked_vars: IdentifierReference[] = [];
+  let yield_count = 0;
+  let has_right_elision = false;
+  let returned = false;
+  let terminal_expr: Expression | undefined;
+  let final_return_expr: Expression | undefined;
+
+  const return_value_type_of = (target: IdentifierReference): TSType =>
+    node({
+      type: "TSTypeReference",
+      typeName: id("ReturnType"),
+      typeArguments: node({
+        type: "TSTypeParameterInstantiation",
+        params: Array.from([
+          node({
+            type: "TSIndexedAccessType",
+            objectType: node({
+              type: "TSTypeQuery",
+              exprName: target,
+              typeArguments: null,
+            }),
+            indexType: node({
+              type: "TSLiteralType",
+              literal: node({
+                type: "Literal",
+                value: "value",
+                raw: '"value"',
+              }),
+            }),
+          }) as TSType,
+        ]),
+      }),
+    });
+
+  const make_typed_right_return = (value_expr: Expression): Statement[] => {
+    if (checked_vars.length === 0) {
+      return [ret(call(right_callee(), [value_expr]))];
+    }
+    const out_var = state.services.fresh("either_out");
+    const raw_types = checked_vars.map(return_value_type_of);
+    const raw_union: TSType = raw_types.length === 1
+      ? raw_types[0]
+      : node({ type: "TSUnionType", types: raw_types });
+    const left_tuple_type: TSType = node({
+      type: "TSTypeOperator",
+      operator: "readonly",
+      typeAnnotation: node({
+        type: "TSTupleType",
+        elementTypes: [
+          node({
+            type: "TSLiteralType",
+            literal: node({ type: "Literal", value: "Left", raw: '"Left"' }),
+          }),
+          node({ type: "TSUnknownKeyword" }),
+        ],
+      }),
+    });
+    const left_type: TSType = node({
+      type: "TSIndexedAccessType",
+      objectType: node({
+        type: "TSTypeReference",
+        typeName: id("Extract"),
+        typeArguments: node({
+          type: "TSTypeParameterInstantiation",
+          params: Array.from([raw_union, left_tuple_type]),
+        }),
+      }),
+      indexType: node({
+        type: "TSLiteralType",
+        literal: node({ type: "Literal", value: 1, raw: "1" }),
+      }),
+    });
+    const right_type: TSType = node({
+      type: "TSTypeQuery",
+      exprName: out_var,
+      typeArguments: null,
+    });
+    const right_call = call(right_callee(), [out_var]);
+    right_call.typeArguments = node({
+      type: "TSTypeParameterInstantiation",
+      params: Array.from([left_type, right_type]),
+    });
+    return [variable("const", out_var, value_expr), ret(right_call)];
+  };
+
+  for (let index = 0; index < body.body.length; index += 1) {
+    const statement = body.body[index];
+    const yielded = read_yield(statement);
+    if (yielded !== undefined) {
+      yield_count += 1;
+      if (yielded.terminal) {
+        if (index !== body.body.length - 1) return undefined;
+        terminal_expr = yielded.expression;
+        returned = true;
+        continue;
+      }
+      const expr_unwrapped = unwrap(yielded.expression);
+      if (
+        expr_unwrapped.type === "CallExpression" &&
+        !expr_unwrapped.optional &&
+        expr_unwrapped.typeArguments == null &&
+        expr_unwrapped.callee.type === "Identifier" &&
+        right_names?.has(expr_unwrapped.callee.name) &&
+        expr_unwrapped.arguments.length === 1 &&
+        expr_unwrapped.arguments[0].type !== "SpreadElement"
+      ) {
+        has_right_elision = true;
+        const inner = expr_unwrapped.arguments[0] as Expression;
+        if (statement.type === "VariableDeclaration") {
+          const decl = statement.declarations[0];
+          emitted.push({
+            ...statement,
+            declarations: [{ ...decl, init: inner }],
+          });
+        } else {
+          emitted.push(
+            node({ type: "ExpressionStatement", expression: inner }),
+          );
+        }
+        continue;
+      }
+      const val = state.services.fresh("either_val");
+      const raw = state.services.fresh("either_raw");
+      checked_vars.push(val);
+      emitted.push(variable("const", val, yielded.expression));
+      emitted.push(variable("const", raw, method(val, "value", [])));
+      emitted.push(
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal("Left"),
+          }),
+          consequent: ret(
+            node({
+              type: "TSAsExpression",
+              expression: val,
+              typeAnnotation: node({ type: "TSNeverKeyword" }),
+            }),
+          ),
+          alternate: null,
+        }),
+      );
+      if (statement.type === "VariableDeclaration") {
+        const decl = statement.declarations[0];
+        emitted.push({
+          ...statement,
+          declarations: [{
+            ...decl,
+            init: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(1),
+              computed: true,
+              optional: false,
+            }),
+          }],
+        });
+      }
+      continue;
+    }
+    if (statement.type === "ReturnStatement") {
+      if (index !== body.body.length - 1) return undefined;
+      if (statement.argument !== null && contains(statement.argument, true)) {
+        return undefined;
+      }
+      final_return_expr = statement.argument ?? void_zero();
+      returned = true;
+      continue;
+    }
+    if (contains(statement, true)) return undefined;
+    emitted.push(statement);
+  }
+  if (yield_count === 0 || (yield_count === 1 && !has_right_elision)) {
+    return undefined;
+  }
+  if (terminal_expr !== undefined) {
+    if (checked_vars.length === 0) {
+      emitted.push(ret(terminal_expr));
+    } else {
+      const val = state.services.fresh("either_val");
+      const raw = state.services.fresh("either_raw");
+      checked_vars.push(val);
+      emitted.push(variable("const", val, terminal_expr));
+      emitted.push(variable("const", raw, method(val, "value", [])));
+      emitted.push(
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal("Left"),
+          }),
+          consequent: ret(
+            node({
+              type: "TSAsExpression",
+              expression: val,
+              typeAnnotation: node({ type: "TSNeverKeyword" }),
+            }),
+          ),
+          alternate: null,
+        }),
+      );
+      emitted.push(
+        ...make_typed_right_return(
+          node({
+            type: "MemberExpression",
+            object: raw,
+            property: literal(1),
+            computed: true,
+            optional: false,
+          }),
+        ),
+      );
+    }
+    return { block: block(emitted), yielded: true };
+  }
+  emitted.push(
+    ...make_typed_right_return(returned ? final_return_expr! : void_zero()),
+  );
+  return { block: block(emitted), yielded: true };
+}
+
 function flat(
   body: BlockStatement | FunctionBody,
   state: State,
@@ -1666,7 +1924,8 @@ export function lower_generator(
     if (explicit && explicit.type !== "Identifier") {
       state.dictionary = services.fresh("dictionary");
     }
-    let result = flat(run.body, state) ?? direct_maybe(run.body, state);
+    let result = flat(run.body, state) ?? direct_maybe(run.body, state) ??
+      direct_either(run.body, state);
     if (!result) {
       let yield_count = 0;
       for (let index = 0; index < run.body.body.length; index += 1) {

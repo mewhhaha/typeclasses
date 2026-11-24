@@ -258,15 +258,9 @@ function create_data_constructor<dictionary extends object>(
 export function is_data(
   value: unknown,
 ): value is WrappedData<object, unknown, unknown> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return has_own.call(value, data_value) || data_marker in value;
+  return typeof value === "object" && value !== null &&
+    ((value as { [data_marker]?: boolean })[data_marker] === true ||
+      has_own.call(value, data_value));
 }
 
 function data_prototype(dictionary: object): object {
@@ -293,6 +287,7 @@ function data_prototype(dictionary: object): object {
       value: data_iterator,
     },
   });
+  mark_data_prototype(prototype);
   define_data_interop(prototype);
 
   Object.defineProperty(data_dictionary, data_prototype_key, {
@@ -412,17 +407,17 @@ class DataYield<yielded, item> extends Iterator<yielded, item, unknown> {
     super();
     this.#current = value;
   }
-  next(...args: [] | [unknown]): IteratorResult<yielded, item> {
+  next(value?: unknown): IteratorResult<yielded, item> {
     switch (this.#state) {
       case 0: {
-        const value = this.#current!;
+        const current = this.#current!;
         this.#current = undefined;
         this.#state = 1;
-        return { done: false, value };
+        return { done: false, value: current };
       }
       case 1:
         this.#state = 2;
-        return { done: true, value: args[0] as item };
+        return { done: true, value: value as item };
       default:
         return { done: true, value: undefined as item };
     }

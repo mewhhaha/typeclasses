@@ -13,10 +13,12 @@ import {
 } from "./typeclass.ts";
 import {
   type Effect,
-  handle_lift,
-  handle_lift_terminal,
+  is_effect,
+  is_lift_of,
   type Lift,
-  type LiftHandler,
+  pure,
+  suspend,
+  type TaggedOperation,
 } from "./effects.ts";
 import {
   cell_dictionary,
@@ -86,9 +88,15 @@ Object.defineProperty(Reader, "with_environment", {
     Reader as unknown as AsReader<environment>,
 });
 
+function identity_environment<environment>(
+  environment: environment,
+): environment {
+  return environment;
+}
+
 /** Reads the current environment. */
 export function ask<environment>(): Reader<environment, environment> {
-  return Reader((environment: environment) => environment);
+  return Reader(identity_environment<environment>);
 }
 
 /** Selects a value from the current environment. */
@@ -182,7 +190,7 @@ function make_reader_cell<key extends PropertyKey, environment>(
 
   Object.defineProperties(dictionary, {
     ask: {
-      value: () => wrap((environment: environment) => environment),
+      value: () => wrap(identity_environment<environment>),
     },
     asks: {
       value: <item>(fn: (environment: environment) => item) => wrap(fn),
@@ -354,22 +362,43 @@ export function run_reader(
   if (args.length === 2) {
     const [effect, environment] = args;
 
-    return handle_lift(
-      effect,
-      reader_kind,
-      environment,
-      reader_lift_handler,
-    );
+    return run_reader_effect(effect, reader_kind, environment);
   }
 
   const [cell, effect, environment] = args;
 
-  return handle_lift(
+  return run_reader_effect(
     effect,
     cell[kind] as AsReader<unknown>[typeof kind],
     environment,
-    reader_lift_handler,
   );
+}
+
+function run_reader_effect(
+  effect: Effect<unknown, unknown>,
+  runtime_kind: AsReader<unknown>[typeof kind],
+  environment: unknown,
+): Effect<unknown, unknown> {
+  let current = effect;
+
+  while (true) {
+    if (current[0] === "pure") {
+      return pure(current[1]);
+    }
+
+    if (is_lift_of(current[1], runtime_kind)) {
+      const lifted = (current[1] as Lift<AsReader<unknown>, unknown>)[1];
+      current = current[2](lifted.value()(environment));
+      continue;
+    }
+
+    const suspended = current;
+    return suspend(
+      suspended[1],
+      (value) =>
+        run_reader_effect(suspended[2](value), runtime_kind, environment),
+    );
+  }
 }
 
 /**
@@ -461,27 +490,35 @@ function run_reader_kind(
     return (effect as Reader<unknown, unknown>).value()(environment);
   }
 
-  return handle_lift_terminal(
-    effect as Effect<Lift<AsReader<unknown>, unknown>, unknown>,
-    runtime_kind,
-    environment,
-    reader_lift_handler,
-  );
-}
+  let current = effect as Effect<Lift<AsReader<unknown>, unknown>, unknown>;
 
-const reader_lift_handler: LiftHandler<
-  AsReader<unknown>,
-  unknown,
-  unknown,
-  unknown
-> = {
-  done(value) {
-    return value;
-  },
-  handle(value, state) {
-    return [value.value()(state), state] as const;
-  },
-};
+  while (true) {
+    if (!is_effect(current)) {
+      throw new TypeError("Invalid effect value");
+    }
+
+    if (current[0] === "pure") {
+      return current[1];
+    }
+
+    if (current[0] !== "impure") {
+      throw new TypeError("Invalid effect value");
+    }
+
+    const operation = current[1];
+    if (!is_lift_of(operation, runtime_kind)) {
+      throw new TypeError(
+        "Unhandled effect operation: " + (operation as TaggedOperation)[0],
+      );
+    }
+
+    const value = operation[1].value()(environment);
+    current = current[2](value) as Effect<
+      Lift<AsReader<unknown>, unknown>,
+      unknown
+    >;
+  }
+}
 
 Show.instance(Reader)({
   show() {
