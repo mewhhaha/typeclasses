@@ -1,7 +1,8 @@
 import { ArrayT } from "./array.ts";
 import {
+  bind,
   type Effect,
-  handle_operation,
+  is_effect,
   map,
   type Operation,
   type OperationOutput,
@@ -41,6 +42,99 @@ type HandledRequirements<table> = table[keyof table] extends infer handler
   : never
   : never;
 
+function run_operations_record(
+  effect: Effect<unknown, unknown>,
+  entries: Record<
+    string,
+    (
+      operation: TaggedOperation & Operation<unknown>,
+    ) => Effect<unknown, unknown>
+  >,
+): Effect<unknown, unknown> {
+  let current = effect;
+  while (true) {
+    if (current[0] === "pure") return current;
+    const operation = current[1];
+    let handle:
+      | ((
+        operation: TaggedOperation & Operation<unknown>,
+      ) => Effect<unknown, unknown>)
+      | undefined;
+    if (Array.isArray(operation) && Object.hasOwn(entries, operation[0])) {
+      const candidate = entries[operation[0]];
+      if (typeof candidate === "function") handle = candidate;
+    }
+    if (handle === undefined) {
+      const suspended = current;
+      return suspend(
+        suspended[1] as Operation<unknown>,
+        (value) => run_operations_record(suspended[2](value), entries),
+      );
+    }
+    const handled = handle.call(
+      entries,
+      operation as TaggedOperation & Operation<unknown>,
+    );
+    if (!is_effect(handled)) {
+      throw new TypeError("Operation handler returned an invalid effect");
+    }
+    if (handled[0] === "pure") {
+      current = current[2](handled[1]);
+      continue;
+    }
+    const suspended = current;
+    return bind(
+      handled,
+      (value) => run_operations_record(suspended[2](value), entries),
+    );
+  }
+}
+
+function run_prepared_operations(
+  effect: Effect<unknown, unknown>,
+  entries: ReadonlyMap<
+    string,
+    (
+      operation: TaggedOperation & Operation<unknown>,
+    ) => Effect<unknown, unknown>
+  >,
+  receiver: unknown,
+): Effect<unknown, unknown> {
+  let current = effect;
+  while (true) {
+    if (current[0] === "pure") return current;
+    const operation = current[1];
+    const handle = Array.isArray(operation)
+      ? entries.get(operation[0])
+      : undefined;
+    if (handle === undefined) {
+      const suspended = current;
+      return suspend(
+        suspended[1] as Operation<unknown>,
+        (value) =>
+          run_prepared_operations(suspended[2](value), entries, receiver),
+      );
+    }
+    const handled = handle.call(
+      receiver,
+      operation as TaggedOperation & Operation<unknown>,
+    );
+    if (!is_effect(handled)) {
+      throw new TypeError("Operation handler returned an invalid effect");
+    }
+    if (handled[0] === "pure") {
+      current = current[2](handled[1]);
+      continue;
+    }
+    const suspended = current;
+    return bind(
+      handled,
+      (value) =>
+        run_prepared_operations(suspended[2](value), entries, receiver),
+    );
+  }
+}
+
 /** Handle independent tagged operations in one pass, retaining emitted requirements. */
 export function handle_operations<
   requirements,
@@ -54,24 +148,15 @@ export function handle_operations<
   | HandledRequirements<table>,
   item
 > {
-  type SelectedOperation =
-    & Selected<requirements, HandledTags<table>>
-    & TaggedOperation
-    & Operation<unknown>;
   const entries = handlers as unknown as Record<
     string,
-    (operation: SelectedOperation) => Effect<unknown, unknown>
+    (
+      operation: TaggedOperation & Operation<unknown>,
+    ) => Effect<unknown, unknown>
   >;
-  return handle_operation(
-    effect,
-    (operation): operation is SelectedOperation =>
-      Array.isArray(operation) && Object.hasOwn(entries, operation[0]) &&
-      typeof entries[operation[0]] === "function",
-    (operation) =>
-      entries[operation[0]](operation) as Effect<
-        unknown,
-        OperationOutput<SelectedOperation>
-      >,
+  return run_operations_record(
+    effect as Effect<unknown, unknown>,
+    entries,
   ) as Effect<
     | Exclude<requirements, Selected<requirements, HandledTags<table>>>
     | HandledRequirements<table>,
@@ -81,10 +166,12 @@ export function handle_operations<
 
 type PreparedEffect<pending, item, table> =
   & Effect<pending, item>
-  & (table extends OperationTable<NoInfer<pending>> ? unknown : {
-    readonly ERROR:
-      "prepared operation handler output must match its operation";
-  });
+  & (NoInfer<pending> extends infer checked
+    ? table extends OperationTable<checked> ? unknown : {
+      readonly ERROR:
+        "prepared operation handler output must match its operation";
+    }
+    : never);
 
 /** Snapshot an operation table once for reuse. Later source-table mutation is isolated. */
 export function prepare_operations<
@@ -124,11 +211,10 @@ export function prepare_operations<
         item
       >;
     }
-    return handle_operation(
-      effect,
-      (operation): operation is SelectedOperation =>
-        Array.isArray(operation) && entries.has(operation[0]),
-      (operation) => entries.get(operation[0])!.call(handlers, operation),
+    return run_prepared_operations(
+      effect as Effect<unknown, unknown>,
+      entries,
+      handlers,
     ) as Effect<
       | Exclude<pending, Selected<pending, HandledTags<table>>>
       | HandledRequirements<table>,
@@ -273,6 +359,14 @@ type FusedCellPlan = {
   readonly ordered: readonly OrderedBinding[];
   readonly dispatch: ReadonlyMap<unknown, number>;
   readonly specs: readonly CellSpec[];
+  readonly fast_count: number;
+  readonly k0: unknown;
+  readonly s0: number;
+  readonly k1: unknown;
+  readonly s1: number;
+  readonly k2: unknown;
+  readonly s2: number;
+  readonly initial_template: readonly unknown[] | undefined;
 };
 
 function collect_ordered_bindings(bindings: Bindings): OrderedBinding[] {
@@ -294,16 +388,65 @@ function build_fused_cell_plan(
 ): FusedCellPlan | undefined {
   const specs: CellSpec[] = [];
   const dispatch = new Map<unknown, number>();
+  let static_initial = true;
   for (let index = 0; index < ordered.length; index += 1) {
     const spec = ordered[index].spec;
     if (spec === undefined) return undefined;
     specs.push(spec);
+    if (spec.family === "writer" && spec.initial === undefined) {
+      static_initial = false;
+    }
     // Earlier bindings run innermost and own any duplicate cell key.
     if (!dispatch.has(spec.runtime_kind)) {
       dispatch.set(spec.runtime_kind, index);
     }
   }
-  return { ordered, dispatch, specs };
+  let k0: unknown;
+  let s0 = -1;
+  let k1: unknown;
+  let s1 = -1;
+  let k2: unknown;
+  let s2 = -1;
+  const fast_count = dispatch.size;
+  if (fast_count <= 3) {
+    let seen = 0;
+    for (const [runtime_kind, slot] of dispatch) {
+      if (seen === 0) {
+        k0 = runtime_kind;
+        s0 = slot;
+      } else if (seen === 1) {
+        k1 = runtime_kind;
+        s1 = slot;
+      } else {
+        k2 = runtime_kind;
+        s2 = slot;
+      }
+      seen += 1;
+    }
+  }
+  let initial_template: unknown[] | undefined;
+  if (static_initial) {
+    initial_template = new Array<unknown>(specs.length);
+    for (let index = 0; index < specs.length; index += 1) {
+      const spec = specs[index];
+      initial_template[index] = spec.family === "reader"
+        ? spec.value
+        : spec.initial;
+    }
+  }
+  return {
+    ordered,
+    dispatch,
+    specs,
+    fast_count,
+    k0,
+    s0,
+    k1,
+    s1,
+    k2,
+    s2,
+    initial_template,
+  };
 }
 
 function set_named_property(
@@ -345,6 +488,9 @@ function build_cell_result<item, bindings extends Bindings>(
 }
 
 function initial_cell_values(plan: FusedCellPlan): unknown[] {
+  if (plan.initial_template !== undefined) {
+    return plan.initial_template.slice();
+  }
   const values = new Array<unknown>(plan.specs.length);
   for (let index = 0; index < plan.specs.length; index += 1) {
     const spec = plan.specs[index];
@@ -387,7 +533,15 @@ function run_fused_cells_step(
 ): Effect<unknown, unknown> | CellResult<unknown, Bindings> {
   let current = effect;
   let buffers: (unknown[] | undefined)[] | undefined;
-  let bufferable: boolean[] | undefined;
+  let non_bufferable_mask = 0;
+  let non_bufferable_set: Set<number> | undefined;
+  const fast_count = plan.fast_count;
+  const k0 = plan.k0;
+  const s0 = plan.s0;
+  const k1 = plan.k1;
+  const s1 = plan.s1;
+  const k2 = plan.k2;
+  const s2 = plan.s2;
 
   while (true) {
     if (current[0] === "pure") {
@@ -407,7 +561,15 @@ function run_fused_cells_step(
     ) {
       const lifted = (operation as readonly [string, unknown])[1];
       if (typeof lifted === "object" && lifted !== null) {
-        const slot = plan.dispatch.get((lifted as Dictionary)[kind]);
+        const lifted_kind = (lifted as Dictionary)[kind];
+        let slot: number | undefined;
+        if (fast_count <= 3) {
+          if (fast_count >= 1 && lifted_kind === k0) slot = s0;
+          else if (fast_count >= 2 && lifted_kind === k1) slot = s1;
+          else if (fast_count === 3 && lifted_kind === k2) slot = s2;
+        } else {
+          slot = plan.dispatch.get(lifted_kind);
+        }
         if (slot !== undefined) {
           const spec = plan.specs[slot];
           switch (spec.family) {
@@ -435,12 +597,12 @@ function run_fused_cells_step(
                 }
               ).value();
               const current_output = values[slot] as Data<Dictionary, unknown>;
-              if (bufferable === undefined) {
-                bufferable = new Array<boolean>(plan.specs.length).fill(true);
-              }
+              const is_bufferable = slot < 31
+                ? (non_bufferable_mask & (1 << slot)) === 0
+                : !(non_bufferable_set?.has(slot) ?? false);
               const existing_buffer = buffers?.[slot];
               if (
-                bufferable[slot] &&
+                is_bufferable &&
                 (existing_buffer !== undefined ||
                   has_canonical_array_concat(current_output)) &&
                 is_canonical_array_concat_method() &&
@@ -471,7 +633,8 @@ function run_fused_cells_step(
                   >;
                   buffers![slot] = undefined;
                 }
-                bufferable[slot] = false;
+                if (slot < 31) non_bufferable_mask |= 1 << slot;
+                else (non_bufferable_set ??= new Set()).add(slot);
                 values[slot] = (
                   target as unknown as {
                     concat(other: unknown): Data<Dictionary, unknown>;

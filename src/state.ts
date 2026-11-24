@@ -86,9 +86,13 @@ Object.defineProperty(State, "with_state", {
   value: <state>(): AsState<state> => State as unknown as AsState<state>,
 });
 
+function read_state<state>(state: state): readonly [state, state] {
+  return [state, state];
+}
+
 /** Reads the current state. */
 export function get<state>(): State<state, state> {
-  return State((state: state) => [state, state]);
+  return State(read_state<state>);
 }
 
 /** Replaces the current state. */
@@ -174,7 +178,7 @@ function make_state_cell<key extends PropertyKey, state>(
 
   Object.defineProperties(dictionary, {
     get: {
-      value: () => wrap((current: state) => [current, current] as const),
+      value: () => wrap(read_state<state>),
     },
     put: {
       value: (next: state) =>

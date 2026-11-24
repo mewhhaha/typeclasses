@@ -49,58 +49,215 @@ export type StmJournal = {
   readonly writes: Map<TVar<unknown>, unknown>;
 };
 
-type JournalStorage = {
-  reads?: Map<TVar<unknown>, unknown>;
-  writes?: Map<TVar<unknown>, unknown>;
-  exposed?: Set<TVar<unknown>>;
-  escaped: boolean;
-};
+const journal_inline_limit = 8;
+
 class Journal implements StmJournal {
   readonly parent?: StmJournal;
-  readonly storage: JournalStorage = { escaped: false };
+  escaped = false;
+  reads_map?: Map<TVar<unknown>, unknown>;
+  writes_map?: Map<TVar<unknown>, unknown>;
+  exposed_map?: Set<TVar<unknown>>;
+  r0_k?: TVar<unknown>;
+  r0_v: unknown = undefined;
+  w0_k?: TVar<unknown>;
+  w0_v: unknown = undefined;
+  w0_exp = false;
+  r_keys?: TVar<unknown>[];
+  r_vals?: unknown[];
+  w_keys?: TVar<unknown>[];
+  w_vals?: unknown[];
+  w_exp?: boolean[];
+
   constructor(parent?: StmJournal) {
     this.parent = parent;
   }
-  get reads(): Map<TVar<unknown>, unknown> {
-    return this.storage.reads ??= new Map();
+
+  promote_reads(): Map<TVar<unknown>, unknown> {
+    if (this.reads_map !== undefined) return this.reads_map;
+    const map = new Map<TVar<unknown>, unknown>();
+    if (this.r0_k !== undefined) {
+      map.set(this.r0_k, this.r0_v);
+      this.r0_k = undefined;
+      this.r0_v = undefined;
+    }
+    if (this.r_keys !== undefined) {
+      const keys = this.r_keys;
+      const vals = this.r_vals!;
+      for (let index = 0; index < keys.length; index += 1) {
+        map.set(keys[index], vals[index]);
+      }
+      this.r_keys = undefined;
+      this.r_vals = undefined;
+    }
+    this.reads_map = map;
+    return map;
   }
+
+  promote_writes(): Map<TVar<unknown>, unknown> {
+    if (this.writes_map !== undefined) return this.writes_map;
+    const map = new Map<TVar<unknown>, unknown>();
+    if (this.w0_k !== undefined) {
+      map.set(this.w0_k, this.w0_v);
+      if (this.w0_exp) (this.exposed_map ??= new Set()).add(this.w0_k);
+      this.w0_k = undefined;
+      this.w0_v = undefined;
+      this.w0_exp = false;
+    }
+    if (this.w_keys !== undefined) {
+      const keys = this.w_keys;
+      const vals = this.w_vals!;
+      const exp = this.w_exp!;
+      for (let index = 0; index < keys.length; index += 1) {
+        map.set(keys[index], vals[index]);
+        if (exp[index]) (this.exposed_map ??= new Set()).add(keys[index]);
+      }
+      this.w_keys = undefined;
+      this.w_vals = undefined;
+      this.w_exp = undefined;
+    }
+    this.writes_map = map;
+    return map;
+  }
+
+  get reads(): Map<TVar<unknown>, unknown> {
+    return this.promote_reads();
+  }
+
   get writes(): Map<TVar<unknown>, unknown> {
-    this.storage.escaped = true;
-    return this.storage.writes ??= new Map();
+    this.escaped = true;
+    return this.promote_writes();
+  }
+
+  set_read(key: TVar<unknown>, value: unknown): void {
+    if (this.reads_map !== undefined) {
+      this.reads_map.set(key, value);
+      return;
+    }
+    if (this.r0_k === undefined || this.r0_k === key) {
+      this.r0_k = key;
+      this.r0_v = value;
+      return;
+    }
+    const keys = this.r_keys;
+    const vals = this.r_vals;
+    if (keys === undefined) {
+      this.r_keys = [key];
+      this.r_vals = [value];
+      return;
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      if (keys[index] === key) {
+        vals![index] = value;
+        return;
+      }
+    }
+    if (keys.length >= journal_inline_limit) {
+      this.promote_reads().set(key, value);
+      return;
+    }
+    keys.push(key);
+    vals!.push(value);
+  }
+
+  set_write(key: TVar<unknown>, value: unknown, mark_exposed = false): void {
+    if (this.writes_map !== undefined) {
+      this.writes_map.set(key, value);
+      if (mark_exposed) (this.exposed_map ??= new Set()).add(key);
+      return;
+    }
+    if (this.w0_k === undefined || this.w0_k === key) {
+      this.w0_k = key;
+      this.w0_v = value;
+      if (mark_exposed) this.w0_exp = true;
+      return;
+    }
+    const keys = this.w_keys;
+    const vals = this.w_vals;
+    const exp = this.w_exp;
+    if (keys === undefined) {
+      this.w_keys = [key];
+      this.w_vals = [value];
+      this.w_exp = [mark_exposed];
+      return;
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      if (keys[index] === key) {
+        vals![index] = value;
+        if (mark_exposed) exp![index] = true;
+        return;
+      }
+    }
+    if (keys.length >= journal_inline_limit) {
+      const map = this.promote_writes();
+      map.set(key, value);
+      if (mark_exposed) (this.exposed_map ??= new Set()).add(key);
+      return;
+    }
+    keys.push(key);
+    vals!.push(value);
+    exp!.push(mark_exposed);
+  }
+
+  has_write(key: TVar<unknown>): boolean {
+    if (this.writes_map !== undefined) return this.writes_map.has(key);
+    if (this.w0_k === key) return true;
+    const keys = this.w_keys;
+    if (keys !== undefined) {
+      for (let index = 0; index < keys.length; index += 1) {
+        if (keys[index] === key) return true;
+      }
+    }
+    return false;
+  }
+
+  mark_exposed(key: TVar<unknown>): void {
+    if (this.writes_map !== undefined) {
+      (this.exposed_map ??= new Set()).add(key);
+      return;
+    }
+    if (this.w0_k === key) {
+      this.w0_exp = true;
+      return;
+    }
+    const keys = this.w_keys;
+    if (keys !== undefined) {
+      for (let index = 0; index < keys.length; index += 1) {
+        if (keys[index] === key) {
+          this.w_exp![index] = true;
+          return;
+        }
+      }
+    }
   }
 }
-function create_journal(parent?: StmJournal): StmJournal {
+
+function create_journal(parent?: StmJournal): Journal {
   return new Journal(parent);
 }
-function storage_of(journal: StmJournal): JournalStorage | undefined {
-  if (journal instanceof Journal) return journal.storage;
+
+function journal_of(journal: StmJournal): Journal | undefined {
+  return journal instanceof Journal ? journal : undefined;
 }
 
 function reads_of(
   journal: StmJournal,
 ): Map<TVar<unknown>, unknown> | undefined {
-  const storage = storage_of(journal);
-  if (storage !== undefined) return storage.reads;
+  const internal = journal_of(journal);
+  if (internal !== undefined) return internal.reads_map;
   return journal.reads;
 }
 
 function writes_of(
   journal: StmJournal,
 ): Map<TVar<unknown>, unknown> | undefined {
-  const storage = storage_of(journal);
-  if (storage !== undefined) return storage.writes;
-  return journal.writes;
-}
-
-function writable(journal: StmJournal): Map<TVar<unknown>, unknown> {
-  const storage = storage_of(journal);
-  if (storage !== undefined) return storage.writes ??= new Map();
+  const internal = journal_of(journal);
+  if (internal !== undefined) return internal.writes_map;
   return journal.writes;
 }
 
 function expose(journal: StmJournal, variable: TVar<unknown>): void {
-  const storage = storage_of(journal);
-  if (storage !== undefined) (storage.exposed ??= new Set()).add(variable);
+  const internal = journal_of(journal);
+  if (internal !== undefined) internal.mark_exposed(variable);
 }
 
 /** A synchronous transaction evaluated against an isolated journal. */
@@ -129,8 +286,8 @@ export const Stm: AsStm = data<AsStm>(stm_identity, function (transaction) {
   return this.data((journal) => {
     // Arbitrary callbacks can retain the raw journal. They cannot establish the
     // ownership proof used by the closed set of built-in operations.
-    const storage = storage_of(journal);
-    if (storage !== undefined) storage.escaped = true;
+    const internal = journal_of(journal);
+    if (internal !== undefined) internal.escaped = true;
     return transaction(journal);
   });
 });
@@ -334,6 +491,49 @@ function read_journal<item>(
   variable: TVar<item>,
 ): item {
   const key = variable as TVar<unknown>;
+  const internal = journal_of(journal);
+  if (internal !== undefined) {
+    if (internal.writes_map !== undefined) {
+      if (internal.writes_map.has(key)) {
+        (internal.exposed_map ??= new Set()).add(key);
+        return internal.writes_map.get(key) as item;
+      }
+    } else if (internal.w0_k !== undefined) {
+      if (internal.w0_k === key) {
+        internal.w0_exp = true;
+        return internal.w0_v as item;
+      }
+      const w_keys = internal.w_keys;
+      if (w_keys !== undefined) {
+        for (let index = 0; index < w_keys.length; index += 1) {
+          if (w_keys[index] === key) {
+            internal.w_exp![index] = true;
+            return internal.w_vals![index] as item;
+          }
+        }
+      }
+    }
+    if (internal.reads_map !== undefined) {
+      if (internal.reads_map.has(key)) {
+        return internal.reads_map.get(key) as item;
+      }
+    } else if (internal.r0_k !== undefined) {
+      if (internal.r0_k === key) return internal.r0_v as item;
+      const r_keys = internal.r_keys;
+      if (r_keys !== undefined) {
+        for (let index = 0; index < r_keys.length; index += 1) {
+          if (r_keys[index] === key) return internal.r_vals![index] as item;
+        }
+      }
+    }
+    const value = isolate_tvar(
+      variable,
+      lookup_journal(journal.parent, key, read_current(variable)) as item,
+      `value read from TVar ${read_tvar_id(variable)}`,
+    );
+    internal.set_read(key, value);
+    return value;
+  }
 
   const writes = writes_of(journal);
   if (writes?.has(key)) {
@@ -358,39 +558,124 @@ function write_journal<item>(
   variable: TVar<item>,
   value: item,
 ): void {
-  writable(journal).set(
-    variable as TVar<unknown>,
-    isolate_tvar(
-      variable,
-      value,
-      `value written to TVar ${read_tvar_id(variable)}`,
-    ),
+  const isolated = isolate_tvar(
+    variable,
+    value,
+    `value written to TVar ${read_tvar_id(variable)}`,
   );
+  const internal = journal_of(journal);
+  if (internal !== undefined) {
+    internal.set_write(variable as TVar<unknown>, isolated);
+    return;
+  }
+  journal.writes.set(variable as TVar<unknown>, isolated);
 }
 
 function commit_journal(journal: StmJournal): void {
-  const writes = writes_of(journal);
-  if (writes === undefined) return;
-  const storage = storage_of(journal);
-  // Private staged clones have never escaped. Only exposed snapshots need a
-  // second clone. Prepare every clone before publishing any TVar value.
-  if (storage !== undefined && !storage.escaped) {
-    // Preparation can reuse the private map: it cannot be retained by callbacks.
-    for (const [variable, value] of writes) {
-      if (storage.exposed?.has(variable)) {
-        writes.set(
-          variable,
-          isolate_tvar(
-            variable,
-            value,
-            `commit value for TVar ${read_tvar_id(variable)}`,
-          ),
-        );
+  const internal = journal_of(journal);
+  if (internal !== undefined) {
+    if (internal.writes_map === undefined) {
+      if (internal.w0_k === undefined) return;
+      if (!internal.escaped) {
+        if (internal.w_keys === undefined) {
+          let value = internal.w0_v;
+          if (internal.w0_exp) {
+            value = isolate_tvar(
+              internal.w0_k,
+              value,
+              `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
+            );
+          }
+          write_current(internal.w0_k, value);
+          return;
+        }
+        let v0 = internal.w0_v;
+        if (internal.w0_exp) {
+          v0 = isolate_tvar(
+            internal.w0_k,
+            v0,
+            `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
+          );
+        }
+        const keys = internal.w_keys;
+        const vals = internal.w_vals!;
+        const exp = internal.w_exp!;
+        for (let index = 0; index < keys.length; index += 1) {
+          if (exp[index]) {
+            vals[index] = isolate_tvar(
+              keys[index],
+              vals[index],
+              `commit value for TVar ${read_tvar_id(keys[index])}`,
+            );
+          }
+        }
+        write_current(internal.w0_k, v0);
+        for (let index = 0; index < keys.length; index += 1) {
+          write_current(keys[index], vals[index]);
+        }
+        return;
       }
+      // Escaped journal with inline writes: isolate every value before publishing.
+      const v0 = isolate_tvar(
+        internal.w0_k,
+        internal.w0_v,
+        `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
+      );
+      const keys = internal.w_keys;
+      const prepared: unknown[] = [];
+      if (keys !== undefined) {
+        const vals = internal.w_vals!;
+        for (let index = 0; index < keys.length; index += 1) {
+          prepared.push(
+            isolate_tvar(
+              keys[index],
+              vals[index],
+              `commit value for TVar ${read_tvar_id(keys[index])}`,
+            ),
+          );
+        }
+      }
+      write_current(internal.w0_k, v0);
+      if (keys !== undefined) {
+        for (let index = 0; index < keys.length; index += 1) {
+          write_current(keys[index], prepared[index]);
+        }
+      }
+      return;
     }
-    for (const [variable, value] of writes) write_current(variable, value);
+    const writes = internal.writes_map;
+    if (!internal.escaped) {
+      for (const [variable, value] of writes) {
+        if (internal.exposed_map?.has(variable)) {
+          writes.set(
+            variable,
+            isolate_tvar(
+              variable,
+              value,
+              `commit value for TVar ${read_tvar_id(variable)}`,
+            ),
+          );
+        }
+      }
+      for (const [variable, value] of writes) write_current(variable, value);
+      return;
+    }
+    const commits: [TVar<unknown>, unknown][] = [];
+    for (const [variable, value] of writes) {
+      commits.push([
+        variable,
+        isolate_tvar(
+          variable,
+          value,
+          `commit value for TVar ${read_tvar_id(variable)}`,
+        ),
+      ]);
+    }
+    for (const [variable, value] of commits) write_current(variable, value);
     return;
   }
+  const writes = writes_of(journal);
+  if (writes === undefined) return;
   const commits: [TVar<unknown>, unknown][] = [];
   for (const [variable, value] of writes) {
     commits.push([
@@ -411,6 +696,36 @@ function lookup_journal(
   fallback: unknown,
 ): unknown {
   for (let current = journal; current !== undefined; current = current.parent) {
+    const internal = journal_of(current);
+    if (internal !== undefined) {
+      if (internal.writes_map !== undefined) {
+        if (internal.writes_map.has(variable)) {
+          return internal.writes_map.get(variable);
+        }
+      } else if (internal.w0_k !== undefined) {
+        if (internal.w0_k === variable) return internal.w0_v;
+        const w_keys = internal.w_keys;
+        if (w_keys !== undefined) {
+          for (let index = 0; index < w_keys.length; index += 1) {
+            if (w_keys[index] === variable) return internal.w_vals![index];
+          }
+        }
+      }
+      if (internal.reads_map !== undefined) {
+        if (internal.reads_map.has(variable)) {
+          return internal.reads_map.get(variable);
+        }
+      } else if (internal.r0_k !== undefined) {
+        if (internal.r0_k === variable) return internal.r0_v;
+        const r_keys = internal.r_keys;
+        if (r_keys !== undefined) {
+          for (let index = 0; index < r_keys.length; index += 1) {
+            if (r_keys[index] === variable) return internal.r_vals![index];
+          }
+        }
+      }
+      continue;
+    }
     const writes = writes_of(current);
     if (writes?.has(variable)) return writes.get(variable);
     const reads = reads_of(current);
@@ -420,25 +735,78 @@ function lookup_journal(
 }
 
 function merge_journal(journal: StmJournal, branch: StmJournal): void {
+  const target = journal_of(journal);
+  const source = journal_of(branch);
+  const merge_read = (variable: TVar<unknown>, value: unknown) => {
+    if (target !== undefined) {
+      if (target.has_write(variable)) target.set_write(variable, value, true);
+      else target.set_read(variable, value);
+    } else if (writes_of(journal)?.has(variable)) {
+      journal.writes.set(variable, value);
+      expose(journal, variable);
+    } else {
+      journal.reads.set(variable, value);
+    }
+  };
+  const merge_write = (
+    variable: TVar<unknown>,
+    value: unknown,
+    is_exposed: boolean,
+  ) => {
+    if (target !== undefined) {
+      target.set_write(variable, value, is_exposed);
+    } else {
+      journal.writes.set(variable, value);
+      if (is_exposed) expose(journal, variable);
+    }
+  };
+  if (source !== undefined) {
+    if (source.reads_map !== undefined) {
+      for (const [variable, value] of source.reads_map) {
+        merge_read(variable, value);
+      }
+    } else if (source.r0_k !== undefined) {
+      merge_read(source.r0_k, source.r0_v);
+      const r_keys = source.r_keys;
+      if (r_keys !== undefined) {
+        const r_vals = source.r_vals!;
+        for (let index = 0; index < r_keys.length; index += 1) {
+          merge_read(r_keys[index], r_vals[index]);
+        }
+      }
+    }
+    if (source.writes_map !== undefined) {
+      for (const [variable, value] of source.writes_map) {
+        merge_write(
+          variable,
+          value,
+          source.escaped || (source.exposed_map?.has(variable) ?? false),
+        );
+      }
+    } else if (source.w0_k !== undefined) {
+      merge_write(source.w0_k, source.w0_v, source.escaped || source.w0_exp);
+      const w_keys = source.w_keys;
+      if (w_keys !== undefined) {
+        const w_vals = source.w_vals!;
+        const w_exp = source.w_exp!;
+        for (let index = 0; index < w_keys.length; index += 1) {
+          merge_write(
+            w_keys[index],
+            w_vals[index],
+            source.escaped || w_exp[index],
+          );
+        }
+      }
+    }
+    return;
+  }
   const reads = reads_of(branch);
   if (reads !== undefined) {
-    for (const [variable, value] of reads) {
-      if (writes_of(journal)?.has(variable)) {
-        writable(journal).set(variable, value);
-        expose(journal, variable);
-      } else journal.reads.set(variable, value);
-    }
+    for (const [variable, value] of reads) merge_read(variable, value);
   }
   const writes = writes_of(branch);
   if (writes !== undefined) {
-    const branch_storage = storage_of(branch);
-    for (const [variable, value] of writes) {
-      writable(journal).set(variable, value);
-      if (
-        branch_storage === undefined || branch_storage.escaped ||
-        branch_storage.exposed?.has(variable)
-      ) expose(journal, variable);
-    }
+    for (const [variable, value] of writes) merge_write(variable, value, true);
   }
 }
 
