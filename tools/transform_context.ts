@@ -78,6 +78,7 @@ export type PrimitiveFunctionName =
   | "modify"
   | "writer"
   | "tell";
+export type CellFactoryKind = "reader" | "state" | "writer";
 export type ImportedBindings = {
   readonly do_names: ReadonlySet<string>;
   readonly program_names: ReadonlySet<string>;
@@ -96,6 +97,10 @@ export type ImportedBindings = {
     string,
     ReadonlySet<PrimitiveFunctionName>
   >;
+  readonly cell_factories?: ReadonlyMap<string, CellFactoryKind>;
+  readonly cell_namespaces?: ReadonlyMap<string, ReadonlySet<CellFactoryKind>>;
+  readonly direct_maybe_dictionaries?: ReadonlySet<string>;
+  readonly just_constructors?: ReadonlySet<string>;
   readonly effect_helper_shadowed: boolean;
   readonly program_module?: string;
 };

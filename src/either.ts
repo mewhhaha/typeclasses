@@ -274,7 +274,14 @@ export function from_left<left, right>(
   fallback: left,
   value: Either<left, right>,
 ): left {
-  return either((error) => error, () => fallback, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return payload as left;
+    case "Right":
+      return fallback;
+  }
 }
 
 /** Haskell `fromRight :: b -> Either a b -> b`. */
@@ -282,14 +289,28 @@ export function from_right<left, right>(
   fallback: right,
   value: Either<left, right>,
 ): right {
-  return either(() => fallback, (item) => item, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return fallback;
+    case "Right":
+      return payload as right;
+  }
 }
 
 /** Haskell `hush :: Either a b -> Maybe b`. */
 export function hush<left, right>(
   value: Either<left, right>,
 ): Maybe<right> {
-  return either(() => Nothing<right>(), (item) => Just(item), value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return Nothing<right>();
+    case "Right":
+      return Just(payload as right);
+  }
 }
 
 /** Haskell `note :: e -> Maybe a -> Either e a`. */
@@ -369,12 +390,51 @@ export function bind_widen<
   }
 }
 
+/** Map only the left error payload while leaving right values untouched. */
+export function map_left<value extends Either<AnyLeft, unknown>, next_left>(
+  value: value,
+  fn: (error: EitherLeft<ReturnType<value["value"]>>) => next_left,
+): Either<next_left, EitherRight<ReturnType<value["value"]>>> {
+  const [tag, payload] = value.value();
+  type Output = Either<next_left, EitherRight<ReturnType<value["value"]>>>;
+
+  switch (tag) {
+    case "Left":
+      return Left<next_left, EitherRight<ReturnType<value["value"]>>>(
+        fn(payload as EitherLeft<ReturnType<value["value"]>>),
+      ) as Output;
+    case "Right":
+      return Right<next_left, EitherRight<ReturnType<value["value"]>>>(
+        payload as EitherRight<ReturnType<value["value"]>>,
+      ) as Output;
+  }
+}
+
+/** Execute `fn`, catching synchronous exceptions into the Left branch. */
+export function try_catch<error, item>(
+  fn: () => item,
+  on_error: (cause: unknown) => error,
+): Either<error, item> {
+  try {
+    return Right<error, item>(fn());
+  } catch (cause) {
+    return Left<error, item>(on_error(cause));
+  }
+}
+
 /** Recover a result with a lazy fallback while retaining the successful type. */
 export function recover_or_else<error, item, fallback>(
   value: Either<error, item>,
   fallback: (error: error) => fallback,
 ): item | fallback {
-  return either(fallback, (item): item | fallback => item, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return fallback(payload as error);
+    case "Right":
+      return payload as item;
+  }
 }
 
 // Keep dictionary construction and instance installation in one removable unit.

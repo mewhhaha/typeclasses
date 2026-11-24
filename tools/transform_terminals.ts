@@ -175,6 +175,157 @@ export function create_terminal_transform(services: TransformServices) {
     }
     return undefined;
   }
+  function is_cell_factory_call(
+    expression: Expression,
+    kind: TerminalKind,
+  ): boolean {
+    const value = parentheses(expression);
+    if (value.type !== "CallExpression" || value.optional) return false;
+    const check_callee = (callee: Expression): boolean => {
+      if (callee.type === "Identifier" && services.bindings.imported(callee)) {
+        return services.imports.cell_factories?.get(callee.name) === kind;
+      }
+      if (
+        callee.type === "MemberExpression" && !callee.computed &&
+        !callee.optional && callee.object.type === "Identifier" &&
+        callee.property.type === "Identifier" &&
+        services.bindings.imported(callee.object)
+      ) {
+        const allowed = services.imports.cell_namespaces?.get(
+          callee.object.name,
+        );
+        if (allowed === undefined || !allowed.has(kind)) return false;
+        switch (kind) {
+          case "reader":
+            return callee.property.name === "reader";
+          case "state":
+            return callee.property.name === "state";
+          case "writer":
+            return callee.property.name === "writer_cell";
+        }
+      }
+      return false;
+    };
+    if (check_callee(value.callee)) return true;
+    // Curried cell factories: `reader<Config>()("config")`, `state<number>()("count")`
+    const inner = parentheses(value.callee);
+    return (kind === "reader" || kind === "state") &&
+      inner.type === "CallExpression" && !inner.optional &&
+      inner.arguments.length === 0 && check_callee(inner.callee);
+  }
+  function resolve_cell(
+    expression: Expression,
+    kind: TerminalKind,
+  ):
+    | { readonly identifier: IdentifierReference; readonly declaration: Node }
+    | undefined {
+    const value = parentheses(expression);
+    if (value.type !== "Identifier") return undefined;
+    const declaration = services.bindings.resolve(value);
+    if (
+      declaration === null || declaration.type !== "VariableDeclarator" ||
+      declaration.init === null
+    ) return undefined;
+    const owner = services.bindings.parent(declaration);
+    if (
+      owner === null || owner.type !== "VariableDeclaration" ||
+      owner.kind !== "const"
+    ) return undefined;
+    if (!is_cell_factory_call(declaration.init, kind)) return undefined;
+    return { identifier: value, declaration };
+  }
+  function cell_primitive(
+    expression: Expression,
+    cell_declaration: Node,
+    kind: TerminalKind,
+  ): Primitive | undefined {
+    const value = parentheses(expression);
+    if (
+      value.type !== "CallExpression" || value.optional ||
+      value.typeArguments != null ||
+      value.arguments.some((argument) => argument.type === "SpreadElement")
+    ) return undefined;
+    if (
+      value.callee.type !== "MemberExpression" || value.callee.computed ||
+      value.callee.optional || value.callee.object.type !== "Identifier" ||
+      value.callee.property.type !== "Identifier" ||
+      services.bindings.resolve(value.callee.object) !== cell_declaration
+    ) return undefined;
+    let name: PrimitiveFunctionName | undefined;
+    switch (kind) {
+      case "reader":
+        if (value.callee.property.name === "ask") name = "ask";
+        else if (value.callee.property.name === "asks") name = "asks";
+        break;
+      case "state":
+        switch (value.callee.property.name) {
+          case "get":
+          case "gets":
+          case "put":
+          case "modify":
+            name = value.callee.property.name;
+            break;
+        }
+        break;
+      case "writer":
+        if (value.callee.property.name === "tell") name = "tell";
+        else if (value.callee.property.name === "write") name = "writer";
+        break;
+    }
+    if (name === undefined || !primitive_arity(name, value.arguments.length)) {
+      return undefined;
+    }
+    return { name, arguments: value.arguments as Expression[] };
+  }
+  function cell_input_type(
+    cell_id: IdentifierReference,
+    kind: TerminalKind,
+  ): TSType | undefined {
+    if (kind === "writer") return undefined;
+    const method_name = kind === "reader" ? "ask" : "get";
+    const ask_value_type: TSType = node({
+      type: "TSIndexedAccessType",
+      objectType: node({
+        type: "TSTypeReference",
+        typeName: id("ReturnType"),
+        typeArguments: node({
+          type: "TSTypeParameterInstantiation",
+          params: Array.from([
+            node({
+              type: "TSTypeQuery",
+              exprName: node({
+                type: "TSQualifiedName",
+                left: id(cell_id.name),
+                right: id(method_name),
+              }),
+              typeArguments: null,
+            }) as TSType,
+          ]),
+        }),
+      }),
+      indexType: node({
+        type: "TSLiteralType",
+        literal: node({ type: "Literal", value: "value", raw: '"value"' }),
+      }),
+    });
+    const return_value: TSType = node({
+      type: "TSTypeReference",
+      typeName: id("ReturnType"),
+      typeArguments: node({
+        type: "TSTypeParameterInstantiation",
+        params: Array.from([ask_value_type]),
+      }),
+    });
+    if (kind === "reader") return return_value;
+    return node({
+      type: "TSIndexedAccessType",
+      objectType: return_value,
+      indexType: node({
+        type: "TSLiteralType",
+        literal: node({ type: "Literal", value: 1, raw: "1" }),
+      }),
+    });
+  }
   function runner(target_: Target): Expression {
     const name = target_.imported + "_terminal";
     if (target_.namespace !== undefined) return member(target_.namespace, name);
@@ -187,12 +338,91 @@ export function create_terminal_transform(services: TransformServices) {
       return undefined;
     }
     const handled = parentheses(outer.arguments[0] as Expression);
-    if (handled.type !== "CallExpression" || !plain_call(handled, 2)) {
+    if (
+      handled.type !== "CallExpression" || handled.optional ||
+      handled.typeArguments != null ||
+      handled.arguments.some((argument) => argument.type === "SpreadElement") ||
+      (handled.arguments.length !== 2 && handled.arguments.length !== 3)
+    ) {
       return undefined;
     }
     const handler = target(handled.callee);
     if (handler === undefined || handler.imported === "run") return undefined;
     const kind = terminal_kind(handler.imported);
+
+    // Keyed cell terminal fusion:
+    //   run(run_reader(cell, Program(...), env))
+    //   run(run_state(cell, Program(...), init))
+    //   run(run_writer(cell, Program(...), empty))
+    //   run(run_writer(cell, Program(...)))
+    const keyed = handled.arguments.length === 3 ||
+      (kind === "writer" &&
+        resolve_cell(handled.arguments[0] as Expression, "writer") !==
+          undefined);
+    if (keyed) {
+      const resolved_cell = resolve_cell(
+        handled.arguments[0] as Expression,
+        kind,
+      );
+      if (resolved_cell === undefined) return undefined;
+      const program = parentheses(handled.arguments[1] as Expression);
+      const input_expr: Expression = handled.arguments.length === 3
+        ? handled.arguments[2] as Expression
+        : node({
+          type: "MemberExpression",
+          object: call(
+            member(
+              call(member(id(resolved_cell.identifier.name), "pure"), [
+                void_zero(),
+              ]),
+              "value",
+            ),
+            [],
+          ),
+          property: node({ type: "Literal", value: 1, raw: "1" }),
+          computed: true,
+          optional: false,
+        });
+      if (
+        program.type !== "CallExpression" || !plain_call(program, 1) ||
+        services.kind(program) !== "program"
+      ) return undefined;
+      const run = program.arguments[0];
+      if (
+        run.type !== "FunctionExpression" || !valid_generator(run) ||
+        lexical_hazard(run.body!) ||
+        (handled.arguments.length === 3 &&
+          (lexical_hazard(input_expr) || contains_await_yield(input_expr)))
+      ) return undefined;
+      const body = read_body(run.body!);
+      if (body === undefined) return undefined;
+      const can_fuse = services.config.optimizations?.terminal_body !== false &&
+        body.parts.every((part) => {
+          if (part.kind !== "yield") return true;
+          return cell_primitive(
+            part.expression,
+            resolved_cell.declaration,
+            kind,
+          ) !== undefined;
+        });
+      if (!can_fuse) {
+        return {
+          expression: { ...handled, callee: runner(handler) },
+          direct: false,
+        };
+      }
+      return {
+        expression: emit_keyed(
+          body,
+          input_expr,
+          kind,
+          resolved_cell.identifier,
+          resolved_cell.declaration,
+        ),
+        direct: true,
+      };
+    }
+
     const argument = parentheses(handled.arguments[0] as Expression);
     let program = argument;
     let candidate:
@@ -486,6 +716,148 @@ export function create_terminal_transform(services: TransformServices) {
     }
     return call(arrow([input_thunk], block(statements)), [arrow([], input)]);
   }
+  function annotate_callback(
+    expression: Expression,
+    param_type: TSType | undefined,
+  ): Expression {
+    if (param_type === undefined) return expression;
+    const value = parentheses(expression);
+    if (
+      (value.type !== "ArrowFunctionExpression" &&
+        value.type !== "FunctionExpression") ||
+      value.params.length === 0
+    ) return expression;
+    const first = value.params[0];
+    if (first.type !== "Identifier" || first.typeAnnotation != null) {
+      return expression;
+    }
+    return {
+      ...value,
+      params: [
+        {
+          ...first,
+          typeAnnotation: node({
+            type: "TSTypeAnnotation",
+            typeAnnotation: param_type,
+          }),
+        },
+        ...value.params.slice(1),
+      ],
+    };
+  }
+  function emit_keyed(
+    body: Body,
+    input: Expression,
+    kind: TerminalKind,
+    cell_id: IdentifierReference,
+    cell_declaration: Node,
+  ): Expression {
+    const input_thunk = services.fresh(kind + "_input");
+    let current_name = "output";
+    if (kind === "reader") current_name = "environment";
+    if (kind === "state") current_name = "state";
+    const current = services.fresh(current_name);
+    const resolved_type = cell_input_type(cell_id, kind);
+    const statements: Statement[] = [];
+    let initialized = false;
+    let returned = false;
+    for (const part of body.parts) {
+      if (part.kind === "statement") {
+        statements.push(part.statement);
+        continue;
+      }
+      const operation = cell_primitive(
+        part.expression,
+        cell_declaration,
+        kind,
+      )!;
+      const arguments_ = operation.arguments.map((argument, index) => {
+        const temporary = services.fresh(operation.name + "_argument_" + index);
+        const typed_arg = index === 0 &&
+            (operation.name === "asks" || operation.name === "gets" ||
+              operation.name === "modify")
+          ? annotate_callback(argument, resolved_type)
+          : argument;
+        const type = index === 0 && operation.name === "put"
+          ? resolved_type
+          : undefined;
+        statements.push(
+          variable(
+            temporary,
+            node({
+              type: "SequenceExpression",
+              expressions: [void_zero(), typed_arg],
+            }),
+            "const",
+            type,
+          ),
+        );
+        return temporary;
+      });
+      if (!initialized) {
+        const declaration_kind: "const" | "let" = kind === "reader"
+          ? "const"
+          : "let";
+        statements.push(
+          variable(
+            current,
+            call(input_thunk, []),
+            declaration_kind,
+            resolved_type,
+          ),
+        );
+        initialized = true;
+      }
+      let value: Expression;
+      switch (operation.name) {
+        case "ask":
+        case "get":
+          value = current;
+          break;
+        case "asks":
+        case "gets":
+          value = call(arguments_[0], [current]);
+          break;
+        case "put":
+          statements.push(assign(current, arguments_[0]));
+          value = void_zero();
+          break;
+        case "modify":
+          statements.push(assign(current, call(arguments_[0], [current])));
+          value = void_zero();
+          break;
+        case "writer":
+          statements.push(
+            assign(current, call(member(current, "concat"), [arguments_[1]])),
+          );
+          value = arguments_[0];
+          break;
+        case "tell":
+          statements.push(
+            assign(current, call(member(current, "concat"), [arguments_[0]])),
+          );
+          value = void_zero();
+          break;
+      }
+      if (part.returns) {
+        statements.push(ret(output(value, current, kind)));
+        returned = true;
+      } else if (part.binding !== undefined) {
+        statements.push({
+          ...part.binding.statement,
+          declarations: [{ ...part.binding.declaration, init: value }],
+        });
+      } else if (operation.name === "asks" || operation.name === "gets") {
+        statements.push(
+          node({ type: "ExpressionStatement", expression: value }),
+        );
+      }
+    }
+    if (!returned) {
+      statements.push(ret(output(body.result ?? void_zero(), current, kind)));
+    }
+    return call(arrow([input_thunk], block(statements)), [arrow([], input)]);
+  }
   function collect_named() {
     const candidates = new Map<
       Node | null,
@@ -499,7 +871,9 @@ export function create_terminal_transform(services: TransformServices) {
     >();
     if (
       services.config.optimizations?.terminal === false ||
-      services.config.optimizations?.terminal_body === false
+      services.config.optimizations?.terminal_body === false ||
+      (services.imports.terminal_functions.size === 0 &&
+        services.imports.terminal_namespaces.size === 0)
     ) return candidates;
     const nodes: { statement: Statement; owner: Node }[] = [];
     walk(services.program, (parent) => {
@@ -557,6 +931,7 @@ export function create_terminal_transform(services: TransformServices) {
         kind,
       });
     }
+    if (candidates.size === 0) return candidates;
     const allowed = new Set<Node>();
     const used = new Set<Node | null>();
     for (const { statement, owner } of nodes) {
@@ -596,6 +971,10 @@ export function create_terminal_transform(services: TransformServices) {
       allowed.add(name);
       used.add(key);
     }
+    if (used.size === 0) {
+      candidates.clear();
+      return candidates;
+    }
     walk(services.program, (child) => {
       if (child.type !== "Identifier") return;
       const key = services.bindings.resolve(child);
@@ -609,6 +988,10 @@ export function create_terminal_transform(services: TransformServices) {
       if (!used.has(key)) candidates.delete(key);
     }
     return candidates;
+  }
+  const named_statements = new Set<Node>();
+  for (const candidate of named.values()) {
+    named_statements.add(candidate.statement);
   }
   return {
     lower(
@@ -634,11 +1017,11 @@ export function create_terminal_transform(services: TransformServices) {
     remove(statement: Node): boolean {
       return removed.has(statement);
     },
+    has_removals(): boolean {
+      return removed.size > 0;
+    },
     skip(statement: Node): boolean {
-      for (const candidate of named.values()) {
-        if (candidate.statement === statement) return true;
-      }
-      return false;
+      return named_statements.size > 0 && named_statements.has(statement);
     },
   };
 }

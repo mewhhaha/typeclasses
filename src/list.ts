@@ -113,22 +113,24 @@ function list_cons<item>(head: item, tail: RawList<item>): RawList<item> {
 }
 
 // Cells are private until finish; published list tails never change.
-function list_builder<item>() {
-  let first: RawList<item> = list_nil();
-  let last: ["Cons", item, RawList<item>] | undefined;
-  return {
-    push(item: item): void {
-      const cell: ["Cons", item, RawList<item>] = ["Cons", item, list_nil()];
-      if (last === undefined) first = cell;
-      else last[2] = cell;
-      last = cell;
-    },
-    finish(tail: RawList<item> = list_nil()): RawList<item> {
-      if (last === undefined) return tail;
-      last[2] = tail;
-      return first;
-    },
-  };
+class ListBuilder<item> {
+  first: RawList<item> = empty;
+  last: ["Cons", item, RawList<item>] | undefined;
+  push(item: item): void {
+    const cell: ["Cons", item, RawList<item>] = ["Cons", item, empty];
+    if (this.last === undefined) this.first = cell;
+    else this.last[2] = cell;
+    this.last = cell;
+  }
+  finish(tail: RawList<item> = empty): RawList<item> {
+    if (this.last === undefined) return tail;
+    this.last[2] = tail;
+    return this.first;
+  }
+}
+
+function list_builder<item>(): ListBuilder<item> {
+  return new ListBuilder<item>();
 }
 
 function list_append<item>(
@@ -295,7 +297,11 @@ function create_list(): ListConstructor {
   Show.instance(List)({
     show() {
       const items: string[] = [];
-      for (const item of list_items(this.value())) items.push(inspect(item));
+      let rest = this.value();
+      while (rest[0] === "Cons") {
+        items.push(inspect(rest[1]));
+        rest = rest[2];
+      }
       return "[" + items.join(", ") + "]";
     },
   });
@@ -502,14 +508,19 @@ function create_list(): ListConstructor {
 
   Foldable.instance(List)({
     [some_method](predicate) {
-      for (const item of list_items(this.value())) {
-        if (predicate(item)) return true;
+      let rest = this.value();
+      while (rest[0] === "Cons") {
+        if (predicate(rest[1])) return true;
+        rest = rest[2];
       }
       return false;
     },
     [find_method](predicate) {
-      for (const item of list_items(this.value())) {
-        if (predicate(item)) return item;
+      let rest = this.value();
+      while (rest[0] === "Cons") {
+        const head = rest[1];
+        if (predicate(head)) return head;
+        rest = rest[2];
       }
       return undefined;
     },

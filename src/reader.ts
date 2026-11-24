@@ -1,5 +1,5 @@
 import type { Runnable } from "./data_value.ts";
-import { bind_computation, map_computation } from "./computation.ts";
+import { bind_reader_computation, map_computation } from "./computation.ts";
 import {
   type As,
   type Data,
@@ -148,13 +148,25 @@ export type ReaderCellValue<key extends PropertyKey, environment, item> =
   >;
 
 /**
+ * Declare a Reader cell without repeating its key in type arguments:
+ * `const config = reader<Config>()("config")`.
+ */
+export function reader<environment>(): <const key extends PropertyKey>(
+  key: key & NominalKey<key>,
+) => AsReaderCell<key, environment>;
+/**
  * Declare a Reader cell using a runtime key. Reusing the key within this family
  * addresses the same cell. Use a const Symbol for a private identity.
  */
 export function reader<key extends PropertyKey, environment>(
   key: key & NominalKey<key>,
-): AsReaderCell<key, environment> {
-  return make_reader_cell<key, environment>(key);
+): AsReaderCell<key, environment>;
+export function reader(key?: PropertyKey): unknown {
+  if (arguments.length === 0) {
+    return (cell_key: PropertyKey) => make_reader_cell(cell_key);
+  }
+
+  return make_reader_cell(key as PropertyKey);
 }
 
 function make_reader_cell<key extends PropertyKey, environment>(
@@ -235,9 +247,9 @@ function make_reader_cell<key extends PropertyKey, environment>(
       const read = this.value();
 
       return wrap(
-        bind_computation(
+        bind_reader_computation(
           read,
-          (value, environment) => [fn(value).value(), environment],
+          (value) => fn(value).value(),
         ),
       );
     },
@@ -530,9 +542,9 @@ Applicative.instance(Reader)({
 Monad.instance(Reader)({
   bind(fn) {
     return Reader(
-      bind_computation(
+      bind_reader_computation(
         this.value(),
-        (value, environment) => [fn(value).value(), environment],
+        (value) => fn(value).value(),
       ),
     );
   },

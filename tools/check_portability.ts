@@ -51,6 +51,7 @@ if (import.meta.main) {
     new URL("transform_imports.ts", import.meta.url),
     new URL("transform_iterable_maps.ts", import.meta.url),
     new URL("transform_plugin.ts", import.meta.url),
+    new URL("transform_splice.ts", import.meta.url),
     new URL("transform_terminals.ts", import.meta.url),
   ];
   const violations: string[] = [];

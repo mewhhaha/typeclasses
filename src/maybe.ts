@@ -218,15 +218,51 @@ function is_Nothing_value(value: unknown): value is Maybe<never> {
   return value === nothing_singleton;
 }
 
+/** Keep a Just value when it satisfies `predicate`, narrowing its type. */
+export function filter<item, narrowed extends item>(
+  value: Maybe<item>,
+  predicate: (item: item) => item is narrowed,
+): Maybe<narrowed>;
+/** Keep a Just value when it satisfies `predicate`; otherwise return Nothing. */
+export function filter<item>(
+  value: Maybe<item>,
+  predicate: (item: item) => boolean,
+): Maybe<item>;
+export function filter<item>(
+  value: Maybe<item>,
+  predicate: (item: item) => boolean,
+): Maybe<item> {
+  if (is_Nothing_value(value)) {
+    return nothing_value();
+  }
+
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Nothing":
+      return nothing_value();
+    case "Just":
+      return predicate(payload) ? value : nothing_value();
+  }
+}
+
 /** Return the present value, evaluating the fallback only for Nothing. */
 export function get_or_else<item, fallback>(
   value: Maybe<item>,
   fallback: () => fallback,
 ): item | fallback {
-  return value.match<item | fallback>({
-    Just: (item) => item,
-    Nothing: fallback,
-  });
+  if (is_Nothing_value(value)) {
+    return fallback();
+  }
+
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return payload;
+    case "Nothing":
+      return fallback();
+  }
 }
 
 // Keep dictionary construction and instance installation in one removable unit.

@@ -23,7 +23,9 @@ import {
   ret,
   type_ref,
   unwrap,
+  value_visitor_keys,
   variable,
+  walk_values,
 } from "./transform_ast.ts";
 import type { TransformKind, TransformServices } from "./transform_context.ts";
 
@@ -46,37 +48,40 @@ type Yield = {
 };
 class UnsupportedGenerator extends Error {}
 
-function children(value: Node): Node[] {
-  const result: Node[] = [];
-  for (const [key, item] of Object.entries(value)) {
-    if (
-      key === "parent" || key === "typeAnnotation" || key === "typeArguments" ||
-      key === "returnType" || key === "typeParameters"
-    ) continue;
+function for_each_child(
+  value: Node,
+  callback: (child: Node) => void,
+): void {
+  const keys = value_visitor_keys[value.type];
+  if (keys === undefined || keys.length === 0) return;
+  const record = value as unknown as Record<string, unknown>;
+  for (let index = 0; index < keys.length; index += 1) {
+    const item = record[keys[index]];
+    if (item === null || typeof item !== "object") continue;
     if (Array.isArray(item)) {
-      for (const child of item) {
-        if (child && typeof child === "object" && "type" in child) {
-          result.push(child as Node);
-        }
+      for (let child_index = 0; child_index < item.length; child_index += 1) {
+        const child = item[child_index];
+        if (
+          child !== null && typeof child === "object" &&
+          typeof (child as { type?: unknown }).type === "string"
+        ) callback(child as Node);
       }
-    } else if (item && typeof item === "object" && "type" in item) {
-      result.push(item as Node);
+    } else if (typeof (item as { type?: unknown }).type === "string") {
+      callback(item as Node);
     }
   }
-  return result;
 }
 function function_like(value: Node): boolean {
   return value.type === "FunctionDeclaration" ||
     value.type === "FunctionExpression" ||
     value.type === "ArrowFunctionExpression";
 }
-function visit(value: Node, callback: (value: Node) => boolean | void): void {
-  if (callback(value) === false) return;
-  for (const child of children(value)) visit(child, callback);
+function visit(value: Node, callback: (value: Node) => false | void): void {
+  walk_values(value, callback);
 }
 function contains(value: Node, breaks = false): boolean {
   let found = false;
-  visit(value, (part) => {
+  walk_values(value, (part) => {
     if (function_like(part)) return false;
     if (
       part.type === "YieldExpression" || part.type === "ReturnStatement" ||
@@ -228,16 +233,21 @@ function final_map(
   body: BlockStatement,
   state: State,
 ): Expression | undefined {
-  const last = body.body.at(-1);
-  if (
-    last?.type !== "ReturnStatement" ||
-    body.body.slice(0, -1).some((part) => contains(part))
-  ) return;
+  const length = body.body.length;
+  if (length === 0) return;
+  const last = body.body[length - 1];
+  if (last.type !== "ReturnStatement") return;
+  for (let index = 0; index < length - 1; index += 1) {
+    if (contains(body.body[index])) return;
+  }
   const value = pure_value(last.argument, target);
   if (!value) return;
+  const mapped_body = length === 1
+    ? [ret(value)]
+    : [...body.body.slice(0, -1), ret(value)];
   const callback = continuation(
     params,
-    block([...body.body.slice(0, -1), ret(value)]),
+    block(mapped_body),
     state,
     true,
   );
@@ -268,13 +278,17 @@ function statements(
   context: Expression | undefined,
   state: State,
   options: Options,
+  start = 0,
 ): Result {
   const prefix: Statement[] = [];
-  const finish = (result: Result): Result => ({
-    block: block([...prefix, ...result.block.body]),
-    yielded: result.yielded,
-  });
-  for (let index = 0; index < values.length; index += 1) {
+  const finish = (result: Result): Result => {
+    if (prefix.length === 0) return result;
+    return {
+      block: block([...prefix, ...result.block.body]),
+      yielded: result.yielded,
+    };
+  };
+  for (let index = start; index < values.length; index += 1) {
     const value = values[index];
     const yielded = read_yield(value);
     if (yielded) {
@@ -287,9 +301,14 @@ function statements(
       }
       const params: ParamPattern[] = [];
       if (yielded.name) params.push(yielded.name);
-      const rest = values.slice(index + 1);
       if (state.kind === "program") {
-        const next = statements(rest, yielded.expression, state, options);
+        const next = statements(
+          values,
+          yielded.expression,
+          state,
+          options,
+          index + 1,
+        );
         return finish({
           block: block([
             ret(bind(yielded.expression, params, next.block, state)),
@@ -298,7 +317,7 @@ function statements(
         });
       }
       const local = state.services.fresh("context");
-      const next = statements(rest, local, state, options);
+      const next = statements(values, local, state, options, index + 1);
       const mapped = final_map(
         yielded.expression,
         state.dictionary ?? local,
@@ -878,6 +897,135 @@ function stack_safe_loop(
   };
 }
 
+function direct_maybe(
+  body: BlockStatement | FunctionBody,
+  state: State,
+): Result | undefined {
+  if (
+    state.kind !== "do" ||
+    state.dictionary?.type !== "Identifier" ||
+    !state.services.imports.direct_maybe_dictionaries?.has(
+      state.dictionary.name,
+    ) ||
+    body.body.length >= 128
+  ) return undefined;
+  const dictionary = state.dictionary;
+  const just_names = state.services.imports.just_constructors;
+  const just_name = just_names !== undefined && just_names.size > 0
+    ? just_names.values().next().value
+    : undefined;
+  const wrap_pure = (value: Expression): Expression =>
+    just_name !== undefined
+      ? call(id(just_name), [value])
+      : method(dictionary, "pure", [value]);
+  const emitted: Statement[] = [];
+  let yield_count = 0;
+  let has_just_elision = false;
+  let returned = false;
+  for (let index = 0; index < body.body.length; index += 1) {
+    const statement = body.body[index];
+    const yielded = read_yield(statement);
+    if (yielded !== undefined) {
+      yield_count += 1;
+      if (yielded.terminal) {
+        if (index !== body.body.length - 1) return undefined;
+        emitted.push(ret(yielded.expression));
+        returned = true;
+        continue;
+      }
+      const expr_unwrapped = unwrap(yielded.expression);
+      if (
+        expr_unwrapped.type === "CallExpression" &&
+        !expr_unwrapped.optional &&
+        expr_unwrapped.typeArguments == null &&
+        expr_unwrapped.callee.type === "Identifier" &&
+        just_names?.has(expr_unwrapped.callee.name) &&
+        expr_unwrapped.arguments.length === 1 &&
+        expr_unwrapped.arguments[0].type !== "SpreadElement"
+      ) {
+        has_just_elision = true;
+        const inner = expr_unwrapped.arguments[0] as Expression;
+        if (statement.type === "VariableDeclaration") {
+          const decl = statement.declarations[0];
+          emitted.push({
+            ...statement,
+            declarations: [{ ...decl, init: inner }],
+          });
+        } else {
+          emitted.push(
+            node({ type: "ExpressionStatement", expression: inner }),
+          );
+        }
+        continue;
+      }
+      const raw = state.services.fresh("maybe_raw");
+      emitted.push(
+        variable("const", raw, method(yielded.expression, "value", [])),
+      );
+      emitted.push(
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal("Nothing"),
+          }),
+          consequent: ret(
+            node({
+              type: "TSAsExpression",
+              expression: method(dictionary, "empty", []),
+              typeAnnotation: node({ type: "TSNeverKeyword" }),
+            }),
+          ),
+          alternate: null,
+        }),
+      );
+      if (statement.type === "VariableDeclaration") {
+        const decl = statement.declarations[0];
+        emitted.push({
+          ...statement,
+          declarations: [{
+            ...decl,
+            init: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(1),
+              computed: true,
+              optional: false,
+            }),
+          }],
+        });
+      }
+      continue;
+    }
+    if (statement.type === "ReturnStatement") {
+      if (index !== body.body.length - 1) return undefined;
+      if (statement.argument !== null && contains(statement.argument, true)) {
+        return undefined;
+      }
+      emitted.push(ret(wrap_pure(statement.argument ?? void_zero())));
+      returned = true;
+      continue;
+    }
+    if (contains(statement, true)) return undefined;
+    emitted.push(statement);
+  }
+  if (yield_count === 0 || (yield_count === 1 && !has_just_elision)) {
+    return undefined;
+  }
+  if (!returned) {
+    emitted.push(ret(wrap_pure(void_zero())));
+  }
+  return { block: block(emitted), yielded: true };
+}
+
 function flat(
   body: BlockStatement | FunctionBody,
   state: State,
@@ -893,8 +1041,9 @@ function flat(
   }
   const yields: Yield[] = [];
   const locals = new Set<string>();
-  for (const part of body.body.slice(0, -1)) {
-    const yielded = read_yield(part);
+  const last_index = body.body.length - 1;
+  for (let index = 0; index < last_index; index += 1) {
+    const yielded = read_yield(body.body[index]);
     if (
       !yielded || yielded.terminal ||
       yielded.name && yielded.name.type !== "Identifier"
@@ -905,11 +1054,14 @@ function flat(
   if (!yields.length) return;
   function mentions(value: Node, permitted?: string): boolean {
     let found = false;
-    visit(value, (part) => {
+    walk_values(value, (part) => {
       if (
         part.type === "Identifier" && locals.has(part.name) &&
         part.name !== permitted
-      ) found = true;
+      ) {
+        found = true;
+        return false;
+      }
     });
     return found;
   }
@@ -1038,41 +1190,71 @@ function binding_names(
       }
   }
 }
-function unsafe_capture(body: FunctionBody): Node | undefined {
-  const scopes: Map<string, Capture | undefined>[] = [];
+type BodyAnalysis = {
+  hazard?: Node;
+  var_binding?: Node;
+  first_yield?: YieldExpression;
+  capture?: Node;
+  prefix?: Node;
+};
+
+/** Single-pass analysis for lexical hazards, var locals, unsafe captures, and eager prefixes. */
+function analyze_body(body: FunctionBody): BodyAnalysis {
+  let hazard: Node | undefined;
+  let var_binding: Node | undefined;
+  let first_yield: YieldExpression | undefined;
+  const capture_scopes: Map<string, Capture | undefined>[] = [];
+  const prefix_scopes: Set<string>[] = [];
   const ends: number[] = [];
   const captures: Capture[] = [];
   const yields: number[] = [];
-  function lookup(name: string): Capture | undefined {
-    for (let index = scopes.length - 1; index >= 0; index -= 1) {
-      if (scopes[index].has(name)) return scopes[index].get(name);
+  let max_prefix_yield = -1;
+  const prefix_effects: { node: Node; loop: boolean }[] = [];
+
+  function lookup_capture(name: string): Capture | undefined {
+    for (let index = capture_scopes.length - 1; index >= 0; index -= 1) {
+      const scope = capture_scopes[index];
+      if (scope.has(name)) return scope.get(name);
     }
   }
-  function declare(
+  function is_prefix_local(value: Node): boolean {
+    if (value.type !== "Identifier") return false;
+    for (let index = prefix_scopes.length - 1; index >= 0; index -= 1) {
+      if (prefix_scopes[index].has(value.name)) return true;
+    }
+    return false;
+  }
+  function declare_capture(
     pattern: BindingPattern,
     declaration: Node | undefined,
     allocated: boolean,
     nested: boolean,
   ): void {
+    const scope = capture_scopes[capture_scopes.length - 1];
+    const end = ends[ends.length - 1];
     binding_names(pattern, (name) => {
       let binding: Capture | undefined;
       if (declaration && !nested) {
         binding = {
           declaration,
           allocated,
-          end: ends.at(-1)!,
+          end,
           references: [],
           writes: [],
           closure_write: false,
         };
         captures.push(binding);
       }
-      scopes.at(-1)!.set(name, binding);
+      scope.set(name, binding);
     });
+  }
+  function declare_prefix(pattern: BindingPattern): void {
+    const scope = prefix_scopes[prefix_scopes.length - 1];
+    binding_names(pattern, (name) => scope.add(name));
   }
   function write(value: Node, nested: boolean): void {
     if (value.type === "Identifier") {
-      const binding = lookup(value.name);
+      const binding = lookup_capture(value.name);
       if (binding) {
         binding.writes.push(value.start);
         binding.closure_write ||= nested;
@@ -1094,9 +1276,36 @@ function unsafe_capture(body: FunctionBody): Node | undefined {
       write(value.argument, nested);
     }
   }
-  function scan(value: Node, nested = false, parent?: Node): void {
+  function check_hazard(value: Node, parent?: Node): void {
+    const property = parent?.type === "MemberExpression" && !parent.computed &&
+        parent.property === value ||
+      parent?.type === "Property" && !parent.computed && parent.key === value;
+    if (
+      value.type === "ThisExpression" || value.type === "Super" ||
+      value.type === "MetaProperty" ||
+      value.type === "Identifier" && value.name === "arguments" && !property ||
+      value.type === "CallExpression" && !value.optional &&
+        value.callee.type === "Identifier" && value.callee.name === "eval"
+    ) hazard = value;
+  }
+  function scan(
+    value: Node,
+    nested: boolean,
+    in_yield_arg: boolean,
+    in_loop: boolean,
+    parent?: Node,
+  ): void {
+    check_hazard(value, parent);
+    if (!nested && !in_yield_arg) {
+      if (value.type === "VariableDeclaration" && value.kind === "var") {
+        var_binding = value;
+      }
+      if (value.type === "YieldExpression" && !first_yield) {
+        first_yield = value;
+      }
+    }
     if (function_like(value)) {
-      scopes.push(new Map());
+      capture_scopes.push(new Map());
       ends.push(value.end);
       if (
         value.type === "FunctionDeclaration" ||
@@ -1105,76 +1314,135 @@ function unsafe_capture(body: FunctionBody): Node | undefined {
       ) {
         for (const param of value.params) {
           if (param.type === "RestElement") {
-            declare(param.argument, undefined, false, true);
+            declare_capture(param.argument, undefined, false, true);
           } else if (param.type !== "TSParameterProperty") {
-            declare(param, undefined, false, true);
+            declare_capture(param, undefined, false, true);
           }
         }
       }
-      for (const child of children(value)) scan(child, true, value);
-      scopes.pop();
+      for_each_child(value, (child) => scan(child, true, true, in_loop, value));
+      capture_scopes.pop();
       ends.pop();
       return;
     }
     if (value.type === "BlockStatement") {
-      scopes.push(new Map());
+      capture_scopes.push(new Map());
       ends.push(value.end);
+      if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
       for (const part of value.body) {
         if (part.type === "VariableDeclaration") {
           for (const declaration of part.declarations) {
-            declare(
+            declare_capture(
               declaration.id,
               declaration,
               !!declaration.init && allocation(declaration.init),
               nested,
             );
+            if (!nested && !in_yield_arg) declare_prefix(declaration.id);
           }
         } else if (
           (part.type === "FunctionDeclaration" ||
             part.type === "ClassDeclaration") && part.id
-        ) declare(part.id, part, true, nested);
+        ) declare_capture(part.id, part, true, nested);
       }
-      for (const child of children(value)) scan(child, nested, value);
-      scopes.pop();
+      for_each_child(
+        value,
+        (child) => scan(child, nested, in_yield_arg, in_loop, value),
+      );
+      capture_scopes.pop();
       ends.pop();
+      if (!nested && !in_yield_arg) prefix_scopes.pop();
       return;
     }
     if (
       value.type === "ForStatement" || value.type === "ForOfStatement" ||
       value.type === "ForInStatement"
     ) {
-      scopes.push(new Map());
+      const next_loop = in_loop ||
+        (!nested && !in_yield_arg && contains(value));
+      capture_scopes.push(new Map());
       ends.push(value.end);
+      if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
       let initializer: Node | null;
       if (value.type === "ForStatement") initializer = value.init;
       else initializer = value.left;
       if (initializer?.type === "VariableDeclaration") {
         for (const declaration of initializer.declarations) {
-          declare(
+          declare_capture(
             declaration.id,
             declaration,
             !!declaration.init && allocation(declaration.init),
             nested,
           );
+          if (!nested && !in_yield_arg) declare_prefix(declaration.id);
         }
       }
       if (value.type === "ForStatement") {
-        if (value.init) scan(value.init, nested, value);
-        if (value.test) scan(value.test, nested, value);
-        scan(value.body, nested, value);
+        if (value.init) {
+          scan(value.init, nested, in_yield_arg, next_loop, value);
+        }
+        if (value.test) {
+          scan(value.test, nested, in_yield_arg, next_loop, value);
+        }
+        if (value.update) {
+          // Capture scan intentionally visits init/test/body; hazard/prefix visit update too.
+          scan_update(value.update, nested, in_yield_arg, next_loop, value);
+        }
+        scan(value.body, nested, in_yield_arg, next_loop, value);
       } else {
-        scan(value.right, nested, value);
-        scan(value.body, nested, value);
+        if (value.type === "ForOfStatement") {
+          // ForOfStatement right is skipped by unsafe_prefix, scanned by capture/hazard.
+          scan(value.right, nested, true, next_loop, value);
+        } else {
+          scan(value.right, nested, in_yield_arg, next_loop, value);
+        }
+        scan(value.body, nested, in_yield_arg, next_loop, value);
       }
-      scopes.pop();
+      capture_scopes.pop();
       ends.pop();
+      if (!nested && !in_yield_arg) prefix_scopes.pop();
+      return;
+    }
+    if (
+      (value.type === "WhileStatement" || value.type === "DoWhileStatement") &&
+      !nested && !in_yield_arg
+    ) {
+      const next_loop = in_loop || contains(value);
+      for_each_child(
+        value,
+        (child) => scan(child, nested, in_yield_arg, next_loop, value),
+      );
       return;
     }
     if (value.type === "VariableDeclarator") {
-      if (value.init) scan(value.init, nested, value);
+      // Check lexical hazards in destructuring default patterns while avoiding
+      // counting the declaration's own identifier as a read reference.
+      scan_pattern_hazards(value.id, nested, in_yield_arg, in_loop, value);
+      if (value.init) scan(value.init, nested, in_yield_arg, in_loop, value);
       return;
     }
-    if (value.type === "YieldExpression" && !nested) yields.push(value.start);
+    if (value.type === "YieldExpression") {
+      if (!nested) {
+        yields.push(value.start);
+        if (!in_yield_arg && value.start > max_prefix_yield) {
+          max_prefix_yield = value.start;
+        }
+      }
+      // unsafe_prefix does not descend into YieldExpression.argument; capture/hazard do.
+      for_each_child(
+        value,
+        (child) => scan(child, nested, true, in_loop, value),
+      );
+      return;
+    }
+    if (!nested && !in_yield_arg) {
+      if (
+        value.type === "CallExpression" || value.type === "NewExpression" ||
+        value.type === "AssignmentExpression" && !is_prefix_local(value.left) ||
+        value.type === "UpdateExpression" && !is_prefix_local(value.argument) ||
+        value.type === "UnaryExpression" && value.operator === "delete"
+      ) prefix_effects.push({ node: value, loop: in_loop });
+    }
     if (value.type === "AssignmentExpression") write(value.left, nested);
     if (
       value.type === "UpdateExpression" ||
@@ -1193,91 +1461,117 @@ function unsafe_capture(body: FunctionBody): Node | undefined {
             !parent.computed ||
           parent.type === "Property" && parent.key === value &&
             !parent.computed))
-    ) lookup(value.name)?.references.push(value.start);
-    for (const child of children(value)) scan(child, nested, value);
+    ) lookup_capture(value.name)?.references.push(value.start);
+    for_each_child(
+      value,
+      (child) => scan(child, nested, in_yield_arg, in_loop, value),
+    );
   }
-  scan(body);
-  return captures.find((capture) => {
-    let low = 0;
-    let high = yields.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (yields[middle] < capture.declaration.end) low = middle + 1;
-      else high = middle;
+  function scan_update(
+    value: Node,
+    nested: boolean,
+    in_yield_arg: boolean,
+    in_loop: boolean,
+    parent?: Node,
+  ): void {
+    check_hazard(value, parent);
+    if (function_like(value)) {
+      for_each_child(
+        value,
+        (child) => scan_update(child, true, true, in_loop, value),
+      );
+      return;
     }
-    const yielded = yields[low];
-    if (yielded === undefined || yielded >= capture.end) return false;
-    return capture.closure_write || capture.writes.some((write) =>
-      write > yielded
-    ) || capture.allocated && capture.references.some((reference) =>
-          reference > yielded
+    if (!nested && !in_yield_arg) {
+      if (value.type === "YieldExpression") {
+        if (!first_yield) first_yield = value;
+        if (value.start > max_prefix_yield) max_prefix_yield = value.start;
+        for_each_child(
+          value,
+          (child) => scan_update(child, nested, true, in_loop, value),
         );
-  })?.declaration;
-}
-function unsafe_prefix(body: FunctionBody): Node | undefined {
-  const scopes: Set<string>[] = [];
-  const yields: number[] = [];
-  const effects: { node: Node; loop: boolean }[] = [];
-  function local(value: Node): boolean {
-    return value.type === "Identifier" &&
-      scopes.some((scope) => scope.has(value.name));
-  }
-  function declare(pattern: BindingPattern): void {
-    binding_names(pattern, (name) => scopes.at(-1)!.add(name));
-  }
-  function scan(value: Node, loop = false): void {
-    if (function_like(value)) return;
-    if (value.type === "BlockStatement") {
-      scopes.push(new Set());
-      for (const part of value.body) {
-        if (part.type === "VariableDeclaration") {
-          for (const declaration of part.declarations) {
-            declare(declaration.id);
-          }
-        }
+        return;
       }
-      for (const child of children(value)) scan(child, loop);
-      scopes.pop();
-      return;
+      if (
+        value.type === "CallExpression" || value.type === "NewExpression" ||
+        value.type === "AssignmentExpression" && !is_prefix_local(value.left) ||
+        value.type === "UpdateExpression" && !is_prefix_local(value.argument) ||
+        value.type === "UnaryExpression" && value.operator === "delete"
+      ) prefix_effects.push({ node: value, loop: in_loop });
     }
-    if (value.type === "YieldExpression") {
-      yields.push(value.start);
-      return;
-    }
-    const in_loop = loop ||
-      (value.type === "ForStatement" || value.type === "ForOfStatement" ||
-          value.type === "WhileStatement" ||
-          value.type === "DoWhileStatement") && contains(value);
-    if (
-      value.type === "ForStatement" || value.type === "ForOfStatement" ||
-      value.type === "ForInStatement"
-    ) {
-      scopes.push(new Set());
-      let initializer: Node | null;
-      if (value.type === "ForStatement") initializer = value.init;
-      else initializer = value.left;
-      if (initializer?.type === "VariableDeclaration") {
-        for (const declaration of initializer.declarations) {
-          declare(declaration.id);
-        }
-      }
-      if (value.type === "ForOfStatement") scan(value.body, in_loop);
-      else for (const child of children(value)) scan(child, in_loop);
-      scopes.pop();
-      return;
-    }
-    if (
-      value.type === "CallExpression" || value.type === "NewExpression" ||
-      value.type === "AssignmentExpression" && !local(value.left) ||
-      value.type === "UpdateExpression" && !local(value.argument) ||
-      value.type === "UnaryExpression" && value.operator === "delete"
-    ) effects.push({ node: value, loop: in_loop });
-    for (const child of children(value)) scan(child, in_loop);
+    for_each_child(
+      value,
+      (child) => scan_update(child, nested, in_yield_arg, in_loop, value),
+    );
   }
-  scan(body);
-  return effects.find(({ node, loop }) =>
-    yields.some((yielded) => loop || node.end < yielded)
-  )?.node;
+  function scan_pattern_hazards(
+    pattern: Node,
+    nested: boolean,
+    in_yield_arg: boolean,
+    in_loop: boolean,
+    parent?: Node,
+  ): void {
+    if (pattern.type === "Identifier") {
+      check_hazard(pattern, parent);
+      return;
+    }
+    if (pattern.type === "AssignmentPattern") {
+      scan_pattern_hazards(
+        pattern.left,
+        nested,
+        in_yield_arg,
+        in_loop,
+        pattern,
+      );
+      scan(pattern.right, nested, in_yield_arg, in_loop, pattern);
+      return;
+    }
+    for_each_child(
+      pattern,
+      (child) =>
+        scan_pattern_hazards(child, nested, in_yield_arg, in_loop, pattern),
+    );
+  }
+
+  scan(body, false, false, false);
+
+  let capture: Node | undefined;
+  if (yields.length > 0) {
+    for (let index = 0; index < captures.length; index += 1) {
+      const item = captures[index];
+      let low = 0;
+      let high = yields.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (yields[middle] < item.declaration.end) low = middle + 1;
+        else high = middle;
+      }
+      const yielded = yields[low];
+      if (yielded === undefined || yielded >= item.end) continue;
+      if (
+        item.closure_write ||
+        item.writes.some((position) => position > yielded) ||
+        (item.allocated &&
+          item.references.some((reference) => reference > yielded))
+      ) {
+        capture = item.declaration;
+        break;
+      }
+    }
+  }
+
+  let prefix: Node | undefined;
+  if (max_prefix_yield >= 0) {
+    for (let index = 0; index < prefix_effects.length; index += 1) {
+      const effect = prefix_effects[index];
+      if (effect.loop || effect.node.end < max_prefix_yield) {
+        prefix = effect.node;
+        break;
+      }
+    }
+  }
+
+  return { hazard, var_binding, first_yield, capture, prefix };
 }
 
 /** Lower generator syntax directly into native Oxc expressions. */
@@ -1311,61 +1605,36 @@ export function lower_generator(
     if (
       !run || run.type !== "FunctionExpression" || !run.generator || !run.body
     ) fail(state, value, "expected a function* argument.");
-    let hazard: Node | undefined;
-    let var_binding: Node | undefined;
-    let first_yield: YieldExpression | undefined;
-    const lexical = (part: Node, parent?: Node): void => {
-      const property =
-        parent?.type === "MemberExpression" && !parent.computed &&
-          parent.property === part ||
-        parent?.type === "Property" && !parent.computed && parent.key === part;
-      if (
-        part.type === "ThisExpression" || part.type === "Super" ||
-        part.type === "MetaProperty" ||
-        part.type === "Identifier" && part.name === "arguments" && !property ||
-        part.type === "CallExpression" && !part.optional &&
-          part.callee.type === "Identifier" && part.callee.name === "eval"
-      ) hazard = part;
-      for (const child of children(part)) lexical(child, part);
-    };
-    lexical(run.body);
-    visit(run.body, (part) => {
-      if (function_like(part)) return false;
-      if (part.type === "VariableDeclaration" && part.kind === "var") {
-        var_binding = part;
-      }
-      if (part.type === "YieldExpression" && !first_yield) first_yield = part;
-    });
-    if (hazard) {
+    const analysis = analyze_body(run.body);
+    if (analysis.hazard) {
       fail(
         state,
-        hazard,
+        analysis.hazard,
         "generator lexical this, arguments, new.target, super, and direct eval are not supported.",
       );
     }
-    if (var_binding) {
+    if (analysis.var_binding) {
       fail(
         state,
-        var_binding,
+        analysis.var_binding,
         "var-scoped generator locals are not supported; use let or const.",
       );
     }
-    const capture = unsafe_capture(run.body);
-    if (capture) {
+    if (analysis.capture) {
       fail(
         state,
-        capture,
+        analysis.capture,
         "generator-local state captured across yield* cannot preserve branching or repeated execution.",
       );
     }
-    const prefix = unsafe_prefix(run.body);
-    if (prefix) {
+    if (analysis.prefix) {
       fail(
         state,
-        prefix,
+        analysis.prefix,
         "observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.",
       );
     }
+    const first_yield = analysis.first_yield;
     if (
       explicit?.type === "Identifier" &&
       services.task_dictionaries.has(explicit.name) && first_yield?.argument
@@ -1397,15 +1666,21 @@ export function lower_generator(
     if (explicit && explicit.type !== "Identifier") {
       state.dictionary = services.fresh("dictionary");
     }
-    let result = flat(run.body, state);
-    if (
-      !result && run.body.body.filter((part) => read_yield(part)).length > 256
-    ) {
-      fail(
-        state,
-        value,
-        "long dependent continuations require liveness threading; preserving the generator avoids compiler printer stack overflow.",
-      );
+    let result = flat(run.body, state) ?? direct_maybe(run.body, state);
+    if (!result) {
+      let yield_count = 0;
+      for (let index = 0; index < run.body.body.length; index += 1) {
+        if (read_yield(run.body.body[index])) {
+          yield_count += 1;
+          if (yield_count > 256) {
+            fail(
+              state,
+              value,
+              "long dependent continuations require liveness threading; preserving the generator avoids compiler printer stack overflow.",
+            );
+          }
+        }
+      }
     }
     result ??= statements(run.body.body, undefined, state, {});
     if (kind === "do" && !result.yielded && !state.dictionary) {

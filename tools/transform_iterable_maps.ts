@@ -83,13 +83,33 @@ export function create_iterable_map_fusion(
     }
   }
 
+  const enabled =
+    functions.size + namespaces.size + roots.size + root_namespaces.size > 0;
+  if (!enabled) {
+    return {
+      enabled: false,
+      fuse(_current: CallExpression): Expression | undefined {
+        return undefined;
+      },
+      helper_declaration(): Function | undefined {
+        return undefined;
+      },
+      add_helper(file: Program): Program {
+        return file;
+      },
+    };
+  }
+
   const bindings = analysis ?? create_binding_analysis(program);
   const immutable = new Set<VariableDeclarator>();
   const callbacks = new Map<Node, Function | ArrowFunctionExpression>();
   const writes = new Set<Node>();
+  const collect_names = fresh === undefined;
   const used_names = new Set<string>();
   walk(program, (current) => {
-    if (current.type === "Identifier") used_names.add(current.name);
+    if (collect_names && current.type === "Identifier") {
+      used_names.add(current.name);
+    }
     if (current.type === "VariableDeclaration" && current.kind === "const") {
       for (const declaration of current.declarations) {
         if (declaration.id.type !== "Identifier" || declaration.init === null) {
@@ -235,6 +255,10 @@ export function create_iterable_map_fusion(
         composed = call(helper, [composed, map.arguments[0] as Expression]);
       }
       return call(maps[0].callee, [composed]);
+    },
+    helper_declaration(): Function | undefined {
+      if (helper === undefined) return undefined;
+      return compose_helper(helper);
     },
     add_helper(file: Program): Program {
       if (helper === undefined) return file;

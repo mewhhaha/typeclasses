@@ -354,7 +354,9 @@ function data_to_json(this: DataInteropTarget): unknown {
 
 function data_run(
   this: WrappedDataTarget<unknown>,
-  ...args: unknown[]
+  first?: unknown,
+  second?: unknown,
+  third?: unknown,
 ): unknown {
   const value = this[data_value];
 
@@ -362,7 +364,22 @@ function data_run(
     throw new TypeError("Data value is not callable");
   }
 
-  return Reflect.apply(value, undefined, args);
+  switch (arguments.length) {
+    case 0:
+      return (value as () => unknown)();
+    case 1:
+      return (value as (a: unknown) => unknown)(first);
+    case 2:
+      return (value as (a: unknown, b: unknown) => unknown)(first, second);
+    case 3:
+      return (value as (a: unknown, b: unknown, c: unknown) => unknown)(
+        first,
+        second,
+        third,
+      );
+    default:
+      return Reflect.apply(value, undefined, arguments);
+  }
 }
 
 function data_match(

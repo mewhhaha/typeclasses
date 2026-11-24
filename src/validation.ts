@@ -12,6 +12,7 @@ import {
   type UnionDictionary,
   type WrappedData,
 } from "./typeclass.ts";
+import { type Either, Left, Right } from "./either.ts";
 import { same_context } from "./internal.ts";
 import { inspect } from "./inspect.ts";
 import {
@@ -108,6 +109,13 @@ export type ConfiguredValidationDictionary<error> = AsValidation<error> & {
     <item>(value: item): Validation<error, item>;
     readonly is: ValidGuard;
   };
+  /** Convert an Either into this configured Validation. */
+  from_either<item>(value: Either<error, item>): Validation<error, item>;
+  /** Convert a nullable value into Valid or lazily create an Invalid value. */
+  from_nullable<item>(
+    value: item | null | undefined,
+    on_null: () => error,
+  ): Validation<error, NonNullable<item>>;
 };
 
 type ValidationError<value> = value extends Invalid<infer error> ? error
@@ -198,37 +206,73 @@ function validation_with_semigroup<error>(
   ) as ConfiguredValidationDictionary<error>;
 
   Object.setPrototypeOf(dictionary, Validation);
-  Object.defineProperties(dictionary, {
-    Invalid: {
-      value: Object.assign(
-        function construct_configured_invalid<item = never>(
-          error: error,
-        ): Validation<error, item> {
-          return dictionary<item>([
-            "invalid",
-            error,
-            semigroup,
-          ]) as Validation<error, item>;
-        },
-        { is: Invalid.is },
-      ),
+  const configured_invalid = Object.assign(
+    function construct_configured_invalid<item = never>(
+      error: error,
+    ): Validation<error, item> {
+      return dictionary<item>([
+        "invalid",
+        error,
+        semigroup,
+      ]) as Validation<error, item>;
     },
-    Valid: {
-      value: Object.assign(
-        function construct_configured_valid<item>(
-          item: item,
-        ): Validation<error, item> {
-          return dictionary<item>([
-            "valid",
-            item,
-          ]) as Validation<error, item>;
-        },
-        { is: Valid.is },
-      ),
+    { is: Invalid.is },
+  );
+  const configured_valid = Object.assign(
+    function construct_configured_valid<item>(
+      item: item,
+    ): Validation<error, item> {
+      return dictionary<item>([
+        "valid",
+        item,
+      ]) as Validation<error, item>;
+    },
+    { is: Valid.is },
+  );
+  Object.defineProperties(dictionary, {
+    Invalid: { value: configured_invalid },
+    Valid: { value: configured_valid },
+    from_either: {
+      value<item>(value: Either<error, item>): Validation<error, item> {
+        const [tag, payload] = value.value();
+
+        switch (tag) {
+          case "Left":
+            return configured_invalid<item>(payload);
+          case "Right":
+            return configured_valid(payload);
+        }
+      },
+    },
+    from_nullable: {
+      value<item>(
+        value: item | null | undefined,
+        on_null: () => error,
+      ): Validation<error, NonNullable<item>> {
+        if (value === null || value === undefined) {
+          return configured_invalid<NonNullable<item>>(on_null());
+        }
+
+        return configured_valid(value as NonNullable<item>);
+      },
     },
   });
 
   return dictionary;
+}
+
+/** Convert a Validation into an Either, discarding its accumulation semigroup. */
+export function validation_to_either<error, item>(
+  validation: Validation<error, item>,
+): Either<error, item> {
+  const [tag, payload] = validation.value();
+
+  switch (tag) {
+    case "invalid":
+      return Left<error, item>(payload);
+    case "valid":
+      return Right<error, item>(payload);
+  }
 }
 
 /** Construct a failed Validation that accumulates string message arrays. */

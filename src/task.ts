@@ -42,7 +42,7 @@ export const parallel_task_identity: unique symbol = /* @__PURE__ */ Symbol(
 
 const task_cancellation = Symbol("Task cancellation");
 const protected_promises = new WeakMap<Promise<unknown>, AbortSignal>();
-const completed_tasks = new WeakMap<RawTask<unknown>, unknown>();
+const task_completed = Symbol("Task.completed");
 const completed_undefined = Symbol("Task.completed.undefined");
 function completed_item(value: unknown): unknown {
   if (value === completed_undefined) return undefined;
@@ -60,9 +60,15 @@ type TaskStep =
   };
 type TaskPlan = TaskStep & { source: RawTask<unknown> };
 const task_plan = Symbol("Task.plan");
-type PlannedTask = RawTask<unknown> & { [task_plan]?: TaskPlan };
+type PlannedTask = RawTask<unknown> & {
+  [task_plan]?: TaskPlan;
+  [task_completed]?: unknown;
+};
 function plan_of(task: RawTask<unknown>): TaskPlan | undefined {
   return (task as PlannedTask)[task_plan];
+}
+function completed_of(task: RawTask<unknown>): unknown {
+  return (task as PlannedTask)[task_completed];
 }
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
@@ -276,7 +282,7 @@ export async function run_task<
     if (options.signal?.aborted) {
       throw task_abort_error("run_task", options.signal);
     }
-    const completed = completed_tasks.get(task);
+    const completed = completed_of(task);
     if (completed !== undefined) {
       return completed_item(completed) as RunTaskItem<value>;
     }
@@ -308,7 +314,7 @@ export async function run_task<
             throw task_abort_error("run_task", options.signal);
           }
           let value: unknown;
-          const completed = completed_tasks.get(task);
+          const completed = completed_of(task);
           if (completed !== undefined) value = completed_item(completed);
           else {value = await start_task(
               task,
@@ -521,7 +527,7 @@ MonadRec.instance(Task)({
         const task = step(state).value();
         if (signal?.aborted) throw task_abort_error("Task.tail_rec_m", signal);
         let instruction: Awaited<ReturnType<typeof task>>;
-        const completed = completed_tasks.get(task);
+        const completed = completed_of(task);
         if (completed !== undefined) {
           instruction = completed_item(completed) as typeof instruction;
         } else instruction = await start_task(task, signal, "Task.tail_rec_m");
@@ -604,7 +610,7 @@ function completed_raw_task<item>(
   };
   let stored: unknown = resolved;
   if (stored === undefined) stored = completed_undefined;
-  completed_tasks.set(task as RawTask<unknown>, stored);
+  (task as PlannedTask)[task_completed] = stored;
   return task;
 }
 
@@ -616,9 +622,16 @@ function run_concurrently(
   if (signal?.aborted) {
     return Promise.reject(task_abort_error(operation, signal));
   }
+  if (tasks.length === 1) {
+    const completed = completed_of(tasks[0]);
+    if (completed !== undefined) {
+      return Promise.resolve([completed_item(completed)]);
+    }
+    return start_task(tasks[0], signal, operation).then((value) => [value]);
+  }
   const values: unknown[] = [];
   for (const task of tasks) {
-    const completed = completed_tasks.get(task);
+    const completed = completed_of(task);
     if (completed === undefined) break;
     values.push(completed_item(completed));
   }
@@ -831,7 +844,7 @@ export function traverse_task<input, output>(
           }
           const index = next_index++;
           const task = fn(next.value, index).value();
-          const completed = completed_tasks.get(task);
+          const completed = completed_of(task);
           if (completed !== undefined) {
             results[index] = completed_item(completed) as output;
           } else {
@@ -951,20 +964,20 @@ async function evaluate_task(
   options: RunTaskOptions,
 ): Promise<unknown> {
   let segment = compile_task(plan);
-  const pending: { segment: CompiledTask; index: number }[] = [];
+  let pending: { segment: CompiledTask; index: number }[] | undefined;
   let index = 0;
   let steps = 0;
   let current = segment.source;
   let value: unknown;
   while (true) {
     if (signal?.aborted) throw task_abort_error("Task plan", signal);
-    const completed = completed_tasks.get(current);
+    const completed = completed_of(current);
     if (completed !== undefined) value = completed_item(completed);
     else value = await start_task(current, signal, "Task plan");
     while (true) {
       if (signal?.aborted) throw task_abort_error("Task plan", signal);
       if (index === segment.frames.length) {
-        const previous = pending.pop();
+        const previous = pending?.pop();
         if (previous === undefined) return value;
         segment = previous.segment;
         index = previous.index;
@@ -990,7 +1003,10 @@ async function evaluate_task(
           current = apply(value).value();
           const nested = plan_of(current);
           if (nested !== undefined) {
-            pending.push({ segment, index });
+            if (index < segment.frames.length) {
+              pending ??= [];
+              pending.push({ segment, index });
+            }
             segment = compile_task(nested);
             index = 0;
             current = segment.source;

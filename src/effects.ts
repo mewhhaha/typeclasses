@@ -1,3 +1,4 @@
+import { yield_data } from "./data_value.ts";
 import {
   type Data,
   type Dictionary,
@@ -24,21 +25,102 @@ export type TaggedOperation<tag extends string = string> =
   | readonly [tag]
   | readonly [tag, unknown];
 
-/** Gives a tagged tuple an operation output type without changing its value. */
-export function operation<item>(): {
-  <const tagged extends TaggedOperation>(
-    tagged: tagged,
-  ): tagged & Operation<item>;
-  <const tag extends string>(
-    tag: tag,
-  ): <payload>(payload: payload) => readonly [tag, payload] & Operation<item>;
-} {
+/** @ignore */
+export declare const unconstrained_payload: unique symbol;
+
+/** @ignore */
+export type UnconstrainedPayload = typeof unconstrained_payload;
+
+/** A tagged operation constructor with `.send`, `.is`, and `.tag` helpers. */
+export type OperationConstructor<
+  tag extends string,
+  item,
+  payload = UnconstrainedPayload,
+> = [payload] extends [UnconstrainedPayload] ? {
+    <value>(payload: value): readonly [tag, value] & Operation<item>;
+    /** Sends this operation as an Effect producing `item`. */
+    send<value>(
+      payload: value,
+    ): Effect<readonly [tag, value] & Operation<item>, item>;
+    /** Tests whether an unknown operation has this tag. */
+    is(
+      candidate: unknown,
+    ): candidate is readonly [tag, unknown] & Operation<item>;
+    /** The operation's discriminant tag. */
+    readonly tag: tag;
+  }
+  : [payload] extends [void] ? {
+      (): readonly [tag] & Operation<item>;
+      /** Sends this zero-payload operation as an Effect producing `item`. */
+      send(): Effect<readonly [tag] & Operation<item>, item>;
+      /** Tests whether an unknown operation has this tag. */
+      is(candidate: unknown): candidate is readonly [tag] & Operation<item>;
+      /** The operation's discriminant tag. */
+      readonly tag: tag;
+    }
+  : {
+    (payload: payload): readonly [tag, payload] & Operation<item>;
+    /** Sends this operation as an Effect producing `item`. */
+    send(
+      payload: payload,
+    ): Effect<readonly [tag, payload] & Operation<item>, item>;
+    /** Tests whether an unknown operation has this tag. */
+    is(
+      candidate: unknown,
+    ): candidate is readonly [tag, payload] & Operation<item>;
+    /** The operation's discriminant tag. */
+    readonly tag: tag;
+  };
+
+/** Curried builder returned by `Effect.operation`. */
+export type OperationBuilder<
+  item,
+  payload = UnconstrainedPayload,
+> = [payload] extends [UnconstrainedPayload] ? {
+    <const tagged extends TaggedOperation>(
+      tagged: tagged,
+    ): tagged & Operation<item>;
+    <const tag extends string>(
+      tag: tag,
+    ): OperationConstructor<tag, item, UnconstrainedPayload>;
+  }
+  : {
+    <const tag extends string>(
+      tag: tag,
+    ): OperationConstructor<tag, item, payload>;
+  };
+
+/** Gives a tagged tuple an operation output type, or creates a typed constructor. */
+export function operation<
+  item,
+  payload = UnconstrainedPayload,
+>(): OperationBuilder<item, payload> {
   return ((value: string | TaggedOperation) => {
     if (typeof value === "string") {
-      return (payload: unknown) => [value, payload];
+      const construct = function construct_operation(
+        argument?: unknown,
+      ): TaggedOperation {
+        if (arguments.length === 0) return [value];
+        return [value, argument];
+      };
+      return Object.assign(construct, {
+        tag: value,
+        send(argument?: unknown) {
+          return send(
+            (arguments.length === 0 ? [value] : [value, argument]) as
+              & TaggedOperation
+              & Operation<item>,
+          );
+        },
+        is(candidate: unknown): boolean {
+          return Array.isArray(candidate) &&
+            (candidate.length === 1 || candidate.length === 2) &&
+            candidate[0] === value;
+        },
+      });
     }
     return value;
-  }) as ReturnType<typeof operation<item>>;
+  }) as OperationBuilder<item, payload>;
 }
 
 /** An operation that lifts a dictionary value into an effect program. */
@@ -342,7 +424,9 @@ function ImpureEffect(
 ) {
   this[0] = "impure";
   this[1] = operation;
-  this[2] = (value) => resume_effect(resume, frames, queue, value);
+  this[2] = frames === undefined && queue === undefined
+    ? resume
+    : (value) => resume_effect(resume, frames, queue, value);
   this[effect_resume] = resume;
   this[effect_frames] = frames;
   this[effect_queue] = queue;
@@ -484,7 +568,7 @@ export function bind<left, from, right, to>(
 
   return append_effect_frame(
     effect,
-    (value) => fn(value as from) as Effect<unknown, unknown>,
+    fn as unknown as EffectResume,
   ) as Effect<left | right, to>;
 }
 
@@ -1028,17 +1112,17 @@ export function is_lift_of<dictionary extends Dictionary>(
   operation: unknown,
   runtime_kind: dictionary[typeof kind],
 ): operation is Lift<dictionary, unknown> {
-  if (!has_tag(operation, "lift")) {
+  if (typeof operation !== "object" || operation === null) {
     return false;
   }
 
-  const value = operation[1];
-
-  if (typeof value !== "object") {
+  if ((operation as TaggedOperation)[0] !== "lift") {
     return false;
   }
 
-  if (value === null) {
+  const value = (operation as readonly [string, unknown])[1];
+
+  if (typeof value !== "object" || value === null) {
     return false;
   }
 
@@ -1088,6 +1172,34 @@ function resume_effect(
   value: unknown,
 ): Effect<unknown, unknown> {
   let current = resume(value);
+  if (
+    queue === undefined && frames !== undefined && frames.previous === undefined
+  ) {
+    if (current[0] === "pure") {
+      return frames.resume(current[1]);
+    }
+    const target = current as unknown as ImpureEffectTarget;
+    if (target[effect_queue] === undefined) {
+      return new NewImpureEffect(
+        current[1],
+        target[effect_resume],
+        { previous: target[effect_frames], resume: frames.resume },
+        undefined,
+      );
+    }
+    return new NewImpureEffect(
+      current[1],
+      target[effect_resume],
+      undefined,
+      append_effect_queue(
+        append_effect_queue(
+          target[effect_queue],
+          queue_from_frames(target[effect_frames]),
+        ),
+        { tag: "chunk", resumes: [frames.resume], index: 0 },
+      ),
+    );
+  }
   let pending = append_effect_queue(queue, queue_from_frames(frames));
 
   while (pending !== undefined) {
@@ -1296,11 +1408,10 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
   return values;
 }
 
-function* effect_iterator<requirements, item>(
+function effect_iterator<requirements, item>(
   this: Effect<requirements, item>,
 ): Generator<Effect<requirements, item>, item, unknown> {
-  const item = yield this;
-  return item as item;
+  return yield_data(this);
 }
 
 /** Explicit reusable control-flow instructions. Keep state immutable when resuming a suspension more than once. */

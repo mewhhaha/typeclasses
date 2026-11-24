@@ -13,10 +13,11 @@ import {
 } from "./typeclass.ts";
 import {
   type Effect,
-  handle_lift,
   is_effect,
   is_lift_of,
   type Lift,
+  pure,
+  suspend,
   type TaggedOperation,
 } from "./effects.ts";
 import { is_kind_of } from "./internal.ts";
@@ -99,6 +100,23 @@ export const Writer = data<
 >(writer_identity) as unknown as WriterConstructor;
 const writer_kind = Writer[kind];
 const canonical_array_concat = array_concat_method;
+const writer_cell_empties = new WeakMap<
+  object,
+  () => Data<Dictionary, unknown>
+>();
+
+/** @ignore Create a fresh empty output value for a Writer cell. */
+export function writer_cell_empty<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+>(cell: AsWriterCell<key, output, log>): Data<output, log> {
+  const create = writer_cell_empties.get(cell);
+  if (create === undefined) {
+    throw new TypeError("Expected a Writer cell created by writer_cell");
+  }
+  return create() as Data<output, log>;
+}
 
 Object.defineProperty(Writer, "with", {
   value: configured_writer,
@@ -196,6 +214,10 @@ function make_writer_cell<
   const dictionary = cell_dictionary<AsWriterCell<key, output, log>>(
     Writer,
     key,
+  );
+  writer_cell_empties.set(
+    dictionary,
+    () => empty_output(empty) as Data<Dictionary, unknown>,
   );
 
   Object.defineProperties(dictionary, {
@@ -330,6 +352,20 @@ export type WriterEmpty<requirements> = (
     : never
 ) extends (empty: infer empty) => void ? empty : unknown;
 
+/** Handles one cell's lifts starting from its declared empty output. */
+export function run_writer<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect: Effect<requirements, item>,
+): Effect<
+  WithoutWriterCell<requirements, key>,
+  readonly [item, Data<output, log> & WriterCellEmpty<requirements, key>]
+>;
 /** Handles Writer lifts from the supplied empty output value. */
 export function run_writer<requirements, item>(
   effect: Effect<requirements, item>,
@@ -359,11 +395,31 @@ export function run_writer(
     | readonly [
       AsWriterCell<PropertyKey, Dictionary, unknown>,
       Effect<unknown, unknown>,
+    ]
+    | readonly [
+      AsWriterCell<PropertyKey, Dictionary, unknown>,
+      Effect<unknown, unknown>,
       unknown,
     ]
 ): Effect<unknown, unknown> {
   if (args.length === 2) {
-    const [effect, empty] = args;
+    if (writer_cell_empties.has(args[0] as object)) {
+      const [cell, effect] = args as readonly [
+        AsWriterCell<PropertyKey, Dictionary, unknown>,
+        Effect<unknown, unknown>,
+      ];
+
+      return run_writer_kind(
+        effect,
+        cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+        writer_cell_empty(cell),
+      );
+    }
+
+    const [effect, empty] = args as readonly [
+      Effect<unknown, unknown>,
+      unknown,
+    ];
 
     return run_writer_kind(effect, writer_kind, empty);
   }
@@ -385,24 +441,93 @@ function run_writer_kind<requirements, item>(
   WithoutWriter<requirements>,
   readonly [item, WriterEmpty<requirements>]
 > {
-  return handle_lift(effect, runtime_kind, empty, {
-    done(value, output) {
-      return [value as item, output] as const;
-    },
-    handle(
-      value: Data<AsWriter<Dictionary, unknown>, unknown>,
-      output,
-    ) {
-      const [item, next_output] = value.value();
-      return [
-        item,
-        concat_output(output, next_output) as WriterEmpty<requirements>,
-      ] as const;
-    },
-  }) as Effect<
-    WithoutWriter<requirements>,
-    readonly [item, WriterEmpty<requirements>]
-  >;
+  let current = effect as Effect<requirements, unknown>;
+  let current_output = empty as Data<Dictionary, unknown>;
+  let bufferable = has_canonical_array_concat(current_output);
+  let buffered_output: unknown[] | undefined;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure": {
+        if (buffered_output !== undefined) {
+          current_output = ArrayT(
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+        }
+        return pure(
+          [current[1] as item, current_output] as const,
+        ) as unknown as Effect<
+          WithoutWriter<requirements>,
+          readonly [item, WriterEmpty<requirements>]
+        >;
+      }
+      case "impure": {
+        const operation = current[1];
+        if (is_lift_of(operation, runtime_kind)) {
+          const [value, next_output] = (operation[1] as Data<
+            AsWriter<Dictionary, unknown>,
+            unknown
+          >).value();
+          if (
+            bufferable &&
+            (buffered_output !== undefined ||
+              has_canonical_array_concat(current_output)) &&
+            is_canonical_array_concat_method() &&
+            is_kind_of(next_output, ArrayT)
+          ) {
+            if (buffered_output === undefined) {
+              buffered_output = [];
+              append_array_log(
+                buffered_output,
+                current_output.value() as readonly unknown[],
+              );
+            }
+            append_array_log(
+              buffered_output,
+              next_output.value() as readonly unknown[],
+            );
+          } else {
+            if (buffered_output !== undefined) {
+              current_output = ArrayT(
+                buffered_output,
+              ) as unknown as Data<Dictionary, unknown>;
+              buffered_output = undefined;
+            }
+            bufferable = false;
+            current_output = concat_output(
+              current_output,
+              next_output,
+            ) as Data<Dictionary, unknown>;
+          }
+          current = current[2](value) as Effect<requirements, unknown>;
+          continue;
+        }
+
+        // Flush any mutable buffer before suspending so replayed continuations
+        // observe an immutable ArrayT snapshot rather than sharing a buffer.
+        if (buffered_output !== undefined) {
+          current_output = ArrayT(
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+          buffered_output = undefined;
+        }
+        const suspended = current;
+        const suspended_output = current_output as WriterEmpty<requirements>;
+        return suspend(
+          suspended[1] as WithoutWriter<requirements>,
+          (value) =>
+            run_writer_kind(
+              suspended[2](value),
+              runtime_kind,
+              suspended_output,
+            ),
+        ) as Effect<
+          WithoutWriter<requirements>,
+          readonly [item, WriterEmpty<requirements>]
+        >;
+      }
+    }
+  }
 }
 
 /**
@@ -413,6 +538,30 @@ export type TerminalWriterEmpty<requirements> =
   [WithoutWriter<requirements>] extends [never] ? WriterEmpty<requirements>
     : never;
 
+/** Runs one cell value starting from its declared empty output. */
+export function run_writer_terminal<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  writer: WriterCellValue<key, output, log, item>,
+): readonly [item, Data<output, log>];
+/** Runs an effect whose only remaining lifts address `cell`, using its empty output. */
+export function run_writer_terminal<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect:
+    & Effect<requirements, item>
+    & ([WithoutWriterCell<requirements, key>] extends [never] ? unknown
+      : never),
+): readonly [item, Data<output, log>];
 /** Runs one Writer value or an effect containing only Writer lifts. */
 export function run_writer_terminal<
   output extends MonoidDictionary<output>,
@@ -467,6 +616,14 @@ export function run_writer_terminal<
 export function run_writer_terminal(
   ...args: readonly unknown[]
 ): readonly [unknown, unknown] {
+  if (args.length === 2 && writer_cell_empties.has(args[0] as object)) {
+    const cell = args[0] as AsWriterCell<PropertyKey, Dictionary, unknown>;
+    return run_writer_terminal_kind(
+      args[1] as Effect<unknown, unknown>,
+      cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+      writer_cell_empty(cell),
+    );
+  }
   const [effect, empty, runtime_kind] = args.length === 2
     ? [args[0], args[1], writer_kind] as const
     : [
@@ -548,16 +705,19 @@ function run_writer_terminal_kind(
       bufferable &&
       (buffered_output !== undefined ||
         has_canonical_array_concat(current_output)) &&
-      Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
-        canonical_array_concat &&
+      is_canonical_array_concat_method() &&
       is_kind_of(next_output, ArrayT)
     ) {
       if (buffered_output === undefined) {
-        buffered_output = [...current_output.value() as Iterable<unknown>];
+        buffered_output = [];
+        append_array_log(
+          buffered_output,
+          current_output.value() as readonly unknown[],
+        );
       }
       append_array_log(
         buffered_output,
-        next_output.value() as Iterable<unknown>,
+        next_output.value() as readonly unknown[],
       );
     } else {
       if (buffered_output !== undefined) {
@@ -742,7 +902,8 @@ function configured_writer<
   }
 }
 
-function has_canonical_array_concat(
+/** @ignore */
+export function has_canonical_array_concat(
   output: Data<Dictionary, unknown>,
 ): boolean {
   if (!is_kind_of(output, ArrayT)) return false;
@@ -759,6 +920,22 @@ function has_canonical_array_concat(
   return false;
 }
 
-function append_array_log(buffer: unknown[], values: Iterable<unknown>): void {
+/** @ignore */
+export function is_canonical_array_concat_method(): boolean {
+  return Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
+    canonical_array_concat;
+}
+
+/** @ignore */
+export function append_array_log(
+  buffer: unknown[],
+  values: Iterable<unknown>,
+): void {
+  if (Array.isArray(values)) {
+    for (let index = 0; index < values.length; index += 1) {
+      buffer.push(values[index]);
+    }
+    return;
+  }
   for (const value of values) buffer.push(value);
 }

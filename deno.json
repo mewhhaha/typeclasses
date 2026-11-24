@@ -1,6 +1,6 @@
 {
   "name": "@mewhhaha/typeclasses",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "MIT",
   "sideEffects": false,
   "exports": {
@@ -87,6 +87,7 @@
       "tools/transform_context.ts",
       "tools/transform_imports.ts",
       "tools/transform_generator.ts",
+      "tools/transform_splice.ts",
       "tools/transform_terminals.ts"
     ],
     "exclude": [

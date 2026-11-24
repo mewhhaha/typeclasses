@@ -81,8 +81,8 @@ export function from_factory<item>(
 export function from_array<item>(
   items: readonly item[],
 ): IterableT<item> {
-  const factory = () => items;
-  known_sizes.set(factory, { items, limit: Infinity });
+  const factory: TaggedIterableFactory<item> = () => items;
+  factory[iterable_array] = items;
   return IterableT(factory);
 }
 
@@ -91,22 +91,25 @@ export function from_iterable<item>(
   iterable: Iterable<item>,
 ): IterableT<item> {
   const items = [...iterable];
-  const factory = () => items;
-  known_sizes.set(factory, { items, limit: Infinity });
+  const factory: TaggedIterableFactory<item> = () => items;
+  factory[iterable_array] = items;
   return IterableT(factory);
 }
 
 /** Materialize a wrapped iterable into a mutable array. */
 export function to_array<item>(iterable: IterableT<item>): item[] {
   const factory = iterable.value();
-  const size = known_sizes.get(factory);
-  if (size === undefined) return [...factory()];
-  if (size.limit === 0) return [];
-  const out = new Array<item>(Math.min(size.items.length, size.limit));
-  let index = 0;
-  for (const item of factory()) out[index++] = item;
-  out.length = index;
-  return out;
+  const plan = pipeline_of(factory);
+  if (plan !== undefined) {
+    const out: item[] = [];
+    push_pipeline<item>(plan, (value) => {
+      out.push(value);
+      return false;
+    });
+    return out;
+  }
+  const items = fast_array_of(factory);
+  return items !== undefined ? (items.slice() as item[]) : [...factory()];
 }
 
 /** Lazily keep matching items, preserving type-guard narrowing. */
@@ -251,16 +254,38 @@ type Stage =
     readonly fn: (item: unknown) => Maybe<unknown>;
   };
 type Stages = { readonly stage: Stage; readonly previous?: Stages };
+type PipelineMeta = {
+  readonly ordered: readonly Stage[];
+  readonly has_take: boolean;
+  readonly has_zero_take: boolean;
+};
 type Pipeline = {
   readonly source: RawIterableT<unknown>;
   readonly stages: Stages;
-  ordered?: readonly Stage[];
+  meta?: PipelineMeta;
 };
-const pipelines = new WeakMap<RawIterableT<unknown>, Pipeline>();
-const known_sizes = new WeakMap<RawIterableT<unknown>, {
-  readonly items: readonly unknown[];
-  readonly limit: number;
-}>();
+const iterable_pipeline = Symbol("IterableT.pipeline");
+const iterable_array = Symbol("IterableT.array");
+type TaggedIterableFactory<item = unknown> = RawIterableT<item> & {
+  [iterable_pipeline]?: Pipeline;
+  [iterable_array]?: readonly unknown[];
+};
+
+function pipeline_of(factory: RawIterableT<unknown>): Pipeline | undefined {
+  return (factory as TaggedIterableFactory)[iterable_pipeline];
+}
+function fast_array_of(
+  source: RawIterableT<unknown>,
+): readonly unknown[] | undefined {
+  const items = (source as TaggedIterableFactory)[iterable_array];
+  if (
+    items !== undefined && Array.isArray(items) &&
+    items[Symbol.iterator] === Array.prototype[Symbol.iterator]
+  ) {
+    return items;
+  }
+  return undefined;
+}
 
 // One generator owns the source. Plans share immutable links; counters belong
 // to each traversal, so replay and interleaved consumers remain independent.
@@ -269,7 +294,7 @@ function pipeline<from, to = from>(
   stage: Stage,
 ): IterableT<to> {
   const current = value.value();
-  const previous = pipelines.get(current);
+  const previous = pipeline_of(current);
   let source: RawIterableT<unknown> = current;
   let stages: Stages = { stage };
   if (previous !== undefined) {
@@ -277,26 +302,11 @@ function pipeline<from, to = from>(
     stages = { stage, previous: previous.stages };
   }
   const plan: Pipeline = { source, stages };
-  const factory = function* (): Generator<to> {
-    const ordered = ordered_stages(plan);
-    if (ordered.every((stage) => stage.tag === "map")) {
-      const functions = ordered.map((stage) =>
-        (stage as Extract<Stage, { tag: "map" }>).fn
-      );
-      for (let item of source()) {
-        for (const fn of functions) item = fn(item);
-        yield item as to;
-      }
-      return;
-    }
-    let remaining: number[] | undefined;
-    if (ordered.some((stage) => stage.tag === "take")) {
-      remaining = ordered.map((stage) => {
-        if (stage.tag === "take") return stage.count;
-        return Infinity;
-      });
-      if (remaining.includes(0)) return;
-    }
+  const factory: TaggedIterableFactory<to> = function* (): Generator<to> {
+    const meta = pipeline_meta(plan);
+    if (meta.has_zero_take) return;
+    const ordered = meta.ordered;
+    const remaining = meta.has_take ? init_remaining(ordered) : undefined;
     for (const input of source()) {
       let item = input;
       let keep = true;
@@ -327,21 +337,7 @@ function pipeline<from, to = from>(
       if (stop) return;
     }
   };
-  pipelines.set(factory, plan);
-  const size = known_sizes.get(current);
-  if (size !== undefined) {
-    switch (stage.tag) {
-      case "map":
-        known_sizes.set(factory, size);
-        break;
-      case "take":
-        known_sizes.set(factory, {
-          items: size.items,
-          limit: Math.min(size.limit, stage.count),
-        });
-        break;
-    }
-  }
+  factory[iterable_pipeline] = plan;
   return IterableT(factory);
 }
 
@@ -358,8 +354,8 @@ export const from_array_view = from_array;
 /** Explicit finite snapshot; consumes the source immediately. */
 export const from_snapshot = from_iterable;
 
-function ordered_stages(plan: Pipeline): readonly Stage[] {
-  if (plan.ordered !== undefined) return plan.ordered;
+function pipeline_meta(plan: Pipeline): PipelineMeta {
+  if (plan.meta !== undefined) return plan.meta;
   const ordered: Stage[] = [];
   let link: Stages | undefined = plan.stages;
   while (link !== undefined) {
@@ -367,8 +363,97 @@ function ordered_stages(plan: Pipeline): readonly Stage[] {
     link = link.previous;
   }
   ordered.reverse();
-  plan.ordered = ordered;
-  return ordered;
+  let has_take = false;
+  let has_zero_take = false;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const stage = ordered[index];
+    if (stage.tag === "take") {
+      has_take = true;
+      if (stage.count === 0) has_zero_take = true;
+    }
+  }
+  const meta: PipelineMeta = { ordered, has_take, has_zero_take };
+  plan.meta = meta;
+  return meta;
+}
+
+function init_remaining(ordered: readonly Stage[]): number[] {
+  const remaining = new Array<number>(ordered.length);
+  for (let index = 0; index < ordered.length; index += 1) {
+    const stage = ordered[index];
+    remaining[index] = stage.tag === "take" ? stage.count : Infinity;
+  }
+  return remaining;
+}
+
+function push_pipeline<item>(
+  plan: Pipeline,
+  visit: (item: item) => boolean,
+): void {
+  const meta = pipeline_meta(plan);
+  if (meta.has_zero_take) return;
+  const items = fast_array_of(plan.source);
+  const ordered = meta.ordered;
+  if (items !== undefined) {
+    if (ordered.length === 1 && ordered[0].tag === "map") {
+      const f0 = ordered[0].fn;
+      for (let index = 0; index < items.length; index += 1) {
+        if (visit(f0(items[index]) as item)) return;
+      }
+      return;
+    }
+    if (
+      ordered.length === 2 && ordered[0].tag === "map" &&
+      ordered[1].tag === "filter"
+    ) {
+      const map_fn = ordered[0].fn;
+      const filter_fn = ordered[1].fn;
+      for (let index = 0; index < items.length; index += 1) {
+        const mapped = map_fn(items[index]);
+        if (filter_fn(mapped) && visit(mapped as item)) return;
+      }
+      return;
+    }
+  }
+  const remaining = meta.has_take ? init_remaining(ordered) : undefined;
+  const step_item = (input: unknown): boolean => {
+    let value = input;
+    let keep = true;
+    let stop = false;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const operation = ordered[index];
+      switch (operation.tag) {
+        case "map":
+          value = operation.fn(value);
+          break;
+        case "filter":
+          keep = operation.fn(value);
+          break;
+        case "take":
+          remaining![index] -= 1;
+          if (remaining![index] === 0) stop = true;
+          break;
+        case "filter_map": {
+          const [tag, payload] = operation.fn(value).value();
+          if (tag === "Nothing") keep = false;
+          else value = payload;
+          break;
+        }
+      }
+      if (!keep) break;
+    }
+    if (keep && visit(value as item)) return true;
+    return stop;
+  };
+  if (items !== undefined) {
+    for (let index = 0; index < items.length; index += 1) {
+      if (step_item(items[index])) return;
+    }
+    return;
+  }
+  for (const input of plan.source()) {
+    if (step_item(input)) return;
+  }
 }
 
 function close_iterators(
@@ -398,43 +483,64 @@ export function filter_map<from, to>(
 }
 
 /**
- * Prepare a reusable terminal loop. A known map/filter/take pipeline lowers to
- * its three callbacks without stage dispatch, counters arrays or yielded values.
- * Other plans retain ordinary iteration and IteratorClose behavior.
+ * Prepare a reusable terminal loop. Pipeline stages lower directly into a push
+ * loop without generator yields or iterator-result boxes, retaining IteratorClose
+ * on early exit.
  */
 export function compile_fold<item>(iterable: IterableT<item>): <state>(
   initial: state,
   reduce: (state: state, item: item) => state,
 ) => state {
   const factory = iterable.value();
-  const plan = pipelines.get(factory);
+  const plan = pipeline_of(factory);
   if (plan !== undefined) {
-    const stages = ordered_stages(plan);
-    const [map, filter, take] = stages;
-    if (
-      stages.length === 3 && map.tag === "map" && filter.tag === "filter" &&
-      take.tag === "take"
-    ) {
-      return (initial, reduce) => {
-        let state = initial;
-        let remaining = take.count;
-        if (remaining === 0) return state;
-        for (const input of plan.source()) {
-          const item = map.fn(input);
-          if (!filter.fn(item)) continue;
-          state = reduce(state, item as item);
-          remaining -= 1;
-          if (remaining === 0) break;
-        }
-        return state;
-      };
-    }
+    const meta = pipeline_meta(plan);
+    if (meta.has_zero_take) return (initial) => initial;
+    return (initial, reduce) => {
+      let state = initial;
+      push_pipeline<item>(plan, (value) => {
+        state = reduce(state, value);
+        return false;
+      });
+      return state;
+    };
+  }
+  const items = fast_array_of(factory);
+  if (items !== undefined) {
+    return (initial, reduce) => {
+      let state = initial;
+      for (let index = 0; index < items.length; index += 1) {
+        state = reduce(state, items[index] as item);
+      }
+      return state;
+    };
   }
   return (initial, reduce) => {
     let state = initial;
     for (const item of factory()) state = reduce(state, item);
     return state;
   };
+}
+
+function run_pipeline_until<item>(
+  factory: RawIterableT<item>,
+  visit: (item: item) => boolean,
+): void {
+  const plan = pipeline_of(factory);
+  if (plan !== undefined) {
+    push_pipeline(plan, visit);
+    return;
+  }
+  const items = fast_array_of(factory);
+  if (items !== undefined) {
+    for (let index = 0; index < items.length; index += 1) {
+      if (visit(items[index] as item)) return;
+    }
+    return;
+  }
+  for (const item of factory()) {
+    if (visit(item)) return;
+  }
 }
 
 function create_iterable(): AsIterable {
@@ -589,21 +695,35 @@ function create_iterable(): AsIterable {
 
   Foldable.instance(IterableT)({
     [some_method](predicate) {
-      for (const item of this.value()()) if (predicate(item)) return true;
-      return false;
+      let matched = false;
+      run_pipeline_until(this.value(), (item) => {
+        if (predicate(item)) {
+          matched = true;
+          return true;
+        }
+        return false;
+      });
+      return matched;
     },
     [find_method](predicate) {
-      for (const item of this.value()()) if (predicate(item)) return item;
-      return undefined;
+      let found: unknown;
+      run_pipeline_until(this.value(), (item) => {
+        if (predicate(item)) {
+          found = item;
+          return true;
+        }
+        return false;
+      });
+      return found as never;
     },
 
     [fold_while_method](initial, fn) {
       let state = initial;
-      for (const item of this.value()()) {
+      run_pipeline_until(this.value(), (item) => {
         const [tag, next] = fn(state, item);
         state = next;
-        if (tag === "Done") return state;
-      }
+        return tag === "Done";
+      });
       return state;
     },
 
