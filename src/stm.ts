@@ -200,33 +200,17 @@ class Journal implements StmJournal {
 
   has_write(key: TVar<unknown>): boolean {
     if (this.writes_map !== undefined) return this.writes_map.has(key);
-    if (this.w0_k === key) return true;
-    const keys = this.w_keys;
-    if (keys !== undefined) {
-      for (let index = 0; index < keys.length; index += 1) {
-        if (keys[index] === key) return true;
-      }
-    }
-    return false;
+    return this.w0_k === key || (this.w_keys?.includes(key) ?? false);
   }
 
   mark_exposed(key: TVar<unknown>): void {
     if (this.writes_map !== undefined) {
       (this.exposed_map ??= new Set()).add(key);
-      return;
-    }
-    if (this.w0_k === key) {
+    } else if (this.w0_k === key) {
       this.w0_exp = true;
-      return;
-    }
-    const keys = this.w_keys;
-    if (keys !== undefined) {
-      for (let index = 0; index < keys.length; index += 1) {
-        if (keys[index] === key) {
-          this.w_exp![index] = true;
-          return;
-        }
-      }
+    } else if (this.w_keys !== undefined) {
+      const idx = this.w_keys.indexOf(key);
+      if (idx >= 0) this.w_exp![idx] = true;
     }
   }
 }
@@ -486,6 +470,45 @@ function run_stm<item>(
   return transaction.value()(journal);
 }
 
+const journal_miss = Symbol("Journal.miss");
+
+function find_in_journal(
+  internal: Journal,
+  key: TVar<unknown>,
+  mark_write_exposed: boolean,
+): unknown {
+  if (internal.writes_map !== undefined) {
+    if (internal.writes_map.has(key)) {
+      if (mark_write_exposed) (internal.exposed_map ??= new Set()).add(key);
+      return internal.writes_map.get(key);
+    }
+  } else if (internal.w0_k !== undefined) {
+    if (internal.w0_k === key) {
+      if (mark_write_exposed) internal.w0_exp = true;
+      return internal.w0_v;
+    }
+    const w_keys = internal.w_keys;
+    if (w_keys !== undefined) {
+      const idx = w_keys.indexOf(key);
+      if (idx >= 0) {
+        if (mark_write_exposed) internal.w_exp![idx] = true;
+        return internal.w_vals![idx];
+      }
+    }
+  }
+  if (internal.reads_map !== undefined) {
+    if (internal.reads_map.has(key)) return internal.reads_map.get(key);
+  } else if (internal.r0_k !== undefined) {
+    if (internal.r0_k === key) return internal.r0_v;
+    const r_keys = internal.r_keys;
+    if (r_keys !== undefined) {
+      const idx = r_keys.indexOf(key);
+      if (idx >= 0) return internal.r_vals![idx];
+    }
+  }
+  return journal_miss;
+}
+
 function read_journal<item>(
   journal: StmJournal,
   variable: TVar<item>,
@@ -493,39 +516,8 @@ function read_journal<item>(
   const key = variable as TVar<unknown>;
   const internal = journal_of(journal);
   if (internal !== undefined) {
-    if (internal.writes_map !== undefined) {
-      if (internal.writes_map.has(key)) {
-        (internal.exposed_map ??= new Set()).add(key);
-        return internal.writes_map.get(key) as item;
-      }
-    } else if (internal.w0_k !== undefined) {
-      if (internal.w0_k === key) {
-        internal.w0_exp = true;
-        return internal.w0_v as item;
-      }
-      const w_keys = internal.w_keys;
-      if (w_keys !== undefined) {
-        for (let index = 0; index < w_keys.length; index += 1) {
-          if (w_keys[index] === key) {
-            internal.w_exp![index] = true;
-            return internal.w_vals![index] as item;
-          }
-        }
-      }
-    }
-    if (internal.reads_map !== undefined) {
-      if (internal.reads_map.has(key)) {
-        return internal.reads_map.get(key) as item;
-      }
-    } else if (internal.r0_k !== undefined) {
-      if (internal.r0_k === key) return internal.r0_v as item;
-      const r_keys = internal.r_keys;
-      if (r_keys !== undefined) {
-        for (let index = 0; index < r_keys.length; index += 1) {
-          if (r_keys[index] === key) return internal.r_vals![index] as item;
-        }
-      }
-    }
+    const found = find_in_journal(internal, key, true);
+    if (found !== journal_miss) return found as item;
     const value = isolate_tvar(
       variable,
       lookup_journal(journal.parent, key, read_current(variable)) as item,
@@ -571,120 +563,52 @@ function write_journal<item>(
   journal.writes.set(variable as TVar<unknown>, isolated);
 }
 
+function isolate_commit(variable: TVar<unknown>, value: unknown): unknown {
+  return isolate_tvar(
+    variable,
+    value,
+    `commit value for TVar ${read_tvar_id(variable)}`,
+  );
+}
+
 function commit_journal(journal: StmJournal): void {
   const internal = journal_of(journal);
-  if (internal !== undefined) {
-    if (internal.writes_map === undefined) {
-      if (internal.w0_k === undefined) return;
-      if (!internal.escaped) {
-        if (internal.w_keys === undefined) {
-          let value = internal.w0_v;
-          if (internal.w0_exp) {
-            value = isolate_tvar(
-              internal.w0_k,
-              value,
-              `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
-            );
-          }
-          write_current(internal.w0_k, value);
-          return;
-        }
-        let v0 = internal.w0_v;
-        if (internal.w0_exp) {
-          v0 = isolate_tvar(
-            internal.w0_k,
-            v0,
-            `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
-          );
-        }
-        const keys = internal.w_keys;
-        const vals = internal.w_vals!;
-        const exp = internal.w_exp!;
-        for (let index = 0; index < keys.length; index += 1) {
-          if (exp[index]) {
-            vals[index] = isolate_tvar(
-              keys[index],
-              vals[index],
-              `commit value for TVar ${read_tvar_id(keys[index])}`,
-            );
-          }
-        }
-        write_current(internal.w0_k, v0);
-        for (let index = 0; index < keys.length; index += 1) {
-          write_current(keys[index], vals[index]);
-        }
-        return;
-      }
-      // Escaped journal with inline writes: isolate every value before publishing.
-      const v0 = isolate_tvar(
-        internal.w0_k,
-        internal.w0_v,
-        `commit value for TVar ${read_tvar_id(internal.w0_k)}`,
-      );
-      const keys = internal.w_keys;
-      const prepared: unknown[] = [];
-      if (keys !== undefined) {
-        const vals = internal.w_vals!;
-        for (let index = 0; index < keys.length; index += 1) {
-          prepared.push(
-            isolate_tvar(
-              keys[index],
-              vals[index],
-              `commit value for TVar ${read_tvar_id(keys[index])}`,
-            ),
-          );
-        }
-      }
+  if (internal !== undefined && internal.writes_map === undefined) {
+    if (internal.w0_k === undefined) return;
+    const esc = internal.escaped;
+    const v0 = esc || internal.w0_exp
+      ? isolate_commit(internal.w0_k, internal.w0_v)
+      : internal.w0_v;
+    const keys = internal.w_keys;
+    if (keys === undefined) {
       write_current(internal.w0_k, v0);
-      if (keys !== undefined) {
-        for (let index = 0; index < keys.length; index += 1) {
-          write_current(keys[index], prepared[index]);
-        }
-      }
       return;
     }
-    const writes = internal.writes_map;
-    if (!internal.escaped) {
-      for (const [variable, value] of writes) {
-        if (internal.exposed_map?.has(variable)) {
-          writes.set(
-            variable,
-            isolate_tvar(
-              variable,
-              value,
-              `commit value for TVar ${read_tvar_id(variable)}`,
-            ),
-          );
-        }
+    const vals = internal.w_vals!;
+    const exp = internal.w_exp!;
+    for (let index = 0; index < keys.length; index += 1) {
+      if (esc || exp[index]) {
+        vals[index] = isolate_commit(keys[index], vals[index]);
       }
-      for (const [variable, value] of writes) write_current(variable, value);
-      return;
     }
-    const commits: [TVar<unknown>, unknown][] = [];
-    for (const [variable, value] of writes) {
-      commits.push([
-        variable,
-        isolate_tvar(
-          variable,
-          value,
-          `commit value for TVar ${read_tvar_id(variable)}`,
-        ),
-      ]);
+    write_current(internal.w0_k, v0);
+    for (let index = 0; index < keys.length; index += 1) {
+      write_current(keys[index], vals[index]);
     }
-    for (const [variable, value] of commits) write_current(variable, value);
     return;
   }
-  const writes = writes_of(journal);
+  const writes = internal !== undefined
+    ? internal.writes_map
+    : writes_of(journal);
   if (writes === undefined) return;
+  const esc = internal === undefined || internal.escaped;
   const commits: [TVar<unknown>, unknown][] = [];
   for (const [variable, value] of writes) {
     commits.push([
       variable,
-      isolate_tvar(
-        variable,
-        value,
-        `commit value for TVar ${read_tvar_id(variable)}`,
-      ),
+      esc || internal.exposed_map?.has(variable)
+        ? isolate_commit(variable, value)
+        : value,
     ]);
   }
   for (const [variable, value] of commits) write_current(variable, value);
@@ -698,32 +622,8 @@ function lookup_journal(
   for (let current = journal; current !== undefined; current = current.parent) {
     const internal = journal_of(current);
     if (internal !== undefined) {
-      if (internal.writes_map !== undefined) {
-        if (internal.writes_map.has(variable)) {
-          return internal.writes_map.get(variable);
-        }
-      } else if (internal.w0_k !== undefined) {
-        if (internal.w0_k === variable) return internal.w0_v;
-        const w_keys = internal.w_keys;
-        if (w_keys !== undefined) {
-          for (let index = 0; index < w_keys.length; index += 1) {
-            if (w_keys[index] === variable) return internal.w_vals![index];
-          }
-        }
-      }
-      if (internal.reads_map !== undefined) {
-        if (internal.reads_map.has(variable)) {
-          return internal.reads_map.get(variable);
-        }
-      } else if (internal.r0_k !== undefined) {
-        if (internal.r0_k === variable) return internal.r0_v;
-        const r_keys = internal.r_keys;
-        if (r_keys !== undefined) {
-          for (let index = 0; index < r_keys.length; index += 1) {
-            if (r_keys[index] === variable) return internal.r_vals![index];
-          }
-        }
-      }
+      const found = find_in_journal(internal, variable, false);
+      if (found !== journal_miss) return found;
       continue;
     }
     const writes = writes_of(current);

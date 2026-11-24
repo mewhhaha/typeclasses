@@ -20,6 +20,7 @@ import {
 import { create_binding_analysis } from "./transform_bindings.ts";
 import {
   create_import_shadow_tracker,
+  create_span_scanner,
   generator_kind,
   might_contain_transform_target,
   scan_import_headers,
@@ -134,65 +135,85 @@ function transform_do_program_checked(
     ? scan_scope_declarations(program, headers)
     : new Map<string, number>();
 
-  let min_relevant = -1;
-  let max_relevant = -1;
+  let skipped_statements = false;
+  let skip_statement: ((statement: Statement) => boolean) | undefined;
   if (!has_iterable && !has_unicode && headers.leading_imports_end >= 0) {
     const scan_from = headers.leading_imports_end;
+    const target_tokens: string[] = [
+      "Do",
+      "Program",
+      "run",
+      "handle_with",
+      "value",
+      ...headers.do_names,
+      ...headers.program_names,
+      ...headers.namespaces,
+      ...headers.terminal_functions.keys(),
+      ...headers.terminal_namespaces.keys(),
+      ...headers.cell_runners.keys(),
+      ...headers.cell_runner_namespaces.keys(),
+      ...headers.operation_runners.keys(),
+      ...headers.operation_runner_namespaces.keys(),
+      ...headers.state_eval_functions.keys(),
+      ...headers.state_eval_namespaces.keys(),
+    ];
     let has_target_token = false;
-    const check_token = (token: string, is_target: boolean) => {
-      const first = source.indexOf(token, scan_from);
-      if (first < 0) return;
-      if (is_target) has_target_token = true;
-      if (min_relevant < 0 || first < min_relevant) min_relevant = first;
-      const last = source.lastIndexOf(token);
-      if (last > max_relevant) max_relevant = last;
-    };
-    check_token("Do", true);
-    check_token("Program", true);
-    check_token("run", true);
-    check_token("handle_with", true);
-    check_token("value", true);
-    for (const name of headers.do_names) check_token(name, true);
-    for (const name of headers.program_names) check_token(name, true);
-    for (const name of headers.namespaces) check_token(name, true);
-    for (const name of headers.terminal_functions.keys()) {
-      check_token(name, true);
-    }
-    for (const name of headers.terminal_namespaces.keys()) {
-      check_token(name, true);
-    }
-    for (const name of headers.cell_runners.keys()) check_token(name, true);
-    for (const name of headers.cell_runner_namespaces.keys()) {
-      check_token(name, true);
+    for (let index = 0; index < target_tokens.length; index += 1) {
+      if (source.indexOf(target_tokens[index], scan_from) >= 0) {
+        has_target_token = true;
+        break;
+      }
     }
     if (config.optimizations?.candidate_scan !== false && !has_target_token) {
       return unchanged_transform_result(source);
     }
     if (
       !config.explain &&
-      headers.terminal_functions.size === 0 &&
-      headers.terminal_namespaces.size === 0 &&
-      headers.cell_runners.size === 0 &&
-      headers.cell_runner_namespaces.size === 0
+      config.optimizations?.candidate_scan !== false
     ) {
-      check_token("Effect", false);
-      for (const name of headers.effect_names) check_token(name, false);
-      for (const name of headers.loop_dictionaries) check_token(name, false);
-      for (const name of headers.direct_maybe_dictionaries) {
-        check_token(name, false);
+      const relevant_tokens: string[] = [
+        ...target_tokens,
+        "Effect",
+        ...headers.effect_names,
+        ...headers.primitive_functions.keys(),
+        ...headers.primitive_namespaces.keys(),
+        ...headers.except_primitives.keys(),
+        ...headers.except_namespaces.keys(),
+        ...headers.operation_helpers.keys(),
+        ...headers.cell_factories.keys(),
+        ...headers.cell_namespaces.keys(),
+        ...headers.cell_providers.keys(),
+        ...headers.cell_provider_namespaces.keys(),
+        ...headers.loop_dictionaries,
+        ...headers.direct_maybe_dictionaries,
+        ...headers.just_constructors,
+        ...headers.direct_either_dictionaries,
+        ...headers.left_constructors,
+        ...headers.right_constructors,
+        ...headers.direct_identity_dictionaries,
+        ...headers.identity_constructors,
+        ...headers.array_constructors,
+        ...headers.direct_reader_dictionaries,
+        ...headers.direct_state_dictionaries,
+        ...scope_declarations.keys(),
+      ];
+      const has_relevant = create_span_scanner(
+        source,
+        relevant_tokens,
+        scan_from,
+      );
+      const skipped = new WeakSet<Statement>();
+      for (let index = 0; index < program.body.length; index += 1) {
+        const stmt = program.body[index] as Statement;
+        if (stmt.type === "ImportDeclaration") continue;
+        if (!has_relevant(stmt.start, stmt.end)) {
+          skipped.add(stmt);
+          skipped_statements = true;
+        }
       }
-      for (const name of headers.just_constructors) check_token(name, false);
-      for (const name of headers.direct_either_dictionaries) {
-        check_token(name, false);
+      if (skipped_statements) {
+        skip_statement = (statement: Statement) => skipped.has(statement);
       }
-      for (const name of headers.right_constructors) check_token(name, false);
-      for (const name of headers.direct_reader_dictionaries) {
-        check_token(name, false);
-      }
-      for (const name of headers.direct_state_dictionaries) {
-        check_token(name, false);
-      }
-      for (const name of scope_declarations.keys()) check_token(name, false);
     }
   }
 
@@ -204,45 +225,58 @@ function transform_do_program_checked(
       ? new Set([...headers.program_names, ...scope_declarations.keys()])
       : headers.program_names;
     let candidate = false;
-    walk_values(program, (current) => {
-      if (candidate) return false;
-      if (current.type === "ImportDeclaration") return false;
-      if (current.type !== "CallExpression") return;
-      if (
-        generator_kind(
-          current,
-          raw_scopes,
-          headers as unknown as TransformServices["imports"],
-        ) !== undefined
-      ) {
-        candidate = true;
-        return false;
-      }
-      const callee = current.callee;
-      if (
-        callee.type === "Identifier" &&
-        (headers.terminal_functions.has(callee.name) ||
-          headers.cell_runners.has(callee.name) || callee.name === "Do" ||
-          callee.name === "Program")
-      ) {
-        candidate = true;
-        return false;
-      }
-      if (
-        callee.type === "MemberExpression" && !callee.computed &&
-        callee.property.type === "Identifier"
-      ) {
-        const property = callee.property.name;
+    const scan_candidate = (root: Node) =>
+      walk_values(root, (current) => {
+        if (candidate) return false;
+        if (current.type === "ImportDeclaration") return false;
+        if (current.type !== "CallExpression") return;
         if (
-          property === "Do" || property === "Program" || property === "run" ||
-          property === "handle_with" || property === "value" ||
-          property === "run_cells" || property === "prepare_cells"
+          generator_kind(
+            current,
+            raw_scopes,
+            headers as unknown as TransformServices["imports"],
+          ) !== undefined
         ) {
           candidate = true;
           return false;
         }
-      }
-    });
+        const callee = current.callee;
+        if (
+          callee.type === "Identifier" &&
+          (headers.terminal_functions.has(callee.name) ||
+            headers.cell_runners.has(callee.name) ||
+            headers.operation_runners.has(callee.name) ||
+            headers.state_eval_functions.has(callee.name) ||
+            callee.name === "Do" ||
+            callee.name === "Program")
+        ) {
+          candidate = true;
+          return false;
+        }
+        if (
+          callee.type === "MemberExpression" && !callee.computed &&
+          callee.property.type === "Identifier"
+        ) {
+          const property = callee.property.name;
+          if (
+            property === "Do" || property === "Program" || property === "run" ||
+            property === "handle_with" || property === "value" ||
+            property === "run_cells" || property === "prepare_cells" ||
+            property === "handle_operations" ||
+            property === "prepare_operations" ||
+            property === "eval_state" || property === "exec_state"
+          ) {
+            candidate = true;
+            return false;
+          }
+        }
+      });
+    for (let index = 0; index < program.body.length; index += 1) {
+      const stmt = program.body[index] as Statement;
+      if (stmt.type === "ImportDeclaration" || skip_statement?.(stmt)) continue;
+      scan_candidate(stmt);
+      if (candidate) break;
+    }
     if (!candidate) return unchanged_transform_result(source);
   }
 
@@ -266,20 +300,6 @@ function transform_do_program_checked(
       reports.push({ ...location(current), optimization, outcome, message });
     }
   }
-  let skipped_statements = false;
-  const skip_statement = !has_iterable && !has_unicode && !config.explain &&
-      headers.terminal_functions.size === 0 &&
-      headers.terminal_namespaces.size === 0 &&
-      headers.cell_runners.size === 0 &&
-      headers.cell_runner_namespaces.size === 0 && min_relevant >= 0
-    ? (statement: Statement) => {
-      if (statement.end <= min_relevant || statement.start > max_relevant) {
-        skipped_statements = true;
-        return true;
-      }
-      return false;
-    }
-    : undefined;
   const names = new Set<string>();
   const shadow_tracker = create_import_shadow_tracker(
     headers,
@@ -438,6 +458,27 @@ function transform_do_program_checked(
         throw new Error("Missing terminal import " + source_local_name);
       }
       return request(declaration.source.value, imported);
+    },
+    import_from_module(anchor_local, sub_module, imported) {
+      const declaration = source_import(anchor_local);
+      if (declaration === undefined) return undefined;
+      const spec = declaration.source.value;
+      if (
+        /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?\/?$/.test(spec) ||
+        /(?:^|\/)mod\.ts$/.test(spec)
+      ) {
+        return request(spec, imported);
+      }
+      const pkg_sub = /^((?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?)\/\w+\/?$/
+        .exec(spec);
+      if (pkg_sub !== null) {
+        return request(pkg_sub[1] + "/" + sub_module, imported);
+      }
+      const file_sub = /^(.*\/)\w+(\.ts)$/.exec(spec);
+      if (file_sub !== null) {
+        return request(file_sub[1] + sub_module + file_sub[2], imported);
+      }
+      return undefined;
     },
     compile(current) {
       return lower_generator(current, services);
@@ -1142,7 +1183,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "8:oxc-parser@0.154.0:esrap@2.4.0";
+  "9:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

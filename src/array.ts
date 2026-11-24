@@ -338,11 +338,15 @@ function create_array(): AsArray {
     },
   });
 
+  function concat_array<item>(
+    this: Data<AsArray, item>,
+    right: Data<AsArray, item>,
+  ): Data<AsArray, item> {
+    return ArrayT([...this.value(), ...right.value()]);
+  }
+
   Semigroup.instance(ArrayT)({
-    concat(right) {
-      const left = this.value();
-      return ArrayT([...left, ...right.value()]);
-    },
+    concat: concat_array,
   });
 
   Monoid.instance(ArrayT)({
@@ -351,11 +355,7 @@ function create_array(): AsArray {
 
   Alternative.instance(ArrayT)({
     empty: empty_array,
-
-    alt(right) {
-      const left = this.value();
-      return ArrayT([...left, ...right.value()]);
-    },
+    alt: concat_array,
   });
 
   Monad.instance(ArrayT)({

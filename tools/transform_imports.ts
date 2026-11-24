@@ -11,8 +11,12 @@ import { might_contain_iterable_maps } from "./transform_iterable_maps.ts";
 import type {
   CellFactoryKind,
   CellRunnerName,
+  ExceptPrimitiveName,
   ImportedBindings,
+  OperationHelperName,
+  OperationRunnerName,
   PrimitiveFunctionName,
+  StateEvalName,
   TerminalFunctionName,
   TransformConfig,
   TransformKind,
@@ -23,6 +27,7 @@ const terminals = new Set<TerminalFunctionName>([
   "run_reader",
   "run_state",
   "run_writer",
+  "run_except",
 ]);
 const primitives = new Set<PrimitiveFunctionName>([
   "ask",
@@ -34,11 +39,30 @@ const primitives = new Set<PrimitiveFunctionName>([
   "writer",
   "tell",
 ]);
+const except_primitive_set = new Set<ExceptPrimitiveName>([
+  "fail",
+  "from_either",
+  "from_maybe",
+  "from_nullable",
+  "from_validation",
+]);
+const state_eval_set = new Set<StateEvalName>(["eval_state", "exec_state"]);
+const operation_runner_set = new Set<OperationRunnerName>([
+  "handle_operations",
+  "prepare_operations",
+]);
+const operation_helper_set = new Set<OperationHelperName>([
+  "operation",
+  "send",
+  "pure",
+]);
 const source_specifiers = new Map<string, string>();
 for (
   const name of [
+    "array",
     "effects",
     "either",
+    "except",
     "handlers",
     "identity",
     "maybe",
@@ -92,6 +116,44 @@ function terminal_exports(
       return new Set(["run_state"]);
     case "writer":
       return new Set(["run_writer"]);
+    case "except":
+      return new Set(["run_except"]);
+  }
+}
+function except_primitive_exports(
+  specifier: string,
+): ReadonlySet<ExceptPrimitiveName> | undefined {
+  switch (package_module(specifier) ?? source_module(specifier)) {
+    case "mod":
+    case "except":
+      return except_primitive_set;
+  }
+}
+function state_eval_exports(
+  specifier: string,
+): ReadonlySet<StateEvalName> | undefined {
+  switch (package_module(specifier) ?? source_module(specifier)) {
+    case "mod":
+    case "state":
+      return state_eval_set;
+  }
+}
+function operation_runner_exports(
+  specifier: string,
+): ReadonlySet<OperationRunnerName> | undefined {
+  switch (package_module(specifier) ?? source_module(specifier)) {
+    case "mod":
+    case "handlers":
+      return operation_runner_set;
+  }
+}
+function operation_helper_exports(
+  specifier: string,
+): ReadonlySet<OperationHelperName> | undefined {
+  switch (package_module(specifier) ?? source_module(specifier)) {
+    case "mod":
+    case "effects":
+      return operation_helper_set;
   }
 }
 function primitive_exports(
@@ -201,6 +263,16 @@ export type UnverifiedImports = {
     string,
     ReadonlySet<PrimitiveFunctionName>
   >;
+  readonly except_primitives: Map<string, ExceptPrimitiveName>;
+  readonly except_namespaces: Map<string, ReadonlySet<ExceptPrimitiveName>>;
+  readonly state_eval_functions: Map<string, StateEvalName>;
+  readonly state_eval_namespaces: Map<string, ReadonlySet<StateEvalName>>;
+  readonly operation_runners: Map<string, OperationRunnerName>;
+  readonly operation_runner_namespaces: Map<
+    string,
+    ReadonlySet<OperationRunnerName>
+  >;
+  readonly operation_helpers: Map<string, OperationHelperName>;
   readonly cell_factories: Map<string, CellFactoryKind>;
   readonly cell_namespaces: Map<string, ReadonlySet<CellFactoryKind>>;
   readonly cell_runners: Map<string, CellRunnerName>;
@@ -210,7 +282,11 @@ export type UnverifiedImports = {
   readonly direct_maybe_dictionaries: Set<string>;
   readonly just_constructors: Set<string>;
   readonly direct_either_dictionaries: Set<string>;
+  readonly left_constructors: Set<string>;
   readonly right_constructors: Set<string>;
+  readonly direct_identity_dictionaries: Set<string>;
+  readonly identity_constructors: Set<string>;
+  readonly array_constructors: Set<string>;
   readonly direct_reader_dictionaries: Set<string>;
   readonly direct_state_dictionaries: Set<string>;
   readonly program_module?: string;
@@ -220,6 +296,29 @@ export type UnverifiedImports = {
   readonly loop_specifier?: string;
   readonly leading_imports_end: number;
 };
+
+/** O(N) monotonic substring span scanner across non-overlapping sorted spans. */
+export function create_span_scanner(
+  source: string,
+  tokens: readonly string[],
+  start_offset = 0,
+): (start: number, end: number) => boolean {
+  const unique = [...new Set(tokens)].filter((token) => token.length > 0);
+  if (unique.length === 0) return () => false;
+  const next = unique.map((token) => source.indexOf(token, start_offset));
+  return (start: number, end: number): boolean => {
+    let hit = false;
+    for (let index = 0; index < unique.length; index += 1) {
+      let pos = next[index];
+      if (pos >= 0 && pos < start) {
+        pos = source.indexOf(unique[index], start);
+        next[index] = pos;
+      }
+      if (pos >= 0 && pos < end) hit = true;
+    }
+    return hit;
+  };
+}
 
 /** Cheap pre-parse filter shared by the CLI and bundler plugins. */
 export function might_contain_transform_target(source: string): boolean {
@@ -233,13 +332,19 @@ export function might_contain_transform_target(source: string): boolean {
   if (
     (source.includes("run_") &&
       (source.includes("run_reader") || source.includes("run_state") ||
-        source.includes("run_writer") || source.includes("run_cells"))) ||
-    source.includes("prepare_cells")
+        source.includes("run_writer") || source.includes("run_cells") ||
+        source.includes("run_except"))) ||
+    source.includes("prepare_cells") ||
+    source.includes("handle_operations") ||
+    source.includes("prepare_operations")
   ) {
     if (
       source.includes("run_cells") || source.includes("prepare_cells") ||
       /\brun\b/.test(source)
     ) return true;
+  }
+  if (source.includes("eval_state") || source.includes("exec_state")) {
+    return true;
   }
   return source.includes("Effect") &&
     (source.includes("interpret") || source.includes("handle_with"));
@@ -267,6 +372,19 @@ export function scan_import_headers(
     string,
     ReadonlySet<PrimitiveFunctionName>
   >();
+  const except_primitives = new Map<string, ExceptPrimitiveName>();
+  const except_namespaces = new Map<
+    string,
+    ReadonlySet<ExceptPrimitiveName>
+  >();
+  const state_eval_functions = new Map<string, StateEvalName>();
+  const state_eval_namespaces = new Map<string, ReadonlySet<StateEvalName>>();
+  const operation_runners = new Map<string, OperationRunnerName>();
+  const operation_runner_namespaces = new Map<
+    string,
+    ReadonlySet<OperationRunnerName>
+  >();
+  const operation_helpers = new Map<string, OperationHelperName>();
   const cell_factories = new Map<string, CellFactoryKind>();
   const cell_namespaces = new Map<string, ReadonlySet<CellFactoryKind>>();
   const cell_runners = new Map<string, CellRunnerName>();
@@ -279,7 +397,11 @@ export function scan_import_headers(
   const direct_maybe_dictionaries = new Set<string>();
   const just_constructors = new Set<string>();
   const direct_either_dictionaries = new Set<string>();
+  const left_constructors = new Set<string>();
   const right_constructors = new Set<string>();
+  const direct_identity_dictionaries = new Set<string>();
+  const identity_constructors = new Set<string>();
+  const array_constructors = new Set<string>();
   const direct_reader_dictionaries = new Set<string>();
   const direct_state_dictionaries = new Set<string>();
   const import_declarations = new Map<string, ImportDeclaration>();
@@ -306,6 +428,10 @@ export function scan_import_headers(
     const specifier = statement.source.value;
     const available_terminals = terminal_exports(specifier, config);
     const available_primitives = primitive_exports(specifier);
+    const available_except_primitives = except_primitive_exports(specifier);
+    const available_state_evals = state_eval_exports(specifier);
+    const available_op_runners = operation_runner_exports(specifier);
+    const available_op_helpers = operation_helper_exports(specifier);
     const available_cell_factories = cell_factory_exports(specifier);
     const available_cell_runners = cell_runner_exports(specifier);
     const available_cell_providers = cell_provider_exports(specifier);
@@ -331,6 +457,15 @@ export function scan_import_headers(
         }
         if (available_primitives !== undefined) {
           primitive_namespaces.set(local, available_primitives);
+        }
+        if (available_except_primitives !== undefined) {
+          except_namespaces.set(local, available_except_primitives);
+        }
+        if (available_state_evals !== undefined) {
+          state_eval_namespaces.set(local, available_state_evals);
+        }
+        if (available_op_runners !== undefined) {
+          operation_runner_namespaces.set(local, available_op_runners);
         }
         if (available_cell_factories !== undefined) {
           cell_namespaces.set(local, available_cell_factories);
@@ -361,6 +496,7 @@ export function scan_import_headers(
         if (imported === "Task") loop_tasks.add(local);
         if (imported === "Maybe") direct_maybe_dictionaries.add(local);
         if (imported === "Either") direct_either_dictionaries.add(local);
+        if (imported === "Identity") direct_identity_dictionaries.add(local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "maybe") && imported === "Just"
@@ -368,9 +504,25 @@ export function scan_import_headers(
         just_constructors.add(local);
       }
       if (
+        (loop_kind === "mod" || loop_kind === "either") && imported === "Left"
+      ) {
+        left_constructors.add(local);
+      }
+      if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Right"
       ) {
         right_constructors.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "identity") &&
+        (imported === "identity" || imported === "Identity")
+      ) {
+        identity_constructors.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "array") && imported === "ArrayT"
+      ) {
+        array_constructors.add(local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "reader") && imported === "Reader"
@@ -389,6 +541,18 @@ export function scan_import_headers(
       }
       if (available_primitives?.has(imported as PrimitiveFunctionName)) {
         primitive_functions.set(local, imported as PrimitiveFunctionName);
+      }
+      if (available_except_primitives?.has(imported as ExceptPrimitiveName)) {
+        except_primitives.set(local, imported as ExceptPrimitiveName);
+      }
+      if (available_state_evals?.has(imported as StateEvalName)) {
+        state_eval_functions.set(local, imported as StateEvalName);
+      }
+      if (available_op_runners?.has(imported as OperationRunnerName)) {
+        operation_runners.set(local, imported as OperationRunnerName);
+      }
+      if (available_op_helpers?.has(imported as OperationHelperName)) {
+        operation_helpers.set(local, imported as OperationHelperName);
       }
       const factory_kind = cell_factory_kind_for(imported);
       if (
@@ -431,6 +595,13 @@ export function scan_import_headers(
     terminal_namespaces,
     primitive_functions,
     primitive_namespaces,
+    except_primitives,
+    except_namespaces,
+    state_eval_functions,
+    state_eval_namespaces,
+    operation_runners,
+    operation_runner_namespaces,
+    operation_helpers,
     cell_factories,
     cell_namespaces,
     cell_runners,
@@ -440,7 +611,11 @@ export function scan_import_headers(
     direct_maybe_dictionaries,
     just_constructors,
     direct_either_dictionaries,
+    left_constructors,
     right_constructors,
+    direct_identity_dictionaries,
+    identity_constructors,
+    array_constructors,
     direct_reader_dictionaries,
     direct_state_dictionaries,
     program_module,
@@ -510,6 +685,13 @@ export function create_import_shadow_tracker(
     ...headers.terminal_namespaces.keys(),
     ...headers.primitive_functions.keys(),
     ...headers.primitive_namespaces.keys(),
+    ...headers.except_primitives.keys(),
+    ...headers.except_namespaces.keys(),
+    ...headers.state_eval_functions.keys(),
+    ...headers.state_eval_namespaces.keys(),
+    ...headers.operation_runners.keys(),
+    ...headers.operation_runner_namespaces.keys(),
+    ...headers.operation_helpers.keys(),
     ...headers.cell_factories.keys(),
     ...headers.cell_namespaces.keys(),
     ...headers.cell_runners.keys(),
@@ -519,7 +701,11 @@ export function create_import_shadow_tracker(
     ...headers.direct_maybe_dictionaries,
     ...headers.just_constructors,
     ...headers.direct_either_dictionaries,
+    ...headers.left_constructors,
     ...headers.right_constructors,
+    ...headers.direct_identity_dictionaries,
+    ...headers.identity_constructors,
+    ...headers.array_constructors,
     ...headers.direct_reader_dictionaries,
     ...headers.direct_state_dictionaries,
     ...headers.loop_dictionaries,
@@ -583,6 +769,13 @@ export function create_import_shadow_tracker(
         headers.terminal_namespaces.delete(name);
         headers.primitive_functions.delete(name);
         headers.primitive_namespaces.delete(name);
+        headers.except_primitives.delete(name);
+        headers.except_namespaces.delete(name);
+        headers.state_eval_functions.delete(name);
+        headers.state_eval_namespaces.delete(name);
+        headers.operation_runners.delete(name);
+        headers.operation_runner_namespaces.delete(name);
+        headers.operation_helpers.delete(name);
         headers.cell_factories.delete(name);
         headers.cell_namespaces.delete(name);
         headers.cell_runners.delete(name);
@@ -592,7 +785,11 @@ export function create_import_shadow_tracker(
         headers.direct_maybe_dictionaries.delete(name);
         headers.just_constructors.delete(name);
         headers.direct_either_dictionaries.delete(name);
+        headers.left_constructors.delete(name);
         headers.right_constructors.delete(name);
+        headers.direct_identity_dictionaries.delete(name);
+        headers.identity_constructors.delete(name);
+        headers.array_constructors.delete(name);
         headers.direct_reader_dictionaries.delete(name);
         headers.direct_state_dictionaries.delete(name);
         headers.loop_dictionaries.delete(name);
@@ -617,6 +814,13 @@ export function create_import_shadow_tracker(
           terminal_namespaces: headers.terminal_namespaces,
           primitive_functions: headers.primitive_functions,
           primitive_namespaces: headers.primitive_namespaces,
+          except_primitives: headers.except_primitives,
+          except_namespaces: headers.except_namespaces,
+          state_eval_functions: headers.state_eval_functions,
+          state_eval_namespaces: headers.state_eval_namespaces,
+          operation_runners: headers.operation_runners,
+          operation_runner_namespaces: headers.operation_runner_namespaces,
+          operation_helpers: headers.operation_helpers,
           cell_factories: headers.cell_factories,
           cell_namespaces: headers.cell_namespaces,
           cell_runners: headers.cell_runners,
@@ -626,7 +830,11 @@ export function create_import_shadow_tracker(
           direct_maybe_dictionaries: headers.direct_maybe_dictionaries,
           just_constructors: headers.just_constructors,
           direct_either_dictionaries: headers.direct_either_dictionaries,
+          left_constructors: headers.left_constructors,
           right_constructors: headers.right_constructors,
+          direct_identity_dictionaries: headers.direct_identity_dictionaries,
+          identity_constructors: headers.identity_constructors,
+          array_constructors: headers.array_constructors,
           direct_reader_dictionaries: headers.direct_reader_dictionaries,
           direct_state_dictionaries: headers.direct_state_dictionaries,
           program_module: headers.program_module,

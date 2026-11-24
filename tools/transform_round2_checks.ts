@@ -79,9 +79,10 @@ Deno.test("general MonadRec loops preserve branching, break, return and repeated
 export default Do(Maybe, function* () { ${body} }).value();`;
     const result = transform_do_program_source(source);
     assert_equals(result.diagnostics, []);
-    if (!body.includes("return n")) {
-      assert_true(result.code.includes("tail_rec_m"), result.code);
-    }
+    assert_true(
+      !result.code.includes("function*") && !result.code.includes("Do("),
+      result.code,
+    );
     assert_equals(await evaluate(result.code), await evaluate(source));
   }
 });

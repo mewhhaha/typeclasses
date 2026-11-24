@@ -8,6 +8,7 @@ import {
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec } from "./loop.ts";
+import { register_fast_do } from "./typeclasses/monad.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -111,6 +112,8 @@ function create_identity(): AsIdentity {
       return fn(this.value());
     },
   });
+
+  register_fast_do(Identity, 2, Identity);
 
   MonadRec.instance(Identity)({
     tail_rec_m(initial, step) {

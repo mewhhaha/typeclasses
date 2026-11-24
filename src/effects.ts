@@ -279,7 +279,6 @@ export type LiftHandler<
 };
 
 type ProgramPath = {
-  readonly length: number;
   readonly previous: ProgramPath | undefined;
   readonly value: unknown;
 };
@@ -787,49 +786,10 @@ export function handle_with(
   effect: Effect<unknown, unknown>,
   handlers: readonly ((effect: never) => unknown)[],
 ): unknown {
-  switch (handlers.length) {
-    case 0:
-      return effect;
-    case 1:
-      return handlers[0](effect as never);
-    case 2:
-      return handlers[1](handlers[0](effect as never) as never);
-    case 3:
-      return handlers[2](
-        handlers[1](handlers[0](effect as never) as never) as never,
-      );
-    case 4:
-      return handlers[3](
-        handlers[2](
-          handlers[1](handlers[0](effect as never) as never) as never,
-        ) as never,
-      );
-    case 5:
-      return handlers[4](
-        handlers[3](
-          handlers[2](
-            handlers[1](handlers[0](effect as never) as never) as never,
-          ) as never,
-        ) as never,
-      );
-    case 6:
-      return handlers[5](
-        handlers[4](
-          handlers[3](
-            handlers[2](
-              handlers[1](handlers[0](effect as never) as never) as never,
-            ) as never,
-          ) as never,
-        ) as never,
-      );
-  }
-
   let handled: unknown = effect;
-
-  for (const handler of handlers) {
-    handled = handler(handled as never);
+  for (let index = 0; index < handlers.length; index += 1) {
+    handled = handlers[index](handled as never);
   }
-
   return handled;
 }
 
@@ -875,59 +835,92 @@ export function handle_operation<
   let current = effect as Effect<requirements, unknown>;
 
   while (true) {
-    switch (current[0]) {
-      case "pure":
-        return current as Effect<
-          WithoutOperation<requirements, selected> | handled_requirements,
-          item
-        >;
-      case "impure": {
-        const suspended = current;
-
-        if (!select(suspended[1])) {
-          return new NewImpureEffect(
-            suspended[1] as WithoutOperation<requirements, selected>,
-            (value) =>
-              handle_operation(
-                suspended[2](value),
-                select,
-                handle,
-              ),
-          ) as Effect<
-            WithoutOperation<requirements, selected> | handled_requirements,
-            item
-          >;
-        }
-
-        const handled = handle(suspended[1]);
-
-        if (!is_effect(handled)) {
-          throw new TypeError("Operation handler returned an invalid effect");
-        }
-
-        switch (handled[0]) {
-          case "pure":
-            current = suspended[2](handled[1]) as Effect<
-              requirements,
-              unknown
-            >;
-            continue;
-          case "impure":
-            return bind(
-              handled,
-              (value) =>
-                handle_operation(
-                  suspended[2](value),
-                  select,
-                  handle,
-                ),
-            ) as Effect<
-              WithoutOperation<requirements, selected> | handled_requirements,
-              item
-            >;
-        }
-      }
+    if (current[0] === "pure") {
+      return current as Effect<
+        WithoutOperation<requirements, selected> | handled_requirements,
+        item
+      >;
     }
+    const suspended = current;
+    if (!select(suspended[1])) {
+      return new NewImpureEffect(
+        suspended[1] as WithoutOperation<requirements, selected>,
+        (value) => handle_operation(suspended[2](value), select, handle),
+      ) as Effect<
+        WithoutOperation<requirements, selected> | handled_requirements,
+        item
+      >;
+    }
+    const handled = handle(suspended[1]);
+    if (!is_effect(handled)) {
+      throw new TypeError("Operation handler returned an invalid effect");
+    }
+    if (handled[0] === "pure") {
+      current = suspended[2](handled[1]) as Effect<requirements, unknown>;
+      continue;
+    }
+    return bind(
+      handled,
+      (value) => handle_operation(suspended[2](value), select, handle),
+    ) as Effect<
+      WithoutOperation<requirements, selected> | handled_requirements,
+      item
+    >;
+  }
+}
+
+function handle_lift_step<
+  dictionary extends Dictionary,
+  state,
+  item,
+  result,
+>(
+  effect: Effect<unknown, unknown>,
+  runtime_kind: dictionary[typeof kind],
+  state: state,
+  handler: LiftHandler<dictionary, state, item, result>,
+  terminal: boolean,
+): unknown {
+  let current = effect;
+  let current_state = state;
+
+  while (true) {
+    if (terminal && !is_effect(current)) {
+      throw new TypeError("Invalid effect value");
+    }
+    const tag = current[0];
+    if (tag === "pure") {
+      const done = handler.done(current[1] as item, current_state);
+      return terminal ? done : pure(done);
+    }
+    if (tag !== "impure") throw new TypeError("Invalid effect value");
+    if (is_lift_of(current[1], runtime_kind)) {
+      const [value, next] = handler.handle(
+        (current[1] as Lift<dictionary, unknown>)[1],
+        current_state,
+      );
+      current = current[2](value);
+      current_state = next;
+      continue;
+    }
+    if (terminal) {
+      throw new TypeError(
+        "Unhandled effect operation: " + (current[1] as TaggedOperation)[0],
+      );
+    }
+    const suspended = current;
+    const suspended_state = current_state;
+    return new NewImpureEffect(
+      suspended[1],
+      (value) =>
+        handle_lift_step(
+          suspended[2](value),
+          runtime_kind,
+          suspended_state,
+          handler,
+          false,
+        ) as Effect<unknown, unknown>,
+    );
   }
 }
 
@@ -943,36 +936,13 @@ export function handle_lift_terminal<
   state: state,
   handler: LiftHandler<dictionary, state, item, result>,
 ): result {
-  let current = effect as Effect<Lift<dictionary, unknown>, unknown>;
-  let current_state = state;
-
-  while (true) {
-    if (!is_effect(current)) {
-      throw new TypeError("Invalid effect value");
-    }
-
-    switch (current[0]) {
-      case "pure":
-        return handler.done(current[1] as item, current_state);
-      case "impure": {
-        if (is_lift_of(current[1], runtime_kind)) {
-          const operation = current[1] as Lift<dictionary, unknown>;
-          const [value, next] = handler.handle(operation[1], current_state);
-          current = current[2](value) as Effect<
-            Lift<dictionary, unknown>,
-            unknown
-          >;
-          current_state = next;
-          continue;
-        }
-
-        const operation = current[1] as TaggedOperation;
-        throw new TypeError("Unhandled effect operation: " + operation[0]);
-      }
-      default:
-        throw new TypeError("Invalid effect value");
-    }
-  }
+  return handle_lift_step(
+    effect as Effect<unknown, unknown>,
+    runtime_kind,
+    state,
+    handler,
+    true,
+  ) as result;
 }
 
 /** Handles one dictionary's lifts while preserving other requirements. */
@@ -988,37 +958,13 @@ export function handle_lift<
   state: state,
   handler: LiftHandler<dictionary, state, item, result>,
 ): Effect<WithoutLift<requirements, dictionary>, result> {
-  let current = effect as Effect<requirements, unknown>;
-  let current_state = state;
-
-  while (true) {
-    switch (current[0]) {
-      case "pure":
-        return pure(handler.done(current[1] as item, current_state));
-      case "impure": {
-        if (is_lift_of(current[1], runtime_kind)) {
-          const operation = current[1] as unknown as Lift<dictionary, unknown>;
-          const [value, next] = handler.handle(operation[1], current_state);
-          current = current[2](value) as Effect<requirements, unknown>;
-          current_state = next;
-          continue;
-        }
-
-        const suspended = current;
-        const suspended_state = current_state;
-        return new NewImpureEffect(
-          suspended[1] as WithoutLift<requirements, dictionary>,
-          (value) =>
-            handle_lift(
-              suspended[2](value),
-              runtime_kind,
-              suspended_state,
-              handler,
-            ),
-        ) as Effect<WithoutLift<requirements, dictionary>, result>;
-      }
-    }
-  }
+  return handle_lift_step(
+    effect as Effect<unknown, unknown>,
+    runtime_kind,
+    state,
+    handler,
+    false,
+  ) as Effect<WithoutLift<requirements, dictionary>, result>;
 }
 
 function program<yielded, item>(
@@ -1057,45 +1003,46 @@ function program<yielded, item>(
     current: yielded,
     iterator: Generator<yielded, item, unknown>,
   ): Effect<EffectRequirements<yielded>, item> {
-    // Pure yields need no suspended continuation. Consume them here rather
-    // than recursively entering bind's immediate pure fast path.
-    let effect = as_effect<EffectRequirements<yielded>, unknown>(current);
-    while (effect[0] === "pure") {
+    let item_value: unknown = current;
+    let effect: Effect<EffectRequirements<yielded>, unknown> | undefined;
+    while (!is_data(item_value)) {
+      effect = as_effect<EffectRequirements<yielded>, unknown>(item_value);
+      if (effect[0] !== "pure") break;
       path = append_program_path(path, effect[1]);
       const next = iterator.next(effect[1]);
       if (next.done) return pure(next.value);
-      effect = as_effect<EffectRequirements<yielded>, unknown>(next.value);
+      item_value = next.value;
+      effect = undefined;
     }
 
     let calls = 0;
     const suspended_path = path;
+    const resume_step = (
+      value: unknown,
+    ): Effect<EffectRequirements<yielded>, item> => {
+      if (calls === 0) {
+        calls = 1;
+        const next = iterator.next(value);
+        return next.done ? pure(next.value) : step(
+          append_program_path(suspended_path, value),
+          next.value,
+          iterator,
+        );
+      }
+      calls += 1;
+      const next_path = append_program_path(suspended_path, value);
+      const state = run_with(next_path);
+      return state.next.done
+        ? pure(state.next.value)
+        : step(next_path, state.next.value, state.iterator);
+    };
 
-    return bind(
-      effect,
-      (value) => {
-        if (calls === 0) {
-          calls += 1;
-          const next = iterator.next(value);
-
-          if (next.done) {
-            return pure(next.value);
-          }
-
-          const next_path = append_program_path(suspended_path, value);
-          return step(next_path, next.value, iterator);
-        }
-
-        calls += 1;
-        const next_path = append_program_path(suspended_path, value);
-        const state = run_with(next_path);
-
-        if (state.next.done) {
-          return pure(state.next.value);
-        }
-
-        return step(next_path, state.next.value, state.iterator);
-      },
-    );
+    return effect === undefined
+      ? new NewImpureEffect(
+        ["lift", item_value] as EffectRequirements<yielded>,
+        resume_step,
+      )
+      : bind(effect, resume_step);
   }
 }
 
@@ -1112,21 +1059,13 @@ export function is_lift_of<dictionary extends Dictionary>(
   operation: unknown,
   runtime_kind: dictionary[typeof kind],
 ): operation is Lift<dictionary, unknown> {
-  if (typeof operation !== "object" || operation === null) {
-    return false;
-  }
-
-  if ((operation as TaggedOperation)[0] !== "lift") {
-    return false;
-  }
-
+  if (
+    typeof operation !== "object" || operation === null ||
+    (operation as TaggedOperation)[0] !== "lift"
+  ) return false;
   const value = (operation as readonly [string, unknown])[1];
-
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  return (value as Dictionary)[kind] === runtime_kind;
+  return typeof value === "object" && value !== null &&
+    (value as Dictionary)[kind] === runtime_kind;
 }
 
 /** Tests whether an unknown operation has the given tuple tag. */
@@ -1134,22 +1073,25 @@ export function has_tag<tag extends string>(
   operation: unknown,
   tag: tag,
 ): operation is TaggedOperation<tag> {
-  if (typeof operation !== "object") {
-    return false;
-  }
-
-  if (operation === null) {
-    return false;
-  }
-
-  return (operation as TaggedOperation)[0] === tag;
+  return typeof operation === "object" && operation !== null &&
+    (operation as TaggedOperation)[0] === tag;
 }
 
 function append_effect_frame<requirements, item>(
   effect: Impure<requirements, item>,
   resume: (value: unknown) => Effect<unknown, unknown>,
 ): Effect<requirements, unknown> {
-  const target = effect as ImpureEffectTarget;
+  const target = effect as unknown as ImpureEffectTarget;
+  if (
+    target[effect_resume] === resume_pure &&
+    target[effect_frames] === undefined &&
+    target[effect_queue] === undefined
+  ) {
+    return new NewImpureEffect(
+      effect[1],
+      resume as (value: unknown) => Effect<requirements, unknown>,
+    );
+  }
   const frames: EffectFrame = {
     previous: target[effect_frames],
     resume,
@@ -1162,6 +1104,15 @@ function append_effect_frame<requirements, item>(
     ) => Effect<requirements, unknown>,
     frames,
     target[effect_queue],
+  );
+}
+
+function own_effect_queue(
+  target: ImpureEffectTarget,
+): EffectQueue | undefined {
+  return append_effect_queue(
+    target[effect_queue],
+    queue_from_frames(target[effect_frames]),
   );
 }
 
@@ -1192,10 +1143,7 @@ function resume_effect(
       target[effect_resume],
       undefined,
       append_effect_queue(
-        append_effect_queue(
-          target[effect_queue],
-          queue_from_frames(target[effect_frames]),
-        ),
+        own_effect_queue(target),
         { tag: "chunk", resumes: [frames.resume], index: 0 },
       ),
     );
@@ -1205,15 +1153,11 @@ function resume_effect(
   while (pending !== undefined) {
     if (current[0] === "impure") {
       const target = current as unknown as ImpureEffectTarget;
-      const own = append_effect_queue(
-        target[effect_queue],
-        queue_from_frames(target[effect_frames]),
-      );
       return new NewImpureEffect(
         current[1],
         target[effect_resume],
         undefined,
-        append_effect_queue(own, pending),
+        append_effect_queue(own_effect_queue(target), pending),
       );
     }
 
@@ -1362,15 +1306,8 @@ function as_effect<requirements, item>(
 
 /** Tests whether an unknown value is an Effect created by this module. */
 export function is_effect(value: unknown): value is Effect<unknown, unknown> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return Object.getPrototypeOf(value) === EffectPrototype;
+  return typeof value === "object" && value !== null &&
+    Object.getPrototypeOf(value) === EffectPrototype;
 }
 
 function resume_pure(value: unknown): Effect<never, unknown> {
@@ -1381,31 +1318,15 @@ function append_program_path(
   previous: ProgramPath | undefined,
   value: unknown,
 ): ProgramPath {
-  return {
-    previous,
-    value,
-    length: (previous?.length ?? 0) + 1,
-  };
+  return { previous, value };
 }
 
 function values_from_path(path: ProgramPath | undefined): unknown[] {
-  if (path === undefined) {
-    return [];
+  const values: unknown[] = [];
+  for (let node = path; node !== undefined; node = node.previous) {
+    values.push(node.value);
   }
-
-  const values = new Array<unknown>(path.length);
-  let index = values.length - 1;
-
-  for (
-    let node: ProgramPath | undefined = path;
-    node !== undefined;
-    node = node.previous
-  ) {
-    values[index] = node.value;
-    index -= 1;
-  }
-
-  return values;
+  return values.reverse();
 }
 
 function effect_iterator<requirements, item>(

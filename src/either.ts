@@ -22,7 +22,7 @@ import { compare_unknown, Ord } from "./typeclasses/ord.ts";
 import { Eq } from "./typeclasses/eq.ts";
 import { Foldable } from "./typeclasses/foldable.ts";
 import { Functor } from "./typeclasses/functor.ts";
-import { Monad } from "./typeclasses/monad.ts";
+import { Monad, register_fast_do } from "./typeclasses/monad.ts";
 import { MonadError } from "./typeclasses/monad_error.ts";
 import { MonadRec } from "./typeclasses/monad_rec.ts";
 import { Show } from "./typeclasses/show.ts";
@@ -186,6 +186,16 @@ function either_with_left<left>(): EitherDictionary<left> {
   return Either as unknown as EitherDictionary<left>;
 }
 
+function is_either_branch(value: unknown, tag: "Left" | "Right"): boolean {
+  if (!Array.isArray(value)) {
+    if (!is_data(value)) return false;
+    if ((value as unknown as AsEither)[kind] !== Either[kind]) return false;
+    value = value.value();
+    if (!Array.isArray(value)) return false;
+  }
+  return value.length === 2 && value[0] === tag;
+}
+
 /** Narrow a raw Either value to its left branch. */
 export function is_left<value extends Either<AnyLeft, unknown>>(
   value: value,
@@ -205,14 +215,7 @@ export function is_left<left, right>(
 ): value is
   | Left<left>
   | WrappedData<AsEither<unknown>, Left<unknown>, unknown> {
-  if (!Array.isArray(value)) {
-    if (!is_data(value)) return false;
-    if ((value as unknown as AsEither)[kind] !== Either[kind]) return false;
-    value = value.value();
-    if (!Array.isArray(value)) return false;
-  }
-
-  return value.length === 2 && value[0] === "Left";
+  return is_either_branch(value, "Left");
 }
 
 /** Narrow a raw Either value to its right branch. */
@@ -234,14 +237,7 @@ export function is_right<left, right>(
 ): value is
   | Right<right>
   | WrappedData<AsEither<unknown>, Right<unknown>, unknown> {
-  if (!Array.isArray(value)) {
-    if (!is_data(value)) return false;
-    if ((value as unknown as AsEither)[kind] !== Either[kind]) return false;
-    value = value.value();
-    if (!Array.isArray(value)) return false;
-  }
-
-  return value.length === 2 && value[0] === "Right";
+  return is_either_branch(value, "Right");
 }
 
 /** Accept a finite number or return a descriptive left value. */
@@ -641,6 +637,8 @@ function create_either(): EitherConstructor {
       }
     },
   });
+
+  register_fast_do(Either, 1, Either.Right, Either.Left);
 
   Foldable.instance(Either)({
     fold(initial, fn) {

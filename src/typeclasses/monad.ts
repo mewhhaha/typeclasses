@@ -15,6 +15,50 @@ import { monad_error_typeclass } from "./monad_error.ts";
 /** Runtime token for the Monad typeclass. */
 export const monad_typeclass = /* @__PURE__ */ Symbol("Monad");
 
+type FastDoSpec = readonly [
+  mode: 0 | 1 | 2,
+  wrap: (value: unknown) => unknown,
+  fail: ((error: unknown) => unknown) | undefined,
+  bind: unknown,
+  pure: unknown,
+  map: unknown,
+  err: unknown,
+];
+
+/** @ignore Internal fast iterative runner metadata for single-shot synchronous monads. */
+export const do_runner_method: unique symbol = /* @__PURE__ */ Symbol(
+  "Monad.do_runner",
+);
+
+/** @ignore Registers a canonical single-shot monad for iterative Do execution. */
+export function register_fast_do(
+  dictionary: object,
+  mode: 0 | 1 | 2,
+  wrap: (value: unknown) => unknown,
+  fail?: (error: unknown) => unknown,
+): void {
+  const t = dictionary as Record<PropertyKey, unknown>;
+  Object.defineProperty(dictionary, do_runner_method, {
+    value: [
+      mode,
+      wrap,
+      fail,
+      t.bind,
+      t.pure,
+      mode === 1 ? t.map : undefined,
+      mode === 1 ? t[monad_error_typeclass] : undefined,
+    ] satisfies FastDoSpec,
+  });
+}
+
+function push_do_path(
+  previous: DoPath | undefined,
+  thrown: boolean,
+  value: unknown,
+): DoPath {
+  return { previous, thrown, value };
+}
+
 /** Applicative dictionary capability for context-dependent sequencing. */
 export interface Monad<dictionary extends Dictionary>
   extends
@@ -66,7 +110,6 @@ type DoInput = {
 
 type DoPath = {
   readonly previous: DoPath | undefined;
-  readonly length: number;
   readonly thrown: boolean;
   readonly value: unknown;
 };
@@ -164,6 +207,48 @@ export function Do<dictionary extends Monad<dictionary>, result>(
     throw new TypeError("Do requires at least one yielded value");
   }
 
+  const spec = (first_next.value as {
+    readonly [do_runner_method]?: FastDoSpec;
+  })?.[do_runner_method];
+  if (spec !== undefined) {
+    const [mode, wrap, fail, c_bind, c_pure, c_map, c_err] = spec;
+    let current = first_next.value;
+    let path: DoPath | undefined;
+    while (true) {
+      if (
+        current.bind !== c_bind ||
+        (mode === 1 &&
+          (current.map !== c_map || current.pure !== c_pure ||
+            (current as unknown as Record<symbol, unknown>)[
+                monad_error_typeclass
+              ] !== c_err))
+      ) return step(path, current, first_iterator);
+      const raw = current.value() as readonly [string, unknown];
+      if (mode === 0 && raw[0] === "Nothing") {
+        return current as unknown as Data<dictionary, result>;
+      }
+      const thrown = mode === 1 && raw[0] === "Left";
+      const payload = mode === 2 ? raw : raw[1];
+      let next: IteratorResult<Data<dictionary, unknown>, result>;
+      if (mode === 1) {
+        try {
+          next = thrown
+            ? first_iterator.throw(payload)
+            : first_iterator.next(payload);
+        } catch (error) {
+          return fail!(error) as Data<dictionary, result>;
+        }
+      } else next = first_iterator.next(payload);
+      if (next.done) {
+        return (current.pure === c_pure
+          ? wrap(next.value)
+          : current.pure(next.value)) as Data<dictionary, result>;
+      }
+      path = push_do_path(path, thrown, payload);
+      current = next.value;
+    }
+  }
+
   return step(undefined, first_next.value, first_iterator);
 
   function replay(
@@ -205,28 +290,20 @@ export function Do<dictionary extends Monad<dictionary>, result>(
       thrown: boolean,
       value: unknown,
     ): Data<dictionary, result> {
-      const next_path: DoPath = {
-        previous: path,
-        length: path === undefined ? 1 : path.length + 1,
-        thrown,
-        value,
-      };
-      let next_iterator: DoGenerator<dictionary, result>;
+      let next_path: DoPath | undefined;
+      let next_iterator = iterator;
       let next_result: IteratorResult<Data<dictionary, unknown>, result>;
       try {
-        if (calls === 0) {
-          calls += 1;
-          next_iterator = iterator;
+        if (calls++ === 0) {
           next_result = thrown ? iterator.throw(value) : iterator.next(value);
         } else {
-          calls += 1;
-          const replayed = replay(next_path);
+          const replayed = replay(
+            next_path = push_do_path(path, thrown, value),
+          );
           next_iterator = replayed.iterator;
           next_result = replayed.next;
         }
       } catch (error) {
-        // A rejected yield has already run. Propagate its error through that
-        // value's dictionary rather than evaluating the failed computation again.
         if (implementation !== undefined) {
           return implementation.throw_error.call(current, error) as Data<
             dictionary,
@@ -235,9 +312,11 @@ export function Do<dictionary extends Monad<dictionary>, result>(
         }
         throw error;
       }
-
-      if (next_result.done) return current.pure(next_result.value);
-      return step(next_path, next_result.value, next_iterator);
+      return next_result.done ? current.pure(next_result.value) : step(
+        next_path ?? push_do_path(path, thrown, value),
+        next_result.value,
+        next_iterator,
+      );
     }
 
     if (implementation === undefined) {
@@ -259,17 +338,13 @@ export function Do<dictionary extends Monad<dictionary>, result>(
 }
 
 function nodes_from_path(path: DoPath): DoPath[] {
-  const nodes = new Array<DoPath>(path.length);
-  let index = path.length - 1;
-
+  const nodes: DoPath[] = [];
   for (
     let node: DoPath | undefined = path;
     node !== undefined;
     node = node.previous
   ) {
-    nodes[index] = node;
-    index -= 1;
+    nodes.push(node);
   }
-
-  return nodes;
+  return nodes.reverse();
 }

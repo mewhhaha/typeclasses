@@ -16,11 +16,11 @@ import {
 } from "./typeclass.ts";
 import {
   type Effect,
-  handle_lift,
   is_effect,
   is_lift_of,
   type Lift,
-  type LiftHandler,
+  pure,
+  suspend,
   type TaggedOperation,
 } from "./effects.ts";
 import {
@@ -357,19 +357,36 @@ export type StateItem<requirements> = (
     : never
 ) extends (state: infer state) => void ? state : unknown;
 
-const state_lift_handler: LiftHandler<
-  AsState<unknown>,
-  unknown,
-  unknown,
-  unknown
-> = {
-  done(value, current_state) {
-    return [value, current_state] as const;
-  },
-  handle(value, current_state) {
-    return value.value()(current_state);
-  },
-};
+function run_state_effect(
+  effect: Effect<unknown, unknown>,
+  runtime_kind: AsState<unknown>[typeof kind],
+  initial: unknown,
+): Effect<unknown, unknown> {
+  let current = effect;
+  let current_state = initial;
+
+  while (true) {
+    if (current[0] === "pure") {
+      return pure([current[1], current_state] as const);
+    }
+
+    if (is_lift_of(current[1], runtime_kind)) {
+      const lifted = (current[1] as Lift<AsState<unknown>, unknown>)[1];
+      const [value, next] = lifted.value()(current_state);
+      current = current[2](value);
+      current_state = next;
+      continue;
+    }
+
+    const suspended = current;
+    const saved_state = current_state;
+    return suspend(
+      suspended[1],
+      (value) =>
+        run_state_effect(suspended[2](value), runtime_kind, saved_state),
+    );
+  }
+}
 
 /** Handles State lifts with an initial state. */
 export function run_state<requirements, item>(
@@ -401,16 +418,15 @@ export function run_state(
   if (args.length === 2) {
     const [effect, initial] = args;
 
-    return handle_lift(effect, state_kind, initial, state_lift_handler);
+    return run_state_effect(effect, state_kind, initial);
   }
 
   const [cell, effect, initial] = args;
 
-  return handle_lift(
+  return run_state_effect(
     effect,
     cell[kind] as AsState<unknown>[typeof kind],
     initial,
-    state_lift_handler,
   );
 }
 
