@@ -75,7 +75,7 @@ Deno.test("bounded transform cache isolates source, filename, config and caller 
   assert_equals(cache.stats().bytes, 0);
 });
 
-Deno.test("explicit built-in counted loops lower through MonadRec without stack growth", async () => {
+Deno.test("explicit built-in counted loops lower directly without stack growth", async () => {
   const generated: string[] = [];
   for (
     const [module, dictionary, value] of [["maybe", "Maybe", "Just"], [
@@ -95,7 +95,16 @@ export default result.value();`;
       explain: true,
     });
     assert_equals(result.diagnostics, []);
-    assert_true(result.code.includes("tail_rec_m"), result.code);
+    assert_true(
+      !result.code.includes("function*") && !result.code.includes("Do("),
+      result.code,
+    );
+    assert_true(
+      result.reports.some((report) =>
+        report.optimization === "loop" && report.outcome === "transformed"
+      ),
+      "report must identify the lowered loop site",
+    );
     generated.push(result.code);
     assert_equals(
       await evaluate(result.code),
@@ -295,20 +304,38 @@ Deno.test("named fusion preserves TDZ and refuses different lexical capture scop
 });
 
 Deno.test("stack-safe loop specialization recognizes named package-root imports", () => {
-  const source = `import { Do, Maybe, Just } from "@mewhhaha/typeclasses";
+  const maybe_source = `import { Do, Maybe, Just } from "@mewhhaha/typeclasses";
 const p = Do(Maybe, function* () { for (let i = 0; i < 10; i += 1) { yield* Just(i); } return 42; });`;
-  const result = transform_do_program_source(source, "package.ts", {
+  const maybe_result = transform_do_program_source(maybe_source, "package.ts", {
     explain: true,
   });
   assert_true(
-    result.code.includes('from "@mewhhaha/typeclasses/loop"'),
-    result.code,
+    !maybe_result.code.includes("function*") &&
+      !maybe_result.code.includes("Do("),
+    maybe_result.code,
   );
-  assert_true(result.code.includes("Maybe.tail_rec_m"), result.code);
   assert_true(
-    result.reports.some((report) =>
+    maybe_result.reports.some((report) =>
       report.optimization === "loop" && report.outcome === "transformed"
     ),
-    "report must identify the stack-safe loop site",
+    "report must identify the direct single-shot loop site",
+  );
+
+  const task_source = `import { Do, Task } from "@mewhhaha/typeclasses";
+const t = Task(async () => 1);
+const p = Do(Task, function* () { for (let i = 0; i < 10; i += 1) { yield* t; } return 42; });`;
+  const task_result = transform_do_program_source(task_source, "package.ts", {
+    explain: true,
+  });
+  assert_true(
+    task_result.code.includes('from "@mewhhaha/typeclasses/loop"'),
+    task_result.code,
+  );
+  assert_true(task_result.code.includes("Task.tail_rec_m"), task_result.code);
+  assert_true(
+    task_result.reports.some((report) =>
+      report.optimization === "loop" && report.outcome === "transformed"
+    ),
+    "report must identify the stack-safe Task loop site",
   );
 });

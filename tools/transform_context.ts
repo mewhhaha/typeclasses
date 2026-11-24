@@ -68,7 +68,8 @@ export type TerminalFunctionName =
   | "run"
   | "run_reader"
   | "run_state"
-  | "run_writer";
+  | "run_writer"
+  | "run_except";
 export type PrimitiveFunctionName =
   | "ask"
   | "asks"
@@ -78,6 +79,15 @@ export type PrimitiveFunctionName =
   | "modify"
   | "writer"
   | "tell";
+export type ExceptPrimitiveName =
+  | "fail"
+  | "from_either"
+  | "from_maybe"
+  | "from_nullable"
+  | "from_validation";
+export type StateEvalName = "eval_state" | "exec_state";
+export type OperationRunnerName = "handle_operations" | "prepare_operations";
+export type OperationHelperName = "operation" | "send" | "pure";
 export type CellFactoryKind = "reader" | "state" | "writer";
 export type CellRunnerName = "run_cells" | "prepare_cells";
 export type ImportedBindings = {
@@ -98,6 +108,22 @@ export type ImportedBindings = {
     string,
     ReadonlySet<PrimitiveFunctionName>
   >;
+  readonly except_primitives?: ReadonlyMap<string, ExceptPrimitiveName>;
+  readonly except_namespaces?: ReadonlyMap<
+    string,
+    ReadonlySet<ExceptPrimitiveName>
+  >;
+  readonly state_eval_functions?: ReadonlyMap<string, StateEvalName>;
+  readonly state_eval_namespaces?: ReadonlyMap<
+    string,
+    ReadonlySet<StateEvalName>
+  >;
+  readonly operation_runners?: ReadonlyMap<string, OperationRunnerName>;
+  readonly operation_runner_namespaces?: ReadonlyMap<
+    string,
+    ReadonlySet<OperationRunnerName>
+  >;
+  readonly operation_helpers?: ReadonlyMap<string, OperationHelperName>;
   readonly cell_factories?: ReadonlyMap<string, CellFactoryKind>;
   readonly cell_namespaces?: ReadonlyMap<string, ReadonlySet<CellFactoryKind>>;
   readonly cell_runners?: ReadonlyMap<string, CellRunnerName>;
@@ -113,7 +139,11 @@ export type ImportedBindings = {
   readonly direct_maybe_dictionaries?: ReadonlySet<string>;
   readonly just_constructors?: ReadonlySet<string>;
   readonly direct_either_dictionaries?: ReadonlySet<string>;
+  readonly left_constructors?: ReadonlySet<string>;
   readonly right_constructors?: ReadonlySet<string>;
+  readonly direct_identity_dictionaries?: ReadonlySet<string>;
+  readonly identity_constructors?: ReadonlySet<string>;
+  readonly array_constructors?: ReadonlySet<string>;
   readonly direct_reader_dictionaries?: ReadonlySet<string>;
   readonly direct_state_dictionaries?: ReadonlySet<string>;
   readonly effect_helper_shadowed: boolean;
@@ -143,5 +173,10 @@ export type TransformServices = {
   loop(): IdentifierReference | undefined;
   flat_dictionary(expression: Expression): Expression | undefined;
   terminal(imported: string, source_local_name: string): IdentifierReference;
+  import_from_module?(
+    anchor_local: string,
+    sub_module: string,
+    imported: string,
+  ): IdentifierReference | undefined;
   compile(call: CallExpression): Expression | undefined;
 };

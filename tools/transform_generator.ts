@@ -897,161 +897,441 @@ function stack_safe_loop(
   };
 }
 
-function direct_maybe(
+function is_primitive_array_literal(expression: Expression): boolean {
+  const array = unwrap(expression);
+  return array.type === "ArrayExpression" && array.elements.every((item) => {
+    if (!item || item.type === "SpreadElement") return false;
+    const primitive = unwrap(item);
+    if (primitive.type === "Literal") return !("regex" in primitive);
+    return primitive.type === "UnaryExpression" &&
+      (primitive.operator === "+" || primitive.operator === "-") &&
+      primitive.argument.type === "Literal" &&
+      typeof primitive.argument.value === "number";
+  });
+}
+
+function contains_yield_or_await(value: Node): boolean {
+  let found = false;
+  walk_values(value, (part) => {
+    if (function_like(part)) return false;
+    if (part.type === "YieldExpression" || part.type === "AwaitExpression") {
+      found = true;
+      return false;
+    }
+  });
+  return found;
+}
+
+function is_trivial_pure_expr(expression: Expression): boolean {
+  const value = unwrap(expression);
+  if (value.type === "Literal") return true;
+  if (value.type === "TemplateLiteral" && value.expressions.length === 0) {
+    return true;
+  }
+  if (
+    value.type === "UnaryExpression" &&
+    (value.operator === "void" || value.operator === "-" ||
+      value.operator === "+" || value.operator === "!" ||
+      value.operator === "~")
+  ) return is_trivial_pure_expr(value.argument);
+  return false;
+}
+
+type DirectSingleShotMode = "maybe" | "either" | "identity";
+
+function direct_single_shot_mode(
+  explicit: Expression | undefined,
+  services: TransformServices,
+): DirectSingleShotMode | undefined {
+  if (explicit?.type !== "Identifier") return undefined;
+  if (services.imports.direct_maybe_dictionaries?.has(explicit.name)) {
+    return "maybe";
+  }
+  if (services.imports.direct_either_dictionaries?.has(explicit.name)) {
+    return "either";
+  }
+  if (services.imports.direct_identity_dictionaries?.has(explicit.name)) {
+    return "identity";
+  }
+  return undefined;
+}
+
+function direct_single_shot(
   body: BlockStatement | FunctionBody,
   state: State,
+  mode: DirectSingleShotMode,
+  force_direct: boolean,
 ): Result | undefined {
   if (
     state.kind !== "do" ||
     state.dictionary?.type !== "Identifier" ||
-    !state.services.imports.direct_maybe_dictionaries?.has(
-      state.dictionary.name,
-    ) ||
     body.body.length >= 128
   ) return undefined;
   const dictionary = state.dictionary;
-  const just_names = state.services.imports.just_constructors;
-  const just_name = just_names !== undefined && just_names.size > 0
-    ? just_names.values().next().value
-    : undefined;
-  const wrap_pure = (value: Expression): Expression =>
+  const elide_names = mode === "maybe"
+    ? state.services.imports.just_constructors
+    : mode === "either"
+    ? state.services.imports.right_constructors
+    : state.services.imports.identity_constructors;
+  const just_name = state.services.imports.just_constructors?.values().next()
+    .value;
+  const right_name = state.services.imports.right_constructors?.values().next()
+    .value;
+  const identity_name = state.services.imports.identity_constructors?.values()
+    .next().value;
+  const right_callee = (): Expression =>
+    right_name !== undefined ? id(right_name) : member(dictionary, "Right");
+  const wrap_maybe = (value: Expression): Expression =>
     just_name !== undefined
       ? call(id(just_name), [value])
       : method(dictionary, "pure", [value]);
-  const emitted: Statement[] = [];
-  let yield_count = 0;
-  let has_just_elision = false;
-  let returned = false;
-  for (let index = 0; index < body.body.length; index += 1) {
-    const statement = body.body[index];
-    const yielded = read_yield(statement);
-    if (yielded !== undefined) {
-      yield_count += 1;
-      if (yielded.terminal) {
-        if (index !== body.body.length - 1) return undefined;
-        emitted.push(ret(yielded.expression));
-        returned = true;
-        continue;
-      }
-      const expr_unwrapped = unwrap(yielded.expression);
-      if (
-        expr_unwrapped.type === "CallExpression" &&
-        !expr_unwrapped.optional &&
-        expr_unwrapped.typeArguments == null &&
-        expr_unwrapped.callee.type === "Identifier" &&
-        just_names?.has(expr_unwrapped.callee.name) &&
-        expr_unwrapped.arguments.length === 1 &&
-        expr_unwrapped.arguments[0].type !== "SpreadElement"
-      ) {
-        has_just_elision = true;
-        const inner = expr_unwrapped.arguments[0] as Expression;
-        if (statement.type === "VariableDeclaration") {
-          const decl = statement.declarations[0];
-          emitted.push({
-            ...statement,
-            declarations: [{ ...decl, init: inner }],
-          });
-        } else {
-          emitted.push(
-            node({ type: "ExpressionStatement", expression: inner }),
-          );
-        }
-        continue;
-      }
-      const raw = state.services.fresh("maybe_raw");
-      emitted.push(
-        variable("const", raw, method(yielded.expression, "value", [])),
-      );
-      emitted.push(
-        node({
-          type: "IfStatement",
-          test: node({
-            type: "BinaryExpression",
-            operator: "===",
-            left: node({
-              type: "MemberExpression",
-              object: raw,
-              property: literal(0),
-              computed: true,
-              optional: false,
-            }),
-            right: literal("Nothing"),
-          }),
-          consequent: ret(
-            node({
-              type: "TSAsExpression",
-              expression: method(dictionary, "empty", []),
-              typeAnnotation: node({ type: "TSNeverKeyword" }),
-            }),
-          ),
-          alternate: null,
-        }),
-      );
-      if (statement.type === "VariableDeclaration") {
-        const decl = statement.declarations[0];
-        emitted.push({
-          ...statement,
-          declarations: [{
-            ...decl,
-            init: node({
-              type: "MemberExpression",
-              object: raw,
-              property: literal(1),
-              computed: true,
-              optional: false,
-            }),
-          }],
-        });
-      }
-      continue;
-    }
-    if (statement.type === "ReturnStatement") {
-      if (index !== body.body.length - 1) return undefined;
-      if (statement.argument !== null && contains(statement.argument, true)) {
-        return undefined;
-      }
-      emitted.push(ret(wrap_pure(statement.argument ?? void_zero())));
-      returned = true;
-      continue;
-    }
-    if (contains(statement, true)) return undefined;
-    emitted.push(statement);
-  }
-  if (yield_count === 0 || (yield_count === 1 && !has_just_elision)) {
-    return undefined;
-  }
-  if (!returned) {
-    emitted.push(ret(wrap_pure(void_zero())));
-  }
-  return { block: block(emitted), yielded: true };
-}
+  const wrap_identity = (value: Expression): Expression =>
+    identity_name !== undefined
+      ? call(id(identity_name), [value])
+      : call(dictionary, [value]);
 
-function direct_either(
-  body: BlockStatement | FunctionBody,
-  state: State,
-): Result | undefined {
-  if (
-    state.kind !== "do" ||
-    state.dictionary?.type !== "Identifier" ||
-    !state.services.imports.direct_either_dictionaries?.has(
-      state.dictionary.name,
-    ) ||
-    body.body.length >= 128
-  ) return undefined;
-  const dictionary = state.dictionary;
-  const right_names = state.services.imports.right_constructors;
-  const right_name = right_names !== undefined && right_names.size > 0
-    ? right_names.values().next().value
-    : undefined;
-  const right_callee = (): Expression =>
-    right_name !== undefined ? id(right_name) : member(dictionary, "Right");
-  const emitted: Statement[] = [];
-  const checked_vars: IdentifierReference[] = [];
+  const elided_inner = (expression: Expression): Expression | undefined => {
+    const inner_expr = unwrap(expression);
+    if (
+      inner_expr.type === "CallExpression" &&
+      !inner_expr.optional &&
+      inner_expr.typeArguments == null &&
+      inner_expr.callee.type === "Identifier" &&
+      elide_names?.has(inner_expr.callee.name) &&
+      inner_expr.arguments.length === 1 &&
+      inner_expr.arguments[0].type !== "SpreadElement"
+    ) {
+      return inner_expr.arguments[0] as Expression;
+    }
+    return undefined;
+  };
+
+  // Phase 1: Validate body structure and detect control flow / loops / elisions.
   let yield_count = 0;
-  let has_right_elision = false;
-  let returned = false;
-  let terminal_expr: Expression | undefined;
-  let final_return_expr: Expression | undefined;
+  let checked_yield_count = 0;
+  let has_elision = false;
+  let has_control_flow = false;
+  let has_nested_yield = false;
+  let first_loop_node: Node | undefined;
+
+  function validate_expr(expression: Expression, nested: boolean): boolean {
+    if (!contains_yield_or_await(expression)) return true;
+    const target = unwrap(expression);
+    if (target.type === "AwaitExpression") return false;
+    if (target.type === "YieldExpression") {
+      if (!target.delegate || target.argument === null) return false;
+      if (!validate_expr(target.argument, true)) return false;
+      yield_count += 1;
+      if (nested) has_nested_yield = true;
+      if (elided_inner(target.argument) !== undefined) has_elision = true;
+      else checked_yield_count += 1;
+      return true;
+    }
+    switch (target.type) {
+      case "BinaryExpression":
+        return (target.left.type === "PrivateIdentifier" ||
+          validate_expr(target.left, true)) &&
+          validate_expr(target.right, true);
+      case "UnaryExpression":
+        return validate_expr(target.argument, true);
+      case "SequenceExpression":
+        return target.expressions.every((item) => validate_expr(item, true));
+      case "TemplateLiteral":
+        return target.expressions.every((item) => validate_expr(item, true));
+      case "ArrayExpression":
+        return target.elements.every((item) =>
+          item === null
+            ? true
+            : item.type === "SpreadElement"
+            ? validate_expr(item.argument, true)
+            : validate_expr(item, true)
+        );
+      case "ObjectExpression":
+        return target.properties.every((prop) =>
+          prop.type === "SpreadElement"
+            ? validate_expr(prop.argument, true)
+            : (!prop.computed || validate_expr(prop.key as Expression, true)) &&
+              validate_expr(prop.value as Expression, true)
+        );
+      case "MemberExpression":
+        return !target.optional &&
+          validate_expr(target.object, true) &&
+          (!target.computed ||
+            validate_expr(target.property as Expression, true));
+      case "CallExpression":
+      case "NewExpression":
+        if (target.type === "CallExpression" && target.optional) return false;
+        return validate_expr(target.callee as Expression, true) &&
+          target.arguments.every((arg) =>
+            arg.type === "SpreadElement"
+              ? validate_expr(arg.argument, true)
+              : validate_expr(arg, true)
+          );
+      case "AssignmentExpression":
+        return target.left.type === "Identifier" &&
+          validate_expr(target.right, true);
+      case "ConditionalExpression":
+        return validate_expr(target.test, true) &&
+          validate_expr(target.consequent, true) &&
+          validate_expr(target.alternate, true);
+      case "LogicalExpression":
+        return validate_expr(target.left, true) &&
+          validate_expr(target.right, true);
+      case "TSAsExpression":
+      case "TSTypeAssertion":
+      case "TSNonNullExpression":
+      case "TSSatisfiesExpression":
+        return validate_expr(target.expression, true);
+      default:
+        return false;
+    }
+  }
+
+  function validate_stmt(
+    statement: Statement,
+    in_loop: boolean,
+    in_switch: boolean,
+    in_control: boolean,
+    is_last_top: boolean,
+  ): boolean {
+    if (
+      statement.type === "ExpressionStatement" && "directive" in statement &&
+      statement.directive != null
+    ) return true;
+    switch (statement.type) {
+      case "EmptyStatement":
+        return true;
+      case "ThrowStatement":
+        if (mode === "either") return false;
+        return !contains_yield_or_await(statement.argument);
+      case "TryStatement":
+      case "LabeledStatement":
+      case "WithStatement":
+        return false;
+      case "BreakStatement":
+        return statement.label === null && (in_loop || in_switch);
+      case "ContinueStatement":
+        return statement.label === null && in_loop;
+      case "ReturnStatement": {
+        if (!is_last_top) has_control_flow = true;
+        if (statement.argument === null) return true;
+        if (yield_star(statement.argument)) {
+          if (!validate_expr(statement.argument.argument, true)) return false;
+          yield_count += 1;
+          if (in_control) has_control_flow = true;
+          if (elided_inner(statement.argument.argument) !== undefined) {
+            has_elision = true;
+          } else {
+            checked_yield_count += 1;
+          }
+          return true;
+        }
+        if (in_control) has_control_flow = true;
+        return validate_expr(statement.argument, true);
+      }
+      case "VariableDeclaration":
+        if (statement.kind === "var") return false;
+        if (
+          statement.declarations.length === 1 &&
+          yield_star(statement.declarations[0].init)
+        ) {
+          const inner = statement.declarations[0].init.argument;
+          if (!validate_expr(inner, true)) return false;
+          yield_count += 1;
+          if (in_control) has_control_flow = true;
+          if (elided_inner(inner) !== undefined) has_elision = true;
+          else checked_yield_count += 1;
+          return true;
+        }
+        for (const decl of statement.declarations) {
+          if (
+            decl.init !== null && !validate_expr(decl.init, true)
+          ) return false;
+        }
+        return true;
+      case "ExpressionStatement":
+        if (yield_star(statement.expression)) {
+          const inner = statement.expression.argument;
+          if (!validate_expr(inner, true)) return false;
+          yield_count += 1;
+          if (in_control) has_control_flow = true;
+          if (elided_inner(inner) !== undefined) has_elision = true;
+          else checked_yield_count += 1;
+          return true;
+        }
+        return validate_expr(statement.expression, true);
+      case "BlockStatement":
+        for (const inner of statement.body) {
+          if (
+            !validate_stmt(
+              inner as Statement,
+              in_loop,
+              in_switch,
+              true,
+              false,
+            )
+          ) return false;
+        }
+        return true;
+      case "IfStatement": {
+        if (!validate_expr(statement.test, true)) return false;
+        const before = yield_count;
+        if (
+          !validate_stmt(statement.consequent, in_loop, in_switch, true, false)
+        ) {
+          return false;
+        }
+        if (
+          statement.alternate !== null &&
+          !validate_stmt(statement.alternate, in_loop, in_switch, true, false)
+        ) return false;
+        if (yield_count > before || contains(statement, true)) {
+          has_control_flow = true;
+        }
+        return true;
+      }
+      case "ForStatement": {
+        if (
+          statement.init !== null &&
+          ((statement.init.type === "VariableDeclaration" &&
+            statement.init.kind === "var") ||
+            contains_yield_or_await(statement.init))
+        ) return false;
+        if (
+          statement.update !== null && contains_yield_or_await(statement.update)
+        ) {
+          return false;
+        }
+        if (statement.test !== null && !validate_expr(statement.test, true)) {
+          return false;
+        }
+        const before = yield_count;
+        if (!validate_stmt(statement.body, true, in_switch, true, false)) {
+          return false;
+        }
+        if (
+          yield_count > before ||
+          (statement.test !== null && contains_yield_or_await(statement.test))
+        ) {
+          has_control_flow = true;
+          first_loop_node ??= statement;
+        }
+        return true;
+      }
+      case "WhileStatement": {
+        if (!validate_expr(statement.test, true)) return false;
+        const before = yield_count;
+        if (!validate_stmt(statement.body, true, in_switch, true, false)) {
+          return false;
+        }
+        if (yield_count > before || contains_yield_or_await(statement.test)) {
+          has_control_flow = true;
+          first_loop_node ??= statement;
+        }
+        return true;
+      }
+      case "DoWhileStatement": {
+        if (contains_yield_or_await(statement.test)) return false;
+        const before = yield_count;
+        if (!validate_stmt(statement.body, true, in_switch, true, false)) {
+          return false;
+        }
+        if (yield_count > before) {
+          has_control_flow = true;
+          first_loop_node ??= statement;
+        }
+        return true;
+      }
+      case "ForOfStatement": {
+        if (
+          statement.await ||
+          (statement.left.type === "VariableDeclaration" &&
+            statement.left.kind === "var") ||
+          contains_yield_or_await(statement.left) ||
+          contains_yield_or_await(statement.right)
+        ) return false;
+        // Preserve lazy iterable diagnostics for non-literal for...of iterables.
+        if (
+          contains(statement.body, true) &&
+          !is_primitive_array_literal(statement.right)
+        ) return false;
+        const before = yield_count;
+        if (!validate_stmt(statement.body, true, in_switch, true, false)) {
+          return false;
+        }
+        if (yield_count > before) {
+          has_control_flow = true;
+          first_loop_node ??= statement;
+        }
+        return true;
+      }
+      case "ForInStatement": {
+        if (
+          (statement.left.type === "VariableDeclaration" &&
+            statement.left.kind === "var") ||
+          contains_yield_or_await(statement.left) ||
+          contains_yield_or_await(statement.right)
+        ) return false;
+        const before = yield_count;
+        if (!validate_stmt(statement.body, true, in_switch, true, false)) {
+          return false;
+        }
+        if (yield_count > before) {
+          has_control_flow = true;
+          first_loop_node ??= statement;
+        }
+        return true;
+      }
+      case "SwitchStatement": {
+        if (!validate_expr(statement.discriminant, true)) return false;
+        const before = yield_count;
+        for (const item of statement.cases) {
+          if (item.test !== null && contains_yield_or_await(item.test)) {
+            return false;
+          }
+          for (const inner of item.consequent) {
+            if (
+              !validate_stmt(inner as Statement, in_loop, true, true, false)
+            ) {
+              return false;
+            }
+          }
+        }
+        if (
+          yield_count > before ||
+          contains_yield_or_await(statement.discriminant)
+        ) has_control_flow = true;
+        return true;
+      }
+      default:
+        return !contains(statement, true);
+    }
+  }
+
+  for (let index = 0; index < body.body.length; index += 1) {
+    if (
+      !validate_stmt(
+        body.body[index] as Statement,
+        false,
+        false,
+        false,
+        index === body.body.length - 1,
+      )
+    ) return undefined;
+  }
+  if (yield_count === 0) return undefined;
+  if (
+    !force_direct && !has_control_flow && !has_nested_yield &&
+    yield_count === 1 && !has_elision
+  ) return undefined;
+
+  // Phase 2: Emit lowered statements.
+  const use_either_wrapper = mode === "either" && has_control_flow &&
+    checked_yield_count > 0;
+  const either_err_var = use_either_wrapper
+    ? state.services.fresh("either_err")
+    : undefined;
+  const checked_vars: IdentifierReference[] = [];
 
   const return_value_type_of = (target: IdentifierReference): TSType =>
     node({
@@ -1131,48 +1411,42 @@ function direct_either(
     return [variable("const", out_var, value_expr), ret(right_call)];
   };
 
-  for (let index = 0; index < body.body.length; index += 1) {
-    const statement = body.body[index];
-    const yielded = read_yield(statement);
-    if (yielded !== undefined) {
-      yield_count += 1;
-      if (yielded.terminal) {
-        if (index !== body.body.length - 1) return undefined;
-        terminal_expr = yielded.expression;
-        returned = true;
-        continue;
-      }
-      const expr_unwrapped = unwrap(yielded.expression);
-      if (
-        expr_unwrapped.type === "CallExpression" &&
-        !expr_unwrapped.optional &&
-        expr_unwrapped.typeArguments == null &&
-        expr_unwrapped.callee.type === "Identifier" &&
-        right_names?.has(expr_unwrapped.callee.name) &&
-        expr_unwrapped.arguments.length === 1 &&
-        expr_unwrapped.arguments[0].type !== "SpreadElement"
-      ) {
-        has_right_elision = true;
-        const inner = expr_unwrapped.arguments[0] as Expression;
-        if (statement.type === "VariableDeclaration") {
-          const decl = statement.declarations[0];
-          emitted.push({
-            ...statement,
-            declarations: [{ ...decl, init: inner }],
-          });
-        } else {
-          emitted.push(
-            node({ type: "ExpressionStatement", expression: inner }),
-          );
-        }
-        continue;
-      }
-      const val = state.services.fresh("either_val");
-      const raw = state.services.fresh("either_raw");
-      checked_vars.push(val);
-      emitted.push(variable("const", val, yielded.expression));
-      emitted.push(variable("const", raw, method(val, "value", [])));
-      emitted.push(
+  const make_as_const_tuple = (
+    tag: string,
+    value_expr: Expression,
+  ): Expression =>
+    node({
+      type: "TSAsExpression",
+      expression: node({
+        type: "ArrayExpression",
+        elements: [literal(tag), value_expr],
+      }),
+      typeAnnotation: type_ref("const"),
+    });
+
+  const emit_return_value = (value_expr: Expression): Statement[] => {
+    if (mode === "maybe") return [ret(wrap_maybe(value_expr))];
+    if (mode === "identity") return [ret(wrap_identity(value_expr))];
+    if (use_either_wrapper) {
+      return [ret(make_as_const_tuple("Right", value_expr))];
+    }
+    return make_typed_right_return(value_expr);
+  };
+
+  const emit_yield_value = (
+    raw_arg: Expression,
+    target_stmts: Statement[],
+  ): Expression => {
+    const arg = lower_expr(raw_arg, target_stmts);
+    const elided = elided_inner(arg);
+    if (elided !== undefined) return elided;
+    if (mode === "identity") {
+      return method(arg, "value", []);
+    }
+    if (mode === "maybe") {
+      const raw = state.services.fresh("maybe_raw");
+      target_stmts.push(variable("const", raw, method(arg, "value", [])));
+      target_stmts.push(
         node({
           type: "IfStatement",
           test: node({
@@ -1185,75 +1459,69 @@ function direct_either(
               computed: true,
               optional: false,
             }),
-            right: literal("Left"),
+            right: literal("Nothing"),
           }),
           consequent: ret(
             node({
               type: "TSAsExpression",
-              expression: val,
+              expression: method(dictionary, "empty", []),
               typeAnnotation: node({ type: "TSNeverKeyword" }),
             }),
           ),
           alternate: null,
         }),
       );
-      if (statement.type === "VariableDeclaration") {
-        const decl = statement.declarations[0];
-        emitted.push({
-          ...statement,
-          declarations: [{
-            ...decl,
-            init: node({
-              type: "MemberExpression",
-              object: raw,
-              property: literal(1),
-              computed: true,
-              optional: false,
+      return node({
+        type: "MemberExpression",
+        object: raw,
+        property: literal(1),
+        computed: true,
+        optional: false,
+      });
+    }
+    // mode === "either"
+    const val = state.services.fresh("either_val");
+    const raw = state.services.fresh("either_raw");
+    if (!use_either_wrapper) checked_vars.push(val);
+    target_stmts.push(variable("const", val, arg));
+    target_stmts.push(variable("const", raw, method(val, "value", [])));
+    const left_test = node({
+      type: "BinaryExpression",
+      operator: "===",
+      left: node({
+        type: "MemberExpression",
+        object: raw,
+        property: literal(0),
+        computed: true,
+        optional: false,
+      }),
+      right: literal("Left"),
+    });
+    if (use_either_wrapper) {
+      target_stmts.push(
+        node({
+          type: "IfStatement",
+          test: left_test,
+          consequent: block([
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: either_err_var!,
+                right: val,
+              }),
             }),
-          }],
-        });
-      }
-      continue;
-    }
-    if (statement.type === "ReturnStatement") {
-      if (index !== body.body.length - 1) return undefined;
-      if (statement.argument !== null && contains(statement.argument, true)) {
-        return undefined;
-      }
-      final_return_expr = statement.argument ?? void_zero();
-      returned = true;
-      continue;
-    }
-    if (contains(statement, true)) return undefined;
-    emitted.push(statement);
-  }
-  if (yield_count === 0 || (yield_count === 1 && !has_right_elision)) {
-    return undefined;
-  }
-  if (terminal_expr !== undefined) {
-    if (checked_vars.length === 0) {
-      emitted.push(ret(terminal_expr));
+            ret(raw),
+          ]),
+          alternate: null,
+        }),
+      );
     } else {
-      const val = state.services.fresh("either_val");
-      const raw = state.services.fresh("either_raw");
-      checked_vars.push(val);
-      emitted.push(variable("const", val, terminal_expr));
-      emitted.push(variable("const", raw, method(val, "value", [])));
-      emitted.push(
+      target_stmts.push(
         node({
           type: "IfStatement",
-          test: node({
-            type: "BinaryExpression",
-            operator: "===",
-            left: node({
-              type: "MemberExpression",
-              object: raw,
-              property: literal(0),
-              computed: true,
-              optional: false,
-            }),
-            right: literal("Left"),
-          }),
+          test: left_test,
           consequent: ret(
             node({
               type: "TSAsExpression",
@@ -1264,23 +1532,608 @@ function direct_either(
           alternate: null,
         }),
       );
-      emitted.push(
-        ...make_typed_right_return(
+    }
+    return node({
+      type: "MemberExpression",
+      object: raw,
+      property: literal(1),
+      computed: true,
+      optional: false,
+    });
+  };
+
+  function lower_ordered_list<T extends Expression | null>(
+    items: readonly T[],
+    target_stmts: Statement[],
+  ): T[] {
+    let last_yield = -1;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item !== null && contains_yield_or_await(item)) last_yield = index;
+    }
+    if (last_yield < 0) return [...items];
+    const out: T[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item === null) {
+        out.push(item);
+        continue;
+      }
+      if (index < last_yield) {
+        if (contains_yield_or_await(item)) {
+          const lowered = lower_expr(item, target_stmts);
+          const tmp = state.services.fresh("arg");
+          target_stmts.push(variable("const", tmp, lowered));
+          out.push(tmp as T);
+        } else if (!is_trivial_pure_expr(item)) {
+          const tmp = state.services.fresh("arg");
+          target_stmts.push(variable("const", tmp, item));
+          out.push(tmp as T);
+        } else {
+          out.push(item);
+        }
+      } else if (index === last_yield) {
+        out.push(lower_expr(item, target_stmts) as T);
+      } else {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  function lower_expr(
+    expression: Expression,
+    target_stmts: Statement[],
+  ): Expression {
+    if (!contains_yield_or_await(expression)) return expression;
+    if (expression.type === "ParenthesizedExpression") {
+      return lower_expr(expression.expression, target_stmts);
+    }
+    if (
+      expression.type === "YieldExpression" && expression.delegate &&
+      expression.argument !== null
+    ) {
+      return emit_yield_value(expression.argument, target_stmts);
+    }
+    switch (expression.type) {
+      case "BinaryExpression": {
+        if (expression.left.type === "PrivateIdentifier") {
+          return {
+            ...expression,
+            right: lower_expr(expression.right, target_stmts),
+          };
+        }
+        const [left, right] = lower_ordered_list(
+          [expression.left, expression.right],
+          target_stmts,
+        );
+        return { ...expression, left: left!, right: right! };
+      }
+      case "UnaryExpression":
+        return {
+          ...expression,
+          argument: lower_expr(expression.argument, target_stmts),
+        };
+      case "SequenceExpression":
+        return {
+          ...expression,
+          expressions: lower_ordered_list(expression.expressions, target_stmts),
+        };
+      case "TemplateLiteral":
+        return {
+          ...expression,
+          expressions: lower_ordered_list(expression.expressions, target_stmts),
+        };
+      case "ArrayExpression": {
+        let last_yield = -1;
+        for (let i = 0; i < expression.elements.length; i += 1) {
+          const el = expression.elements[i];
+          if (el !== null && contains_yield_or_await(el)) last_yield = i;
+        }
+        const elements = expression.elements.map((el, i) => {
+          if (el === null || i > last_yield) return el;
+          if (el.type === "SpreadElement") {
+            const lowered = lower_expr(el.argument, target_stmts);
+            if (i < last_yield && !is_trivial_pure_expr(lowered)) {
+              const tmp = state.services.fresh("arg");
+              target_stmts.push(variable("const", tmp, lowered));
+              return { ...el, argument: tmp };
+            }
+            return { ...el, argument: lowered };
+          }
+          const lowered = lower_expr(el, target_stmts);
+          if (i < last_yield && !is_trivial_pure_expr(lowered)) {
+            const tmp = state.services.fresh("arg");
+            target_stmts.push(variable("const", tmp, lowered));
+            return tmp;
+          }
+          return lowered;
+        });
+        return { ...expression, elements };
+      }
+      case "ObjectExpression": {
+        let last_yield = -1;
+        for (let i = 0; i < expression.properties.length; i += 1) {
+          if (contains_yield_or_await(expression.properties[i])) last_yield = i;
+        }
+        const properties = expression.properties.map((prop, i) => {
+          if (i > last_yield) return prop;
+          if (prop.type === "SpreadElement") {
+            const lowered = lower_expr(prop.argument, target_stmts);
+            if (i < last_yield && !is_trivial_pure_expr(lowered)) {
+              const tmp = state.services.fresh("arg");
+              target_stmts.push(variable("const", tmp, lowered));
+              return { ...prop, argument: tmp };
+            }
+            return { ...prop, argument: lowered };
+          }
+          let key = prop.key;
+          if (prop.computed) {
+            const lk = lower_expr(prop.key as Expression, target_stmts);
+            if (
+              contains_yield_or_await(prop.value) ||
+              (i < last_yield && !is_trivial_pure_expr(lk))
+            ) {
+              const tmp = state.services.fresh("key");
+              target_stmts.push(variable("const", tmp, lk));
+              key = tmp;
+            } else {
+              key = lk;
+            }
+          }
+          const lv = lower_expr(prop.value as Expression, target_stmts);
+          if (i < last_yield && !is_trivial_pure_expr(lv)) {
+            const tmp = state.services.fresh("val");
+            target_stmts.push(variable("const", tmp, lv));
+            return { ...prop, key, value: tmp, shorthand: false };
+          }
+          return { ...prop, key, value: lv, shorthand: false };
+        });
+        return { ...expression, properties };
+      }
+      case "MemberExpression": {
+        if (!expression.computed) {
+          return {
+            ...expression,
+            object: lower_expr(expression.object, target_stmts),
+          };
+        }
+        const [object, property] = lower_ordered_list(
+          [expression.object, expression.property as Expression],
+          target_stmts,
+        );
+        return { ...expression, object, property };
+      }
+      case "CallExpression":
+      case "NewExpression": {
+        const callee_has = contains_yield_or_await(expression.callee);
+        let last_arg = -1;
+        for (let i = 0; i < expression.arguments.length; i += 1) {
+          if (contains_yield_or_await(expression.arguments[i])) last_arg = i;
+        }
+        let callee = expression.callee;
+        if (last_arg >= 0) {
+          if (
+            expression.type === "CallExpression" &&
+            callee.type === "MemberExpression" && !callee.optional
+          ) {
+            const obj = lower_expr(callee.object, target_stmts);
+            const obj_tmp = state.services.fresh("recv");
+            target_stmts.push(variable("const", obj_tmp, obj));
+            if (callee.computed) {
+              const lp = lower_expr(
+                callee.property as Expression,
+                target_stmts,
+              );
+              const prop_tmp = state.services.fresh("prop");
+              target_stmts.push(variable("const", prop_tmp, lp));
+              callee = { ...callee, object: obj_tmp, property: prop_tmp };
+            } else {
+              callee = { ...callee, object: obj_tmp };
+            }
+          } else if (
+            callee_has || !is_trivial_pure_expr(callee as Expression)
+          ) {
+            const lc = lower_expr(callee as Expression, target_stmts);
+            const tmp = state.services.fresh("callee");
+            target_stmts.push(variable("const", tmp, lc));
+            callee = tmp;
+          }
+        } else {
+          callee = lower_expr(callee as Expression, target_stmts);
+        }
+        const args = expression.arguments.map((arg, i) => {
+          if (i > last_arg) return arg;
+          if (arg.type === "SpreadElement") {
+            const la = lower_expr(arg.argument, target_stmts);
+            if (i < last_arg && !is_trivial_pure_expr(la)) {
+              const tmp = state.services.fresh("arg");
+              target_stmts.push(variable("const", tmp, la));
+              return { ...arg, argument: tmp };
+            }
+            return { ...arg, argument: la };
+          }
+          const la = lower_expr(arg, target_stmts);
+          if (i < last_arg && !is_trivial_pure_expr(la)) {
+            const tmp = state.services.fresh("arg");
+            target_stmts.push(variable("const", tmp, la));
+            return tmp;
+          }
+          return la;
+        });
+        return { ...expression, callee, arguments: args };
+      }
+      case "AssignmentExpression":
+        return {
+          ...expression,
+          right: lower_expr(expression.right, target_stmts),
+        };
+      case "ConditionalExpression": {
+        const test = lower_expr(expression.test, target_stmts);
+        if (
+          !contains_yield_or_await(expression.consequent) &&
+          !contains_yield_or_await(expression.alternate)
+        ) return { ...expression, test };
+        const out = state.services.fresh("cond");
+        const cons_stmts: Statement[] = [];
+        const cons_val = lower_expr(expression.consequent, cons_stmts);
+        cons_stmts.push(
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: out,
+              right: cons_val,
+            }),
+          }),
+        );
+        const alt_stmts: Statement[] = [];
+        const alt_val = lower_expr(expression.alternate, alt_stmts);
+        alt_stmts.push(
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: out,
+              right: alt_val,
+            }),
+          }),
+        );
+        target_stmts.push(
+          node({
+            type: "VariableDeclaration",
+            kind: "let",
+            declarations: [
+              node({ type: "VariableDeclarator", id: out, init: null }),
+            ],
+          }),
+        );
+        target_stmts.push(
+          node({
+            type: "IfStatement",
+            test,
+            consequent: block(cons_stmts),
+            alternate: block(alt_stmts),
+          }),
+        );
+        return out;
+      }
+      case "LogicalExpression": {
+        const left = lower_expr(expression.left, target_stmts);
+        if (!contains_yield_or_await(expression.right)) {
+          return { ...expression, left };
+        }
+        const out = state.services.fresh("logic");
+        target_stmts.push(variable("let", out, left));
+        const right_stmts: Statement[] = [];
+        const right_val = lower_expr(expression.right, right_stmts);
+        right_stmts.push(
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: out,
+              right: right_val,
+            }),
+          }),
+        );
+        const guard: Expression = expression.operator === "&&"
+          ? out
+          : expression.operator === "||"
+          ? node({
+            type: "UnaryExpression",
+            operator: "!",
+            prefix: true,
+            argument: out,
+          })
+          : node({
+            type: "BinaryExpression",
+            operator: "==",
+            left: out,
+            right: literal(null),
+          });
+        target_stmts.push(
+          node({
+            type: "IfStatement",
+            test: guard,
+            consequent: block(right_stmts),
+            alternate: null,
+          }),
+        );
+        return out;
+      }
+      case "TSAsExpression":
+      case "TSTypeAssertion":
+      case "TSNonNullExpression":
+      case "TSSatisfiesExpression":
+        return {
+          ...expression,
+          expression: lower_expr(expression.expression, target_stmts),
+        };
+      default:
+        return expression;
+    }
+  }
+
+  function lower_stmt(statement: Statement): Statement[] {
+    if (
+      statement.type === "ExpressionStatement" && "directive" in statement &&
+      statement.directive != null
+    ) return [statement];
+    switch (statement.type) {
+      case "VariableDeclaration": {
+        if (statement.declarations.length === 1) {
+          const decl = statement.declarations[0];
+          const init = decl.init;
+          if (yield_star(init)) {
+            const stmts: Statement[] = [];
+            const val = emit_yield_value(init.argument, stmts);
+            stmts.push({
+              ...statement,
+              declarations: [{ ...decl, init: val }],
+            });
+            return stmts;
+          }
+        }
+        const stmts: Statement[] = [];
+        const declarations = statement.declarations.map((decl) =>
+          decl.init !== null && contains_yield_or_await(decl.init)
+            ? { ...decl, init: lower_expr(decl.init, stmts) }
+            : decl
+        );
+        stmts.push({ ...statement, declarations });
+        return stmts;
+      }
+      case "ExpressionStatement": {
+        if (yield_star(statement.expression)) {
+          const stmts: Statement[] = [];
+          const val = emit_yield_value(statement.expression.argument, stmts);
+          if (elided_inner(statement.expression.argument) !== undefined) {
+            stmts.push(node({ type: "ExpressionStatement", expression: val }));
+          }
+          return stmts;
+        }
+        if (!contains_yield_or_await(statement.expression)) return [statement];
+        const stmts: Statement[] = [];
+        const expr_out = lower_expr(statement.expression, stmts);
+        stmts.push({ ...statement, expression: expr_out });
+        return stmts;
+      }
+      case "ReturnStatement": {
+        if (statement.argument !== null && yield_star(statement.argument)) {
+          const stmts: Statement[] = [];
+          if (mode === "maybe" || mode === "identity") {
+            const arg = lower_expr(statement.argument.argument, stmts);
+            stmts.push(ret(arg));
+            return stmts;
+          }
+          if (!use_either_wrapper && checked_vars.length === 0) {
+            const arg = lower_expr(statement.argument.argument, stmts);
+            stmts.push(ret(arg));
+            return stmts;
+          }
+          const val = emit_yield_value(statement.argument.argument, stmts);
+          stmts.push(...emit_return_value(val));
+          return stmts;
+        }
+        const stmts: Statement[] = [];
+        const arg = statement.argument !== null
+          ? lower_expr(statement.argument, stmts)
+          : void_zero();
+        stmts.push(...emit_return_value(arg));
+        return stmts;
+      }
+      case "BlockStatement":
+        return [block(lower_list(statement.body as Statement[]))];
+      case "IfStatement": {
+        const stmts: Statement[] = [];
+        const test = lower_expr(statement.test, stmts);
+        const consequent = lower_single(statement.consequent);
+        const alternate = statement.alternate !== null
+          ? lower_single(statement.alternate)
+          : null;
+        stmts.push({ ...statement, test, consequent, alternate });
+        return stmts;
+      }
+      case "ForStatement": {
+        const lowered_body = lower_single(statement.body);
+        if (
+          statement.test !== null && contains_yield_or_await(statement.test)
+        ) {
+          const test_stmts: Statement[] = [];
+          const test_val = lower_expr(statement.test, test_stmts);
+          test_stmts.push(
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: test_val,
+              }),
+              consequent: node({ type: "BreakStatement", label: null }),
+              alternate: null,
+            }),
+          );
+          const body_stmts = lowered_body.type === "BlockStatement"
+            ? lowered_body.body
+            : [lowered_body];
+          return [{
+            ...statement,
+            test: null,
+            body: block([...test_stmts, ...(body_stmts as Statement[])]),
+          }];
+        }
+        return [{ ...statement, body: lowered_body }];
+      }
+      case "WhileStatement": {
+        const lowered_body = lower_single(statement.body);
+        if (contains_yield_or_await(statement.test)) {
+          const test_stmts: Statement[] = [];
+          const test_val = lower_expr(statement.test, test_stmts);
+          test_stmts.push(
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: test_val,
+              }),
+              consequent: node({ type: "BreakStatement", label: null }),
+              alternate: null,
+            }),
+          );
+          const body_stmts = lowered_body.type === "BlockStatement"
+            ? lowered_body.body
+            : [lowered_body];
+          return [{
+            ...statement,
+            test: literal(true),
+            body: block([...test_stmts, ...(body_stmts as Statement[])]),
+          }];
+        }
+        return [{ ...statement, body: lowered_body }];
+      }
+      case "DoWhileStatement":
+      case "ForOfStatement":
+      case "ForInStatement":
+        return [{ ...statement, body: lower_single(statement.body) }];
+      case "SwitchStatement": {
+        const stmts: Statement[] = [];
+        const discriminant = lower_expr(statement.discriminant, stmts);
+        const cases = statement.cases.map((item) => ({
+          ...item,
+          consequent: lower_list(item.consequent as Statement[]),
+        }));
+        stmts.push({ ...statement, discriminant, cases });
+        return stmts;
+      }
+      default:
+        return [statement];
+    }
+  }
+  function lower_list(list: readonly Statement[]): Statement[] {
+    const out: Statement[] = [];
+    for (const item of list) out.push(...lower_stmt(item));
+    return out;
+  }
+  function lower_single(statement: Statement): Statement {
+    const list = lower_stmt(statement);
+    return list.length === 1 ? list[0] : block(list);
+  }
+
+  const emitted = lower_list(body.body as Statement[]);
+  const last = emitted[emitted.length - 1];
+  if (last?.type !== "ReturnStatement") {
+    emitted.push(...emit_return_value(void_zero()));
+  }
+
+  if (first_loop_node !== undefined) {
+    state.services.report(
+      first_loop_node,
+      "loop",
+      "transformed",
+      "Lowered single-shot monad loop directly into native control flow.",
+    );
+  }
+
+  if (use_either_wrapper) {
+    const out_raw = state.services.fresh("either_out");
+    const either_type: TSType = type_ref("ReturnType", [
+      node({
+        type: "TSTypeQuery",
+        exprName: dictionary,
+        typeArguments: node({
+          type: "TSTypeParameterInstantiation",
+          params: Array.from([
+            node({
+              type: "TSTypeQuery",
+              exprName: out_raw,
+              typeArguments: null,
+            }) as TSType,
+          ]),
+        }),
+      }) as TSType,
+    ]);
+    const final_expr: Expression = node({
+      type: "TSAsExpression",
+      expression: node({
+        type: "ConditionalExpression",
+        test: node({
+          type: "BinaryExpression",
+          operator: "===",
+          left: node({
+            type: "MemberExpression",
+            object: out_raw,
+            property: literal(0),
+            computed: true,
+            optional: false,
+          }),
+          right: literal("Left"),
+        }),
+        consequent: either_err_var!,
+        alternate: call(right_callee(), [
           node({
             type: "MemberExpression",
-            object: raw,
+            object: out_raw,
             property: literal(1),
             computed: true,
             optional: false,
           }),
-        ),
-      );
-    }
-    return { block: block(emitted), yielded: true };
+        ]),
+      }),
+      typeAnnotation: either_type,
+    });
+    return {
+      block: block([
+        node({
+          type: "VariableDeclaration",
+          kind: "let",
+          declarations: [
+            node({
+              type: "VariableDeclarator",
+              id: {
+                ...either_err_var!,
+                typeAnnotation: node({
+                  type: "TSTypeAnnotation",
+                  typeAnnotation: node({ type: "TSUnknownKeyword" }),
+                }),
+              },
+              init: null,
+            }),
+          ],
+        }),
+        variable("const", out_raw, call(arrow([], block(emitted)), [])),
+        ret(final_expr),
+      ]),
+      yielded: true,
+    };
   }
-  emitted.push(
-    ...make_typed_right_return(returned ? final_return_expr! : void_zero()),
-  );
+
   return { block: block(emitted), yielded: true };
 }
 
@@ -1878,6 +2731,13 @@ export function lower_generator(
         "var-scoped generator locals are not supported; use let or const.",
       );
     }
+    const direct_mode = kind === "do"
+      ? direct_single_shot_mode(explicit, services)
+      : undefined;
+    if (direct_mode !== undefined && (analysis.capture || analysis.prefix)) {
+      const direct = direct_single_shot(run.body, state, direct_mode, true);
+      if (direct !== undefined) return expr(direct.block);
+    }
     if (analysis.capture) {
       fail(
         state,
@@ -1924,8 +2784,10 @@ export function lower_generator(
     if (explicit && explicit.type !== "Identifier") {
       state.dictionary = services.fresh("dictionary");
     }
-    let result = flat(run.body, state) ?? direct_maybe(run.body, state) ??
-      direct_either(run.body, state);
+    let result = flat(run.body, state) ??
+      (direct_mode !== undefined
+        ? direct_single_shot(run.body, state, direct_mode, false)
+        : undefined);
     if (!result) {
       let yield_count = 0;
       for (let index = 0; index < run.body.body.length; index += 1) {

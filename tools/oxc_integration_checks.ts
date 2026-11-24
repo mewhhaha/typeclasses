@@ -564,3 +564,366 @@ Deno.test("round-2 post-plugin fusion covers control-flow terminals, multi-cell 
   assert_equals(unmapped.map, null);
   assert_equals(unmapped.code, result.code);
 });
+
+Deno.test("round-3 post-plugin fusion covers direct single-shot loops, run_except, handle_operations, expression yields, Writer ArrayT push, and eval/exec_state", async () => {
+  const root = new URL("../src/", import.meta.url).href;
+  const source = [
+    `import { Do } from ${JSON.stringify(root + "typeclasses.ts")};`,
+    `import { Maybe, Just, Nothing } from ${
+      JSON.stringify(root + "maybe.ts")
+    };`,
+    `import { Either, Left, Right } from ${
+      JSON.stringify(root + "either.ts")
+    };`,
+    `import { Identity, identity } from ${
+      JSON.stringify(root + "identity.ts")
+    };`,
+    `import { Effect, Program, run } from ${
+      JSON.stringify(root + "effects.ts")
+    };`,
+    `import { ask, run_reader } from ${JSON.stringify(root + "reader.ts")};`,
+    `import { eval_state, exec_state, get, modify, put, run_state, State } from ${
+      JSON.stringify(root + "state.ts")
+    };`,
+    `import { run_writer, tell, writer, writer_cell } from ${
+      JSON.stringify(root + "writer.ts")
+    };`,
+    `import { fail, from_either, from_maybe, from_nullable, from_validation, run_except } from ${
+      JSON.stringify(root + "except.ts")
+    };`,
+    `import { type Validation, Valid, InvalidMessages } from ${
+      JSON.stringify(root + "validation.ts")
+    };`,
+    `import { ArrayT } from ${JSON.stringify(root + "array.ts")};`,
+    `import { handle_operations, prepare_operations, provide_writer, run_cells } from ${
+      JSON.stringify(root + "handlers.ts")
+    };`,
+    // P1: Direct single-shot loops + mutable locals + expression yields
+    "export function maybe_loop(n: number, fail_at: number) {",
+    "  return Do(Maybe, function* () {",
+    "    let sum = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      const v = yield* (i === fail_at ? Nothing<number>() : Just(i));",
+    "      sum += v;",
+    "    }",
+    "    return sum;",
+    "  });",
+    "}",
+    "export function maybe_expr_yield(flag: boolean) {",
+    "  return Do(Maybe, function* () {",
+    "    return flag ? (yield* Just(10)) + (yield* Just(5)) : (yield* Just(1));",
+    "  });",
+    "}",
+    'function check_a(n: number): Either<"neg", number> { return n < 0 ? Left("neg") : Right(n + 1); }',
+    'function check_b(n: number): Either<"big", number> { return n > 20 ? Left("big") : Right(n * 2); }',
+    "export function either_loop(limit: number) {",
+    "  return Do(Either, function* () {",
+    "    let total = 0;",
+    "    for (let i = 0; i < limit; i += 1) {",
+    "      if (i % 2 === 0) continue;",
+    "      const a = yield* check_a(i);",
+    "      total += a + (yield* check_b(a));",
+    "    }",
+    "    return total;",
+    "  });",
+    "}",
+    "export const either_loop_mapped = either_loop(6).map((x) => x + 1);",
+    "export function identity_loop(n: number) {",
+    "  return Do(Identity, function* () {",
+    "    let acc = 0;",
+    "    let i = 0;",
+    "    while (i < n) {",
+    "      acc += yield* identity(i + 1);",
+    "      i += 1;",
+    "    }",
+    "    return acc;",
+    "  });",
+    "}",
+    // P2: run_except single-layer + stacked with state/reader/writer (both orders!)
+    "export let lazy_calls = 0;",
+    "export function except_single(x: number | null, m: Maybe<number>, e: Either<string, number>, v: Validation<readonly string[], number>) {",
+    "  return run(run_except(Program(function* () {",
+    '    const a = yield* from_nullable(x, () => { lazy_calls += 1; return "null" as const; });',
+    '    const b = yield* from_maybe(m, () => { lazy_calls += 1; return "nothing" as const; });',
+    "    const c = yield* from_either(e);",
+    "    const d = yield* from_validation(v);",
+    '    if (a + b + c + d < 0) yield* fail<"neg">("neg");',
+    "    return a + b + c + d;",
+    "  })));",
+    "}",
+    "export function except_outer_state_inner(stop: number) {",
+    "  return run(run_except(run_state(Program(function* () {",
+    "    for (let i = 1; i <= 5; i += 1) {",
+    "      yield* modify((n: number) => n + i);",
+    '      if (i === stop) yield* fail<"stopped">("stopped");',
+    "    }",
+    "    return yield* get<number>();",
+    "  }), 0)));",
+    "}",
+    "export function state_outer_except_inner(stop: number) {",
+    "  return run(run_state(run_except(Program(function* () {",
+    "    for (let i = 1; i <= 5; i += 1) {",
+    "      yield* modify((n: number) => n + i);",
+    '      if (i === stop) yield* fail<"stopped">("stopped");',
+    "    }",
+    "    return yield* get<number>();",
+    "  })), 0));",
+    "}",
+    "export function writer_outer_except_reader(fail_step: number) {",
+    "  return run(run_writer(run_except(run_reader(Program(function* () {",
+    "    const mul = yield* ask<number>();",
+    "    for (let i = 1; i <= 3; i += 1) {",
+    "      yield* tell(ArrayT([`step:${i * mul}`]));",
+    '      if (i === fail_step) yield* fail<"halt">("halt");',
+    "    }",
+    "    return mul * 10;",
+    "  }), 2)), ArrayT<string>([])));",
+    "}",
+    "export function named_except(ok: boolean) {",
+    "  const p = Program(function* () {",
+    '    const v = yield* from_nullable(ok ? 42 : null, () => "missing" as const);',
+    "    return v;",
+    "  });",
+    "  return run(run_except(p));",
+    "}",
+    // P3: handle_operations & prepare_operations with pure inlining, hygiene, and dynamic fallback
+    'const Step = Effect.operation<number, number>()("step");',
+    'const Ping = Effect.operation<number, void>()("ping");',
+    'const Dyn = Effect.operation<number, number>()("dyn");',
+    "const outer_bias = 100;",
+    "export function ops_pure_loop(n: number) {",
+    "  return run(handle_operations(Program(function* () {",
+    "    let sum = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      sum += yield* Step.send(i);",
+    "    }",
+    "    sum += yield* Ping.send();",
+    "    return sum;",
+    "  }), {",
+    "    step: ([, x]) => Effect.pure(x * 2),",
+    "    ping: () => Effect.pure(5),",
+    "  }));",
+    "}",
+    "export function ops_hygiene() {",
+    "  return run(handle_operations(Program(function* () {",
+    "    const outer_bias = 999;",
+    "    const a = yield* Step.send(1);",
+    "    return a + outer_bias;",
+    "  }), {",
+    "    step: ([, x]) => Effect.pure(x + outer_bias),",
+    "  }));",
+    "}",
+    "let dyn_fn = ([, x]: readonly ['dyn', number]) => Effect.pure(x + 10);",
+    "const prepared_ops = prepare_operations({",
+    "  step: ([, x]: readonly ['step', number]) => Effect.pure(x * 3),",
+    "  dyn: dyn_fn,",
+    "});",
+    "dyn_fn = ([, x]: readonly ['dyn', number]) => Effect.pure(x + 999);",
+    "export function ops_prepared(x: number) {",
+    "  return run(prepared_ops(Program(function* () {",
+    "    const a = yield* Step.send(x);",
+    "    const b = yield* Dyn.send(a);",
+    "    return b;",
+    "  })));",
+    "}",
+    "export function ops_stacked_state(n: number) {",
+    "  return run(run_state(handle_operations(Program(function* () {",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      const next = yield* Step.send(yield* get<number>());",
+    "      yield* put<number>(next);",
+    "    }",
+    "    return yield* get<number>();",
+    "  }), {",
+    "    step: ([, x]) => Effect.pure(x + 2),",
+    "  }), 0));",
+    "}",
+    // P4: expression-level yields, O(N) Writer ArrayT buffer fusion, eval_state & exec_state
+    "export function expr_yield_while(limit: number) {",
+    "  return run(run_state(Program(function* () {",
+    "    while ((yield* get<number>()) < limit) {",
+    "      yield* put<number>((yield* get<number>()) + 1);",
+    "    }",
+    "    return yield* get<number>();",
+    "  }), 0));",
+    "}",
+    "export function expr_yield_binary(env: number, init: number) {",
+    "  return run(run_reader(run_state(Program(function* () {",
+    "    return (yield* ask<number>()) + (yield* get<number>());",
+    "  }), init), env));",
+    "}",
+    "export function writer_buffer_loop(n: number) {",
+    "  return run(run_writer(Program(function* () {",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      yield* tell(ArrayT([i]));",
+    "    }",
+    "    return yield* writer(n * 10, ArrayT([999]));",
+    "  }), ArrayT<number>([])));",
+    "}",
+    'const log_cell = writer_cell("log", ArrayT<number>([]));',
+    "export function cells_writer_buffer(n: number) {",
+    "  return run_cells(Program(function* () {",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      yield* log_cell.tell(ArrayT([i * 2]));",
+    "    }",
+    "    return n;",
+    "  }), { log: provide_writer(log_cell) });",
+    "}",
+    "export function eval_state_fused(init: number) {",
+    "  return eval_state(Do(State, function* () {",
+    "    yield* modify((n: number) => n + 7);",
+    "    return (yield* get<number>()) * 2;",
+    "  }), init);",
+    "}",
+    "export function exec_state_fused(init: number) {",
+    "  return exec_state(Do(State, function* () {",
+    "    yield* modify((n: number) => n + 7);",
+    "    return 0;",
+    "  }), init);",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round3_fusion.ts");
+  assert_equals(result.diagnostics, []);
+  assert_true(
+    !result.code.includes("function*") &&
+      !result.code.includes("Do(") &&
+      !result.code.includes("run_except(") &&
+      !result.code.includes("eval_state(") &&
+      !result.code.includes("exec_state(") &&
+      (result.code.match(/handle_operations\(/g) ?? []).length === 1,
+    "expected all Round 3 constructs to fuse completely (except hygiene fallback)\n\n" +
+      result.code,
+  );
+  assert_true(
+    !result.code.includes("state_ready_") &&
+      !result.code.includes("writer_ready_"),
+    "expected literal-init loops to eager-init without ready guards\n\n" +
+      result.code,
+  );
+  assert_true(
+    result.code.includes(".push(") && !result.code.includes(".concat("),
+    "expected Writer ArrayT buffer fusion to use .push() instead of .concat()\n\n" +
+      result.code,
+  );
+
+  // Strict TypeScript check on generated code!
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round3-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Runtime execution verification!
+  const compiled = executable_typescript(result.code, "round3_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  assert_equals(mod.maybe_loop(5, 0).value(), ["Just", 15]);
+  assert_equals(mod.maybe_loop(5, 3).value(), ["Nothing"]);
+  assert_equals(mod.maybe_expr_yield(true).value(), ["Just", 15]);
+  assert_equals(mod.maybe_expr_yield(false).value(), ["Just", 1]);
+  assert_equals(mod.either_loop(6).value(), ["Right", 36]);
+  assert_equals(mod.either_loop(25).value(), ["Left", "big"]);
+  assert_equals(mod.either_loop_mapped.value(), ["Right", 37]);
+  assert_equals(mod.identity_loop(5).value(), 15);
+
+  // P2 checks
+  const { Just: J, Nothing: N } = await import("../src/maybe.ts");
+  const { Left: L, Right: R } = await import("../src/either.ts");
+  const { InvalidMessages: inv, Valid: val } = await import(
+    "../src/validation.ts"
+  );
+  assert_equals(mod.except_single(1, J(2), R(3), val(4)).value(), [
+    "Right",
+    10,
+  ]);
+  assert_equals(mod.lazy_calls, 0);
+  assert_equals(mod.except_single(null, J(2), R(3), val(4)).value(), [
+    "Left",
+    "null",
+  ]);
+  assert_equals(mod.lazy_calls, 1);
+  assert_equals(mod.except_single(1, N(), R(3), val(4)).value(), [
+    "Left",
+    "nothing",
+  ]);
+  assert_equals(mod.lazy_calls, 2);
+  assert_equals(mod.except_single(1, J(2), L("e"), val(4)).value(), [
+    "Left",
+    "e",
+  ]);
+  assert_equals(mod.except_single(1, J(2), R(3), inv("v")).value(), [
+    "Left",
+    ["v"],
+  ]);
+  assert_equals(mod.except_single(-10, J(2), R(3), val(4)).value(), [
+    "Left",
+    "neg",
+  ]);
+  assert_equals(mod.except_outer_state_inner(0).value(), ["Right", [15, 15]]);
+  assert_equals(mod.except_outer_state_inner(3).value(), ["Left", "stopped"]);
+  const [so_ok, so_state_ok] = mod.state_outer_except_inner(0);
+  assert_equals(so_ok.value(), ["Right", 15]);
+  assert_equals(so_state_ok, 15);
+  const [so_err, so_state_err] = mod.state_outer_except_inner(3);
+  assert_equals(so_err.value(), ["Left", "stopped"]);
+  assert_equals(so_state_err, 6);
+  const [wr_err, wr_log] = mod.writer_outer_except_reader(2);
+  assert_equals(wr_err.value(), ["Left", "halt"]);
+  assert_equals(wr_log.value(), ["step:2", "step:4"]);
+  assert_equals(mod.named_except(true).value(), ["Right", 42]);
+  assert_equals(mod.named_except(false).value(), ["Left", "missing"]);
+
+  // P3 checks
+  assert_equals(mod.ops_pure_loop(5), 35);
+  assert_equals(mod.ops_hygiene(), 1100);
+  assert_equals(mod.ops_prepared(4), 22);
+  assert_equals(mod.ops_stacked_state(5), [10, 10]);
+
+  // P4 checks
+  assert_equals(mod.expr_yield_while(6), [6, 6]);
+  assert_equals(mod.expr_yield_binary(10, 7), [17, 7]);
+  const [wb_val, wb_log] = mod.writer_buffer_loop(5);
+  assert_equals(wb_val, 50);
+  assert_equals(wb_log.value(), [0, 1, 2, 3, 4, 999]);
+  const cb = mod.cells_writer_buffer(4);
+  assert_equals(cb.result, 4);
+  assert_equals(cb.logs.log.value(), [0, 2, 4, 6]);
+  assert_equals(mod.eval_state_fused(3), 20);
+  assert_equals(mod.exec_state_fused(3), 10);
+
+  // T1 safety: named Program referenced by an otherwise-untouched skipped function must NOT be deleted!
+  const t1_helpers = Array.from(
+    { length: 40 },
+    (_, i) => `export function helper_${i}(x: number) { return x + ${i}; }`,
+  ).join("\n");
+  const t1_source = [
+    `import { Program, run } from ${JSON.stringify(root + "effects.ts")};`,
+    `import { ask, run_reader } from ${JSON.stringify(root + "reader.ts")};`,
+    "const escaped_prog = Program(function* () { return yield* ask<number>(); });",
+    "export const fused_val = run(run_reader(escaped_prog, 7));",
+    t1_helpers,
+    "export function keep_ref() { return escaped_prog; }",
+  ].join("\n");
+  const t1_result = transform_do_program_source(t1_source, "t1_escape.ts");
+  assert_true(
+    t1_result.code.includes("const escaped_prog ="),
+    "T1 span skipping must retain named Programs referenced by untouched statements\n\n" +
+      t1_result.code,
+  );
+});
