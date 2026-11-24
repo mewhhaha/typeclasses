@@ -369,6 +369,38 @@ export function bind_widen<
   }
 }
 
+/** Map only the left error payload while leaving right values untouched. */
+export function map_left<value extends Either<AnyLeft, unknown>, next_left>(
+  value: value,
+  fn: (error: EitherLeft<ReturnType<value["value"]>>) => next_left,
+): Either<next_left, EitherRight<ReturnType<value["value"]>>> {
+  const [tag, payload] = value.value();
+  type Output = Either<next_left, EitherRight<ReturnType<value["value"]>>>;
+
+  switch (tag) {
+    case "Left":
+      return Left<next_left, EitherRight<ReturnType<value["value"]>>>(
+        fn(payload as EitherLeft<ReturnType<value["value"]>>),
+      ) as Output;
+    case "Right":
+      return Right<next_left, EitherRight<ReturnType<value["value"]>>>(
+        payload as EitherRight<ReturnType<value["value"]>>,
+      ) as Output;
+  }
+}
+
+/** Execute `fn`, catching synchronous exceptions into the Left branch. */
+export function try_catch<error, item>(
+  fn: () => item,
+  on_error: (cause: unknown) => error,
+): Either<error, item> {
+  try {
+    return Right<error, item>(fn());
+  } catch (cause) {
+    return Left<error, item>(on_error(cause));
+  }
+}
+
 /** Recover a result with a lazy fallback while retaining the successful type. */
 export function recover_or_else<error, item, fallback>(
   value: Either<error, item>,

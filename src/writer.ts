@@ -99,6 +99,23 @@ export const Writer = data<
 >(writer_identity) as unknown as WriterConstructor;
 const writer_kind = Writer[kind];
 const canonical_array_concat = array_concat_method;
+const writer_cell_empties = new WeakMap<
+  object,
+  () => Data<Dictionary, unknown>
+>();
+
+/** @ignore Create a fresh empty output value for a Writer cell. */
+export function writer_cell_empty<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+>(cell: AsWriterCell<key, output, log>): Data<output, log> {
+  const create = writer_cell_empties.get(cell);
+  if (create === undefined) {
+    throw new TypeError("Expected a Writer cell created by writer_cell");
+  }
+  return create() as Data<output, log>;
+}
 
 Object.defineProperty(Writer, "with", {
   value: configured_writer,
@@ -196,6 +213,10 @@ function make_writer_cell<
   const dictionary = cell_dictionary<AsWriterCell<key, output, log>>(
     Writer,
     key,
+  );
+  writer_cell_empties.set(
+    dictionary,
+    () => empty_output(empty) as Data<Dictionary, unknown>,
   );
 
   Object.defineProperties(dictionary, {
@@ -330,6 +351,20 @@ export type WriterEmpty<requirements> = (
     : never
 ) extends (empty: infer empty) => void ? empty : unknown;
 
+/** Handles one cell's lifts starting from its declared empty output. */
+export function run_writer<
+  key extends PropertyKey,
+  output extends Dictionary,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect: Effect<requirements, item>,
+): Effect<
+  WithoutWriterCell<requirements, key>,
+  readonly [item, Data<output, log> & WriterCellEmpty<requirements, key>]
+>;
 /** Handles Writer lifts from the supplied empty output value. */
 export function run_writer<requirements, item>(
   effect: Effect<requirements, item>,
@@ -359,11 +394,31 @@ export function run_writer(
     | readonly [
       AsWriterCell<PropertyKey, Dictionary, unknown>,
       Effect<unknown, unknown>,
+    ]
+    | readonly [
+      AsWriterCell<PropertyKey, Dictionary, unknown>,
+      Effect<unknown, unknown>,
       unknown,
     ]
 ): Effect<unknown, unknown> {
   if (args.length === 2) {
-    const [effect, empty] = args;
+    if (writer_cell_empties.has(args[0] as object)) {
+      const [cell, effect] = args as readonly [
+        AsWriterCell<PropertyKey, Dictionary, unknown>,
+        Effect<unknown, unknown>,
+      ];
+
+      return run_writer_kind(
+        effect,
+        cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+        writer_cell_empty(cell),
+      );
+    }
+
+    const [effect, empty] = args as readonly [
+      Effect<unknown, unknown>,
+      unknown,
+    ];
 
     return run_writer_kind(effect, writer_kind, empty);
   }
@@ -413,6 +468,30 @@ export type TerminalWriterEmpty<requirements> =
   [WithoutWriter<requirements>] extends [never] ? WriterEmpty<requirements>
     : never;
 
+/** Runs one cell value starting from its declared empty output. */
+export function run_writer_terminal<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  writer: WriterCellValue<key, output, log, item>,
+): readonly [item, Data<output, log>];
+/** Runs an effect whose only remaining lifts address `cell`, using its empty output. */
+export function run_writer_terminal<
+  key extends PropertyKey,
+  output extends MonoidDictionary<output>,
+  log,
+  requirements,
+  item,
+>(
+  cell: AsWriterCell<key, output, log>,
+  effect:
+    & Effect<requirements, item>
+    & ([WithoutWriterCell<requirements, key>] extends [never] ? unknown
+      : never),
+): readonly [item, Data<output, log>];
 /** Runs one Writer value or an effect containing only Writer lifts. */
 export function run_writer_terminal<
   output extends MonoidDictionary<output>,
@@ -467,6 +546,14 @@ export function run_writer_terminal<
 export function run_writer_terminal(
   ...args: readonly unknown[]
 ): readonly [unknown, unknown] {
+  if (args.length === 2 && writer_cell_empties.has(args[0] as object)) {
+    const cell = args[0] as AsWriterCell<PropertyKey, Dictionary, unknown>;
+    return run_writer_terminal_kind(
+      args[1] as Effect<unknown, unknown>,
+      cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+      writer_cell_empty(cell),
+    );
+  }
   const [effect, empty, runtime_kind] = args.length === 2
     ? [args[0], args[1], writer_kind] as const
     : [

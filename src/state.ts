@@ -148,11 +148,23 @@ export type CellValue<key extends PropertyKey, state, item> = WrappedData<
   item
 >;
 
+/**
+ * Declare a State cell without repeating its key in type arguments:
+ * `const counter = state<number>()("counter")`.
+ */
+export function state<state>(): <const key extends PropertyKey>(
+  key: key & NominalKey<key>,
+) => AsCell<key, state>;
 /** Declare a State cell addressed by a runtime key within the State family. */
 export function state<key extends PropertyKey, state>(
   key: key & NominalKey<key>,
-): AsCell<key, state> {
-  return make_state_cell<key, state>(key);
+): AsCell<key, state>;
+export function state(key?: PropertyKey): unknown {
+  if (arguments.length === 0) {
+    return (cell_key: PropertyKey) => make_state_cell(cell_key);
+  }
+
+  return make_state_cell(key as PropertyKey);
 }
 
 function make_state_cell<key extends PropertyKey, state>(

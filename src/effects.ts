@@ -24,21 +24,102 @@ export type TaggedOperation<tag extends string = string> =
   | readonly [tag]
   | readonly [tag, unknown];
 
-/** Gives a tagged tuple an operation output type without changing its value. */
-export function operation<item>(): {
-  <const tagged extends TaggedOperation>(
-    tagged: tagged,
-  ): tagged & Operation<item>;
-  <const tag extends string>(
-    tag: tag,
-  ): <payload>(payload: payload) => readonly [tag, payload] & Operation<item>;
-} {
+/** @ignore */
+export declare const unconstrained_payload: unique symbol;
+
+/** @ignore */
+export type UnconstrainedPayload = typeof unconstrained_payload;
+
+/** A tagged operation constructor with `.send`, `.is`, and `.tag` helpers. */
+export type OperationConstructor<
+  tag extends string,
+  item,
+  payload = UnconstrainedPayload,
+> = [payload] extends [UnconstrainedPayload] ? {
+    <value>(payload: value): readonly [tag, value] & Operation<item>;
+    /** Sends this operation as an Effect producing `item`. */
+    send<value>(
+      payload: value,
+    ): Effect<readonly [tag, value] & Operation<item>, item>;
+    /** Tests whether an unknown operation has this tag. */
+    is(
+      candidate: unknown,
+    ): candidate is readonly [tag, unknown] & Operation<item>;
+    /** The operation's discriminant tag. */
+    readonly tag: tag;
+  }
+  : [payload] extends [void] ? {
+      (): readonly [tag] & Operation<item>;
+      /** Sends this zero-payload operation as an Effect producing `item`. */
+      send(): Effect<readonly [tag] & Operation<item>, item>;
+      /** Tests whether an unknown operation has this tag. */
+      is(candidate: unknown): candidate is readonly [tag] & Operation<item>;
+      /** The operation's discriminant tag. */
+      readonly tag: tag;
+    }
+  : {
+    (payload: payload): readonly [tag, payload] & Operation<item>;
+    /** Sends this operation as an Effect producing `item`. */
+    send(
+      payload: payload,
+    ): Effect<readonly [tag, payload] & Operation<item>, item>;
+    /** Tests whether an unknown operation has this tag. */
+    is(
+      candidate: unknown,
+    ): candidate is readonly [tag, payload] & Operation<item>;
+    /** The operation's discriminant tag. */
+    readonly tag: tag;
+  };
+
+/** Curried builder returned by `Effect.operation`. */
+export type OperationBuilder<
+  item,
+  payload = UnconstrainedPayload,
+> = [payload] extends [UnconstrainedPayload] ? {
+    <const tagged extends TaggedOperation>(
+      tagged: tagged,
+    ): tagged & Operation<item>;
+    <const tag extends string>(
+      tag: tag,
+    ): OperationConstructor<tag, item, UnconstrainedPayload>;
+  }
+  : {
+    <const tag extends string>(
+      tag: tag,
+    ): OperationConstructor<tag, item, payload>;
+  };
+
+/** Gives a tagged tuple an operation output type, or creates a typed constructor. */
+export function operation<
+  item,
+  payload = UnconstrainedPayload,
+>(): OperationBuilder<item, payload> {
   return ((value: string | TaggedOperation) => {
     if (typeof value === "string") {
-      return (payload: unknown) => [value, payload];
+      const construct = function construct_operation(
+        argument?: unknown,
+      ): TaggedOperation {
+        if (arguments.length === 0) return [value];
+        return [value, argument];
+      };
+      return Object.assign(construct, {
+        tag: value,
+        send(argument?: unknown) {
+          return send(
+            (arguments.length === 0 ? [value] : [value, argument]) as
+              & TaggedOperation
+              & Operation<item>,
+          );
+        },
+        is(candidate: unknown): boolean {
+          return Array.isArray(candidate) &&
+            (candidate.length === 1 || candidate.length === 2) &&
+            candidate[0] === value;
+        },
+      });
     }
     return value;
-  }) as ReturnType<typeof operation<item>>;
+  }) as OperationBuilder<item, payload>;
 }
 
 /** An operation that lifts a dictionary value into an effect program. */

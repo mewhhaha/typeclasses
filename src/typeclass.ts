@@ -342,10 +342,20 @@ export type TaggedUnionShape<dictionary extends Dictionary> = {
   >;
 };
 
+/** @ignore */
+export declare const union_dictionary: unique symbol;
+
 /** A dictionary augmented with constructors and guards for every union tag. */
 export type UnionDictionary<dictionary extends Dictionary> =
   & dictionary
-  & TaggedDictionary<dictionary, TaggedTag<dictionary>>;
+  & TaggedDictionary<dictionary, TaggedTag<dictionary>>
+  & { readonly [union_dictionary]: dictionary };
+
+/** Extract the wrapped value type for a plain or union dictionary. */
+export type DataOf<dictionary extends Dictionary, item> = dictionary extends {
+  readonly [union_dictionary]: infer base extends Dictionary;
+} ? Data<base, item>
+  : Data<dictionary, item>;
 
 /** Declare the tags and payload slots of a tagged union dictionary. */
 export function union<const variants extends UnionVariantsShape>(

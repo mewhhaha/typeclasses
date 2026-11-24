@@ -23,10 +23,16 @@ export type {
   Operation,
   /** @ignore */
   operation_output,
+  OperationBuilder,
+  OperationConstructor,
   OperationOutput,
   ProgramConstructor,
   ProgramScope,
   TaggedOperation,
+  /** @ignore */
+  unconstrained_payload,
+  /** @ignore */
+  UnconstrainedPayload,
   Uses,
   WithoutOperation,
 } from "./effects.ts";

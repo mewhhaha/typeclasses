@@ -11,7 +11,9 @@ import {
   type Uses,
 } from "./effects.ts";
 import { type Either, Left, Right } from "./either.ts";
+import type { Maybe } from "./maybe.ts";
 import { type AsTask, from_fn, is_task_cancellation } from "./task.ts";
+import type { Validation } from "./validation.ts";
 
 /** An operation that short-circuits a program with a typed error.
  *
@@ -78,6 +80,47 @@ export function from_either<error, item>(
     case "Left":
       return fail(payload);
     case "Right":
+      return pure(payload);
+  }
+}
+
+/** Lifts a Maybe, lazily producing a typed failure for Nothing. */
+export function from_maybe<error, item>(
+  value: Maybe<item>,
+  on_nothing: () => error,
+): Effect<Fails<error>, item> {
+  const [branch, payload] = value.value();
+
+  switch (branch) {
+    case "Nothing":
+      return fail(on_nothing());
+    case "Just":
+      return pure(payload);
+  }
+}
+
+/** Lifts a nullable value, lazily producing a typed failure for null or undefined. */
+export function from_nullable<error, item>(
+  value: item | null | undefined,
+  on_null: () => error,
+): Effect<Fails<error>, NonNullable<item>> {
+  if (value === null || value === undefined) {
+    return fail(on_null());
+  }
+
+  return pure(value as NonNullable<item>);
+}
+
+/** Lifts a Validation, failing the program with its accumulated error on Invalid. */
+export function from_validation<error, item>(
+  value: Validation<error, item>,
+): Effect<Fails<error>, item> {
+  const [branch, payload] = value.value();
+
+  switch (branch) {
+    case "invalid":
+      return fail(payload);
+    case "valid":
       return pure(payload);
   }
 }
@@ -178,6 +221,14 @@ export function recover<requirements, item, replacement = never>(
     WithoutFails<requirements> | replacement,
     item
   >;
+}
+
+/** Translates failures into another error type while keeping other capabilities intact. */
+export function map_error<requirements, item, next_error>(
+  effect: Effect<requirements, item>,
+  fn: (error: FailsError<requirements>) => next_error,
+): Effect<WithoutFails<requirements> | Fails<next_error>, item> {
+  return recover(effect, (error) => fail(fn(error)));
 }
 
 /** The settled outcome of an `attempt`, before it re-enters the program. */

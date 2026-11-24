@@ -1,6 +1,7 @@
 import {
   type Effect,
   handle_operation,
+  map,
   type Operation,
   type OperationOutput,
   run,
@@ -9,7 +10,7 @@ import {
 } from "./effects.ts";
 import { type AsReaderCell, run_reader } from "./reader.ts";
 import { type AsCell, run_state } from "./state.ts";
-import { type AsWriterCell, run_writer } from "./writer.ts";
+import { type AsWriterCell, run_writer, writer_cell_empty } from "./writer.ts";
 import type { Data } from "./typeclass.ts";
 import type { Monoid } from "./typeclasses/monoid.ts";
 
@@ -168,19 +169,23 @@ export function provide_state<key extends PropertyKey, state>(
   };
 }
 
-/** Supply a Writer cell's initial log and retain its final log by name. */
+/** Supply a Writer cell's initial log (defaults to the cell's declared empty log). */
 export function provide_writer<
   key extends PropertyKey,
   output extends Monoid<output>,
   log,
 >(
   cell: AsWriterCell<key, output, log>,
-  initial: Data<NoInfer<output>, NoInfer<log>>,
+  initial?: Data<NoInfer<output>, NoInfer<log>>,
 ): CellBinding<Uses<typeof cell>, "writer", Data<output, log>> {
   return {
     family: "writer",
     handle: (effect) =>
-      run_writer(cell, effect as Effect<Uses<typeof cell>, unknown>, initial),
+      run_writer(
+        cell,
+        effect as Effect<Uses<typeof cell>, unknown>,
+        initial === undefined ? writer_cell_empty(cell) : initial,
+      ),
   };
 }
 
@@ -198,6 +203,100 @@ type NamedValues<bindings extends Bindings, family extends Family> = {
     : never;
 };
 
+/** Named result, final states, and logs produced by cell handlers. */
+export type CellResult<item, bindings extends Bindings> = {
+  readonly result: item;
+  readonly states: NamedValues<bindings, "state">;
+  readonly logs: NamedValues<bindings, "writer">;
+};
+
+type OrderedBinding = {
+  readonly name: PropertyKey;
+  readonly family: Family;
+  readonly handle: (
+    effect: Effect<unknown, unknown>,
+  ) => Effect<unknown, unknown>;
+};
+
+function collect_ordered_bindings(bindings: Bindings): OrderedBinding[] {
+  return Reflect.ownKeys(bindings)
+    .filter((key) => Object.prototype.propertyIsEnumerable.call(bindings, key))
+    .map((key) => ({
+      name: key,
+      family: bindings[key].family,
+      handle: bindings[key].handle,
+    }));
+}
+
+function unpack_cell_result<item, bindings extends Bindings>(
+  packed: unknown,
+  ordered: readonly OrderedBinding[],
+): CellResult<item, bindings> {
+  let result = packed;
+  const states: Record<PropertyKey, unknown> = {};
+  const logs: Record<PropertyKey, unknown> = {};
+  for (let index = ordered.length - 1; index >= 0; index--) {
+    const { name, family } = ordered[index];
+    if (family === "reader") continue;
+    const [value, final] = result as readonly [unknown, unknown];
+    result = value;
+    let destination = states;
+    if (family === "writer") destination = logs;
+    Object.defineProperty(destination, name, {
+      value: final,
+      enumerable: true,
+    });
+  }
+  return {
+    result: result as item,
+    states: states as NamedValues<bindings, "state">,
+    logs: logs as NamedValues<bindings, "writer">,
+  };
+}
+
+/** Handle supplied cells in property order while preserving remaining capabilities. */
+export function handle_cells<
+  requirements,
+  item,
+  const bindings extends Bindings,
+>(
+  effect: Effect<requirements, item>,
+  bindings: bindings,
+): Effect<
+  Exclude<requirements, BoundRequirements<bindings>>,
+  CellResult<item, bindings>
+> {
+  return prepare_handle_cells(bindings)(effect);
+}
+
+/** Snapshot cell bindings once for composable reuse across effects with other capabilities. */
+export function prepare_handle_cells<const bindings extends Bindings>(
+  bindings: bindings,
+): <requirements, item>(
+  effect: Effect<requirements, item>,
+) => Effect<
+  Exclude<requirements, BoundRequirements<bindings>>,
+  CellResult<item, bindings>
+> {
+  const ordered = collect_ordered_bindings(bindings);
+  return function prepared<requirements, item>(
+    effect: Effect<requirements, item>,
+  ): Effect<
+    Exclude<requirements, BoundRequirements<bindings>>,
+    CellResult<item, bindings>
+  > {
+    let current = effect as Effect<unknown, unknown>;
+    for (const binding of ordered) current = binding.handle(current);
+    return map(
+      current,
+      (packed) => unpack_cell_result<item, bindings>(packed, ordered),
+    ) as Effect<
+      Exclude<requirements, BoundRequirements<bindings>>,
+      CellResult<item, bindings>
+    >;
+  };
+}
+
 /** Run fully supplied cells in property order, returning named states and logs. */
 export function run_cells<requirements, item, const bindings extends Bindings>(
   effect:
@@ -208,11 +307,7 @@ export function run_cells<requirements, item, const bindings extends Bindings>(
         readonly ERROR: "run_cells requires a binding for every capability";
       }),
   bindings: bindings,
-): {
-  readonly result: item;
-  readonly states: NamedValues<bindings, "state">;
-  readonly logs: NamedValues<bindings, "writer">;
-} {
+): CellResult<item, bindings> {
   return prepare_cells(bindings)(effect);
 }
 
@@ -227,18 +322,8 @@ export function prepare_cells<const bindings extends Bindings>(
       : {
         readonly ERROR: "run_cells requires a binding for every capability";
       }),
-) => {
-  readonly result: item;
-  readonly states: NamedValues<bindings, "state">;
-  readonly logs: NamedValues<bindings, "writer">;
-} {
-  const ordered = Reflect.ownKeys(bindings)
-    .filter((key) => Object.prototype.propertyIsEnumerable.call(bindings, key))
-    .map((key) => ({
-      name: key,
-      family: bindings[key].family,
-      handle: bindings[key].handle,
-    }));
+) => CellResult<item, bindings> {
+  const ordered = collect_ordered_bindings(bindings);
   return function prepared<requirements, item>(
     effect:
       & Effect<requirements, item>
@@ -247,32 +332,12 @@ export function prepare_cells<const bindings extends Bindings>(
         : {
           readonly ERROR: "run_cells requires a binding for every capability";
         }),
-  ): {
-    readonly result: item;
-    readonly states: NamedValues<bindings, "state">;
-    readonly logs: NamedValues<bindings, "writer">;
-  } {
+  ): CellResult<item, bindings> {
     let current = effect as Effect<unknown, unknown>;
     for (const binding of ordered) current = binding.handle(current);
-    let result = run(current as Effect<never, unknown>);
-    const states: Record<PropertyKey, unknown> = {};
-    const logs: Record<PropertyKey, unknown> = {};
-    for (let index = ordered.length - 1; index >= 0; index--) {
-      const { name, family } = ordered[index];
-      if (family === "reader") continue;
-      const [value, final] = result as readonly [unknown, unknown];
-      result = value;
-      let destination = states;
-      if (family === "writer") destination = logs;
-      Object.defineProperty(destination, name, {
-        value: final,
-        enumerable: true,
-      });
-    }
-    return {
-      result: result as item,
-      states: states as NamedValues<bindings, "state">,
-      logs: logs as NamedValues<bindings, "writer">,
-    };
+    return unpack_cell_result<item, bindings>(
+      run(current as Effect<never, unknown>),
+      ordered,
+    );
   };
 }
