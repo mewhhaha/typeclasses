@@ -2,7 +2,7 @@
 import { assert_equals, assert_true } from "./assert.ts";
 import { ArrayT } from "./array.ts";
 import { Effect, Program, run } from "./effects.ts";
-import { type Either, Left, map_left, Right, try_catch } from "./either.ts";
+import { Either, Left, map_left, Right, try_catch } from "./either.ts";
 import {
   fail,
   from_maybe,
@@ -22,7 +22,7 @@ import {
   provide_writer,
   run_cells,
 } from "./handlers.ts";
-import { filter, Just, type Maybe, Nothing } from "./maybe.ts";
+import { filter, Just, Maybe, Nothing } from "./maybe.ts";
 import { reader } from "./reader.ts";
 import { state } from "./state.ts";
 import { from_fn, run_task } from "./task.ts";
@@ -650,4 +650,108 @@ Deno.test("round-2 runtime hills preserve operation table, STM journal, and mult
   assert_equals(out5.result, 66);
   assert_equals(out5.states, { c2: 12, c3: 22, c4: 32 });
   assert_equals(out5.logs.c5.value(), [2]);
+});
+
+Deno.test("round-3 runtime hills preserve deep Effect fusion, fast Do semantics, IterableT pipelines, and iterative run_state", async () => {
+  const { Identity, identity } = await import("./identity.ts");
+  const { Do } = await import("./typeclasses.ts");
+  const { from_array: iter_from_array, to_array: iter_to_array } = await import(
+    "./iterable.ts"
+  );
+  const { Foldable } = await import("./typeclasses/foldable.ts");
+  const { get, modify, run_state, run_state_terminal } = await import(
+    "./state.ts"
+  );
+
+  // R1: 50,000-deep Effect.bind right-identity fusion stays stack-safe
+  const step_inc = modify((n: number) => n + 1);
+  let deep = Effect.from(step_inc);
+  for (let i = 0; i < 49_999; i += 1) {
+    deep = Effect.bind(deep, () => Effect.from(step_inc));
+  }
+  const [, deep_state] = run_state_terminal(deep, 0);
+  assert_equals(deep_state, 50_000);
+
+  // R1: Program direct Data lifting preserves multi-shot branch replay
+  const pick = Effect.operation<number, void>()("r3.pick");
+  const replayable = Program(function* () {
+    yield* modify((n: number) => n + 1);
+    const k = yield* pick.send();
+    yield* modify((n: number) => n + k);
+    return yield* get<number>();
+  });
+  const suspended = run_state(replayable, 10);
+  assert_true(suspended[0] === "impure", "expected suspended op");
+  if (suspended[0] === "impure") {
+    const a = suspended[2](2);
+    const b = suspended[2](7);
+    assert_true(a[0] === "pure" && b[0] === "pure", "expected pure branches");
+    if (a[0] === "pure" && b[0] === "pure") {
+      assert_equals(a[1], [13, 13]);
+      assert_equals(b[1], [18, 18]);
+    }
+  }
+
+  // R2: Fast Do(Maybe / Either / Identity) preserves short-circuit, try/catch, and throw-to-Left
+  const m_ok = Do(Maybe, function* () {
+    const a = yield* Just(10);
+    const b = yield* Just(20);
+    return a + b;
+  });
+  assert_equals(m_ok.value(), ["Just", 30]);
+  const m_none = Do(Maybe, function* () {
+    const a = yield* Just(10);
+    const b = yield* Nothing<number>();
+    return a + b;
+  });
+  assert_equals(m_none.value(), ["Nothing"]);
+  const e_ok = Do(Either, function* () {
+    const a = yield* Right(4);
+    const b = yield* Right(6);
+    return a * b;
+  });
+  assert_equals(e_ok.value(), ["Right", 24]);
+  const e_left = Do(Either.with_left<string>(), function* () {
+    const a = yield* Right<string, number>(4);
+    const b = yield* Left<string, number>("nope");
+    return a + b;
+  });
+  assert_equals(e_left.value(), ["Left", "nope"]);
+  const e_throw = Do(Either, function* () {
+    const a = yield* Right<unknown, number>(4);
+    if (a > 0) throw "boom";
+    return a;
+  });
+  assert_equals(e_throw.value(), ["Left", "boom"]);
+  const id_val = Do(Identity, function* () {
+    const a = yield* identity(3);
+    const b = yield* identity(9);
+    return a + b;
+  });
+  assert_equals(id_val.value(), 12);
+
+  // R3: Specialized 1- and 2-stage IterableT push loops observe live array growth and early exit
+  const growing = [1, 2, 3];
+  const grown = iter_to_array(
+    iter_from_array(growing)
+      .filter((n) => {
+        if (n === 2) growing.push(4);
+        return n % 2 === 0;
+      })
+      .map((n) => n * 10),
+  );
+  assert_equals(grown, [20, 40]);
+
+  let visited = 0;
+  const found = Foldable.find(
+    iter_from_array([1, 2, 3, 4, 5])
+      .map((n) => {
+        visited += 1;
+        return n * 3;
+      })
+      .filter((n) => n > 6),
+    (n) => n >= 9,
+  );
+  assert_equals(found, 9);
+  assert_equals(visited, 3);
 });

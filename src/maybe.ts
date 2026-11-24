@@ -24,7 +24,11 @@ import { compare_unknown, type Ord, ord_typeclass } from "./typeclasses/ord.ts";
 import { eq_typeclass } from "./typeclasses/eq.ts";
 import { foldable_typeclass } from "./typeclasses/foldable.ts";
 import { functor_map, functor_typeclass } from "./typeclasses/functor.ts";
-import { type Monad, monad_typeclass } from "./typeclasses/monad.ts";
+import {
+  type Monad,
+  monad_typeclass,
+  register_fast_do,
+} from "./typeclasses/monad.ts";
 import { monad_rec_typeclass, type MonadRec } from "./typeclasses/monad_rec.ts";
 import { type Monoid, monoid_typeclass } from "./typeclasses/monoid.ts";
 import { semigroup_typeclass } from "./typeclasses/semigroup.ts";
@@ -92,15 +96,7 @@ const nothing_singleton = /* @__PURE__ */ Nothing<never>();
 export function from_nullable<item>(
   value: item | null | undefined,
 ): Maybe<NonNullable<item>> {
-  if (value === null) {
-    return nothing_value();
-  }
-
-  if (value === undefined) {
-    return nothing_value();
-  }
-
-  return Just(value);
+  return value == null ? nothing_value() : Just(value);
 }
 
 /** Haskell `toNullable :: Maybe a -> a | null`. */
@@ -399,40 +395,21 @@ function create_maybe(): MaybeConstructor {
     },
   });
 
+  function alt_maybe<item>(
+    this: Data<AsMaybe, item>,
+    right: Data<AsMaybe, item>,
+  ): Data<AsMaybe, item> {
+    if (is_Nothing_value(this)) return right;
+    return this.value()[0] === "Just" ? same_context(this) : right;
+  }
+
   instance(alternative_typeclass)({
     empty: empty_maybe,
-
-    alt(right) {
-      if (is_Nothing_value(this)) {
-        return right;
-      }
-
-      const [tag] = this.value();
-
-      switch (tag) {
-        case "Just":
-          return same_context(this);
-        case "Nothing":
-          return right;
-      }
-    },
+    alt: alt_maybe,
   });
 
   instance(semigroup_typeclass)({
-    concat(right) {
-      if (is_Nothing_value(this)) {
-        return right;
-      }
-
-      const [tag] = this.value();
-
-      switch (tag) {
-        case "Just":
-          return same_context(this);
-        case "Nothing":
-          return right;
-      }
-    },
+    concat: alt_maybe,
   });
 
   instance(monoid_typeclass)({
@@ -455,6 +432,8 @@ function create_maybe(): MaybeConstructor {
       }
     },
   });
+
+  register_fast_do(Maybe, 0, Maybe.Just);
 
   instance(monad_rec_typeclass)({
     tail_rec_m(initial, step) {

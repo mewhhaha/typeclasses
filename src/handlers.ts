@@ -42,77 +42,39 @@ type HandledRequirements<table> = table[keyof table] extends infer handler
   : never
   : never;
 
-function run_operations_record(
-  effect: Effect<unknown, unknown>,
-  entries: Record<
-    string,
-    (
-      operation: TaggedOperation & Operation<unknown>,
-    ) => Effect<unknown, unknown>
-  >,
-): Effect<unknown, unknown> {
-  let current = effect;
-  while (true) {
-    if (current[0] === "pure") return current;
-    const operation = current[1];
-    let handle:
-      | ((
-        operation: TaggedOperation & Operation<unknown>,
-      ) => Effect<unknown, unknown>)
-      | undefined;
-    if (Array.isArray(operation) && Object.hasOwn(entries, operation[0])) {
-      const candidate = entries[operation[0]];
-      if (typeof candidate === "function") handle = candidate;
-    }
-    if (handle === undefined) {
-      const suspended = current;
-      return suspend(
-        suspended[1] as Operation<unknown>,
-        (value) => run_operations_record(suspended[2](value), entries),
-      );
-    }
-    const handled = handle.call(
-      entries,
-      operation as TaggedOperation & Operation<unknown>,
-    );
-    if (!is_effect(handled)) {
-      throw new TypeError("Operation handler returned an invalid effect");
-    }
-    if (handled[0] === "pure") {
-      current = current[2](handled[1]);
-      continue;
-    }
-    const suspended = current;
-    return bind(
-      handled,
-      (value) => run_operations_record(suspended[2](value), entries),
-    );
-  }
-}
+type OperationEntry = (
+  operation: TaggedOperation & Operation<unknown>,
+) => Effect<unknown, unknown>;
 
-function run_prepared_operations(
+function run_operations_loop(
   effect: Effect<unknown, unknown>,
-  entries: ReadonlyMap<
-    string,
-    (
-      operation: TaggedOperation & Operation<unknown>,
-    ) => Effect<unknown, unknown>
-  >,
+  entries: Record<string, OperationEntry> | ReadonlyMap<string, OperationEntry>,
+  is_map: boolean,
   receiver: unknown,
 ): Effect<unknown, unknown> {
   let current = effect;
   while (true) {
     if (current[0] === "pure") return current;
     const operation = current[1];
-    const handle = Array.isArray(operation)
-      ? entries.get(operation[0])
-      : undefined;
+    let handle: OperationEntry | undefined;
+    if (Array.isArray(operation)) {
+      if (is_map) {
+        handle = (entries as ReadonlyMap<string, OperationEntry>).get(
+          operation[0],
+        );
+      } else if (Object.hasOwn(entries, operation[0])) {
+        const candidate = (entries as Record<string, OperationEntry>)[
+          operation[0]
+        ];
+        if (typeof candidate === "function") handle = candidate;
+      }
+    }
     if (handle === undefined) {
       const suspended = current;
       return suspend(
         suspended[1] as Operation<unknown>,
         (value) =>
-          run_prepared_operations(suspended[2](value), entries, receiver),
+          run_operations_loop(suspended[2](value), entries, is_map, receiver),
       );
     }
     const handled = handle.call(
@@ -130,7 +92,7 @@ function run_prepared_operations(
     return bind(
       handled,
       (value) =>
-        run_prepared_operations(suspended[2](value), entries, receiver),
+        run_operations_loop(suspended[2](value), entries, is_map, receiver),
     );
   }
 }
@@ -154,8 +116,10 @@ export function handle_operations<
       operation: TaggedOperation & Operation<unknown>,
     ) => Effect<unknown, unknown>
   >;
-  return run_operations_record(
+  return run_operations_loop(
     effect as Effect<unknown, unknown>,
+    entries,
+    false,
     entries,
   ) as Effect<
     | Exclude<requirements, Selected<requirements, HandledTags<table>>>
@@ -211,9 +175,10 @@ export function prepare_operations<
         item
       >;
     }
-    return run_prepared_operations(
+    return run_operations_loop(
       effect as Effect<unknown, unknown>,
       entries,
+      true,
       handlers,
     ) as Effect<
       | Exclude<pending, Selected<pending, HandledTags<table>>>

@@ -307,34 +307,12 @@ function pipeline<from, to = from>(
     if (meta.has_zero_take) return;
     const ordered = meta.ordered;
     const remaining = meta.has_take ? init_remaining(ordered) : undefined;
+    const state: StageState = { value: undefined, stop: false };
     for (const input of source()) {
-      let item = input;
-      let keep = true;
-      let stop = false;
-      for (let index = 0; index < ordered.length; index += 1) {
-        const operation = ordered[index];
-        switch (operation.tag) {
-          case "map":
-            item = operation.fn(item);
-            break;
-          case "filter":
-            keep = operation.fn(item);
-            break;
-          case "take":
-            remaining![index] -= 1;
-            if (remaining![index] === 0) stop = true;
-            break;
-          case "filter_map": {
-            const [tag, value] = operation.fn(item).value();
-            if (tag === "Nothing") keep = false;
-            else item = value;
-            break;
-          }
-        }
-        if (!keep) break;
+      if (eval_stages(input, ordered, remaining, state)) {
+        yield state.value as to;
       }
-      if (keep) yield item as to;
-      if (stop) return;
+      if (state.stop) return;
     }
   };
   factory[iterable_pipeline] = plan;
@@ -378,12 +356,40 @@ function pipeline_meta(plan: Pipeline): PipelineMeta {
 }
 
 function init_remaining(ordered: readonly Stage[]): number[] {
-  const remaining = new Array<number>(ordered.length);
+  return ordered.map((stage) => stage.tag === "take" ? stage.count : Infinity);
+}
+
+type StageState = { value: unknown; stop: boolean };
+
+function eval_stages(
+  input: unknown,
+  ordered: readonly Stage[],
+  remaining: number[] | undefined,
+  state: StageState,
+): boolean {
+  let value = input;
   for (let index = 0; index < ordered.length; index += 1) {
-    const stage = ordered[index];
-    remaining[index] = stage.tag === "take" ? stage.count : Infinity;
+    const op = ordered[index];
+    switch (op.tag) {
+      case "map":
+        value = op.fn(value);
+        break;
+      case "filter":
+        if (!op.fn(value)) return false;
+        break;
+      case "take":
+        if (--remaining![index] === 0) state.stop = true;
+        break;
+      case "filter_map": {
+        const [tag, payload] = op.fn(value).value();
+        if (tag === "Nothing") return false;
+        value = payload;
+        break;
+      }
+    }
   }
-  return remaining;
+  state.value = value;
+  return true;
 }
 
 function push_pipeline<item>(
@@ -394,65 +400,55 @@ function push_pipeline<item>(
   if (meta.has_zero_take) return;
   const items = fast_array_of(plan.source);
   const ordered = meta.ordered;
+  const n = ordered.length;
   if (items !== undefined) {
-    if (ordered.length === 1 && ordered[0].tag === "map") {
-      const f0 = ordered[0].fn;
-      for (let index = 0; index < items.length; index += 1) {
-        if (visit(f0(items[index]) as item)) return;
+    if (n === 1) {
+      const s0 = ordered[0];
+      if (s0.tag === "map" || s0.tag === "filter") {
+        const is_map = s0.tag === "map";
+        const fn = s0.fn;
+        for (let i = 0; i < items.length; i += 1) {
+          const v = items[i];
+          if (is_map ? visit(fn(v) as item) : (fn(v) && visit(v as item))) {
+            return;
+          }
+        }
+        return;
       }
-      return;
-    }
-    if (
-      ordered.length === 2 && ordered[0].tag === "map" &&
-      ordered[1].tag === "filter"
-    ) {
-      const map_fn = ordered[0].fn;
-      const filter_fn = ordered[1].fn;
-      for (let index = 0; index < items.length; index += 1) {
-        const mapped = map_fn(items[index]);
-        if (filter_fn(mapped) && visit(mapped as item)) return;
+    } else if (n === 2) {
+      const [s0, s1] = ordered;
+      if (s0.tag === "map" && s1.tag === "filter") {
+        for (let i = 0; i < items.length; i += 1) {
+          const m = s0.fn(items[i]);
+          if (s1.fn(m) && visit(m as item)) return;
+        }
+        return;
       }
-      return;
+      if (s0.tag === "filter" && s1.tag === "map") {
+        for (let i = 0; i < items.length; i += 1) {
+          const v = items[i];
+          if (s0.fn(v) && visit(s1.fn(v) as item)) return;
+        }
+        return;
+      }
     }
   }
   const remaining = meta.has_take ? init_remaining(ordered) : undefined;
-  const step_item = (input: unknown): boolean => {
-    let value = input;
-    let keep = true;
-    let stop = false;
-    for (let index = 0; index < ordered.length; index += 1) {
-      const operation = ordered[index];
-      switch (operation.tag) {
-        case "map":
-          value = operation.fn(value);
-          break;
-        case "filter":
-          keep = operation.fn(value);
-          break;
-        case "take":
-          remaining![index] -= 1;
-          if (remaining![index] === 0) stop = true;
-          break;
-        case "filter_map": {
-          const [tag, payload] = operation.fn(value).value();
-          if (tag === "Nothing") keep = false;
-          else value = payload;
-          break;
-        }
-      }
-      if (!keep) break;
-    }
-    if (keep && visit(value as item)) return true;
-    return stop;
-  };
+  const state: StageState = { value: undefined, stop: false };
   if (items !== undefined) {
-    for (let index = 0; index < items.length; index += 1) {
-      if (step_item(items[index])) return;
+    for (let i = 0; i < items.length; i += 1) {
+      if (
+        (eval_stages(items[i], ordered, remaining, state) &&
+          visit(state.value as item)) || state.stop
+      ) return;
     }
     return;
   }
   for (const input of plan.source()) {
-    if (step_item(input)) return;
+    if (
+      (eval_stages(input, ordered, remaining, state) &&
+        visit(state.value as item)) || state.stop
+    ) return;
   }
 }
 
@@ -651,16 +647,20 @@ function create_iterable(): AsIterable {
     },
   });
 
-  Semigroup.instance(IterableT)({
-    concat(right) {
-      const left = this.value();
-      const right_value = right.value();
+  function concat_iterable<item>(
+    this: Data<AsIterable, item>,
+    right: Data<AsIterable, item>,
+  ): Data<AsIterable, item> {
+    const left = this.value();
+    const right_value = right.value();
+    return IterableT(function* () {
+      yield* left();
+      yield* right_value();
+    });
+  }
 
-      return IterableT(function* () {
-        yield* left();
-        yield* right_value();
-      });
-    },
+  Semigroup.instance(IterableT)({
+    concat: concat_iterable,
   });
 
   Monoid.instance(IterableT)({
@@ -669,16 +669,7 @@ function create_iterable(): AsIterable {
 
   Alternative.instance(IterableT)({
     empty: empty_iterable,
-
-    alt(right) {
-      const left = this.value();
-      const right_value = right.value();
-
-      return IterableT(function* () {
-        yield* left();
-        yield* right_value();
-      });
-    },
+    alt: concat_iterable,
   });
 
   Monad.instance(IterableT)({
