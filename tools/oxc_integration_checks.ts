@@ -4,6 +4,7 @@ import {
   create_transform_cache,
   transform_do_program_source,
 } from "./transform_do_program.ts";
+import { executable_typescript } from "./transform_execute.ts";
 
 Deno.test("Oxc preserves comments and UTF-16 source locations across mapped and unmapped output", () => {
   const source = `import { Do } from "../src/typeclasses.ts";
@@ -252,4 +253,118 @@ Deno.test("terminal lift specializes 2-arg keyed run_writer using the cell defau
     "expected 2-arg keyed run_writer to lift to run_writer_terminal\n\n" +
       result.code,
   );
+});
+
+Deno.test("direct Maybe Do lowering elides Just, short-circuits Nothing, and respects shadows", async () => {
+  const root = new URL("../src/", import.meta.url).href;
+  const source = [
+    `import { Do } from ${JSON.stringify(root + "typeclasses.ts")};`,
+    `import { Just, Maybe, Nothing } from ${
+      JSON.stringify(root + "maybe.ts")
+    };`,
+    "export const hit = Do(Maybe, function* () {",
+    "  const a = yield* Just(20);",
+    "  const b = yield* (a > 0 ? Just(22) : Nothing<number>());",
+    "  return a + b;",
+    "}).value();",
+    "export const miss = Do(Maybe, function* () {",
+    "  const a = yield* Nothing<number>();",
+    "  const b = yield* Just(1);",
+    "  return a + b;",
+    "}).value();",
+    "export function returned(v: number) {",
+    "  return Do(Maybe, function* () {",
+    "    const a = yield* Just(v);",
+    "    return a + 2;",
+    "  });",
+    "}",
+  ].join("\n");
+  const result = transform_do_program_source(source, "direct_maybe.ts");
+  assert_equals(result.diagnostics, []);
+  assert_equals(result.transformed, 3);
+  assert_true(
+    !result.code.includes(".bind(") && !result.code.includes(".map("),
+    "expected direct Maybe lowering without bind/map closures\n\n" +
+      result.code,
+  );
+  assert_true(
+    result.code.includes("export function returned(v: number) {\n  {\n"),
+    "expected return Do(Maybe, ...) to unwrap zero-arg IIFE into lexical block\n\n" +
+      result.code,
+  );
+  const compiled = executable_typescript(result.code, "direct_maybe.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  assert_equals(mod.hit, ["Just", 42]);
+  assert_equals(mod.miss, ["Nothing"]);
+  assert_equals(mod.returned(40).value(), ["Just", 42]);
+
+  // Shadowed Maybe must stay on dynamic dictionary dispatch.
+  const shadowed = [
+    'import { Do } from "../src/typeclasses.ts";',
+    'import { Just, Maybe } from "../src/maybe.ts";',
+    "function inner(Maybe: typeof import('../src/maybe.ts').Maybe) {",
+    "  return Do(Maybe, function* () { const a = yield* Just(1); return a + 1; });",
+    "}",
+  ].join("\n");
+  const shadowed_result = transform_do_program_source(
+    shadowed,
+    "shadowed_maybe.ts",
+  );
+  assert_equals(shadowed_result.diagnostics, []);
+  assert_true(
+    shadowed_result.code.includes(".map("),
+    "shadowed Maybe must not use direct Maybe lowering\n\n" +
+      shadowed_result.code,
+  );
+});
+
+Deno.test("keyed cell terminal fusion lowers Reader, State, and Writer cells without an Effect spine", async () => {
+  const root = new URL("../src/", import.meta.url).href;
+  const source = [
+    `import { Program, run } from ${JSON.stringify(root + "effects.ts")};`,
+    `import { reader, run_reader } from ${JSON.stringify(root + "reader.ts")};`,
+    `import { state, run_state } from ${JSON.stringify(root + "state.ts")};`,
+    `import { writer_cell, run_writer } from ${
+      JSON.stringify(root + "writer.ts")
+    };`,
+    `import { ArrayT } from ${JSON.stringify(root + "array.ts")};`,
+    'const cfg = reader<{ inc: number }>()("cfg");',
+    'const cnt = state<number>()("cnt");',
+    'const log = writer_cell("log", ArrayT<string>([]));',
+    "export const r = run(run_reader(cfg, Program(function* () {",
+    "  const a = yield* cfg.ask();",
+    "  const b = yield* cfg.asks((c) => c.inc * 2);",
+    "  return a.inc + b;",
+    "}), { inc: 7 }));",
+    "export const s = run(run_state(cnt, Program(function* () {",
+    "  const before = yield* cnt.get();",
+    "  yield* cnt.modify((n) => n + 5);",
+    "  const after = yield* cnt.gets((n) => n * 2);",
+    "  return before + after;",
+    "}), 3));",
+    "export const w = run(run_writer(log, Program(function* () {",
+    '  yield* log.tell(ArrayT(["a"]));',
+    '  const v = yield* log.write(10, ArrayT(["b"]));',
+    "  return v + 1;",
+    "})));",
+  ].join("\n");
+  const result = transform_do_program_source(source, "keyed_fuse.ts");
+  assert_equals(result.diagnostics, []);
+  assert_equals(result.transformed, 3);
+  assert_true(
+    !result.code.includes("Effect.bind_from") &&
+      !result.code.includes("run_reader_terminal") &&
+      !result.code.includes("run_state_terminal") &&
+      !result.code.includes("run_writer_terminal"),
+    "expected keyed cells to fuse without Effect spine\n\n" + result.code,
+  );
+  const compiled = executable_typescript(result.code, "keyed_fuse.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  assert_equals(mod.r, 21);
+  assert_equals(mod.s, [19, 8]);
+  assert_equals([mod.w[0], mod.w[1].value()], [11, ["a", "b"]]);
 });

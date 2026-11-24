@@ -897,6 +897,135 @@ function stack_safe_loop(
   };
 }
 
+function direct_maybe(
+  body: BlockStatement | FunctionBody,
+  state: State,
+): Result | undefined {
+  if (
+    state.kind !== "do" ||
+    state.dictionary?.type !== "Identifier" ||
+    !state.services.imports.direct_maybe_dictionaries?.has(
+      state.dictionary.name,
+    ) ||
+    body.body.length >= 128
+  ) return undefined;
+  const dictionary = state.dictionary;
+  const just_names = state.services.imports.just_constructors;
+  const just_name = just_names !== undefined && just_names.size > 0
+    ? just_names.values().next().value
+    : undefined;
+  const wrap_pure = (value: Expression): Expression =>
+    just_name !== undefined
+      ? call(id(just_name), [value])
+      : method(dictionary, "pure", [value]);
+  const emitted: Statement[] = [];
+  let yield_count = 0;
+  let has_just_elision = false;
+  let returned = false;
+  for (let index = 0; index < body.body.length; index += 1) {
+    const statement = body.body[index];
+    const yielded = read_yield(statement);
+    if (yielded !== undefined) {
+      yield_count += 1;
+      if (yielded.terminal) {
+        if (index !== body.body.length - 1) return undefined;
+        emitted.push(ret(yielded.expression));
+        returned = true;
+        continue;
+      }
+      const expr_unwrapped = unwrap(yielded.expression);
+      if (
+        expr_unwrapped.type === "CallExpression" &&
+        !expr_unwrapped.optional &&
+        expr_unwrapped.typeArguments == null &&
+        expr_unwrapped.callee.type === "Identifier" &&
+        just_names?.has(expr_unwrapped.callee.name) &&
+        expr_unwrapped.arguments.length === 1 &&
+        expr_unwrapped.arguments[0].type !== "SpreadElement"
+      ) {
+        has_just_elision = true;
+        const inner = expr_unwrapped.arguments[0] as Expression;
+        if (statement.type === "VariableDeclaration") {
+          const decl = statement.declarations[0];
+          emitted.push({
+            ...statement,
+            declarations: [{ ...decl, init: inner }],
+          });
+        } else {
+          emitted.push(
+            node({ type: "ExpressionStatement", expression: inner }),
+          );
+        }
+        continue;
+      }
+      const raw = state.services.fresh("maybe_raw");
+      emitted.push(
+        variable("const", raw, method(yielded.expression, "value", [])),
+      );
+      emitted.push(
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal("Nothing"),
+          }),
+          consequent: ret(
+            node({
+              type: "TSAsExpression",
+              expression: method(dictionary, "empty", []),
+              typeAnnotation: node({ type: "TSNeverKeyword" }),
+            }),
+          ),
+          alternate: null,
+        }),
+      );
+      if (statement.type === "VariableDeclaration") {
+        const decl = statement.declarations[0];
+        emitted.push({
+          ...statement,
+          declarations: [{
+            ...decl,
+            init: node({
+              type: "MemberExpression",
+              object: raw,
+              property: literal(1),
+              computed: true,
+              optional: false,
+            }),
+          }],
+        });
+      }
+      continue;
+    }
+    if (statement.type === "ReturnStatement") {
+      if (index !== body.body.length - 1) return undefined;
+      if (statement.argument !== null && contains(statement.argument, true)) {
+        return undefined;
+      }
+      emitted.push(ret(wrap_pure(statement.argument ?? void_zero())));
+      returned = true;
+      continue;
+    }
+    if (contains(statement, true)) return undefined;
+    emitted.push(statement);
+  }
+  if (yield_count === 0 || (yield_count === 1 && !has_just_elision)) {
+    return undefined;
+  }
+  if (!returned) {
+    emitted.push(ret(wrap_pure(void_zero())));
+  }
+  return { block: block(emitted), yielded: true };
+}
+
 function flat(
   body: BlockStatement | FunctionBody,
   state: State,
@@ -1537,7 +1666,7 @@ export function lower_generator(
     if (explicit && explicit.type !== "Identifier") {
       state.dictionary = services.fresh("dictionary");
     }
-    let result = flat(run.body, state);
+    let result = flat(run.body, state) ?? direct_maybe(run.body, state);
     if (!result) {
       let yield_count = 0;
       for (let index = 0; index < run.body.body.length; index += 1) {

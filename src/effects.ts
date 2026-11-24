@@ -1,3 +1,4 @@
+import { yield_data } from "./data_value.ts";
 import {
   type Data,
   type Dictionary,
@@ -423,7 +424,9 @@ function ImpureEffect(
 ) {
   this[0] = "impure";
   this[1] = operation;
-  this[2] = (value) => resume_effect(resume, frames, queue, value);
+  this[2] = frames === undefined && queue === undefined
+    ? resume
+    : (value) => resume_effect(resume, frames, queue, value);
   this[effect_resume] = resume;
   this[effect_frames] = frames;
   this[effect_queue] = queue;
@@ -565,7 +568,7 @@ export function bind<left, from, right, to>(
 
   return append_effect_frame(
     effect,
-    (value) => fn(value as from) as Effect<unknown, unknown>,
+    fn as unknown as EffectResume,
   ) as Effect<left | right, to>;
 }
 
@@ -1109,17 +1112,17 @@ export function is_lift_of<dictionary extends Dictionary>(
   operation: unknown,
   runtime_kind: dictionary[typeof kind],
 ): operation is Lift<dictionary, unknown> {
-  if (!has_tag(operation, "lift")) {
+  if (typeof operation !== "object" || operation === null) {
     return false;
   }
 
-  const value = operation[1];
-
-  if (typeof value !== "object") {
+  if ((operation as TaggedOperation)[0] !== "lift") {
     return false;
   }
 
-  if (value === null) {
+  const value = (operation as readonly [string, unknown])[1];
+
+  if (typeof value !== "object" || value === null) {
     return false;
   }
 
@@ -1169,6 +1172,34 @@ function resume_effect(
   value: unknown,
 ): Effect<unknown, unknown> {
   let current = resume(value);
+  if (
+    queue === undefined && frames !== undefined && frames.previous === undefined
+  ) {
+    if (current[0] === "pure") {
+      return frames.resume(current[1]);
+    }
+    const target = current as unknown as ImpureEffectTarget;
+    if (target[effect_queue] === undefined) {
+      return new NewImpureEffect(
+        current[1],
+        target[effect_resume],
+        { previous: target[effect_frames], resume: frames.resume },
+        undefined,
+      );
+    }
+    return new NewImpureEffect(
+      current[1],
+      target[effect_resume],
+      undefined,
+      append_effect_queue(
+        append_effect_queue(
+          target[effect_queue],
+          queue_from_frames(target[effect_frames]),
+        ),
+        { tag: "chunk", resumes: [frames.resume], index: 0 },
+      ),
+    );
+  }
   let pending = append_effect_queue(queue, queue_from_frames(frames));
 
   while (pending !== undefined) {
@@ -1377,11 +1408,10 @@ function values_from_path(path: ProgramPath | undefined): unknown[] {
   return values;
 }
 
-function* effect_iterator<requirements, item>(
+function effect_iterator<requirements, item>(
   this: Effect<requirements, item>,
 ): Generator<Effect<requirements, item>, item, unknown> {
-  const item = yield this;
-  return item as item;
+  return yield_data(this);
 }
 
 /** Explicit reusable control-flow instructions. Keep state immutable when resuming a suspension more than once. */

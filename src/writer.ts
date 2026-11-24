@@ -13,10 +13,11 @@ import {
 } from "./typeclass.ts";
 import {
   type Effect,
-  handle_lift,
   is_effect,
   is_lift_of,
   type Lift,
+  pure,
+  suspend,
   type TaggedOperation,
 } from "./effects.ts";
 import { is_kind_of } from "./internal.ts";
@@ -440,24 +441,93 @@ function run_writer_kind<requirements, item>(
   WithoutWriter<requirements>,
   readonly [item, WriterEmpty<requirements>]
 > {
-  return handle_lift(effect, runtime_kind, empty, {
-    done(value, output) {
-      return [value as item, output] as const;
-    },
-    handle(
-      value: Data<AsWriter<Dictionary, unknown>, unknown>,
-      output,
-    ) {
-      const [item, next_output] = value.value();
-      return [
-        item,
-        concat_output(output, next_output) as WriterEmpty<requirements>,
-      ] as const;
-    },
-  }) as Effect<
-    WithoutWriter<requirements>,
-    readonly [item, WriterEmpty<requirements>]
-  >;
+  let current = effect as Effect<requirements, unknown>;
+  let current_output = empty as Data<Dictionary, unknown>;
+  let bufferable = has_canonical_array_concat(current_output);
+  let buffered_output: unknown[] | undefined;
+
+  while (true) {
+    switch (current[0]) {
+      case "pure": {
+        if (buffered_output !== undefined) {
+          current_output = ArrayT(
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+        }
+        return pure(
+          [current[1] as item, current_output] as const,
+        ) as unknown as Effect<
+          WithoutWriter<requirements>,
+          readonly [item, WriterEmpty<requirements>]
+        >;
+      }
+      case "impure": {
+        const operation = current[1];
+        if (is_lift_of(operation, runtime_kind)) {
+          const [value, next_output] = (operation[1] as Data<
+            AsWriter<Dictionary, unknown>,
+            unknown
+          >).value();
+          if (
+            bufferable &&
+            (buffered_output !== undefined ||
+              has_canonical_array_concat(current_output)) &&
+            is_canonical_array_concat_method() &&
+            is_kind_of(next_output, ArrayT)
+          ) {
+            if (buffered_output === undefined) {
+              buffered_output = [];
+              append_array_log(
+                buffered_output,
+                current_output.value() as readonly unknown[],
+              );
+            }
+            append_array_log(
+              buffered_output,
+              next_output.value() as readonly unknown[],
+            );
+          } else {
+            if (buffered_output !== undefined) {
+              current_output = ArrayT(
+                buffered_output,
+              ) as unknown as Data<Dictionary, unknown>;
+              buffered_output = undefined;
+            }
+            bufferable = false;
+            current_output = concat_output(
+              current_output,
+              next_output,
+            ) as Data<Dictionary, unknown>;
+          }
+          current = current[2](value) as Effect<requirements, unknown>;
+          continue;
+        }
+
+        // Flush any mutable buffer before suspending so replayed continuations
+        // observe an immutable ArrayT snapshot rather than sharing a buffer.
+        if (buffered_output !== undefined) {
+          current_output = ArrayT(
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+          buffered_output = undefined;
+        }
+        const suspended = current;
+        const suspended_output = current_output as WriterEmpty<requirements>;
+        return suspend(
+          suspended[1] as WithoutWriter<requirements>,
+          (value) =>
+            run_writer_kind(
+              suspended[2](value),
+              runtime_kind,
+              suspended_output,
+            ),
+        ) as Effect<
+          WithoutWriter<requirements>,
+          readonly [item, WriterEmpty<requirements>]
+        >;
+      }
+    }
+  }
 }
 
 /**
@@ -635,16 +705,19 @@ function run_writer_terminal_kind(
       bufferable &&
       (buffered_output !== undefined ||
         has_canonical_array_concat(current_output)) &&
-      Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
-        canonical_array_concat &&
+      is_canonical_array_concat_method() &&
       is_kind_of(next_output, ArrayT)
     ) {
       if (buffered_output === undefined) {
-        buffered_output = [...current_output.value() as Iterable<unknown>];
+        buffered_output = [];
+        append_array_log(
+          buffered_output,
+          current_output.value() as readonly unknown[],
+        );
       }
       append_array_log(
         buffered_output,
-        next_output.value() as Iterable<unknown>,
+        next_output.value() as readonly unknown[],
       );
     } else {
       if (buffered_output !== undefined) {
@@ -829,7 +902,8 @@ function configured_writer<
   }
 }
 
-function has_canonical_array_concat(
+/** @ignore */
+export function has_canonical_array_concat(
   output: Data<Dictionary, unknown>,
 ): boolean {
   if (!is_kind_of(output, ArrayT)) return false;
@@ -846,6 +920,22 @@ function has_canonical_array_concat(
   return false;
 }
 
-function append_array_log(buffer: unknown[], values: Iterable<unknown>): void {
+/** @ignore */
+export function is_canonical_array_concat_method(): boolean {
+  return Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
+    canonical_array_concat;
+}
+
+/** @ignore */
+export function append_array_log(
+  buffer: unknown[],
+  values: Iterable<unknown>,
+): void {
+  if (Array.isArray(values)) {
+    for (let index = 0; index < values.length; index += 1) {
+      buffer.push(values[index]);
+    }
+    return;
+  }
   for (const value of values) buffer.push(value);
 }

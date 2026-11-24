@@ -274,7 +274,14 @@ export function from_left<left, right>(
   fallback: left,
   value: Either<left, right>,
 ): left {
-  return either((error) => error, () => fallback, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return payload as left;
+    case "Right":
+      return fallback;
+  }
 }
 
 /** Haskell `fromRight :: b -> Either a b -> b`. */
@@ -282,14 +289,28 @@ export function from_right<left, right>(
   fallback: right,
   value: Either<left, right>,
 ): right {
-  return either(() => fallback, (item) => item, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return fallback;
+    case "Right":
+      return payload as right;
+  }
 }
 
 /** Haskell `hush :: Either a b -> Maybe b`. */
 export function hush<left, right>(
   value: Either<left, right>,
 ): Maybe<right> {
-  return either(() => Nothing<right>(), (item) => Just(item), value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return Nothing<right>();
+    case "Right":
+      return Just(payload as right);
+  }
 }
 
 /** Haskell `note :: e -> Maybe a -> Either e a`. */
@@ -406,7 +427,14 @@ export function recover_or_else<error, item, fallback>(
   value: Either<error, item>,
   fallback: (error: error) => fallback,
 ): item | fallback {
-  return either(fallback, (item): item | fallback => item, value);
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Left":
+      return fallback(payload as error);
+    case "Right":
+      return payload as item;
+  }
 }
 
 // Keep dictionary construction and instance installation in one removable unit.

@@ -66,7 +66,9 @@ type DoInput = {
 
 type DoPath = {
   readonly previous: DoPath | undefined;
-  readonly value: DoInput;
+  readonly length: number;
+  readonly thrown: boolean;
+  readonly value: unknown;
 };
 
 type DoErrorMethods<dictionary extends Dictionary> = {
@@ -151,20 +153,21 @@ export function Do<dictionary extends Monad<dictionary>, result>(
   const run = explicit_run === undefined
     ? dictionary_or_run as () => DoGenerator<dictionary, result>
     : explicit_run;
-  const first = run_with(undefined);
+  const first_iterator = run();
+  const first_next = first_iterator.next();
 
-  if (first.next.done) {
+  if (first_next.done) {
     if (dictionary !== undefined) {
-      return dictionary.pure(first.next.value);
+      return dictionary.pure(first_next.value);
     }
 
     throw new TypeError("Do requires at least one yielded value");
   }
 
-  return step(undefined, first.next.value, first.iterator);
+  return step(undefined, first_next.value, first_iterator);
 
-  function run_with(
-    path: DoPath | undefined,
+  function replay(
+    path: DoPath,
   ): {
     iterator: DoGenerator<dictionary, result>;
     next: IteratorResult<Data<dictionary, unknown>, result>;
@@ -172,16 +175,17 @@ export function Do<dictionary extends Monad<dictionary>, result>(
     const iterator = run();
     let next = iterator.next();
 
-    const values = values_from_path(path);
+    const nodes = nodes_from_path(path);
 
-    for (const value of values) {
+    for (let index = 0; index < nodes.length; index += 1) {
       if (next.done) {
         return { iterator, next };
       }
 
-      next = value.tag === "next"
-        ? iterator.next(value.value)
-        : iterator.throw(value.value);
+      const node = nodes[index];
+      next = node.thrown
+        ? iterator.throw(node.value)
+        : iterator.next(node.value);
     }
 
     return { iterator, next };
@@ -197,21 +201,28 @@ export function Do<dictionary extends Monad<dictionary>, result>(
       [monad_error_typeclass]?: DoErrorMethods<dictionary>;
     })[monad_error_typeclass];
 
-    function advance(input: DoInput): Data<dictionary, result> {
-      const next_path = append_do_path(path, input);
-      let state: ReturnType<typeof run_with>;
+    function advance(
+      thrown: boolean,
+      value: unknown,
+    ): Data<dictionary, result> {
+      const next_path: DoPath = {
+        previous: path,
+        length: path === undefined ? 1 : path.length + 1,
+        thrown,
+        value,
+      };
+      let next_iterator: DoGenerator<dictionary, result>;
+      let next_result: IteratorResult<Data<dictionary, unknown>, result>;
       try {
         if (calls === 0) {
           calls += 1;
-          state = {
-            iterator,
-            next: input.tag === "next"
-              ? iterator.next(input.value)
-              : iterator.throw(input.value),
-          };
+          next_iterator = iterator;
+          next_result = thrown ? iterator.throw(value) : iterator.next(value);
         } else {
           calls += 1;
-          state = run_with(next_path);
+          const replayed = replay(next_path);
+          next_iterator = replayed.iterator;
+          next_result = replayed.next;
         }
       } catch (error) {
         // A rejected yield has already run. Propagate its error through that
@@ -225,12 +236,12 @@ export function Do<dictionary extends Monad<dictionary>, result>(
         throw error;
       }
 
-      if (state.next.done) return current.pure(state.next.value);
-      return step(next_path, state.next.value, state.iterator);
+      if (next_result.done) return current.pure(next_result.value);
+      return step(next_path, next_result.value, next_iterator);
     }
 
     if (implementation === undefined) {
-      return current.bind((value) => advance({ tag: "next", value }));
+      return current.bind((value) => advance(false, value));
     }
 
     // Catch only this yield, before binding the rest of the program. Otherwise
@@ -240,50 +251,25 @@ export function Do<dictionary extends Monad<dictionary>, result>(
       yielded,
       (error) => current.pure<DoInput>({ tag: "throw", value: error }),
     );
-    return input.bind((value) => advance(value as DoInput));
+    return input.bind((value) => {
+      const boxed = value as DoInput;
+      return advance(boxed.tag === "throw", boxed.value);
+    });
   }
 }
 
-function append_do_path(
-  previous: DoPath | undefined,
-  value: DoInput,
-): DoPath {
-  return {
-    previous,
-    value,
-  };
-}
-
-function values_from_path(path: DoPath | undefined): DoInput[] {
-  if (path === undefined) {
-    return [];
-  }
-
-  const values = new Array<DoInput>(do_path_length(path));
-  let index = values.length - 1;
+function nodes_from_path(path: DoPath): DoPath[] {
+  const nodes = new Array<DoPath>(path.length);
+  let index = path.length - 1;
 
   for (
     let node: DoPath | undefined = path;
     node !== undefined;
     node = node.previous
   ) {
-    values[index] = node.value;
+    nodes[index] = node;
     index -= 1;
   }
 
-  return values;
-}
-
-function do_path_length(path: DoPath): number {
-  let length = 0;
-
-  for (
-    let node: DoPath | undefined = path;
-    node !== undefined;
-    node = node.previous
-  ) {
-    length += 1;
-  }
-
-  return length;
+  return nodes;
 }

@@ -1,17 +1,28 @@
+import { ArrayT } from "./array.ts";
 import {
   type Effect,
   handle_operation,
   map,
   type Operation,
   type OperationOutput,
+  pure,
   run,
+  suspend,
   type TaggedOperation,
   type Uses,
 } from "./effects.ts";
+import { is_kind_of } from "./internal.ts";
 import { type AsReaderCell, run_reader } from "./reader.ts";
 import { type AsCell, run_state } from "./state.ts";
-import { type AsWriterCell, run_writer, writer_cell_empty } from "./writer.ts";
-import type { Data } from "./typeclass.ts";
+import {
+  append_array_log,
+  type AsWriterCell,
+  has_canonical_array_concat,
+  is_canonical_array_concat_method,
+  run_writer,
+  writer_cell_empty,
+} from "./writer.ts";
+import { type Data, type Dictionary, kind } from "./typeclass.ts";
 import type { Monoid } from "./typeclasses/monoid.ts";
 
 type Selected<requirements, tag> = Extract<requirements, { readonly 0: tag }>;
@@ -141,12 +152,32 @@ export type CellBinding<requirements, family extends Family, value> = {
   ) => Effect<unknown, unknown>;
 };
 
+type CellSpec =
+  | {
+    readonly family: "reader";
+    readonly runtime_kind: unknown;
+    readonly value: unknown;
+  }
+  | {
+    readonly family: "state";
+    readonly runtime_kind: unknown;
+    readonly initial: unknown;
+  }
+  | {
+    readonly family: "writer";
+    readonly runtime_kind: unknown;
+    readonly initial: Data<Dictionary, unknown> | undefined;
+    readonly cell: AsWriterCell<PropertyKey, Dictionary, unknown>;
+  };
+
+const cell_binding_specs = new WeakMap<object, CellSpec>();
+
 /** Supply a Reader cell's environment. */
 export function provide_reader<key extends PropertyKey, environment>(
   cell: AsReaderCell<key, environment>,
   environment: NoInfer<environment>,
 ): CellBinding<Uses<typeof cell>, "reader", never> {
-  return {
+  const binding: CellBinding<Uses<typeof cell>, "reader", never> = {
     family: "reader",
     handle: (effect) =>
       run_reader(
@@ -155,6 +186,12 @@ export function provide_reader<key extends PropertyKey, environment>(
         environment,
       ),
   };
+  cell_binding_specs.set(binding, {
+    family: "reader",
+    runtime_kind: cell[kind],
+    value: environment,
+  });
+  return binding;
 }
 
 /** Supply a State cell's initial state and retain its final state by name. */
@@ -162,11 +199,17 @@ export function provide_state<key extends PropertyKey, state>(
   cell: AsCell<key, state>,
   initial: NoInfer<state>,
 ): CellBinding<Uses<typeof cell>, "state", state> {
-  return {
+  const binding: CellBinding<Uses<typeof cell>, "state", state> = {
     family: "state",
     handle: (effect) =>
       run_state(cell, effect as Effect<Uses<typeof cell>, unknown>, initial),
   };
+  cell_binding_specs.set(binding, {
+    family: "state",
+    runtime_kind: cell[kind],
+    initial,
+  });
+  return binding;
 }
 
 /** Supply a Writer cell's initial log (defaults to the cell's declared empty log). */
@@ -178,7 +221,7 @@ export function provide_writer<
   cell: AsWriterCell<key, output, log>,
   initial?: Data<NoInfer<output>, NoInfer<log>>,
 ): CellBinding<Uses<typeof cell>, "writer", Data<output, log>> {
-  return {
+  const binding: CellBinding<Uses<typeof cell>, "writer", Data<output, log>> = {
     family: "writer",
     handle: (effect) =>
       run_writer(
@@ -187,6 +230,13 @@ export function provide_writer<
         initial === undefined ? writer_cell_empty(cell) : initial,
       ),
   };
+  cell_binding_specs.set(binding, {
+    family: "writer",
+    runtime_kind: cell[kind],
+    initial: initial as Data<Dictionary, unknown> | undefined,
+    cell: cell as unknown as AsWriterCell<PropertyKey, Dictionary, unknown>,
+  });
+  return binding;
 }
 
 type Bindings = Readonly<
@@ -216,16 +266,249 @@ type OrderedBinding = {
   readonly handle: (
     effect: Effect<unknown, unknown>,
   ) => Effect<unknown, unknown>;
+  readonly spec?: CellSpec;
+};
+
+type FusedCellPlan = {
+  readonly ordered: readonly OrderedBinding[];
+  readonly dispatch: ReadonlyMap<unknown, number>;
+  readonly specs: readonly CellSpec[];
 };
 
 function collect_ordered_bindings(bindings: Bindings): OrderedBinding[] {
   return Reflect.ownKeys(bindings)
     .filter((key) => Object.prototype.propertyIsEnumerable.call(bindings, key))
-    .map((key) => ({
-      name: key,
-      family: bindings[key].family,
-      handle: bindings[key].handle,
-    }));
+    .map((key) => {
+      const binding = bindings[key];
+      return {
+        name: key,
+        family: binding.family,
+        handle: binding.handle,
+        spec: cell_binding_specs.get(binding),
+      };
+    });
+}
+
+function build_fused_cell_plan(
+  ordered: readonly OrderedBinding[],
+): FusedCellPlan | undefined {
+  const specs: CellSpec[] = [];
+  const dispatch = new Map<unknown, number>();
+  for (let index = 0; index < ordered.length; index += 1) {
+    const spec = ordered[index].spec;
+    if (spec === undefined) return undefined;
+    specs.push(spec);
+    // Earlier bindings run innermost and own any duplicate cell key.
+    if (!dispatch.has(spec.runtime_kind)) {
+      dispatch.set(spec.runtime_kind, index);
+    }
+  }
+  return { ordered, dispatch, specs };
+}
+
+function set_named_property(
+  target: Record<PropertyKey, unknown>,
+  name: PropertyKey,
+  value: unknown,
+): void {
+  if (name === "__proto__") {
+    Object.defineProperty(target, name, {
+      value,
+      enumerable: true,
+    });
+    return;
+  }
+  target[name] = value;
+}
+
+function build_cell_result<item, bindings extends Bindings>(
+  result: unknown,
+  ordered: readonly OrderedBinding[],
+  values: readonly unknown[],
+): CellResult<item, bindings> {
+  const states: Record<PropertyKey, unknown> = {};
+  const logs: Record<PropertyKey, unknown> = {};
+  for (let index = 0; index < ordered.length; index += 1) {
+    const { name, family } = ordered[index];
+    if (family === "reader") continue;
+    set_named_property(
+      family === "writer" ? logs : states,
+      name,
+      values[index],
+    );
+  }
+  return {
+    result: result as item,
+    states: states as NamedValues<bindings, "state">,
+    logs: logs as NamedValues<bindings, "writer">,
+  };
+}
+
+function initial_cell_values(plan: FusedCellPlan): unknown[] {
+  const values = new Array<unknown>(plan.specs.length);
+  for (let index = 0; index < plan.specs.length; index += 1) {
+    const spec = plan.specs[index];
+    switch (spec.family) {
+      case "reader":
+        values[index] = spec.value;
+        break;
+      case "state":
+        values[index] = spec.initial;
+        break;
+      case "writer":
+        values[index] = spec.initial === undefined
+          ? writer_cell_empty(spec.cell)
+          : spec.initial;
+        break;
+    }
+  }
+  return values;
+}
+
+function flush_writer_buffers(
+  values: unknown[],
+  buffers: (unknown[] | undefined)[] | undefined,
+): void {
+  if (buffers === undefined) return;
+  for (let index = 0; index < buffers.length; index += 1) {
+    const buffer = buffers[index];
+    if (buffer !== undefined) {
+      values[index] = ArrayT(buffer);
+      buffers[index] = undefined;
+    }
+  }
+}
+
+function run_fused_cells_step(
+  effect: Effect<unknown, unknown>,
+  plan: FusedCellPlan,
+  values: unknown[],
+  terminal: boolean,
+): Effect<unknown, unknown> | CellResult<unknown, Bindings> {
+  let current = effect;
+  let buffers: (unknown[] | undefined)[] | undefined;
+  let bufferable: boolean[] | undefined;
+
+  while (true) {
+    if (current[0] === "pure") {
+      flush_writer_buffers(values, buffers);
+      const out = build_cell_result<unknown, Bindings>(
+        current[1],
+        plan.ordered,
+        values,
+      );
+      return terminal ? out : pure(out);
+    }
+
+    const operation = current[1];
+    if (
+      typeof operation === "object" && operation !== null &&
+      (operation as TaggedOperation)[0] === "lift"
+    ) {
+      const lifted = (operation as readonly [string, unknown])[1];
+      if (typeof lifted === "object" && lifted !== null) {
+        const slot = plan.dispatch.get((lifted as Dictionary)[kind]);
+        if (slot !== undefined) {
+          const spec = plan.specs[slot];
+          switch (spec.family) {
+            case "reader": {
+              const value = (
+                lifted as { value(): (env: unknown) => unknown }
+              ).value()(values[slot]);
+              current = current[2](value);
+              continue;
+            }
+            case "state": {
+              const [value, next] = (
+                lifted as {
+                  value(): (state: unknown) => readonly [unknown, unknown];
+                }
+              ).value()(values[slot]);
+              values[slot] = next;
+              current = current[2](value);
+              continue;
+            }
+            case "writer": {
+              const [value, next_output] = (
+                lifted as {
+                  value(): readonly [unknown, Data<Dictionary, unknown>];
+                }
+              ).value();
+              const current_output = values[slot] as Data<Dictionary, unknown>;
+              if (bufferable === undefined) {
+                bufferable = new Array<boolean>(plan.specs.length).fill(true);
+              }
+              const existing_buffer = buffers?.[slot];
+              if (
+                bufferable[slot] &&
+                (existing_buffer !== undefined ||
+                  has_canonical_array_concat(current_output)) &&
+                is_canonical_array_concat_method() &&
+                is_kind_of(next_output, ArrayT)
+              ) {
+                let active = existing_buffer;
+                if (active === undefined) {
+                  active = [];
+                  append_array_log(
+                    active,
+                    current_output.value() as readonly unknown[],
+                  );
+                  buffers ??= new Array<unknown[] | undefined>(
+                    plan.specs.length,
+                  );
+                  buffers[slot] = active;
+                }
+                append_array_log(
+                  active,
+                  next_output.value() as readonly unknown[],
+                );
+              } else {
+                let target = current_output;
+                if (existing_buffer !== undefined) {
+                  target = ArrayT(existing_buffer) as unknown as Data<
+                    Dictionary,
+                    unknown
+                  >;
+                  buffers![slot] = undefined;
+                }
+                bufferable[slot] = false;
+                values[slot] = (
+                  target as unknown as {
+                    concat(other: unknown): Data<Dictionary, unknown>;
+                  }
+                ).concat(next_output);
+              }
+              current = current[2](value);
+              continue;
+            }
+          }
+        }
+      }
+    }
+
+    if (terminal) {
+      throw new TypeError(
+        "Unhandled effect operation: " +
+          String((operation as TaggedOperation)[0]),
+      );
+    }
+
+    // Flush active mutable writer buffers before suspending so replayed
+    // continuations receive an immutable snapshot of all cell slots.
+    flush_writer_buffers(values, buffers);
+    const suspended = current;
+    const saved = values.slice();
+    return suspend(
+      suspended[1],
+      (value) =>
+        run_fused_cells_step(
+          suspended[2](value),
+          plan,
+          saved.slice(),
+          false,
+        ) as Effect<unknown, unknown>,
+    );
+  }
 }
 
 function unpack_cell_result<item, bindings extends Bindings>(
@@ -240,12 +523,7 @@ function unpack_cell_result<item, bindings extends Bindings>(
     if (family === "reader") continue;
     const [value, final] = result as readonly [unknown, unknown];
     result = value;
-    let destination = states;
-    if (family === "writer") destination = logs;
-    Object.defineProperty(destination, name, {
-      value: final,
-      enumerable: true,
-    });
+    set_named_property(family === "writer" ? logs : states, name, final);
   }
   return {
     result: result as item,
@@ -279,6 +557,25 @@ export function prepare_handle_cells<const bindings extends Bindings>(
   CellResult<item, bindings>
 > {
   const ordered = collect_ordered_bindings(bindings);
+  const fused = build_fused_cell_plan(ordered);
+  if (fused !== undefined) {
+    return function prepared<requirements, item>(
+      effect: Effect<requirements, item>,
+    ): Effect<
+      Exclude<requirements, BoundRequirements<bindings>>,
+      CellResult<item, bindings>
+    > {
+      return run_fused_cells_step(
+        effect as Effect<unknown, unknown>,
+        fused,
+        initial_cell_values(fused),
+        false,
+      ) as Effect<
+        Exclude<requirements, BoundRequirements<bindings>>,
+        CellResult<item, bindings>
+      >;
+    };
+  }
   return function prepared<requirements, item>(
     effect: Effect<requirements, item>,
   ): Effect<
@@ -324,6 +621,25 @@ export function prepare_cells<const bindings extends Bindings>(
       }),
 ) => CellResult<item, bindings> {
   const ordered = collect_ordered_bindings(bindings);
+  const fused = build_fused_cell_plan(ordered);
+  if (fused !== undefined) {
+    return function prepared<requirements, item>(
+      effect:
+        & Effect<requirements, item>
+        & ([Exclude<requirements, BoundRequirements<bindings>>] extends [never]
+          ? unknown
+          : {
+            readonly ERROR: "run_cells requires a binding for every capability";
+          }),
+    ): CellResult<item, bindings> {
+      return run_fused_cells_step(
+        effect as Effect<unknown, unknown>,
+        fused,
+        initial_cell_values(fused),
+        true,
+      ) as CellResult<item, bindings>;
+    };
+  }
   return function prepared<requirements, item>(
     effect:
       & Effect<requirements, item>

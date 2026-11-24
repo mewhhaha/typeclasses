@@ -9,6 +9,7 @@ import type {
 import { unwrap, walk } from "./transform_ast.ts";
 import { might_contain_iterable_maps } from "./transform_iterable_maps.ts";
 import type {
+  CellFactoryKind,
   ImportedBindings,
   PrimitiveFunctionName,
   TerminalFunctionName,
@@ -34,7 +35,18 @@ const primitives = new Set<PrimitiveFunctionName>([
 ]);
 const source_specifiers = new Map<string, string>();
 for (
-  const name of ["effects", "mod", "reader", "state", "typeclasses", "writer"]
+  const name of [
+    "effects",
+    "either",
+    "identity",
+    "maybe",
+    "mod",
+    "reader",
+    "state",
+    "task",
+    "typeclasses",
+    "writer",
+  ]
 ) {
   try {
     const url = new URL(`../src/${name}.ts`, import.meta.url);
@@ -95,6 +107,40 @@ function primitive_exports(
   }
 }
 
+const cell_factory_kinds = new Set<CellFactoryKind>([
+  "reader",
+  "state",
+  "writer",
+]);
+
+function cell_factory_exports(
+  specifier: string,
+): ReadonlySet<CellFactoryKind> | undefined {
+  switch (package_module(specifier) ?? source_module(specifier)) {
+    case "mod":
+      return cell_factory_kinds;
+    case "reader":
+      return new Set<CellFactoryKind>(["reader"]);
+    case "state":
+      return new Set<CellFactoryKind>(["state"]);
+    case "writer":
+      return new Set<CellFactoryKind>(["writer"]);
+  }
+}
+
+function cell_factory_kind_for(
+  imported: string,
+): CellFactoryKind | undefined {
+  switch (imported) {
+    case "reader":
+      return "reader";
+    case "state":
+      return "state";
+    case "writer_cell":
+      return "writer";
+  }
+}
+
 function import_name(
   binding: ImportDeclaration["specifiers"][number],
 ): string | undefined {
@@ -115,6 +161,10 @@ export type UnverifiedImports = {
     string,
     ReadonlySet<PrimitiveFunctionName>
   >;
+  readonly cell_factories: Map<string, CellFactoryKind>;
+  readonly cell_namespaces: Map<string, ReadonlySet<CellFactoryKind>>;
+  readonly direct_maybe_dictionaries: Set<string>;
+  readonly just_constructors: Set<string>;
   readonly program_module?: string;
   readonly import_declarations: Map<string, ImportDeclaration>;
   readonly loop_dictionaries: Set<string>;
@@ -164,6 +214,10 @@ export function scan_import_headers(
     string,
     ReadonlySet<PrimitiveFunctionName>
   >();
+  const cell_factories = new Map<string, CellFactoryKind>();
+  const cell_namespaces = new Map<string, ReadonlySet<CellFactoryKind>>();
+  const direct_maybe_dictionaries = new Set<string>();
+  const just_constructors = new Set<string>();
   const import_declarations = new Map<string, ImportDeclaration>();
   const loop_dictionaries = new Set<string>();
   const loop_tasks = new Set<string>();
@@ -188,6 +242,7 @@ export function scan_import_headers(
     const specifier = statement.source.value;
     const available_terminals = terminal_exports(specifier, config);
     const available_primitives = primitive_exports(specifier);
+    const available_cell_factories = cell_factory_exports(specifier);
     const is_library = library(specifier, config);
     if (/^(?:\.\.?\/)+src\/(?:mod|typeclasses)\.ts$/.test(specifier)) {
       loop_specifier = specifier.replace(/(?:typeclasses|mod)\.ts$/, "loop.ts");
@@ -211,6 +266,9 @@ export function scan_import_headers(
         if (available_primitives !== undefined) {
           primitive_namespaces.set(local, available_primitives);
         }
+        if (available_cell_factories !== undefined) {
+          cell_namespaces.set(local, available_cell_factories);
+        }
         if (is_library) {
           namespaces.add(local);
           program_module ??= specifier;
@@ -229,6 +287,12 @@ export function scan_import_headers(
       ) {
         loop_dictionaries.add(local);
         if (imported === "Task") loop_tasks.add(local);
+        if (imported === "Maybe") direct_maybe_dictionaries.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") && imported === "Just"
+      ) {
+        just_constructors.add(local);
       }
       if (available_terminals?.has(imported as TerminalFunctionName)) {
         terminal_functions.set(local, {
@@ -237,6 +301,13 @@ export function scan_import_headers(
       }
       if (available_primitives?.has(imported as PrimitiveFunctionName)) {
         primitive_functions.set(local, imported as PrimitiveFunctionName);
+      }
+      const factory_kind = cell_factory_kind_for(imported);
+      if (
+        factory_kind !== undefined &&
+        available_cell_factories?.has(factory_kind)
+      ) {
+        cell_factories.set(local, factory_kind);
       }
       if (!is_library) continue;
       switch (imported) {
@@ -262,6 +333,10 @@ export function scan_import_headers(
     terminal_namespaces,
     primitive_functions,
     primitive_namespaces,
+    cell_factories,
+    cell_namespaces,
+    direct_maybe_dictionaries,
+    just_constructors,
     program_module,
     import_declarations,
     loop_dictionaries,
@@ -329,6 +404,10 @@ export function create_import_shadow_tracker(
     ...headers.terminal_namespaces.keys(),
     ...headers.primitive_functions.keys(),
     ...headers.primitive_namespaces.keys(),
+    ...headers.cell_factories.keys(),
+    ...headers.cell_namespaces.keys(),
+    ...headers.direct_maybe_dictionaries,
+    ...headers.just_constructors,
     ...headers.loop_dictionaries,
     ...scope_declarations.keys(),
   ]);
@@ -390,6 +469,10 @@ export function create_import_shadow_tracker(
         headers.terminal_namespaces.delete(name);
         headers.primitive_functions.delete(name);
         headers.primitive_namespaces.delete(name);
+        headers.cell_factories.delete(name);
+        headers.cell_namespaces.delete(name);
+        headers.direct_maybe_dictionaries.delete(name);
+        headers.just_constructors.delete(name);
         headers.loop_dictionaries.delete(name);
         headers.loop_tasks.delete(name);
       }
@@ -412,6 +495,10 @@ export function create_import_shadow_tracker(
           terminal_namespaces: headers.terminal_namespaces,
           primitive_functions: headers.primitive_functions,
           primitive_namespaces: headers.primitive_namespaces,
+          cell_factories: headers.cell_factories,
+          cell_namespaces: headers.cell_namespaces,
+          direct_maybe_dictionaries: headers.direct_maybe_dictionaries,
+          just_constructors: headers.just_constructors,
           program_module: headers.program_module,
           effect_helper_shadowed:
             (headers.program_names.size > 0 || headers.namespaces.size > 0) &&

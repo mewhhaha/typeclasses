@@ -172,6 +172,10 @@ function transform_do_program_checked(
       check_token("Effect", false);
       for (const name of headers.effect_names) check_token(name, false);
       for (const name of headers.loop_dictionaries) check_token(name, false);
+      for (const name of headers.direct_maybe_dictionaries) {
+        check_token(name, false);
+      }
+      for (const name of headers.just_constructors) check_token(name, false);
       for (const name of scope_declarations.keys()) check_token(name, false);
     }
   }
@@ -967,6 +971,23 @@ function inline_statement(current: Statement): Statement[] | undefined {
       }),
     ];
     result = sequenced.expression;
+  } else if (
+    current.type === "ReturnStatement" &&
+    value.type === "CallExpression" && !value.optional && value.start < 0 &&
+    value.arguments.length === 0
+  ) {
+    const callee = unwrap(value.callee);
+    if (
+      callee.type === "ArrowFunctionExpression" && !callee.async &&
+      callee.params.length === 0 && callee.body.type === "BlockStatement"
+    ) {
+      const body = callee.body.body;
+      const last = body[body.length - 1];
+      if (last?.type === "ReturnStatement") {
+        return [callee.body];
+      }
+    }
+    return undefined;
   } else return undefined;
   if (current.type === "ReturnStatement") {
     return [...prefix, { ...current, argument: result }];
@@ -1091,7 +1112,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "6:oxc-parser@0.154.0:esrap@2.4.0";
+  "7:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

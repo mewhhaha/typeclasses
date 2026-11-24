@@ -1,5 +1,5 @@
 import type { Runnable } from "./data_value.ts";
-import { bind_computation, map_computation } from "./computation.ts";
+import { bind_reader_computation, map_computation } from "./computation.ts";
 import {
   type As,
   type Data,
@@ -247,9 +247,9 @@ function make_reader_cell<key extends PropertyKey, environment>(
       const read = this.value();
 
       return wrap(
-        bind_computation(
+        bind_reader_computation(
           read,
-          (value, environment) => [fn(value).value(), environment],
+          (value) => fn(value).value(),
         ),
       );
     },
@@ -542,9 +542,9 @@ Applicative.instance(Reader)({
 Monad.instance(Reader)({
   bind(fn) {
     return Reader(
-      bind_computation(
+      bind_reader_computation(
         this.value(),
-        (value, environment) => [fn(value).value(), environment],
+        (value) => fn(value).value(),
       ),
     );
   },

@@ -372,3 +372,115 @@ Deno.test("Maybe.filter, Either.map_left, Either.try_catch, and Validation bridg
     ["Right", 7],
   );
 });
+
+Deno.test("fused multi-cell handlers and buffered run_writer preserve replay isolation and custom concat", async () => {
+  const {
+    from_array: iter_from_array,
+    to_array: iter_to_array,
+    compile_fold,
+    filter_map,
+  } = await import("./iterable.ts");
+  const { Foldable } = await import("./typeclasses/foldable.ts");
+
+  // 1. Multi-cell replay safety with branching ArrayT + Fails + buffered Writer
+  const cnt = state<number>()("replay_cnt");
+  const log = writer_cell("replay_log", ArrayT<string>([]));
+  const step_op = Effect.operation<number, void>()("branch.pick");
+  const prog = Program(function* () {
+    yield* cnt.modify((n) => n + 1);
+    yield* log.tell(ArrayT(["a"]));
+    yield* log.tell(ArrayT(["b"]));
+    const branch = yield* step_op.send();
+    yield* cnt.modify((n) => n + branch);
+    yield* log.tell(ArrayT([`branch:${branch}`]));
+    return yield* cnt.get();
+  });
+  const handled = handle_cells(prog, {
+    cnt: provide_state(cnt, 10),
+    log: provide_writer(log),
+  });
+  assert_true(handled[0] === "impure", "expected suspended branch op");
+  if (handled[0] === "impure") {
+    const first = handled[2](1);
+    const second = handled[2](5);
+    assert_true(
+      first[0] === "pure" && second[0] === "pure",
+      "expected both resumed branches to complete",
+    );
+    if (first[0] === "pure" && second[0] === "pure") {
+      assert_equals(first[1].result, 12);
+      assert_equals(first[1].states.cnt, 12);
+      assert_equals(first[1].logs.log.value(), ["a", "b", "branch:1"]);
+      assert_equals(second[1].result, 16);
+      assert_equals(second[1].states.cnt, 16);
+      assert_equals(second[1].logs.log.value(), ["a", "b", "branch:5"]);
+    }
+  }
+
+  // 2. Non-terminal run_writer replay isolation
+  const wprog = Program(function* () {
+    yield* log.tell(ArrayT(["init"]));
+    const branch = yield* step_op.send();
+    yield* log.tell(ArrayT([`w:${branch}`]));
+    return branch;
+  });
+  const whandled = run_writer(log, wprog);
+  assert_true(whandled[0] === "impure", "expected suspended writer op");
+  if (whandled[0] === "impure") {
+    const a = whandled[2](1);
+    const b = whandled[2](2);
+    assert_true(
+      a[0] === "pure" && b[0] === "pure",
+      "expected both resumed writer branches to complete",
+    );
+    if (a[0] === "pure" && b[0] === "pure") {
+      assert_equals(a[1][1].value(), ["init", "w:1"]);
+      assert_equals(b[1][1].value(), ["init", "w:2"]);
+    }
+  }
+
+  // 3. Duplicate cell keys preserve property-order precedence (first wins)
+  const dup = run_cells(
+    Program(function* () {
+      yield* cnt.modify((n) => n + 3);
+      return yield* cnt.get();
+    }),
+    {
+      first: provide_state(cnt, 10),
+      second: provide_state(cnt, 99),
+    },
+  );
+  assert_equals(dup.result, 13);
+  assert_equals(dup.states, { first: 13, second: 99 });
+
+  // 4. Generalized generator-less IterableT pipelines across shapes and take(0)
+  let opened = 0;
+  const tracked = iter_from_array([1, 2, 3, 4, 5, 6]);
+  const mf = tracked.map((n) => n * 2).filter((n) => n > 4);
+  const fm = tracked.filter((n) => n % 2 === 0).map((n) => n + 10);
+  const fmp = filter_map(
+    tracked,
+    (n) => (n % 2 === 1 ? Just(n * 10) : Nothing<number>()),
+  );
+  const multi = tracked.map((n) => n + 1).filter((n) => n > 2).map((n) => n * 2)
+    .take(2);
+  assert_equals(iter_to_array(mf), [6, 8, 10, 12]);
+  assert_equals(compile_fold(mf)(0, (a, b) => a + b), 36);
+  assert_equals(iter_to_array(fm), [12, 14, 16]);
+  assert_equals(compile_fold(fm)(0, (a, b) => a + b), 42);
+  assert_equals(iter_to_array(fmp), [10, 30, 50]);
+  assert_equals(compile_fold(fmp)(0, (a, b) => a + b), 90);
+  assert_equals(iter_to_array(multi), [6, 8]);
+  assert_equals(compile_fold(multi)(0, (a, b) => a + b), 14);
+  assert_equals(Foldable.some(mf, (n) => n === 10), true);
+  assert_equals(Foldable.find(mf, (n) => n > 8), 10);
+
+  const never_open = (await import("./iterable.ts")).from_factory(function* () {
+    opened += 1;
+    yield 1;
+  }).take(0);
+  assert_equals(iter_to_array(never_open), []);
+  assert_equals(compile_fold(never_open)(0, (a, b) => a + b), 0);
+  assert_equals(Foldable.some(never_open, () => true), false);
+  assert_equals(opened, 0);
+});

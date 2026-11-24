@@ -251,10 +251,18 @@ export function get_or_else<item, fallback>(
   value: Maybe<item>,
   fallback: () => fallback,
 ): item | fallback {
-  return value.match<item | fallback>({
-    Just: (item) => item,
-    Nothing: fallback,
-  });
+  if (is_Nothing_value(value)) {
+    return fallback();
+  }
+
+  const [tag, payload] = value.value();
+
+  switch (tag) {
+    case "Just":
+      return payload;
+    case "Nothing":
+      return fallback();
+  }
 }
 
 // Keep dictionary construction and instance installation in one removable unit.

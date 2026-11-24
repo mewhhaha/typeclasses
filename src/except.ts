@@ -1,5 +1,4 @@
 import {
-  bind,
   bind_from,
   type Effect,
   type Ensuring,
@@ -203,24 +202,10 @@ export function recover<requirements, item, replacement = never>(
   effect: Effect<requirements, item>,
   on_error: (error: FailsError<requirements>) => Effect<replacement, item>,
 ): Effect<WithoutFails<requirements> | replacement, item> {
-  const recovered = bind(
-    handle_fails<FailsError<requirements>, item>(effect),
-    (outcome): Effect<replacement, item> => {
-      const [branch, payload] = outcome.value();
-
-      switch (branch) {
-        case "Left":
-          return on_error(payload);
-        case "Right":
-          return pure(payload);
-      }
-    },
-  );
-
-  return recovered as Effect<
-    WithoutFails<requirements> | replacement,
-    item
-  >;
+  return handle_recover<FailsError<requirements>, item, replacement>(
+    effect as Effect<unknown, item>,
+    on_error,
+  ) as Effect<WithoutFails<requirements> | replacement, item>;
 }
 
 /** Translates failures into another error type while keeping other capabilities intact. */
@@ -235,6 +220,81 @@ export function map_error<requirements, item, next_error>(
 type Settled<error, item> =
   | readonly ["ok", item]
   | readonly ["error", error];
+
+function handle_recover<error, item, replacement>(
+  effect: Effect<unknown, item>,
+  on_error: (error: error) => Effect<replacement, item>,
+): Effect<unknown, item> {
+  if (effect[0] === "pure") {
+    return effect;
+  }
+
+  const operation = effect[1];
+  const resume = effect[2];
+
+  if (is_fails<error>(operation)) {
+    return on_error(operation[1]) as Effect<unknown, item>;
+  }
+
+  if (is_ensuring(operation)) {
+    return handle_protected_recover<error, item, replacement>(
+      operation[1],
+      resume,
+      on_error,
+    );
+  }
+
+  return suspend(
+    operation,
+    (value) =>
+      handle_recover<error, item, replacement>(resume(value), on_error),
+  );
+}
+
+function handle_protected_recover<error, item, replacement>(
+  scope: Ensuring[1],
+  resume: (value: unknown) => Effect<unknown, item>,
+  on_error: (error: error) => Effect<replacement, item>,
+): Effect<unknown, item> {
+  const protect: Ensuring = ["effect.ensuring", {
+    effect: scope.effect,
+    finalize: scope.finalize,
+    prepare() {
+      let original = scope;
+      while (original.prepare !== undefined) original = original.prepare();
+      const entered = original;
+      let failure: readonly [error] | undefined;
+
+      return {
+        effect: map(handle_fails<error, unknown>(entered.effect), (outcome) => {
+          const [branch, payload] = outcome.value();
+          if (branch === "Left") failure = [payload];
+          return outcome;
+        }),
+        finalize: (exit) =>
+          entered.finalize(
+            exit.status === "succeeded" && failure !== undefined
+              ? { status: "failed", error: failure[0] }
+              : exit,
+          ),
+      };
+    },
+  }];
+
+  return suspend(protect, (value) => {
+    const [branch, payload] = (value as Either<error, unknown>).value();
+
+    switch (branch) {
+      case "Left":
+        return on_error(payload) as Effect<unknown, item>;
+      case "Right":
+        return handle_recover<error, item, replacement>(
+          resume(payload),
+          on_error,
+        );
+    }
+  });
+}
 
 function handle_fails<error, item>(
   effect: Effect<unknown, item>,
