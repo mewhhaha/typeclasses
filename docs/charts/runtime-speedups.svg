@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 548" width="980"
+  height="548" role="img"
+  aria-label="Core Runtime Speedups — Untransformed (vs main)">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+    <linearGradient id="neutralGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#475569" />
+      <stop offset="100%" stop-color="#64748b" />
+    </linearGradient>
+  </defs>
+  <style>
+  .bg {
+    fill: #0d1117;
+    stroke: #30363d;
+    stroke-width: 1;
+  }
+  .title {
+    font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #f0f6fc;
+  }
+  .subtitle {
+    font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #8b949e;
+  }
+  .label {
+    font: 500 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #e6edf3;
+  }
+  .mult {
+    font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #34d399;
+  }
+  .mult-neutral {
+    font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #94a3b8;
+  }
+  .detail {
+    font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .tick {
+    font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .grid {
+    stroke: #21262d;
+    stroke-width: 1;
+  }
+  .baseline {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+  .ci {
+    stroke: #f0f6fc;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.78;
+  }
+  .row-alt {
+    fill: #161b22;
+  }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="979" height="547" rx="12" />
+  <text class="title" x="24"
+    y="34">Core Runtime Speedups — Untransformed (vs main)</text>
+  <text class="subtitle" x="24"
+    y="54">Paired ABBA benchmarks · Fused multi-cell handlers, ArrayT Writer buffering, IterableT push loops, Symbol plans, Effect spine</text>
+  <line x1="24" y1="68" x2="956" y2="68" stroke="#21262d" stroke-width="1" />
+  <rect class="row-alt" x="12" y="120" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="196" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="272" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="348" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="424" width="956" height="38" rx="4" />
+  <line class="baseline" x1="297.1" y1="78" x2="297.1" y2="502" />
+  <text class="tick" x="297.1" y="518" text-anchor="middle">1x</text>
+  <line class="grid" x1="356.6" y1="78" x2="356.6" y2="502" />
+  <text class="tick" x="356.6" y="518" text-anchor="middle">2x</text>
+  <line class="grid" x1="435.3" y1="78" x2="435.3" y2="502" />
+  <text class="tick" x="435.3" y="518" text-anchor="middle">5x</text>
+  <line class="grid" x1="494.8" y1="78" x2="494.8" y2="502" />
+  <text class="tick" x="494.8" y="518" text-anchor="middle">10x</text>
+  <line class="grid" x1="554.2" y1="78" x2="554.2" y2="502" />
+  <text class="tick" x="554.2" y="518" text-anchor="middle">20x</text>
+  <line class="grid" x1="632.9" y1="78" x2="632.9" y2="502" />
+  <text class="tick" x="632.9" y="518" text-anchor="middle">50x</text>
+  <line class="grid" x1="692.4" y1="78" x2="692.4" y2="502" />
+  <text class="tick" x="692.4" y="518" text-anchor="middle">100x</text>
+  <text class="label" x="24" y="105.5">Reader bind/map construct+run</text>
+  <rect x="297.1" y="92.0" width="305.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="525.0" y1="101.0" x2="662.0" y2="101.0" />
+  <line class="ci" x1="525.0" y1="97.0" x2="525.0" y2="105.0" />
+  <line class="ci" x1="662.0" y1="97.0" x2="662.0" y2="105.0" />
+  <text class="mult" x="724" y="105.5">35.09x</text>
+  <text class="detail" x="782" y="105.5">(2865ns -&gt; 43.9ns)</text>
+  <text class="label" x="24" y="143.5">IterableT fold [map,filter] 10k</text>
+  <rect x="297.1" y="130.0" width="193.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="479.2" y1="139.0" x2="499.4" y2="139.0" />
+  <line class="ci" x1="479.2" y1="135.0" x2="479.2" y2="143.0" />
+  <line class="ci" x1="499.4" y1="135.0" x2="499.4" y2="143.0" />
+  <text class="mult" x="724" y="143.5">9.55x</text>
+  <text class="detail" x="782" y="143.5">(164.0µs -&gt; 15.7µs)</text>
+  <text class="label" x="24" y="181.5">IterableT find [map,filter] 10k</text>
+  <rect x="297.1" y="168.0" width="157.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="447.2" y1="177.0" x2="465.3" y2="177.0" />
+  <line class="ci" x1="447.2" y1="173.0" x2="447.2" y2="181.0" />
+  <line class="ci" x1="465.3" y1="173.0" x2="465.3" y2="181.0" />
+  <text class="mult" x="724" y="181.5">6.28x</text>
+  <text class="detail" x="782" y="181.5">(164.9µs -&gt; 25.9µs)</text>
+  <text class="label" x="24" y="219.5">IterableT to_array [map,filter]</text>
+  <rect x="297.1" y="206.0" width="148.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="434.5" y1="215.0" x2="456.4" y2="215.0" />
+  <line class="ci" x1="434.5" y1="211.0" x2="434.5" y2="219.0" />
+  <line class="ci" x1="456.4" y1="211.0" x2="456.4" y2="219.0" />
+  <text class="mult" x="724" y="219.5">5.63x</text>
+  <text class="detail" x="782" y="219.5">(276.4µs -&gt; 56.5µs)</text>
+  <text class="label" x="24" y="257.5">List Foldable.find (2k items)</text>
+  <rect x="297.1" y="244.0" width="143.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="438.3" y1="253.0" x2="444.2" y2="253.0" />
+  <line class="ci" x1="438.3" y1="249.0" x2="438.3" y2="257.0" />
+  <line class="ci" x1="444.2" y1="249.0" x2="444.2" y2="257.0" />
+  <text class="mult" x="724" y="257.5">5.35x</text>
+  <text class="detail" x="782" y="257.5">(21.0µs -&gt; 4.04µs)</text>
+  <text class="label" x="24" y="295.5">run_writer 400 ArrayT tells</text>
+  <rect x="297.1" y="282.0" width="75.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="363.1" y1="291.0" x2="384.9" y2="291.0" />
+  <line class="ci" x1="363.1" y1="287.0" x2="363.1" y2="295.0" />
+  <line class="ci" x1="384.9" y1="287.0" x2="384.9" y2="295.0" />
+  <text class="mult" x="724" y="295.5">2.41x</text>
+  <text class="detail" x="782" y="295.5">(747.3µs -&gt; 299.0µs)</text>
+  <text class="label" x="24" y="333.5">prepare_cells 3-cell x200</text>
+  <rect x="297.1" y="320.0" width="68.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="353.1" y1="329.0" x2="378.6" y2="329.0" />
+  <line class="ci" x1="353.1" y1="325.0" x2="353.1" y2="333.0" />
+  <line class="ci" x1="378.6" y1="325.0" x2="378.6" y2="333.0" />
+  <text class="mult" x="724" y="333.5">2.23x</text>
+  <text class="detail" x="782" y="333.5">(751.3µs -&gt; 324.1µs)</text>
+  <text class="label" x="24" y="371.5">Except recover x100 ops</text>
+  <rect x="297.1" y="358.0" width="21.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="297.4" y1="367.0" x2="340.3" y2="367.0" />
+  <line class="ci" x1="297.4" y1="363.0" x2="297.4" y2="371.0" />
+  <line class="ci" x1="340.3" y1="363.0" x2="340.3" y2="371.0" />
+  <text class="mult" x="724" y="371.5">1.28x</text>
+  <text class="detail" x="782" y="371.5">(142.4µs -&gt; 99.1µs)</text>
+  <text class="label" x="24" y="409.5">Effect bind/map x200 + Reader</text>
+  <rect x="297.1" y="396.0" width="11.8" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="297.9" y1="405.0" x2="318.8" y2="405.0" />
+  <line class="ci" x1="297.9" y1="401.0" x2="297.9" y2="409.0" />
+  <line class="ci" x1="318.8" y1="401.0" x2="318.8" y2="409.0" />
+  <text class="mult" x="724" y="409.5">1.15x</text>
+  <text class="detail" x="782" y="409.5">(111.1µs -&gt; 99.1µs)</text>
+  <text class="label" x="24" y="447.5">Program yield* Effect x100</text>
+  <rect x="299.0" y="434.0" width="2.0" height="18" rx="4"
+    fill="url(#neutralGrad)" />
+  <line class="ci" x1="286.4" y1="443.0" x2="313.4" y2="443.0" />
+  <line class="ci" x1="286.4" y1="439.0" x2="286.4" y2="447.0" />
+  <line class="ci" x1="313.4" y1="439.0" x2="313.4" y2="447.0" />
+  <text class="mult-neutral" x="724" y="447.5">1.02x</text>
+  <text class="detail" x="782" y="447.5">(20.7µs -&gt; 20.3µs)</text>
+  <text class="label" x="24" y="485.5">Task.succeed + map x50</text>
+  <rect x="288.5" y="472.0" width="8.6" height="18" rx="4"
+    fill="url(#neutralGrad)" />
+  <line class="ci" x1="278.0" y1="481.0" x2="309.9" y2="481.0" />
+  <line class="ci" x1="278.0" y1="477.0" x2="278.0" y2="485.0" />
+  <line class="ci" x1="309.9" y1="477.0" x2="309.9" y2="485.0" />
+  <text class="mult-neutral" x="724" y="485.5">0.90x</text>
+  <text class="detail" x="782" y="485.5">(3.81µs -&gt; 3.50µs)</text>
+  <text class="subtitle" x="24"
+    y="534">Log scale (1x dashed = baseline main @ abcda27) · White whiskers = 95% paired bootstrap CI · Higher is faster</text>
+</svg>
