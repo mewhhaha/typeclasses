@@ -499,7 +499,9 @@ export function create_terminal_transform(services: TransformServices) {
     >();
     if (
       services.config.optimizations?.terminal === false ||
-      services.config.optimizations?.terminal_body === false
+      services.config.optimizations?.terminal_body === false ||
+      (services.imports.terminal_functions.size === 0 &&
+        services.imports.terminal_namespaces.size === 0)
     ) return candidates;
     const nodes: { statement: Statement; owner: Node }[] = [];
     walk(services.program, (parent) => {
@@ -557,6 +559,7 @@ export function create_terminal_transform(services: TransformServices) {
         kind,
       });
     }
+    if (candidates.size === 0) return candidates;
     const allowed = new Set<Node>();
     const used = new Set<Node | null>();
     for (const { statement, owner } of nodes) {
@@ -596,6 +599,10 @@ export function create_terminal_transform(services: TransformServices) {
       allowed.add(name);
       used.add(key);
     }
+    if (used.size === 0) {
+      candidates.clear();
+      return candidates;
+    }
     walk(services.program, (child) => {
       if (child.type !== "Identifier") return;
       const key = services.bindings.resolve(child);
@@ -609,6 +616,10 @@ export function create_terminal_transform(services: TransformServices) {
       if (!used.has(key)) candidates.delete(key);
     }
     return candidates;
+  }
+  const named_statements = new Set<Node>();
+  for (const candidate of named.values()) {
+    named_statements.add(candidate.statement);
   }
   return {
     lower(
@@ -634,11 +645,11 @@ export function create_terminal_transform(services: TransformServices) {
     remove(statement: Node): boolean {
       return removed.has(statement);
     },
+    has_removals(): boolean {
+      return removed.size > 0;
+    },
     skip(statement: Node): boolean {
-      for (const candidate of named.values()) {
-        if (candidate.statement === statement) return true;
-      }
-      return false;
+      return named_statements.size > 0 && named_statements.has(statement);
     },
   };
 }

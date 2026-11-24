@@ -1,4 +1,4 @@
-import { parseSync, visitorKeys } from "oxc-parser";
+import { parseSync } from "oxc-parser";
 import type {
   Expression,
   IdentifierReference,
@@ -9,25 +9,21 @@ import type {
   VariableDeclaration,
   VariableDeclarator,
 } from "oxc-parser";
-import { print } from "esrap";
-import ts_language from "esrap/languages/ts";
-import tsx_language from "esrap/languages/tsx";
-import { basename } from "node:path";
 import {
   id,
-  is_node,
   literal,
   node,
-  rewrite,
   unwrap,
-  walk,
+  value_visitor_keys,
+  walk_values,
 } from "./transform_ast.ts";
 import { create_binding_analysis } from "./transform_bindings.ts";
 import {
-  collect_imports,
-  collect_loop_support,
-  collect_program_scopes,
+  create_import_shadow_tracker,
   generator_kind,
+  might_contain_transform_target,
+  scan_import_headers,
+  scan_scope_declarations,
 } from "./transform_imports.ts";
 import { lower_generator } from "./transform_generator.ts";
 import { create_terminal_transform } from "./transform_terminals.ts";
@@ -35,6 +31,12 @@ import {
   create_iterable_map_fusion,
   might_contain_iterable_maps,
 } from "./transform_iterable_maps.ts";
+import {
+  create_source_positions,
+  type PositionLookup,
+  type SourceEdit,
+  splice_edits,
+} from "./transform_splice.ts";
 import type {
   TransformConfig,
   TransformDiagnostic,
@@ -58,6 +60,36 @@ type ImportRequest = {
   readonly namespace?: boolean;
 };
 
+let raw_transfer_supported = true;
+
+function parse_source(
+  file_name: string,
+  source: string,
+  lang: "ts" | "tsx",
+) {
+  if (raw_transfer_supported) {
+    try {
+      return parseSync(
+        file_name,
+        source,
+        {
+          lang,
+          astType: "ts",
+          preserveParens: false,
+          experimentalRawTransfer: true,
+        } as Parameters<typeof parseSync>[2],
+      );
+    } catch {
+      raw_transfer_supported = false;
+    }
+  }
+  return parseSync(file_name, source, {
+    lang,
+    astType: "ts",
+    preserveParens: false,
+  });
+}
+
 /** Lower supported generators, effect runners, and lazy iterable map chains. */
 export function transform_do_program_source(
   source: string,
@@ -67,15 +99,19 @@ export function transform_do_program_source(
   if (!might_contain_transform_target(source)) {
     return unchanged_transform_result(source);
   }
+  return transform_do_program_checked(source, file_name, config);
+}
+
+function transform_do_program_checked(
+  source: string,
+  file_name = "input.ts",
+  config: TransformConfig = {},
+): TransformResult {
   let lang: "ts" | "tsx" = "ts";
   if (file_name.split("?", 1)[0].toLowerCase().endsWith(".tsx")) lang = "tsx";
-  const parsed = parseSync(file_name, source, {
-    lang,
-    astType: "ts",
-    preserveParens: false,
-  });
+  const parsed = parse_source(file_name, source, lang);
   if (parsed.errors.length > 0) {
-    const position = source_positions(source);
+    const position = create_source_positions(source);
     return {
       ...unchanged_transform_result(source),
       diagnostics: parsed.errors.map((error) => {
@@ -90,55 +126,112 @@ export function transform_do_program_source(
     };
   }
   const program = parsed.program;
-  const imports = collect_imports(program, source, config);
-  let scopes = imports.program_names;
-  if (source.includes("scope") || source.includes("\\u")) {
-    scopes = collect_program_scopes(program, imports);
+  const headers = scan_import_headers(program, config);
+  const has_unicode = source.includes("\\u");
+  const has_iterable = config.optimizations?.iterable_map !== false &&
+    might_contain_iterable_maps(source);
+  const scope_declarations = source.includes("scope") || has_unicode
+    ? scan_scope_declarations(program, headers)
+    : new Map<string, number>();
+
+  let min_relevant = -1;
+  let max_relevant = -1;
+  if (!has_iterable && !has_unicode && headers.leading_imports_end >= 0) {
+    const scan_from = headers.leading_imports_end;
+    let has_target_token = false;
+    const check_token = (token: string, is_target: boolean) => {
+      const first = source.indexOf(token, scan_from);
+      if (first < 0) return;
+      if (is_target) has_target_token = true;
+      if (min_relevant < 0 || first < min_relevant) min_relevant = first;
+      const last = source.lastIndexOf(token);
+      if (last > max_relevant) max_relevant = last;
+    };
+    check_token("Do", true);
+    check_token("Program", true);
+    check_token("run", true);
+    check_token("handle_with", true);
+    check_token("value", true);
+    for (const name of headers.do_names) check_token(name, true);
+    for (const name of headers.program_names) check_token(name, true);
+    for (const name of headers.namespaces) check_token(name, true);
+    for (const name of headers.terminal_functions.keys()) {
+      check_token(name, true);
+    }
+    for (const name of headers.terminal_namespaces.keys()) {
+      check_token(name, true);
+    }
+    if (config.optimizations?.candidate_scan !== false && !has_target_token) {
+      return unchanged_transform_result(source);
+    }
+    if (
+      !config.explain &&
+      headers.terminal_functions.size === 0 &&
+      headers.terminal_namespaces.size === 0
+    ) {
+      check_token("Effect", false);
+      for (const name of headers.effect_names) check_token(name, false);
+      for (const name of headers.loop_dictionaries) check_token(name, false);
+      for (const name of scope_declarations.keys()) check_token(name, false);
+    }
   }
+
   if (
     config.optimizations?.candidate_scan !== false &&
-    !(config.optimizations?.iterable_map !== false &&
-      might_contain_iterable_maps(source))
+    !has_iterable
   ) {
+    const raw_scopes = scope_declarations.size > 0
+      ? new Set([...headers.program_names, ...scope_declarations.keys()])
+      : headers.program_names;
     let candidate = false;
-    walk(program, (current) => {
+    walk_values(program, (current) => {
       if (candidate) return false;
+      if (current.type === "ImportDeclaration") return false;
       if (current.type !== "CallExpression") return;
-      if (generator_kind(current, scopes, imports) !== undefined) {
+      if (
+        generator_kind(
+          current,
+          raw_scopes,
+          headers as unknown as TransformServices["imports"],
+        ) !== undefined
+      ) {
         candidate = true;
         return false;
       }
       const callee = current.callee;
       if (
         callee.type === "Identifier" &&
-        (imports.terminal_functions.has(callee.name) || callee.name === "Do" ||
+        (headers.terminal_functions.has(callee.name) || callee.name === "Do" ||
           callee.name === "Program")
-      ) candidate = true;
+      ) {
+        candidate = true;
+        return false;
+      }
       if (
         callee.type === "MemberExpression" && !callee.computed &&
-        callee.property.type === "Identifier" &&
-        ["Do", "Program", "run", "handle_with", "value"].includes(
-          callee.property.name,
-        )
-      ) candidate = true;
+        callee.property.type === "Identifier"
+      ) {
+        const property = callee.property.name;
+        if (
+          property === "Do" || property === "Program" || property === "run" ||
+          property === "handle_with" || property === "value"
+        ) {
+          candidate = true;
+          return false;
+        }
+      }
     });
     if (!candidate) return unchanged_transform_result(source);
   }
-  const position = source_positions(source);
-  walk(program, (current) => {
-    if (current.start < 0) return;
-    Object.assign(current, {
-      loc: { start: position(current.start), end: position(current.end) },
-    });
-  });
-  const comments = parsed.comments.map((comment) => ({
-    ...comment,
-    loc: { start: position(comment.start), end: position(comment.end) },
-  }));
+
+  let position_fn: PositionLookup | undefined;
+  function get_position(): PositionLookup {
+    return position_fn ??= create_source_positions(source);
+  }
   const diagnostics: TransformDiagnostic[] = [];
   const reports: TransformReport[] = [];
   function location(current: Node) {
-    const at = position(Math.max(current.start, 0));
+    const at = get_position()(Math.max(current.start, 0));
     return { file_name, line: at.line, column: at.column + 1 };
   }
   function report(
@@ -151,17 +244,38 @@ export function transform_do_program_source(
       reports.push({ ...location(current), optimization, outcome, message });
     }
   }
-  const bindings = create_binding_analysis(program);
-  const loop_support = collect_loop_support(program);
+  let skipped_statements = false;
+  const skip_statement = !has_iterable && !has_unicode && !config.explain &&
+      headers.terminal_functions.size === 0 &&
+      headers.terminal_namespaces.size === 0 && min_relevant >= 0
+    ? (statement: Statement) => {
+      if (statement.end <= min_relevant || statement.start > max_relevant) {
+        skipped_statements = true;
+        return true;
+      }
+      return false;
+    }
+    : undefined;
   const names = new Set<string>();
-  walk(program, (current) => {
-    if (current.type === "Identifier") names.add(current.name);
+  const shadow_tracker = create_import_shadow_tracker(
+    headers,
+    scope_declarations,
+    source,
+  );
+  const bindings = create_binding_analysis(program, {
+    names,
+    minimal: true,
+    skip_statement,
+    on_node(current) {
+      if (current.type !== "ImportDeclaration") shadow_tracker.observe(current);
+    },
   });
+  const { imports, scopes, loop_support } = shadow_tracker.finish();
   const fresh_counts = new Map<string, number>();
   function fresh(prefix: string): IdentifierReference {
     let count = (fresh_counts.get(prefix) ?? 0) + 1;
     let name = prefix + "_" + count;
-    while (names.has(name)) {
+    while (names.has(name) || (skipped_statements && source.includes(name))) {
       count += 1;
       name = prefix + "_" + count;
     }
@@ -186,11 +300,7 @@ export function transform_do_program_source(
     return local;
   }
   function source_import(local: string): ImportDeclaration | undefined {
-    return program.body.find((statement): statement is ImportDeclaration =>
-      statement.type === "ImportDeclaration" &&
-      statement.importKind !== "type" &&
-      statement.specifiers.some((binding) => binding.local.name === local)
-    );
+    return headers.import_declarations.get(local);
   }
   let effect: Expression | undefined;
   function effect_helper(): Expression {
@@ -323,6 +433,11 @@ export function transform_do_program_source(
     );
   }
   let transformed = 0;
+  const replaced = new WeakSet<Node>();
+  function mark_replaced<T extends Node>(value: T): T {
+    replaced.add(value);
+    return value;
+  }
   function terminal_report(current: Node, direct: boolean) {
     transformed += 1;
     let explanation =
@@ -342,7 +457,9 @@ export function transform_do_program_source(
     }
   }
   function visit(current: Node): Node {
-    if (terminals.skip(current)) return current;
+    if (current.type === "ImportDeclaration" || terminals.skip(current)) {
+      return current;
+    }
     if (current.type === "CallExpression") {
       const fused = iterable?.fuse(current);
       if (fused !== undefined) {
@@ -353,7 +470,7 @@ export function transform_do_program_source(
           "transformed",
           "Composed adjacent lazy maps; callback evaluation and item order are retained.",
         );
-        return children(fused);
+        return mark_replaced(children(fused));
       }
       if (
         current.callee.type === "MemberExpression" &&
@@ -382,10 +499,10 @@ export function transform_do_program_source(
           const next = terminals.lower(terminal.expression);
           if (next !== undefined) {
             terminal_report(current, next.direct);
-            return next.expression;
+            return mark_replaced(next.expression);
           }
         }
-        return terminal.expression;
+        return mark_replaced(terminal.expression);
       }
       const kind = services.kind(current);
       if (kind !== undefined && config.optimizations?.generator !== false) {
@@ -399,7 +516,7 @@ export function transform_do_program_source(
             "transformed",
             "Lowered the generator into dictionary continuations after checking capture and eager-prefix semantics.",
           );
-          return lowered;
+          return mark_replaced(lowered);
         }
         report(
           current,
@@ -423,10 +540,10 @@ export function transform_do_program_source(
             const next = terminals.lower(lowered.expression);
             if (next !== undefined) {
               terminal_report(current, next.direct);
-              return next.expression;
+              return mark_replaced(next.expression);
             }
           }
-          return lowered.expression;
+          return mark_replaced(lowered.expression);
         }
       }
       const callee = current.callee;
@@ -451,143 +568,249 @@ export function transform_do_program_source(
     return children(current);
   }
   function children(current: Node): Node {
+    if (current === program && skip_statement !== undefined) {
+      const body = program.body;
+      let items: Statement[] | undefined;
+      for (let item = 0; item < body.length; item += 1) {
+        const statement = body[item] as Statement;
+        if (
+          statement.type === "ImportDeclaration" || skip_statement(statement)
+        ) {
+          if (items !== undefined) items.push(statement);
+          continue;
+        }
+        const updated = visit(statement) as Statement;
+        if (updated !== statement) {
+          if (items === undefined) {
+            items = body.slice(0, item) as Statement[];
+          }
+          items.push(updated);
+        } else if (items !== undefined) {
+          items.push(statement);
+        }
+      }
+      return items !== undefined ? { ...program, body: items } : program;
+    }
     let result = current;
+    const keys = value_visitor_keys[current.type];
+    if (keys === undefined || keys.length === 0) return result;
     const record = current as unknown as Record<string, unknown>;
-    for (const key of visitorKeys[current.type] ?? []) {
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
       const value = record[key];
+      if (value === null || typeof value !== "object") continue;
       let next: unknown = value;
       if (Array.isArray(value)) {
-        let changed = false;
-        const items = value.map((child) => {
-          if (!is_node(child)) return child;
-          const updated = visit(child);
-          changed ||= updated !== child;
-          return updated;
-        });
-        if (changed) next = items;
-      } else if (is_node(value)) next = visit(value);
+        let items: unknown[] | undefined;
+        for (let item = 0; item < value.length; item += 1) {
+          const child = value[item];
+          if (
+            child === null || typeof child !== "object" ||
+            typeof (child as { type?: unknown }).type !== "string"
+          ) {
+            if (items !== undefined) items.push(child);
+            continue;
+          }
+          const updated = visit(child as Node);
+          if (updated !== child) {
+            if (items === undefined) items = value.slice(0, item);
+            items.push(updated);
+          } else if (items !== undefined) {
+            items.push(child);
+          }
+        }
+        if (items !== undefined) next = items;
+      } else if (typeof (value as { type?: unknown }).type === "string") {
+        next = visit(value as Node);
+      }
       if (next !== value) result = { ...result, [key]: next };
     }
     return result;
   }
-  let output = visit(program) as Program;
-  output = rewrite(output, (current) => {
-    if (terminals.remove(current)) return null;
-  });
+  const output = visit(program) as Program;
   if (transformed === 0) {
     return { code: source, diagnostics, map: null, transformed, reports };
   }
-  output = add_imports(output, requests);
-  if (iterable !== undefined) output = iterable.add_helper(output);
-  output = inline_iifes(output);
-  let language = ts_language({ quotes: "double", comments });
-  if (lang === "tsx") language = tsx_language({ quotes: "double", comments });
-  if (config.source_map === false) {
-    const previous = language._;
-    language._ = (current, context, visitor) => {
-      const previous_location = context.location;
-      context.location = () => {};
-      try {
-        if (previous !== undefined) previous(current, context, visitor);
-        else visitor(current);
-      } finally {
-        context.location = previous_location;
+
+  const edits: SourceEdit[] = [];
+  collect_import_edits(program, requests, edits);
+
+  function collect_ast_edits(orig: Node, next: Node): void {
+    if (orig === next) return;
+    if (
+      replaced.has(next) || orig.type !== next.type || next.start < 0 ||
+      next.start !== orig.start || next.end !== orig.end
+    ) {
+      edits.push({
+        kind: "replace",
+        start: orig.start,
+        end: orig.end,
+        node: inline_iifes(next),
+        is_expression: true,
+      });
+      return;
+    }
+    if (
+      (orig.type === "Program" && next.type === "Program") ||
+      (orig.type === "BlockStatement" && next.type === "BlockStatement")
+    ) {
+      const o_body = orig.body;
+      const n_body = next.body;
+      for (let index = 0; index < o_body.length; index += 1) {
+        const o_stmt = o_body[index] as Statement;
+        const n_stmt = n_body[index] as Statement;
+        if (terminals.remove(o_stmt)) {
+          edits.push({ kind: "delete", start: o_stmt.start, end: o_stmt.end });
+          continue;
+        }
+        if (o_stmt === n_stmt) continue;
+        const expanded = inline_statement(n_stmt);
+        if (expanded !== undefined) {
+          edits.push({
+            kind: "replace_statements",
+            start: o_stmt.start,
+            end: o_stmt.end,
+            statements: expanded.map((stmt) => inline_iifes(stmt)),
+          });
+          continue;
+        }
+        collect_ast_edits(o_stmt, n_stmt);
       }
-    };
+      return;
+    }
+    const keys = value_visitor_keys[orig.type];
+    if (keys === undefined || keys.length === 0) return;
+    const o_record = orig as unknown as Record<string, unknown>;
+    const n_record = next as unknown as Record<string, unknown>;
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      const o_val = o_record[key];
+      const n_val = n_record[key];
+      if (o_val === n_val || o_val === null || n_val === null) continue;
+      if (Array.isArray(o_val) && Array.isArray(n_val)) {
+        const length = Math.min(o_val.length, n_val.length);
+        for (let item = 0; item < length; item += 1) {
+          const o_child = o_val[item];
+          const n_child = n_val[item];
+          if (
+            o_child !== n_child &&
+            o_child !== null && typeof o_child === "object" &&
+            n_child !== null && typeof n_child === "object" &&
+            typeof (o_child as { type?: unknown }).type === "string" &&
+            typeof (n_child as { type?: unknown }).type === "string"
+          ) {
+            collect_ast_edits(o_child as Node, n_child as Node);
+          }
+        }
+      } else if (
+        typeof o_val === "object" && typeof n_val === "object" &&
+        typeof (o_val as { type?: unknown }).type === "string" &&
+        typeof (n_val as { type?: unknown }).type === "string"
+      ) {
+        collect_ast_edits(o_val as Node, n_val as Node);
+      }
+    }
   }
-  const printed = print(output, language, {
-    indent: "  ",
-    sourceMapSource: basename(file_name),
-    sourceMapContent: source,
-  });
-  let map: TransformSourceMap | null = null;
-  if (config.source_map !== false) {
-    map = {
-      ...(printed.map as Omit<TransformSourceMap, "file" | "sourceRoot">),
-      file: basename(file_name),
-      sourceRoot: "",
-    };
+  collect_ast_edits(program, output);
+
+  const helper = iterable?.helper_declaration();
+  if (helper !== undefined) {
+    edits.push({
+      kind: "insert",
+      at: source.length,
+      statements: [helper as Statement],
+      prefix: "\n",
+    });
   }
-  return { code: printed.code + "\n", diagnostics, map, transformed, reports };
+
+  const spliced = splice_edits(
+    source,
+    file_name,
+    lang,
+    parsed.comments,
+    edits,
+    config.source_map !== false,
+    position_fn,
+  );
+  return {
+    code: spliced.code,
+    diagnostics,
+    map: spliced.map,
+    transformed,
+    reports,
+  };
 }
 
 function is_effect_interpreter_call(value: Expression): boolean {
   return value.type === "CallExpression" &&
     value.callee.type === "MemberExpression";
 }
-function source_positions(source: string) {
-  const starts = [0];
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source.charCodeAt(index);
-    if (character === 13) {
-      if (source.charCodeAt(index + 1) === 10) index += 1;
-      starts.push(index + 1);
-    } else if (
-      character === 10 || character === 0x2028 || character === 0x2029
-    ) starts.push(index + 1);
-  }
-  return (offset: number) => {
-    let left = 0;
-    let right = starts.length;
-    while (left + 1 < right) {
-      const middle = (left + right) >>> 1;
-      if (starts[middle] <= offset) left = middle;
-      else right = middle;
-    }
-    return { line: left + 1, column: offset - starts[left] };
-  };
-}
-function add_imports(
+
+function collect_import_edits(
   program: Program,
   requests: readonly ImportRequest[],
-): Program {
+  edits: SourceEdit[],
+): void {
+  if (requests.length === 0) return;
   const remaining = new Set(requests);
-  const body = program.body.map((statement) => {
+  for (const statement of program.body) {
     if (
       statement.type !== "ImportDeclaration" ||
       statement.importKind === "type" || statement.specifiers.some((binding) =>
         binding.type === "ImportNamespaceSpecifier"
       )
     ) {
-      return statement;
+      continue;
     }
     const added = requests.filter((request) =>
       !request.namespace && request.source === statement.source.value &&
       remaining.has(request)
     );
+    if (added.length === 0) {
+      continue;
+    }
     for (const request of added) {
       remaining.delete(request);
     }
-    return {
-      ...statement,
-      specifiers: [
-        ...statement.specifiers,
-        ...added.map((request) =>
-          node({
-            type: "ImportSpecifier",
-            imported: id(request.imported),
-            local: request.local,
-            importKind: "value" as const,
-          })
-        ),
-      ],
-    };
-  });
+    edits.push({
+      kind: "replace",
+      start: statement.start,
+      end: statement.end,
+      node: {
+        ...statement,
+        specifiers: [
+          ...statement.specifiers,
+          ...added.map((request) =>
+            node({
+              type: "ImportSpecifier",
+              imported: id(request.imported),
+              local: request.local,
+              importKind: "value" as const,
+            })
+          ),
+        ],
+      },
+    });
+  }
+  if (remaining.size === 0) return;
+  const inserted: Statement[] = [];
   for (const request of remaining) {
     let specifiers: ImportDeclaration["specifiers"];
     if (request.namespace) {
       specifiers = [
         node({ type: "ImportNamespaceSpecifier", local: request.local }),
       ];
-    } else {specifiers = [
+    } else {
+      specifiers = [
         node({
           type: "ImportSpecifier",
           imported: id(request.imported),
           local: request.local,
           importKind: "value",
         }),
-      ];}
-    body.unshift(
+      ];
+    }
+    inserted.unshift(
       node({
         type: "ImportDeclaration",
         source: literal(request.source) as ImportDeclaration["source"],
@@ -595,10 +818,24 @@ function add_imports(
         importKind: "value",
         attributes: [],
         phase: null,
-      }),
+      }) as unknown as Statement,
     );
   }
-  return { ...program, body };
+  let insert_at = 0;
+  for (const statement of program.body) {
+    if (
+      statement.type === "ExpressionStatement" && "directive" in statement &&
+      statement.directive != null
+    ) continue;
+    insert_at = statement.start;
+    break;
+  }
+  edits.push({
+    kind: "insert",
+    at: insert_at,
+    statements: inserted,
+    suffix: "\n",
+  });
 }
 
 function unchanged_transform_result(source: string): TransformResult {
@@ -610,161 +847,195 @@ function unchanged_transform_result(source: string): TransformResult {
     reports: [],
   };
 }
-function might_contain_transform_target(source: string): boolean {
-  if (might_contain_iterable_maps(source) || source.includes("\\u")) {
-    return true;
-  }
-  if (
-    (source.includes("Do") || source.includes("Program")) &&
-    /\b(?:Do|Program)\b/.test(source)
-  ) return true;
-  if (
-    source.includes("run_") &&
-    (source.includes("run_reader") || source.includes("run_state") ||
-      source.includes("run_writer")) &&
-    /\brun\b/.test(source)
-  ) return true;
-  return source.includes("Effect") &&
-    (source.includes("interpret") || source.includes("handle_with"));
-}
 
 // Generated zero-argument wrappers contain compiler temporaries, which can move
 // into a surrounding declaration or return without leaking source local names.
-function inline_iifes(program: Program): Program {
-  function generated(statement: Statement): statement is VariableDeclaration {
-    return statement.type === "VariableDeclaration" &&
-      statement.declarations.every((declaration) =>
-        declaration.id.type === "Identifier" && declaration.id.start < 0
-      );
-  }
-  type Inline = { prefix: Statement[]; expression: Expression };
-  function expression(value: Expression): Inline | undefined {
-    if (value.type !== "CallExpression" || value.optional) return undefined;
-    const callee = unwrap(value.callee);
+function is_generated_declaration(
+  statement: Statement,
+): statement is VariableDeclaration {
+  return statement.type === "VariableDeclaration" &&
+    statement.declarations.every((declaration) =>
+      declaration.id.type === "Identifier" && declaration.id.start < 0
+    );
+}
+type InlineResult = { prefix: Statement[]; expression: Expression };
+function inline_expression(value: Expression): InlineResult | undefined {
+  if (value.type !== "CallExpression" || value.optional) return undefined;
+  const callee = unwrap(value.callee);
+  if (
+    value.start < 0 && value.arguments.length === 0 &&
+    callee.type === "ArrowFunctionExpression" && callee.params.length === 0 &&
+    callee.body.type === "BlockStatement"
+  ) {
+    const body = callee.body.body;
+    const last = body[body.length - 1];
     if (
-      value.start < 0 && value.arguments.length === 0 &&
-      callee.type === "ArrowFunctionExpression" && callee.params.length === 0 &&
-      callee.body.type === "BlockStatement"
+      last?.type === "ReturnStatement" && last.argument !== null &&
+      body.slice(0, -1).every((statement) =>
+        is_generated_declaration(statement as Statement)
+      )
     ) {
-      const body = callee.body.body;
-      const last = body[body.length - 1];
-      if (
-        last?.type === "ReturnStatement" && last.argument !== null &&
-        body.slice(0, -1).every((statement) =>
-          generated(statement as Statement)
-        )
-      ) {
-        return {
-          prefix: body.slice(0, -1) as Statement[],
-          expression: last.argument,
-        };
-      }
-    }
-    if (
-      !static_target(value.callee) || value.arguments[0] === undefined ||
-      value.arguments[0].type === "SpreadElement"
-    ) return undefined;
-    const inner = expression(value.arguments[0]);
-    if (inner === undefined) return undefined;
-    return {
-      prefix: inner.prefix,
-      expression: {
-        ...value,
-        arguments: [inner.expression, ...value.arguments.slice(1)],
-      },
-    };
-  }
-  function sequence(
-    value: Expression,
-  ):
-    | { declarations: VariableDeclarator[]; expression: Expression }
-    | undefined {
-    const inlined = expression(value);
-    if (inlined !== undefined && inlined.prefix.length > 0) {
-      const declarations: VariableDeclarator[] = [];
-      const expressions: Expression[] = [];
-      for (const statement of inlined.prefix) {
-        if (!generated(statement)) return undefined;
-        for (const declaration of statement.declarations) {
-          if (
-            declaration.id.type !== "Identifier" || declaration.init === null
-          ) return undefined;
-          declarations.push({ ...declaration, init: null });
-          expressions.push(
-            node({
-              type: "AssignmentExpression",
-              operator: "=",
-              left: id(declaration.id.name),
-              right: declaration.init,
-            }),
-          );
-        }
-      }
-      expressions.push(inlined.expression);
       return {
-        declarations,
-        expression: node({ type: "SequenceExpression", expressions }),
+        prefix: body.slice(0, -1) as Statement[],
+        expression: last.argument,
       };
     }
-    if (
-      value.type !== "CallExpression" || value.optional ||
-      value.arguments.some((argument) => argument.type === "SpreadElement")
-    ) return undefined;
+  }
+  if (
+    !static_target(value.callee) || value.arguments[0] === undefined ||
+    value.arguments[0].type === "SpreadElement"
+  ) return undefined;
+  const inner = inline_expression(value.arguments[0]);
+  if (inner === undefined) return undefined;
+  return {
+    prefix: inner.prefix,
+    expression: {
+      ...value,
+      arguments: [inner.expression, ...value.arguments.slice(1)],
+    },
+  };
+}
+function inline_sequence(
+  value: Expression,
+):
+  | { declarations: VariableDeclarator[]; expression: Expression }
+  | undefined {
+  const inlined = inline_expression(value);
+  if (inlined !== undefined && inlined.prefix.length > 0) {
     const declarations: VariableDeclarator[] = [];
-    let changed = false;
-    const args = value.arguments.map((argument) => {
-      const result = sequence(argument as Expression);
-      if (result === undefined) return argument;
-      changed = true;
-      declarations.push(...result.declarations);
-      return result.expression;
-    });
-    if (!changed) return undefined;
-    return { declarations, expression: { ...value, arguments: args } };
-  }
-  function statement(current: Statement): Statement[] {
-    let value: Expression | null | undefined;
-    if (current.type === "ReturnStatement") value = current.argument;
-    if (
-      current.type === "VariableDeclaration" &&
-      current.declarations.length === 1
-    ) value = current.declarations[0].init;
-    if (value == null) return [current];
-    const inlined = expression(value);
-    const sequenced = inlined === undefined && sequence(value);
-    let prefix: Statement[];
-    let result: Expression;
-    if (inlined !== undefined) {
-      prefix = inlined.prefix;
-      result = inlined.expression;
-    } else if (sequenced) {
-      prefix = [
-        node({
-          type: "VariableDeclaration",
-          kind: "let",
-          declarations: sequenced.declarations,
-        }),
-      ];
-      result = sequenced.expression;
-    } else return [current];
-    if (current.type === "ReturnStatement") {
-      return [...prefix, { ...current, argument: result }];
+    const expressions: Expression[] = [];
+    for (const statement of inlined.prefix) {
+      if (!is_generated_declaration(statement)) return undefined;
+      for (const declaration of statement.declarations) {
+        if (
+          declaration.id.type !== "Identifier" || declaration.init === null
+        ) return undefined;
+        declarations.push({ ...declaration, init: null });
+        expressions.push(
+          node({
+            type: "AssignmentExpression",
+            operator: "=",
+            left: id(declaration.id.name),
+            right: declaration.init,
+          }),
+        );
+      }
     }
-    if (current.type === "VariableDeclaration") {
-      return [...prefix, {
-        ...current,
-        declarations: [{ ...current.declarations[0], init: result }],
-      }];
-    }
-    return [current];
-  }
-  return rewrite(program, (current) => {
-    if (current.type !== "Program" && current.type !== "BlockStatement") return;
+    expressions.push(inlined.expression);
     return {
-      ...current,
-      body: current.body.flatMap((item) => statement(item as Statement)),
+      declarations,
+      expression: node({ type: "SequenceExpression", expressions }),
     };
+  }
+  if (
+    value.type !== "CallExpression" || value.optional ||
+    value.arguments.some((argument) => argument.type === "SpreadElement")
+  ) return undefined;
+  const declarations: VariableDeclarator[] = [];
+  let changed = false;
+  const args = value.arguments.map((argument) => {
+    const result = inline_sequence(argument as Expression);
+    if (result === undefined) return argument;
+    changed = true;
+    declarations.push(...result.declarations);
+    return result.expression;
   });
+  if (!changed) return undefined;
+  return { declarations, expression: { ...value, arguments: args } };
+}
+function inline_statement(current: Statement): Statement[] | undefined {
+  let value: Expression | null | undefined;
+  if (current.type === "ReturnStatement") value = current.argument;
+  if (
+    current.type === "VariableDeclaration" &&
+    current.declarations.length === 1
+  ) value = current.declarations[0].init;
+  if (value == null) return undefined;
+  const inlined = inline_expression(value);
+  const sequenced = inlined === undefined && inline_sequence(value);
+  let prefix: Statement[];
+  let result: Expression;
+  if (inlined !== undefined) {
+    prefix = inlined.prefix;
+    result = inlined.expression;
+  } else if (sequenced) {
+    prefix = [
+      node({
+        type: "VariableDeclaration",
+        kind: "let",
+        declarations: sequenced.declarations,
+      }),
+    ];
+    result = sequenced.expression;
+  } else return undefined;
+  if (current.type === "ReturnStatement") {
+    return [...prefix, { ...current, argument: result }];
+  }
+  if (current.type === "VariableDeclaration") {
+    return [...prefix, {
+      ...current,
+      declarations: [{ ...current.declarations[0], init: result }],
+    }];
+  }
+  return undefined;
+}
+function inline_iifes<T extends Node>(root: T): T {
+  function descend(current: Node): Node {
+    let result = current;
+    const keys = value_visitor_keys[current.type];
+    if (keys !== undefined && keys.length > 0) {
+      const record = current as unknown as Record<string, unknown>;
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        const value = record[key];
+        if (value === null || typeof value !== "object") continue;
+        let next: unknown = value;
+        if (Array.isArray(value)) {
+          let items: unknown[] | undefined;
+          for (let item = 0; item < value.length; item += 1) {
+            const child = value[item];
+            if (
+              child === null || typeof child !== "object" ||
+              typeof (child as { type?: unknown }).type !== "string"
+            ) {
+              if (items !== undefined) items.push(child);
+              continue;
+            }
+            const rewritten = descend(child as Node);
+            if (rewritten !== child) {
+              if (items === undefined) items = value.slice(0, item);
+              items.push(rewritten);
+            } else if (items !== undefined) {
+              items.push(child);
+            }
+          }
+          if (items !== undefined) next = items;
+        } else if (typeof (value as { type?: unknown }).type === "string") {
+          next = descend(value as Node);
+        }
+        if (next !== value) result = { ...result, [key]: next };
+      }
+    }
+    if (result.type !== "Program" && result.type !== "BlockStatement") {
+      return result;
+    }
+    let body: Statement[] | undefined;
+    for (let index = 0; index < result.body.length; index += 1) {
+      const item = result.body[index] as Statement;
+      const expanded = inline_statement(item);
+      if (expanded !== undefined) {
+        if (body === undefined) {
+          body = result.body.slice(0, index) as Statement[];
+        }
+        body.push(...expanded);
+      } else if (body !== undefined) {
+        body.push(item);
+      }
+    }
+    if (body === undefined) return result;
+    return { ...result, body };
+  }
+  return descend(root) as T;
 }
 function static_target(value: Expression): boolean {
   if (value.type === "Identifier") return true;
@@ -820,7 +1091,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "5:oxc-parser@0.154.0:esrap@2.4.0";
+  "6:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {
@@ -840,9 +1111,44 @@ export type TransformCache = {
   };
 };
 
+type CacheEntry = {
+  readonly source: string;
+  readonly meta: string;
+  readonly result: TransformResult;
+  readonly bytes: number;
+};
+
+function cache_meta_key(
+  file_name: string,
+  config: TransformConfig,
+): string {
+  if (
+    config.library_specifiers === undefined &&
+    config.terminal_library_specifiers === undefined &&
+    config.optimizations === undefined
+  ) {
+    return transform_cache_version + "\0" + file_name + "\0" +
+      (config.explain ? "1" : "0") +
+      (config.source_map === false ? "0" : "1");
+  }
+  return JSON.stringify([
+    transform_cache_version,
+    file_name,
+    config.library_specifiers ?? [],
+    config.terminal_library_specifiers ?? [],
+    config.explain ?? false,
+    config.source_map ?? true,
+    config.optimizations ?? {},
+  ]);
+}
+
 /** A bounded LRU cache. Source text and all semantic config are part of the key. */
-function transform_result_bytes(key: string, result: TransformResult): number {
-  let characters = key.length + result.code.length;
+function transform_result_bytes(
+  meta: string,
+  source_length: number,
+  result: TransformResult,
+): number {
+  let characters = meta.length + source_length + 1 + result.code.length;
   const map = result.map;
   if (map !== null) {
     characters += map.file.length + map.sourceRoot.length + map.mappings.length;
@@ -879,7 +1185,8 @@ export function create_transform_cache(
       "transform cache byte limit must be a nonnegative integer",
     );
   }
-  const entries = new Map<string, { result: TransformResult; bytes: number }>();
+  const by_source = new Map<string, Map<string, CacheEntry>>();
+  const lru = new Set<CacheEntry>();
   let bytes = 0;
   let hits = 0;
   let misses = 0;
@@ -893,45 +1200,53 @@ export function create_transform_cache(
         misses += 1;
         return transform_do_program_source(source, file_name, config);
       }
-      const key = JSON.stringify([
-        transform_cache_version,
-        file_name,
-        config.library_specifiers ?? [],
-        config.terminal_library_specifiers ?? [],
-        config.explain ?? false,
-        config.source_map ?? true,
-        config.optimizations ?? {},
-      ]) + "\0" + source;
-      const cached = entries.get(key);
+      const meta = cache_meta_key(file_name, config);
+      const bucket = by_source.get(source);
+      const cached = bucket?.get(meta);
       if (cached !== undefined) {
         hits += 1;
-        entries.delete(key);
-        entries.set(key, cached);
+        lru.delete(cached);
+        lru.add(cached);
         return clone_transform_result(cached.result);
       }
       misses += 1;
       const result = transform_do_program_source(source, file_name, config);
-      const entry_bytes = transform_result_bytes(key, result);
+      const entry_bytes = transform_result_bytes(meta, source.length, result);
       if (capacity > 0 && entry_bytes <= max_bytes) {
-        while (entries.size >= capacity || bytes + entry_bytes > max_bytes) {
-          const oldest = entries.keys().next().value!;
-          bytes -= entries.get(oldest)!.bytes;
-          entries.delete(oldest);
+        while (lru.size >= capacity || bytes + entry_bytes > max_bytes) {
+          const oldest = lru.values().next().value!;
+          lru.delete(oldest);
+          bytes -= oldest.bytes;
+          const old_bucket = by_source.get(oldest.source);
+          if (old_bucket !== undefined) {
+            old_bucket.delete(oldest.meta);
+            if (old_bucket.size === 0) by_source.delete(oldest.source);
+          }
         }
-        entries.set(key, {
+        const entry: CacheEntry = {
+          source,
+          meta,
           result: clone_transform_result(result),
           bytes: entry_bytes,
-        });
+        };
+        let target_bucket = by_source.get(source);
+        if (target_bucket === undefined) {
+          target_bucket = new Map();
+          by_source.set(source, target_bucket);
+        }
+        target_bucket.set(meta, entry);
+        lru.add(entry);
         bytes += entry_bytes;
       }
       return result;
     },
     clear() {
-      entries.clear();
+      by_source.clear();
+      lru.clear();
       bytes = 0;
     },
     stats() {
-      return { hits, misses, size: entries.size, capacity, bytes, max_bytes };
+      return { hits, misses, size: lru.size, capacity, bytes, max_bytes };
     },
   };
 }

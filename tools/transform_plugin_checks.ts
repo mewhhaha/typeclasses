@@ -391,3 +391,70 @@ Deno.test("plugin explanation callbacks receive fresh reports across cached tran
     "adapter must expose source decisions on cache hits",
   );
 });
+
+Deno.test({
+  name:
+    "Rolldown native code filter skips non-target modules before invoking JS",
+  permissions: { env: true, ffi: true, read: true, write: true },
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "typeclasses-rolldown-" });
+    try {
+      const root = new URL("../src/", import.meta.url).pathname;
+      await Deno.writeTextFile(
+        dir + "/plain.ts",
+        "export function double(n: number) { return n * 2; }\n",
+      );
+      await Deno.writeTextFile(
+        dir + "/target.ts",
+        [
+          `import { Do } from ${JSON.stringify(root + "typeclasses.ts")};`,
+          `import { Just } from ${JSON.stringify(root + "maybe.ts")};`,
+          'import { double } from "./plain.ts";',
+          "export const answer = Do(function* () { const n = yield* Just(21); return double(n); });",
+        ].join("\n"),
+      );
+      const base = typeclasses_rolldown_plugin();
+      const invoked: string[] = [];
+      const wrapped = {
+        name: base.name,
+        transform: {
+          filter: base.transform.filter,
+          handler(
+            this: { warn(message: string): void },
+            code: string,
+            id: string,
+          ) {
+            invoked.push(id);
+            return base.transform.handler.call(this, code, id);
+          },
+        },
+      };
+      const bundle = await rolldown({
+        input: dir + "/target.ts",
+        plugins: [wrapped],
+      });
+      try {
+        const result = await bundle.generate({ format: "esm" });
+        const output = result.output.map((item) =>
+          "code" in item ? item.code : ""
+        ).join("\n");
+        assert_true(
+          !/\bDo\s*\(\s*function\s*\*/.test(output),
+          "expected target module Do block to lower",
+        );
+        assert_true(
+          invoked.some((id) => id.endsWith("/target.ts")),
+          "expected target module to reach JS handler",
+        );
+        assert_equals(
+          invoked.some((id) => id.endsWith("/plain.ts")),
+          false,
+        );
+      } finally {
+        await bundle.close();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

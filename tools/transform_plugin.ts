@@ -5,9 +5,9 @@ import {
   type TransformReport,
   type TransformSourceMap,
 } from "./transform_do_program.ts";
+import { might_contain_transform_target } from "./transform_imports.ts";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
-import { might_contain_iterable_maps } from "./transform_iterable_maps.ts";
 
 /** Configuration shared by the esbuild, Rollup, Vite, and Rolldown adapters. */
 export type TransformPluginOptions = TransformConfig & {
@@ -59,11 +59,14 @@ export type RollupTransformPlugin = {
   ): TransformHookResult;
 };
 
-/** A Rolldown transformer plugin with a native TypeScript hook filter. */
+/** A Rolldown transformer plugin with native TypeScript and target code hook filters. */
 export type RolldownTransformPlugin = {
   readonly name: "typeclasses-transform";
   readonly transform: {
-    readonly filter: { readonly id: RegExp };
+    readonly filter: {
+      readonly id: RegExp;
+      readonly code?: { readonly include: readonly RegExp[] };
+    };
     handler(
       this: RollupContext,
       code: string,
@@ -116,7 +119,10 @@ export function typeclasses_rollup_plugin(
   };
 }
 
-/** A Rolldown adapter with a native hook filter to avoid needless JS calls. */
+const rolldown_target_code_filter =
+  /\\u|\b(?:Do|Program)\b|run_(?:reader|state|writer)|Effect|iterable|IterableT/;
+
+/** A Rolldown adapter with native id and code hook filters to avoid needless JS calls. */
 export function typeclasses_rolldown_plugin(
   options: TransformPluginOptions = {},
 ): RolldownTransformPlugin {
@@ -124,7 +130,10 @@ export function typeclasses_rolldown_plugin(
   return {
     name: "typeclasses-transform",
     transform: {
-      filter: { id: /\.tsx?(?:\?.*)?$/ },
+      filter: {
+        id: /\.tsx?(?:\?.*)?$/,
+        code: { include: [rolldown_target_code_filter] },
+      },
       handler(this: RollupContext, code: string, id: string) {
         return transform_rollup_source(this, code, id, options, cache);
       },
@@ -168,22 +177,7 @@ function is_typescript_file(id: string): boolean {
 }
 
 function might_contain_target(code: string): boolean {
-  if (might_contain_iterable_maps(code)) return true;
-  // Imported aliases need not retain either public name at the call site, so
-  // include the import declaration itself in this cheap pre-parse filter.
-  if (code.includes("\\u")) return true;
-  if (
-    (code.includes("Do") || code.includes("Program")) &&
-    /\b(?:Do|Program)\b/.test(code)
-  ) return true;
-  if (
-    code.includes("run_") &&
-    (code.includes("run_reader") || code.includes("run_state") ||
-      code.includes("run_writer")) &&
-    /\brun\b/.test(code)
-  ) return true;
-  return code.includes("Effect") &&
-    (code.includes("interpret") || code.includes("handle_with"));
+  return might_contain_transform_target(code);
 }
 
 function report_diagnostics(

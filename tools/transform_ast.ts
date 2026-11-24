@@ -147,9 +147,26 @@ export function type_ref(
   return result;
 }
 
+const skipped_type_keys = new Set([
+  "typeAnnotation",
+  "typeArguments",
+  "returnType",
+  "typeParameters",
+]);
+
+/** Precomputed runtime-only child keys for each Oxc AST node type. */
+export const value_visitor_keys: Readonly<Record<string, readonly string[]>> =
+  /* @__PURE__ */ (() => {
+    const result: Record<string, readonly string[]> = Object.create(null);
+    for (const [type, keys] of Object.entries(visitorKeys)) {
+      result[type] = keys.filter((key) => !skipped_type_keys.has(key));
+    }
+    return result;
+  })();
+
 export function is_node(value: unknown): value is Node {
-  return typeof value === "object" && value !== null && "type" in value &&
-    typeof value.type === "string";
+  return typeof value === "object" && value !== null &&
+    typeof (value as { type?: unknown }).type === "string";
 }
 
 /** Visit only Oxc's child keys; returning false skips a subtree. */
@@ -159,12 +176,50 @@ export function walk(
   parent?: Node,
 ): void {
   if (visit(root, parent) === false) return;
+  const keys = visitorKeys[root.type];
+  if (keys === undefined || keys.length === 0) return;
   const record = root as unknown as Record<string, unknown>;
-  for (const key of visitorKeys[root.type] ?? []) {
-    const value = record[key];
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = record[keys[index]];
+    if (value === null || typeof value !== "object") continue;
     if (Array.isArray(value)) {
-      for (const child of value) if (is_node(child)) walk(child, visit, root);
-    } else if (is_node(value)) walk(value, visit, root);
+      for (let item = 0; item < value.length; item += 1) {
+        const child = value[item];
+        if (
+          child !== null && typeof child === "object" &&
+          typeof (child as { type?: unknown }).type === "string"
+        ) walk(child as Node, visit, root);
+      }
+    } else if (typeof (value as { type?: unknown }).type === "string") {
+      walk(value as Node, visit, root);
+    }
+  }
+}
+
+/** Visit only runtime-value child keys (skipping TS type annotations/arguments). */
+export function walk_values(
+  root: Node,
+  visit: (node: Node, parent?: Node) => void | false,
+  parent?: Node,
+): void {
+  if (visit(root, parent) === false) return;
+  const keys = value_visitor_keys[root.type];
+  if (keys === undefined || keys.length === 0) return;
+  const record = root as unknown as Record<string, unknown>;
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = record[keys[index]];
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
+      for (let item = 0; item < value.length; item += 1) {
+        const child = value[item];
+        if (
+          child !== null && typeof child === "object" &&
+          typeof (child as { type?: unknown }).type === "string"
+        ) walk_values(child as Node, visit, root);
+      }
+    } else if (typeof (value as { type?: unknown }).type === "string") {
+      walk_values(value as Node, visit, root);
+    }
   }
 }
 
@@ -179,25 +234,39 @@ export function rewrite(
 ): Node {
   function descend(current: Node): Node | null {
     let result = current;
-    const record = current as unknown as Record<string, unknown>;
-    for (const key of visitorKeys[current.type] ?? []) {
-      const value = record[key];
-      let next: unknown = value;
-      if (Array.isArray(value)) {
-        const children: unknown[] = [];
-        let changed = false;
-        for (const child of value) {
-          if (!is_node(child)) {
-            children.push(child);
-            continue;
+    const keys = visitorKeys[current.type];
+    if (keys !== undefined && keys.length > 0) {
+      const record = current as unknown as Record<string, unknown>;
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        const value = record[key];
+        if (value === null || typeof value !== "object") continue;
+        let next: unknown = value;
+        if (Array.isArray(value)) {
+          let children: unknown[] | undefined;
+          for (let item = 0; item < value.length; item += 1) {
+            const child = value[item];
+            if (
+              child === null || typeof child !== "object" ||
+              typeof (child as { type?: unknown }).type !== "string"
+            ) {
+              if (children !== undefined) children.push(child);
+              continue;
+            }
+            const rewritten = descend(child as Node);
+            if (rewritten !== child) {
+              if (children === undefined) children = value.slice(0, item);
+              if (rewritten !== null) children.push(rewritten);
+            } else if (children !== undefined) {
+              children.push(child);
+            }
           }
-          const rewritten = descend(child);
-          if (rewritten !== child) changed = true;
-          if (rewritten !== null) children.push(rewritten);
+          if (children !== undefined) next = children;
+        } else if (typeof (value as { type?: unknown }).type === "string") {
+          next = descend(value as Node);
         }
-        if (changed) next = children;
-      } else if (is_node(value)) next = descend(value);
-      if (next !== value) result = { ...result, [key]: next };
+        if (next !== value) result = { ...result, [key]: next };
+      }
     }
     const replacement = visit(result);
     if (replacement === undefined) return result;
