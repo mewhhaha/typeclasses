@@ -161,13 +161,19 @@ function transform_do_program_checked(
     for (const name of headers.terminal_namespaces.keys()) {
       check_token(name, true);
     }
+    for (const name of headers.cell_runners.keys()) check_token(name, true);
+    for (const name of headers.cell_runner_namespaces.keys()) {
+      check_token(name, true);
+    }
     if (config.optimizations?.candidate_scan !== false && !has_target_token) {
       return unchanged_transform_result(source);
     }
     if (
       !config.explain &&
       headers.terminal_functions.size === 0 &&
-      headers.terminal_namespaces.size === 0
+      headers.terminal_namespaces.size === 0 &&
+      headers.cell_runners.size === 0 &&
+      headers.cell_runner_namespaces.size === 0
     ) {
       check_token("Effect", false);
       for (const name of headers.effect_names) check_token(name, false);
@@ -176,6 +182,16 @@ function transform_do_program_checked(
         check_token(name, false);
       }
       for (const name of headers.just_constructors) check_token(name, false);
+      for (const name of headers.direct_either_dictionaries) {
+        check_token(name, false);
+      }
+      for (const name of headers.right_constructors) check_token(name, false);
+      for (const name of headers.direct_reader_dictionaries) {
+        check_token(name, false);
+      }
+      for (const name of headers.direct_state_dictionaries) {
+        check_token(name, false);
+      }
       for (const name of scope_declarations.keys()) check_token(name, false);
     }
   }
@@ -205,7 +221,8 @@ function transform_do_program_checked(
       const callee = current.callee;
       if (
         callee.type === "Identifier" &&
-        (headers.terminal_functions.has(callee.name) || callee.name === "Do" ||
+        (headers.terminal_functions.has(callee.name) ||
+          headers.cell_runners.has(callee.name) || callee.name === "Do" ||
           callee.name === "Program")
       ) {
         candidate = true;
@@ -218,7 +235,8 @@ function transform_do_program_checked(
         const property = callee.property.name;
         if (
           property === "Do" || property === "Program" || property === "run" ||
-          property === "handle_with" || property === "value"
+          property === "handle_with" || property === "value" ||
+          property === "run_cells" || property === "prepare_cells"
         ) {
           candidate = true;
           return false;
@@ -251,7 +269,9 @@ function transform_do_program_checked(
   let skipped_statements = false;
   const skip_statement = !has_iterable && !has_unicode && !config.explain &&
       headers.terminal_functions.size === 0 &&
-      headers.terminal_namespaces.size === 0 && min_relevant >= 0
+      headers.terminal_namespaces.size === 0 &&
+      headers.cell_runners.size === 0 &&
+      headers.cell_runner_namespaces.size === 0 && min_relevant >= 0
     ? (statement: Statement) => {
       if (statement.end <= min_relevant || statement.start > max_relevant) {
         skipped_statements = true;
@@ -423,7 +443,7 @@ function transform_do_program_checked(
       return lower_generator(current, services);
     },
   };
-  const terminals = create_terminal_transform(services);
+  const terminals = create_terminal_transform(services, skip_statement);
   let iterable: ReturnType<typeof create_iterable_map_fusion> | undefined;
   if (
     config.optimizations?.iterable_map !== false &&
@@ -665,6 +685,16 @@ function transform_do_program_checked(
         const n_stmt = n_body[index] as Statement;
         if (terminals.remove(o_stmt)) {
           edits.push({ kind: "delete", start: o_stmt.start, end: o_stmt.end });
+          continue;
+        }
+        const hoisted = terminals.hoist(o_stmt);
+        if (hoisted !== undefined) {
+          edits.push({
+            kind: "replace_statements",
+            start: o_stmt.start,
+            end: o_stmt.end,
+            statements: hoisted.map((stmt) => inline_iifes(stmt)),
+          });
           continue;
         }
         if (o_stmt === n_stmt) continue;
@@ -1112,7 +1142,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "7:oxc-parser@0.154.0:esrap@2.4.0";
+  "8:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

@@ -466,6 +466,9 @@ export function splice_edits(
         }
       };
     }
+    if (!source_map) {
+      return print(target, language, { indent: "  " });
+    }
     return print(target, language, {
       indent: "  ",
       sourceMapSource: base,

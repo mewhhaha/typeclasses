@@ -525,9 +525,13 @@ const value = run(run_reader(Program(function* () {
 }), environment));
 `);
 
-    assert_equals(branch.transformed, 2);
+    assert_equals(branch.transformed, 1);
     assert_equals(branch.diagnostics, []);
-    assert_includes(branch.code, "Effect.map_from");
+    assert_true(
+      !branch.code.includes("Effect.map_from"),
+      "expected branched terminal Program to fuse\n\n" + branch.code,
+    );
+    assert_includes(branch.code, "if (enabled)");
 
     const awaited = await transform(`
 import { Program, run } from "../src/effects.ts";

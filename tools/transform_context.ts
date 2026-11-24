@@ -79,6 +79,7 @@ export type PrimitiveFunctionName =
   | "writer"
   | "tell";
 export type CellFactoryKind = "reader" | "state" | "writer";
+export type CellRunnerName = "run_cells" | "prepare_cells";
 export type ImportedBindings = {
   readonly do_names: ReadonlySet<string>;
   readonly program_names: ReadonlySet<string>;
@@ -99,8 +100,22 @@ export type ImportedBindings = {
   >;
   readonly cell_factories?: ReadonlyMap<string, CellFactoryKind>;
   readonly cell_namespaces?: ReadonlyMap<string, ReadonlySet<CellFactoryKind>>;
+  readonly cell_runners?: ReadonlyMap<string, CellRunnerName>;
+  readonly cell_runner_namespaces?: ReadonlyMap<
+    string,
+    ReadonlySet<CellRunnerName>
+  >;
+  readonly cell_providers?: ReadonlyMap<string, CellFactoryKind>;
+  readonly cell_provider_namespaces?: ReadonlyMap<
+    string,
+    ReadonlySet<CellFactoryKind>
+  >;
   readonly direct_maybe_dictionaries?: ReadonlySet<string>;
   readonly just_constructors?: ReadonlySet<string>;
+  readonly direct_either_dictionaries?: ReadonlySet<string>;
+  readonly right_constructors?: ReadonlySet<string>;
+  readonly direct_reader_dictionaries?: ReadonlySet<string>;
+  readonly direct_state_dictionaries?: ReadonlySet<string>;
   readonly effect_helper_shadowed: boolean;
   readonly program_module?: string;
 };
