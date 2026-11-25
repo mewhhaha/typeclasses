@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1030 774" width="1030"
+  height="774" role="img"
+  aria-label="Round 6: Post-Plugin Runtime Speedups (vs main @ 7e888e3)">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+  </defs>
+  <style>
+  .bg {
+    fill: #0d1117;
+    stroke: #30363d;
+    stroke-width: 1;
+  }
+  .title {
+    font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #f0f6fc;
+  }
+  .subtitle {
+    font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #8b949e;
+  }
+  .label {
+    font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #e6edf3;
+  }
+  .mult {
+    font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #34d399;
+  }
+  .detail {
+    font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .tick {
+    font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .grid {
+    stroke: #21262d;
+    stroke-width: 1;
+  }
+  .baseline {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+  .ci {
+    stroke: #f0f6fc;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.8;
+  }
+  .row-alt {
+    fill: #161b22;
+  }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="1029" height="773" rx="12" />
+  <text class="title" x="24"
+    y="34">Round 6: Post-Plugin Runtime Speedups (vs main @ 7e888e3)</text>
+  <text class="subtitle" x="24"
+    y="54">Paired ABBA benchmarks (8 blocks, 95% bootstrap CI) · Standalone Do, run_task_exit, Validation/Task traverse, lift/collect, IterableT .bind, Maybe/Either</text>
+  <line x1="24" y1="68" x2="1006" y2="68" stroke="#21262d" stroke-width="1" />
+  <rect class="row-alt" x="12" y="118" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="190" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="262" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="334" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="406" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="478" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="550" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="622" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="694" width="1006" height="36" rx="4" />
+  <line class="baseline" x1="390.0" y1="76" x2="390.0" y2="736" />
+  <text class="tick" x="390.0" y="752" text-anchor="middle">1x</text>
+  <line class="grid" x1="429.6" y1="76" x2="429.6" y2="736" />
+  <text class="tick" x="429.6" y="752" text-anchor="middle">2x</text>
+  <line class="grid" x1="481.9" y1="76" x2="481.9" y2="736" />
+  <text class="tick" x="481.9" y="752" text-anchor="middle">5x</text>
+  <line class="grid" x1="521.5" y1="76" x2="521.5" y2="736" />
+  <text class="tick" x="521.5" y="752" text-anchor="middle">10x</text>
+  <line class="grid" x1="561.1" y1="76" x2="561.1" y2="736" />
+  <text class="tick" x="561.1" y="752" text-anchor="middle">20x</text>
+  <line class="grid" x1="613.5" y1="76" x2="613.5" y2="736" />
+  <text class="tick" x="613.5" y="752" text-anchor="middle">50x</text>
+  <line class="grid" x1="653.1" y1="76" x2="653.1" y2="736" />
+  <text class="tick" x="653.1" y="752" text-anchor="middle">100x</text>
+  <line class="grid" x1="692.7" y1="76" x2="692.7" y2="736" />
+  <text class="tick" x="692.7" y="752" text-anchor="middle">200x</text>
+  <line class="grid" x1="745.0" y1="76" x2="745.0" y2="736" />
+  <text class="tick" x="745.0" y="752" text-anchor="middle">500x</text>
+  <text class="label" x="24" y="104.0">standalone Do(State) loop x50 (tx)</text>
+  <rect x="390" y="91.0" width="328.8" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="716.5" y1="100.0" x2="719.6" y2="100.0" />
+  <line class="ci" x1="716.5" y1="96.0" x2="716.5" y2="104.0" />
+  <line class="ci" x1="719.6" y1="96.0" x2="719.6" y2="104.0" />
+  <text class="mult" x="762" y="104.0">316x</text>
+  <text class="detail" x="828" y="104.0">(5.89µs -&gt; 18.5ns)</text>
+  <text class="label" x="24"
+    y="140.0">run_task_exit(run_reader(run_state(x50))) (tx)</text>
+  <rect x="390" y="127.0" width="317.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="707.1" y1="136.0" x2="708.2" y2="136.0" />
+  <line class="ci" x1="707.1" y1="132.0" x2="707.1" y2="140.0" />
+  <line class="ci" x1="708.2" y1="132.0" x2="708.2" y2="140.0" />
+  <text class="mult" x="762" y="140.0">260x</text>
+  <text class="detail" x="828" y="140.0">(36.1µs -&gt; 139ns)</text>
+  <text class="label" x="24"
+    y="176.0">run_task_exit(Program from_fn x50) (tx)</text>
+  <rect x="390" y="163.0" width="302.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="690.5" y1="172.0" x2="705.6" y2="172.0" />
+  <line class="ci" x1="690.5" y1="168.0" x2="690.5" y2="176.0" />
+  <line class="ci" x1="705.6" y1="168.0" x2="705.6" y2="176.0" />
+  <text class="mult" x="762" y="176.0">199x</text>
+  <text class="detail" x="828" y="176.0">(14.3µs -&gt; 71.4ns)</text>
+  <text class="label" x="24"
+    y="212.0">run_task_exit(Do(Task) from_fn x50) (tx)</text>
+  <rect x="390" y="199.0" width="302.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="689.4" y1="208.0" x2="703.6" y2="208.0" />
+  <line class="ci" x1="689.4" y1="204.0" x2="689.4" y2="212.0" />
+  <line class="ci" x1="703.6" y1="204.0" x2="703.6" y2="212.0" />
+  <text class="mult" x="762" y="212.0">199x</text>
+  <text class="detail" x="828" y="212.0">(13.7µs -&gt; 69.2ns)</text>
+  <text class="label" x="24"
+    y="248.0">run_task_exit(handle_cells(Program x50)) (tx)</text>
+  <rect x="390" y="235.0" width="296.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="679.9" y1="244.0" x2="688.6" y2="244.0" />
+  <line class="ci" x1="679.9" y1="240.0" x2="679.9" y2="248.0" />
+  <line class="ci" x1="688.6" y1="240.0" x2="688.6" y2="248.0" />
+  <text class="mult" x="762" y="248.0">181x</text>
+  <text class="detail" x="828" y="248.0">(29.5µs -&gt; 162ns)</text>
+  <text class="label" x="24"
+    y="284.0">standalone Do(Reader) loop x50 (tx)</text>
+  <rect x="390" y="271.0" width="239.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="628.5" y1="280.0" x2="630.0" y2="280.0" />
+  <line class="ci" x1="628.5" y1="276.0" x2="628.5" y2="284.0" />
+  <line class="ci" x1="630.0" y1="276.0" x2="630.0" y2="284.0" />
+  <text class="mult" x="762" y="284.0">65.8x</text>
+  <text class="detail" x="828" y="284.0">(2.93µs -&gt; 44.4ns)</text>
+  <text class="label" x="24"
+    y="320.0">run_task(traverse_sequential(50, Task)) (tx)</text>
+  <rect x="390" y="307.0" width="238.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="621.3" y1="316.0" x2="635.6" y2="316.0" />
+  <line class="ci" x1="621.3" y1="312.0" x2="621.3" y2="320.0" />
+  <line class="ci" x1="635.6" y1="312.0" x2="635.6" y2="320.0" />
+  <text class="mult" x="762" y="320.0">65.1x</text>
+  <text class="detail" x="828" y="320.0">(8.56µs -&gt; 130ns)</text>
+  <text class="label" x="24"
+    y="356.0">collect(Validation, 4 fields) general (tx)</text>
+  <rect x="390" y="343.0" width="231.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="620.8" y1="352.0" x2="624.5" y2="352.0" />
+  <line class="ci" x1="620.8" y1="348.0" x2="620.8" y2="356.0" />
+  <line class="ci" x1="624.5" y1="348.0" x2="624.5" y2="356.0" />
+  <text class="mult" x="762" y="356.0">57.8x</text>
+  <text class="detail" x="828" y="356.0">(1.04µs -&gt; 18.0ns)</text>
+  <text class="label" x="24"
+    y="392.0">Traversable.traverse(ArrayT(500), Validation) 200 err (tx)</text>
+  <rect x="390" y="379.0" width="201.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="586.0" y1="388.0" x2="591.8" y2="388.0" />
+  <line class="ci" x1="586.0" y1="384.0" x2="586.0" y2="392.0" />
+  <line class="ci" x1="591.8" y1="384.0" x2="591.8" y2="392.0" />
+  <text class="mult" x="762" y="392.0">33.9x</text>
+  <text class="detail" x="828" y="392.0">(19.8µs -&gt; 582ns)</text>
+  <text class="label" x="24"
+    y="428.0">IterableT .bind.preview (200-&gt;50) (tx)</text>
+  <rect x="390" y="415.0" width="188.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="577.1" y1="424.0" x2="580.8" y2="424.0" />
+  <line class="ci" x1="577.1" y1="420.0" x2="577.1" y2="428.0" />
+  <line class="ci" x1="580.8" y1="420.0" x2="580.8" y2="428.0" />
+  <text class="mult" x="762" y="428.0">27.3x</text>
+  <text class="detail" x="828" y="428.0">(2.96µs -&gt; 110ns)</text>
+  <text class="label" x="24"
+    y="464.0">IterableT .bind.filter.map.to_array (200) (tx)</text>
+  <rect x="390" y="451.0" width="153.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="536.9" y1="460.0" x2="547.1" y2="460.0" />
+  <line class="ci" x1="536.9" y1="456.0" x2="536.9" y2="464.0" />
+  <line class="ci" x1="547.1" y1="456.0" x2="547.1" y2="464.0" />
+  <text class="mult" x="762" y="464.0">14.7x</text>
+  <text class="detail" x="828" y="464.0">(15.3µs -&gt; 1.05µs)</text>
+  <text class="label" x="24"
+    y="500.0">run_task(Traversable.traverse(50, Task)) (tx)</text>
+  <rect x="390" y="487.0" width="145.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="532.8" y1="496.0" x2="537.9" y2="496.0" />
+  <line class="ci" x1="532.8" y1="492.0" x2="532.8" y2="500.0" />
+  <line class="ci" x1="537.9" y1="492.0" x2="537.9" y2="500.0" />
+  <text class="mult" x="762" y="500.0">12.8x</text>
+  <text class="detail" x="828" y="500.0">(1.48µs -&gt; 117ns)</text>
+  <text class="label" x="24" y="536.0">Do(Either) cond loop x50 (tx)</text>
+  <rect x="390" y="523.0" width="140.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="527.7" y1="532.0" x2="531.1" y2="532.0" />
+  <line class="ci" x1="527.7" y1="528.0" x2="527.7" y2="536.0" />
+  <line class="ci" x1="531.1" y1="528.0" x2="531.1" y2="536.0" />
+  <text class="mult" x="762" y="536.0">11.6x</text>
+  <text class="detail" x="828" y="536.0">(192ns -&gt; 16.2ns)</text>
+  <text class="label" x="24"
+    y="572.0">Traversable.traverse(ArrayT(500), Validation) valid (tx)</text>
+  <rect x="390" y="559.0" width="107.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="496.4" y1="568.0" x2="498.4" y2="568.0" />
+  <line class="ci" x1="496.4" y1="564.0" x2="496.4" y2="572.0" />
+  <line class="ci" x1="498.4" y1="564.0" x2="498.4" y2="572.0" />
+  <text class="mult" x="762" y="572.0">6.58x</text>
+  <text class="detail" x="828" y="572.0">(5.39µs -&gt; 808ns)</text>
+  <text class="label" x="24"
+    y="608.0">Applicative.lift 4 Validation form valid (tx)</text>
+  <rect x="390" y="595.0" width="95.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="483.9" y1="604.0" x2="486.7" y2="604.0" />
+  <line class="ci" x1="483.9" y1="600.0" x2="483.9" y2="608.0" />
+  <line class="ci" x1="486.7" y1="600.0" x2="486.7" y2="608.0" />
+  <text class="mult" x="762" y="608.0">5.30x</text>
+  <text class="detail" x="828" y="608.0">(121ns -&gt; 22.8ns)</text>
+  <text class="label" x="24"
+    y="644.0">Applicative.lift 4 Validation form 4 err (tx)</text>
+  <rect x="390" y="631.0" width="91.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="480.7" y1="640.0" x2="482.8" y2="640.0" />
+  <line class="ci" x1="480.7" y1="636.0" x2="480.7" y2="644.0" />
+  <line class="ci" x1="482.8" y1="636.0" x2="482.8" y2="644.0" />
+  <text class="mult" x="762" y="644.0">4.98x</text>
+  <text class="detail" x="828" y="644.0">(177ns -&gt; 35.5ns)</text>
+  <text class="label" x="24"
+    y="680.0">Do(Maybe) from_nullable loop x50 (tx)</text>
+  <rect x="390" y="667.0" width="56.4" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="446.1" y1="676.0" x2="448.4" y2="676.0" />
+  <line class="ci" x1="446.1" y1="672.0" x2="446.1" y2="680.0" />
+  <line class="ci" x1="448.4" y1="672.0" x2="448.4" y2="680.0" />
+  <text class="mult" x="762" y="680.0">2.68x</text>
+  <text class="detail" x="828" y="680.0">(50.8ns -&gt; 18.9ns)</text>
+  <text class="label" x="24" y="716.0">Do(Maybe) cond loop x50 (tx)</text>
+  <rect x="390" y="703.0" width="36.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="422.3" y1="712.0" x2="431.7" y2="712.0" />
+  <line class="ci" x1="422.3" y1="708.0" x2="422.3" y2="716.0" />
+  <line class="ci" x1="431.7" y1="708.0" x2="431.7" y2="716.0" />
+  <text class="mult" x="762" y="716.0">1.88x</text>
+  <text class="detail" x="828" y="716.0">(23.3ns -&gt; 13.1ns)</text>
+</svg>
