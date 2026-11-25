@@ -3378,6 +3378,22 @@ Deno.test("Codex Wave 2 review regressions (STM, Writer, Task, AsyncIterableT, F
       [10, 200],
     );
 
+    const plain_left = [1];
+    const mutating_right = [0] as number[];
+    Object.defineProperty(mutating_right, Symbol.iterator, {
+      configurable: true,
+      get() {
+        plain_left[0] = 9;
+        return function* () {
+          yield 2;
+        };
+      },
+    });
+    assert_equals(
+      ArrayT(plain_left).concat(ArrayT(mutating_right)).value(),
+      [1, 2],
+    );
+
     const no_call_arr = [1] as number[];
     const no_call_iter = function* () {
       yield 77;

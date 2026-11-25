@@ -341,12 +341,17 @@ function create_array(): AsArray {
     const right_value = right.value();
     const cl = custom_iterable(left);
     if (cl !== undefined) return ArrayT([...cl, ...right_value]);
-    const cr = custom_iterable(right_value);
-    if (cr !== undefined) return ArrayT([...left.slice(), ...cr]);
     const n = left.length;
-    const out = new Array<item>(n + right_value.length);
+    const out = new Array<item>(n);
     for (let i = 0; i < n; i += 1) out[i] = left[i];
-    for (let i = 0; i < right_value.length; i += 1) out[n + i] = right_value[i];
+    const cr = custom_iterable(right_value);
+    if (cr !== undefined) {
+      for (const v of cr) out.push(v);
+      return ArrayT(out);
+    }
+    const m = right_value.length;
+    out.length = n + m;
+    for (let i = 0; i < m; i += 1) out[n + i] = right_value[i];
     return ArrayT(out);
   }
 
