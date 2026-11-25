@@ -97,7 +97,7 @@ export function transform_do_program_source(
   file_name = "input.ts",
   config: TransformConfig = {},
 ): TransformResult {
-  if (!might_contain_transform_target(source)) {
+  if (!might_contain_transform_target(source, config)) {
     return unchanged_transform_result(source);
   }
   return transform_do_program_checked(source, file_name, config);
@@ -147,6 +147,22 @@ function transform_do_program_checked(
       headers.collect_namespaces.size > 0;
     const has_lift = headers.applicative_objects.size > 0 ||
       headers.applicative_namespaces.size > 0;
+    const has_traverse = headers.traversable_objects.size > 0 ||
+      headers.traversable_namespaces.size > 0 ||
+      headers.traverse_sequential_functions.size > 0 ||
+      headers.traverse_sequential_namespaces.size > 0 ||
+      headers.array_constructors.size > 0;
+    const has_match = headers.match_functions.size > 0 ||
+      headers.match_namespaces.size > 0 ||
+      headers.tagged_type_names.size > 0 ||
+      headers.just_constructors.size > 0 ||
+      headers.nothing_constructors.size > 0 ||
+      headers.left_constructors.size > 0 ||
+      headers.right_constructors.size > 0 ||
+      headers.validation_constructors.size > 0 ||
+      headers.list_constructors.size > 0 ||
+      headers.nil_constructors.size > 0 ||
+      headers.cons_constructors.size > 0;
     const target_tokens: string[] = [
       "Do",
       "Program",
@@ -161,16 +177,25 @@ function transform_do_program_checked(
       ...headers.operation_runner_namespaces.keys(),
       ...headers.state_eval_functions.keys(),
       ...headers.state_eval_namespaces.keys(),
+      ...headers.task_run_functions,
+      ...headers.task_namespaces,
       ...headers.collect_functions,
       ...headers.collect_namespaces,
       ...headers.applicative_objects,
       ...headers.applicative_namespaces,
+      ...headers.traversable_objects,
+      ...headers.traversable_namespaces,
+      ...headers.traverse_sequential_functions,
+      ...headers.traverse_sequential_namespaces,
+      ...headers.match_functions,
+      ...headers.match_namespaces,
     ];
     if (has_effect_interp) {
       target_tokens.push("run", "handle_with", "value");
     } else if (
       headers.direct_reader_dictionaries.size > 0 ||
       headers.direct_state_dictionaries.size > 0 ||
+      headers.loop_tasks.size > 0 ||
       headers.cell_factories.size > 0 ||
       headers.cell_namespaces.size > 0
     ) {
@@ -178,6 +203,12 @@ function transform_do_program_checked(
     }
     if (has_collect) target_tokens.push("collect");
     if (has_lift) target_tokens.push("lift");
+    if (has_traverse && source.indexOf("traverse", scan_from) >= 0) {
+      target_tokens.push("traverse");
+    }
+    if (has_match && source.indexOf("match", scan_from) >= 0) {
+      target_tokens.push(".match", "match(");
+    }
     if (has_iterable) {
       target_tokens.push(
         "IterableT",
@@ -187,13 +218,16 @@ function transform_do_program_checked(
         "from_iterable",
         "from_snapshot",
         "filter",
+        "filter_map",
         "take",
         "to_array",
+        "preview",
         "compile_fold",
         "Foldable",
         "iterable",
         ".map",
         ".fold",
+        "fold_while",
         ...headers.iterable_locals,
       );
     }
@@ -234,8 +268,14 @@ function transform_do_program_checked(
         ...headers.direct_identity_dictionaries,
         ...headers.identity_constructors,
         ...headers.array_constructors,
+        ...headers.list_constructors,
+        ...headers.nil_constructors,
+        ...headers.cons_constructors,
         ...headers.direct_reader_dictionaries,
         ...headers.direct_state_dictionaries,
+        ...headers.task_from_fn_functions,
+        ...headers.task_succeed_functions,
+        ...headers.validation_constructors,
         ...headers.iterable_locals,
         ...scope_declarations.keys(),
       ];
@@ -289,6 +329,9 @@ function transform_do_program_checked(
             headers.cell_runners.has(callee.name) ||
             headers.operation_runners.has(callee.name) ||
             headers.state_eval_functions.has(callee.name) ||
+            headers.task_run_functions.has(callee.name) ||
+            headers.traverse_sequential_functions.has(callee.name) ||
+            headers.match_functions.has(callee.name) ||
             headers.collect_functions.has(callee.name) ||
             callee.name === "Do" ||
             callee.name === "Program")
@@ -310,6 +353,8 @@ function transform_do_program_checked(
             property === "handle_operations" ||
             property === "prepare_operations" ||
             property === "eval_state" || property === "exec_state" ||
+            property === "run_task" || property === "traverse" ||
+            property === "traverse_sequential" || property === "match" ||
             property === "collect" || property === "lift"
           ) {
             candidate = true;
@@ -1229,7 +1274,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "10:oxc-parser@0.154.0:esrap@2.4.0";
+  "11:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

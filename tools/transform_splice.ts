@@ -45,6 +45,21 @@ const vlq_lookup = /* @__PURE__ */ (() => {
   }
   return table;
 })();
+const vlq_small = /* @__PURE__ */ (() => {
+  const table = new Array<string>(128);
+  for (let value = -64; value <= 63; value += 1) {
+    let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
+    let out = "";
+    do {
+      let digit = vlq & 31;
+      vlq >>>= 5;
+      if (vlq > 0) digit |= 32;
+      out += vlq_chars[digit];
+    } while (vlq > 0);
+    table[value + 64] = out;
+  }
+  return table;
+})();
 
 const safe_unwrapped_expressions = new Set([
   "CallExpression",
@@ -55,19 +70,16 @@ const safe_unwrapped_expressions = new Set([
   "ParenthesizedExpression",
 ]);
 
+const noop_location = (): void => {};
+
 function make_nomap_language(
   base_lang: ReturnType<typeof ts_language>,
 ): ReturnType<typeof ts_language> {
   const previous = base_lang._;
   base_lang._ = (current, context, visitor) => {
-    const previous_location = context.location;
-    context.location = () => {};
-    try {
-      if (previous !== undefined) previous(current, context, visitor);
-      else visitor(current);
-    } finally {
-      context.location = previous_location;
-    }
+    if (context.location !== noop_location) context.location = noop_location;
+    if (previous !== undefined) previous(current, context, visitor);
+    else visitor(current);
   };
   return base_lang;
 }
@@ -117,11 +129,15 @@ export function create_source_positions(
   return (offset: number) => {
     const line_start = starts[cached];
     const next_start = starts[cached + 1];
-    if (
-      offset >= line_start &&
-      (next_start === undefined || offset < next_start)
-    ) {
-      return { line: cached + 1, column: offset - line_start };
+    if (offset >= line_start) {
+      if (next_start === undefined || offset < next_start) {
+        return { line: cached + 1, column: offset - line_start };
+      }
+      const after_next = starts[cached + 2];
+      if (after_next === undefined || offset < after_next) {
+        cached += 1;
+        return { line: cached + 1, column: offset - next_start };
+      }
     }
     let left = 0;
     let right = starts.length;
@@ -136,6 +152,7 @@ export function create_source_positions(
 }
 
 function encode_vlq(value: number): string {
+  if (value >= -64 && value <= 63) return vlq_small[value + 64];
   let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
   let out = "";
   do {

@@ -85,7 +85,7 @@ export function typeclasses_esbuild_plugin(
     setup(build: EsbuildBuild) {
       build.onLoad({ filter: /\.tsx?$/ }, async ({ path }) => {
         const code = await readFile(path, "utf8");
-        if (!might_contain_target(code)) return undefined;
+        if (!might_contain_target(code, options)) return undefined;
         const result = cache.transform(code, path, options);
         options.on_report?.(result.reports);
         if (report_diagnostics(result.diagnostics, options)) {
@@ -120,7 +120,7 @@ export function typeclasses_rollup_plugin(
 }
 
 const rolldown_target_code_filter =
-  /\\u|\b(?:Do|Program|collect)\b|run_(?:reader|state|writer|cells|except)|prepare_(?:cells|handle_cells|operations)|handle_(?:cells|operations)|(?:eval|exec)_state|Effect|from_(?:array|iterable|factory|snapshot)|IterableT|to_array|compile_fold|Foldable/;
+  /\\u|\b(?:Do|Program|collect|Traversable|traverse_sequential)\b|\.\s*traverse\b|\.\s*match\s*\(\s*\{|(?:^|[^.\w$])match\s*\(|run_(?:reader|state|writer|cells|except|task)|prepare_(?:cells|handle_cells|operations)|handle_(?:cells|operations)|(?:eval|exec)_state|Effect|from_(?:array|iterable|factory|snapshot)|IterableT|to_array|preview|filter_map|compile_fold|Foldable/;
 
 /** A Rolldown adapter with native id and code hook filters to avoid needless JS calls. */
 export function typeclasses_rolldown_plugin(
@@ -148,7 +148,9 @@ function transform_rollup_source(
   options: TransformPluginOptions,
   cache: ReturnType<typeof create_transform_cache>,
 ): TransformHookResult {
-  if (!is_typescript_file(id) || !might_contain_target(code)) return null;
+  if (!is_typescript_file(id) || !might_contain_target(code, options)) {
+    return null;
+  }
   const result = cache.transform(code, id, options);
   options.on_report?.(result.reports);
   const policy = options.on_unsupported ?? "error";
@@ -176,8 +178,11 @@ function is_typescript_file(id: string): boolean {
   return path.endsWith(".ts") || path.endsWith(".tsx");
 }
 
-function might_contain_target(code: string): boolean {
-  return might_contain_transform_target(code);
+function might_contain_target(
+  code: string,
+  options?: TransformPluginOptions,
+): boolean {
+  return might_contain_transform_target(code, options);
 }
 
 function report_diagnostics(

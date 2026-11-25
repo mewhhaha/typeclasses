@@ -1273,3 +1273,335 @@ Deno.test("round-4 post-plugin fusion covers ArrayT comprehensions, IterableT te
   assert_equals(mod.get_prep_init_count(), 1);
   assert_equals(mod.r4_untouched_39(1), 40);
 });
+
+Deno.test("round-5 post-plugin fusion covers Task run_task, direct run_*_terminal, Do(List), Traversable.traverse, tagged match, and IterableT filter_map/preview/fold_while", async () => {
+  const src_dir = new URL("../src/", import.meta.url).href;
+  const source = [
+    `import { Do, Either, Foldable, Identity, identity, Just, Left, List, Nil, Maybe, Nothing, Program, Right, Traversable, Validation, Invalid, Valid, match, from_array as list_from_arr } from "${src_dir}mod.ts";`,
+    `import { ArrayT } from "${src_dir}array.ts";`,
+    `import { from_fn, run_task, succeed, Task } from "${src_dir}task.ts";`,
+    `import { Effect } from "${src_dir}effects.ts";`,
+    `import { ask, reader, Reader, run_reader_terminal } from "${src_dir}reader.ts";`,
+    `import { get, modify, run_state_terminal, state, State } from "${src_dir}state.ts";`,
+    `import { run_writer_terminal, tell, writer_cell } from "${src_dir}writer.ts";`,
+    `import { traverse_sequential } from "${src_dir}traversal.ts";`,
+    `import { from_array, filter_map, preview, to_array } from "${src_dir}iterable.ts";`,
+    // P1: Immediate Task fusion (Do(Task), .run(), Program) + try/catch barrier
+    "export function task_pure_loop(n: number) {",
+    "  return run_task(Do(Task, function* () {",
+    "    let acc = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      acc += yield* succeed(i);",
+    "      acc += yield* from_fn(() => i * 2);",
+    "    }",
+    "    return acc;",
+    "  }));",
+    "}",
+    "export function task_do_dot_run(base: number) {",
+    "  return Do(Task, function* () {",
+    "    const a = yield* from_fn(() => Promise.resolve(base + 5));",
+    "    const b = yield* Task.pure(a * 2);",
+    "    return b;",
+    "  }).run();",
+    "}",
+    "export function task_program_run(n: number) {",
+    "  return run_task(Program(function* () {",
+    "    let total = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      total += yield* Effect.lift(from_fn(() => i + 1));",
+    "    }",
+    "    return yield* Effect.pure(total);",
+    "  }));",
+    "}",
+    "export function task_try_barrier() {",
+    "  return run_task(Do(Task, function* () {",
+    "    try {",
+    "      return yield* from_fn((): number => { throw new Error('reject'); });",
+    "    } catch {",
+    "      return -1;",
+    "    }",
+    "  }));",
+    "}",
+    // P2: Direct run_*_terminal fusion (inline Program, named Program, keyed cells, Do(Reader/State))
+    'const r5_cfg = reader<number>()("r5_cfg");',
+    'const r5_cnt = state<number>()("r5_cnt");',
+    'const r5_log = writer_cell("r5_log", ArrayT<number>([]));',
+    "export function direct_reader_terminal(n: number) {",
+    "  const prog = Program(function* () {",
+    "    const mul = yield* ask<number>();",
+    "    let s = 0;",
+    "    for (let i = 1; i <= n; i += 1) s += i * mul;",
+    "    return s;",
+    "  });",
+    "  return run_reader_terminal(prog, 3);",
+    "}",
+    "export function direct_state_terminal(n: number) {",
+    "  return run_state_terminal(Program(function* () {",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      yield* modify((s: number) => s + i);",
+    "    }",
+    "    return yield* get<number>();",
+    "  }), 10);",
+    "}",
+    "export function direct_writer_terminal(n: number) {",
+    "  return run_writer_terminal(r5_log, Program(function* () {",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      yield* r5_log.tell(ArrayT([i * 2]));",
+    "    }",
+    "    return n;",
+    "  }));",
+    "}",
+    "export function direct_do_reader_state(x: number) {",
+    "  const r = run_reader_terminal(Do(Reader, function* () {",
+    "    const env = yield* ask<number>();",
+    "    return env + x;",
+    "  }), 7);",
+    "  const [sv, st] = run_state_terminal(Do(State, function* () {",
+    "    yield* modify((s: number) => s + r);",
+    "    return yield* get<number>();",
+    "  }), 5);",
+    "  const k = run_reader_terminal(r5_cfg, Program(function* () {",
+    "    const c = yield* r5_cfg.ask();",
+    "    return c * 2;",
+    "  }), 4);",
+    "  const [kv, ks] = run_state_terminal(r5_cnt, Program(function* () {",
+    "    yield* r5_cnt.modify((s) => s + k);",
+    "    return yield* r5_cnt.get();",
+    "  }), 1);",
+    "  return [r, sv, st, kv, ks];",
+    "}",
+    // P3: Direct Do(List, ...) comprehension
+    "export function list_comp_2d(xs: List<number>, ys: List<number>) {",
+    "  return Do(List, function* () {",
+    "    const x = yield* xs;",
+    "    const y = yield* ys;",
+    "    if ((x + y) % 2 !== 0) return yield* Nil<number>();",
+    "    return x * 10 + y;",
+    "  });",
+    "}",
+    // P4: Traversable.traverse & traverse_sequential fusion
+    "export const trav_log: number[] = [];",
+    "export function trav_maybe_elided(xs: number[]) {",
+    "  return Traversable.traverse(ArrayT(xs), Maybe, (x) => x > 0 ? Just(x * 2) : Nothing());",
+    "}",
+    "export function trav_maybe_method_side_effects(xs: number[]) {",
+    "  return ArrayT(xs).traverse(Maybe, (x) => { trav_log.push(x); return x > 0 ? Just(x + 1) : Nothing(); });",
+    "}",
+    "export function trav_either_app_side_effects(xs: number[]) {",
+    "  return Traversable.traverse(ArrayT(xs), Either, (x) => (trav_log.push(x), x > 0 ? Right(x) : Left(`bad:${x}`)));",
+    "}",
+    "export function trav_seq_either_elided(xs: number[]) {",
+    "  return traverse_sequential(xs, Either, (x) => (trav_log.push(x), x > 0 ? Right(x * 3) : Left(`stop:${x}`)));",
+    "}",
+    "export function trav_identity_elided(xs: number[]) {",
+    "  return ArrayT(xs).traverse(Identity, (x) => identity(x + 10));",
+    "}",
+    // P5a: match(val, ...) & val.match(...) + non-target regex/custom .match safety
+    "export function match_maybe_val(m: Maybe<number>) {",
+    "  return m.match({ Just: (v) => v * 2, Nothing: () => -1 });",
+    "}",
+    "export function match_either_fn(e: Either<string, number>) {",
+    "  return match(e, { Right: (v) => v + 1, Left: (err) => err.length });",
+    "}",
+    "export function match_validation_block(v: Validation<string, number>) {",
+    "  return v.match({",
+    "    valid: (n) => { const out = n * 3; return out; },",
+    "    invalid: (err, _s) => -err.length,",
+    "  });",
+    "}",
+    "export function match_list_array(xs: readonly List<number>[], idx: number) {",
+    "  return xs[idx].match({ Cons: (h, _t) => h, Nil: () => 0 });",
+    "}",
+    "export function regex_and_custom_untouched(s: string) {",
+    "  const custom = { match(o: { a: () => number }) { return o.a(); } };",
+    "  return [s.match(/[0-9]+/)?.[0] ?? '', custom.match({ a: () => 99 })];",
+    "}",
+    // P5b: IterableT filter_map, preview, Foldable.fold_while
+    "export function iter_filter_map_preview(xs: number[], limit: number) {",
+    "  return preview(filter_map(from_array(xs), (x) => x % 2 === 0 ? Just(x * 10) : Nothing()), limit);",
+    "}",
+    "export function iter_preview_zero_stage(xs: number[], limit: number) {",
+    "  return preview(from_array(xs), limit);",
+    "}",
+    "export function iter_fold_while_elided(xs: number[], cap: number) {",
+    "  return Foldable.fold_while(from_array(xs).map((x) => x * 2), 0, (acc, x) => acc + x >= cap ? ['Done', acc + x] : ['Continue', acc + x]);",
+    "}",
+    "export function iter_filter_map_general(xs: number[]) {",
+    "  const to_m = (n: number): Maybe<number> => n > 2 ? Just(n + 1) : Nothing();",
+    "  return to_array(filter_map(from_array(xs), to_m));",
+    "}",
+    "export function make_list_pair() { return list_from_arr([1, 2]); }",
+    "export function make_val_pair() { return [Valid(4), Invalid('err', { concat: (a: string, b: string) => a + b })] as const; }",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round5_fusion.ts");
+  assert_equals(result.diagnostics.length, 1);
+  assert_true(
+    result.diagnostics[0].message.includes("Skipped Do"),
+    "only task_try_barrier should emit a diagnostic",
+  );
+  // Verify P1 fused task_pure_loop/task_do_dot_run/task_program_run while preserving try/catch barrier
+  assert_true(
+    result.code.includes("async () =>"),
+    "expected P1 immediate Task calls to fuse into async IIFE\n\n" +
+      result.code,
+  );
+  // Verify P2 fused all run_*_terminal calls (zero remaining run_*_terminal runtime calls!)
+  assert_true(
+    !/run_reader_terminal\(/.test(result.code) &&
+      !/run_state_terminal\(/.test(result.code) &&
+      !/run_writer_terminal\(/.test(result.code),
+    "expected P2 run_*_terminal calls to fuse completely\n\n" + result.code,
+  );
+  // Verify P3 fused Do(List)
+  assert_true(
+    !/Do\(List/.test(result.code),
+    "expected P3 Do(List) comprehension to fuse\n\n" + result.code,
+  );
+  // Verify P4 fused Traversable.traverse & traverse_sequential
+  assert_true(
+    !/Traversable\.traverse\(/.test(result.code) &&
+      !/\.traverse\(/.test(result.code) &&
+      !/traverse_sequential\(/.test(result.code),
+    "expected P4 Traversable.traverse and traverse_sequential to fuse\n\n" +
+      result.code,
+  );
+  // Verify P5a fused tagged match/val.match while leaving regex and custom.match untouched
+  assert_true(
+    !/\bmatch\(e,/.test(result.code) &&
+      !/\bm\.match\(/.test(result.code) &&
+      !/\bv\.match\(/.test(result.code) &&
+      !/xs\[idx\]\.match\(/.test(result.code) &&
+      result.code.includes("s.match(/[0-9]+/)") &&
+      result.code.includes("custom.match("),
+    "expected P5a tagged match fusion + non-target preservation\n\n" +
+      result.code,
+  );
+  // Verify P5b fused filter_map, preview, and Foldable.fold_while
+  assert_true(
+    !/\bpreview\(/.test(result.code) &&
+      !/Foldable\.fold_while\(/.test(result.code) &&
+      !/\bfilter_map\(/.test(result.code),
+    "expected P5b IterableT filter_map, preview, and fold_while to fuse\n\n" +
+      result.code,
+  );
+
+  // Strict TypeScript check on generated Round 5 code!
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round5-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Round 5 TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Execute generated code and verify every semantic invariant!
+  const compiled = executable_typescript(result.code, "round5_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  const { Just, Nothing } = await import("../src/maybe.ts");
+  const { Left, Right } = await import("../src/either.ts");
+  const { from_array: list_from_array, to_array: list_to_array } = await import(
+    "../src/list.ts"
+  );
+
+  // P1 runtime checks
+  assert_equals(await mod.task_pure_loop(5), 45);
+  assert_equals(await mod.task_do_dot_run(10), 30);
+  assert_equals(await mod.task_program_run(4), 14);
+  assert_equals(await mod.task_try_barrier(), -1);
+
+  // P2 runtime checks
+  assert_equals(mod.direct_reader_terminal(4), 30);
+  assert_equals(mod.direct_state_terminal(4), [20, 20]);
+  const [w_res, w_log] = mod.direct_writer_terminal(3);
+  assert_equals([w_res, w_log.value()], [3, [2, 4, 6]]);
+  assert_equals(mod.direct_do_reader_state(3), [10, 15, 15, 9, 9]);
+
+  // P3 runtime checks
+  assert_equals(
+    list_to_array(
+      mod.list_comp_2d(list_from_array([1, 2, 3]), list_from_array([1, 2])),
+    ),
+    [11, 22, 31],
+  );
+
+  // P4 runtime checks (including applicative vs sequential side-effect order & empty/index-0 edge cases!)
+  const tm_ok = mod.trav_maybe_elided([1, 2, 3]).value();
+  assert_equals(tm_ok[0], "Just");
+  if (tm_ok[0] === "Just") assert_equals(tm_ok[1].value(), [2, 4, 6]);
+  const tm_empty = mod.trav_maybe_elided([]).value();
+  assert_equals(tm_empty[0], "Just");
+  if (tm_empty[0] === "Just") assert_equals(tm_empty[1].value(), []);
+  assert_equals(mod.trav_maybe_elided([0, 2, 3]).value(), ["Nothing"]);
+  assert_equals(mod.trav_maybe_elided([1, 0, 3]).value(), ["Nothing"]);
+
+  mod.trav_log.length = 0;
+  assert_equals(mod.trav_maybe_method_side_effects([1, -1, 2]).value(), [
+    "Nothing",
+  ]);
+  assert_equals(mod.trav_log, [1, -1, 2]);
+
+  mod.trav_log.length = 0;
+  assert_equals(mod.trav_either_app_side_effects([1, -2, -3, 4]).value(), [
+    "Left",
+    "bad:-2",
+  ]);
+  assert_equals(mod.trav_log, [1, -2, -3, 4]);
+
+  mod.trav_log.length = 0;
+  assert_equals(mod.trav_seq_either_elided([1, -2, 3]).value(), [
+    "Left",
+    "stop:-2",
+  ]);
+  assert_equals(mod.trav_log, [1, -2]);
+  assert_equals(mod.trav_seq_either_elided([]).value(), ["Right", []]);
+  assert_equals(mod.trav_seq_either_elided([-5, 1]).value(), [
+    "Left",
+    "stop:-5",
+  ]);
+  assert_equals(mod.trav_seq_either_elided([1, 2, 3]).value(), [
+    "Right",
+    [3, 6, 9],
+  ]);
+  assert_equals(mod.trav_identity_elided([]).value().value(), []);
+  assert_equals(mod.trav_identity_elided([1, 2]).value().value(), [11, 12]);
+
+  // P5a runtime checks
+  assert_equals(mod.match_maybe_val(Just(21)), 42);
+  assert_equals(mod.match_maybe_val(Nothing()), -1);
+  assert_equals(mod.match_either_fn(Right(10)), 11);
+  assert_equals(mod.match_either_fn(Left("oops")), 4);
+  const [v_ok, v_bad] = mod.make_val_pair();
+  assert_equals(mod.match_validation_block(v_ok), 12);
+  assert_equals(mod.match_validation_block(v_bad), -3);
+  assert_equals(
+    mod.match_list_array([mod.make_list_pair(), list_from_array([])], 0),
+    1,
+  );
+  assert_equals(
+    mod.match_list_array([mod.make_list_pair(), list_from_array([])], 1),
+    0,
+  );
+  assert_equals(mod.regex_and_custom_untouched("abc123def"), ["123", 99]);
+
+  // P5b runtime checks
+  assert_equals(mod.iter_filter_map_preview([1, 2, 3, 4, 5, 6], 2), [20, 40]);
+  assert_equals(mod.iter_preview_zero_stage([10, 20, 30], 2), [10, 20]);
+  assert_equals(mod.iter_fold_while_elided([1, 2, 3, 4, 5], 12), 12);
+  assert_equals(mod.iter_filter_map_general([1, 2, 3, 4]), [4, 5]);
+});
