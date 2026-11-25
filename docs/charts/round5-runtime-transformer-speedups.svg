@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 486" width="980"
+  height="486" role="img"
+  aria-label="Round 5: Core Runtime &amp; Transformer Speedups (vs main @ b784b36)">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+  <style>
+  .bg {
+    fill: #0d1117;
+    stroke: #30363d;
+    stroke-width: 1;
+  }
+  .title {
+    font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #f0f6fc;
+  }
+  .subtitle {
+    font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #8b949e;
+  }
+  .label {
+    font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #e6edf3;
+  }
+  .mult {
+    font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #38bdf8;
+  }
+  .detail {
+    font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .tick {
+    font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .grid {
+    stroke: #21262d;
+    stroke-width: 1;
+  }
+  .baseline {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+  .ci {
+    stroke: #f0f6fc;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.8;
+  }
+  .row-alt {
+    fill: #161b22;
+  }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="979" height="485" rx="12" />
+  <text class="title" x="24"
+    y="34">Round 5: Core Runtime &amp; Transformer Speedups (vs main @ b784b36)</text>
+  <text class="subtitle" x="24"
+    y="54">Paired ABBA benchmarks (8 blocks, 95% bootstrap CI) · Fast pre-parse skip, AsyncIterableT push pipelines, Task sync from_fn, Stm</text>
+  <line x1="24" y1="68" x2="956" y2="68" stroke="#21262d" stroke-width="1" />
+  <rect class="row-alt" x="12" y="118" width="956" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="190" width="956" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="262" width="956" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="334" width="956" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="406" width="956" height="36" rx="4" />
+  <line class="baseline" x1="330.0" y1="76" x2="330.0" y2="448" />
+  <text class="tick" x="330.0" y="464" text-anchor="middle">1x</text>
+  <line class="grid" x1="394.8" y1="76" x2="394.8" y2="448" />
+  <text class="tick" x="394.8" y="464" text-anchor="middle">2x</text>
+  <line class="grid" x1="480.6" y1="76" x2="480.6" y2="448" />
+  <text class="tick" x="480.6" y="464" text-anchor="middle">5x</text>
+  <line class="grid" x1="545.4" y1="76" x2="545.4" y2="448" />
+  <text class="tick" x="545.4" y="464" text-anchor="middle">10x</text>
+  <line class="grid" x1="610.3" y1="76" x2="610.3" y2="448" />
+  <text class="tick" x="610.3" y="464" text-anchor="middle">20x</text>
+  <line class="grid" x1="696.0" y1="76" x2="696.0" y2="448" />
+  <text class="tick" x="696.0" y="464" text-anchor="middle">50x</text>
+  <text class="label" x="24" y="104.0">Transform: large unm4k (skip)</text>
+  <rect x="330" y="91.0" width="288.0" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="616.7" y1="100.0" x2="618.4" y2="100.0" />
+  <line class="ci" x1="616.7" y1="96.0" x2="616.7" y2="104.0" />
+  <line class="ci" x1="618.4" y1="96.0" x2="618.4" y2="104.0" />
+  <text class="mult" x="716" y="104.0">21.7x</text>
+  <text class="detail" x="782" y="104.0">(233µs -&gt; 10.7µs)</text>
+  <text class="label" x="24"
+    y="140.0">Transform: large unm4k w/ imports (skip)</text>
+  <rect x="330" y="127.0" width="245.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="575.4" y1="136.0" x2="576.9" y2="136.0" />
+  <line class="ci" x1="575.4" y1="132.0" x2="575.4" y2="140.0" />
+  <line class="ci" x1="576.9" y1="132.0" x2="576.9" y2="140.0" />
+  <text class="mult" x="716" y="140.0">13.8x</text>
+  <text class="detail" x="782" y="140.0">(230µs -&gt; 16.6µs)</text>
+  <text class="label" x="24"
+    y="176.0">AsyncIterableT from_chunks to_array</text>
+  <rect x="330" y="163.0" width="236.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="564.4" y1="172.0" x2="570.1" y2="172.0" />
+  <line class="ci" x1="564.4" y1="168.0" x2="564.4" y2="176.0" />
+  <line class="ci" x1="570.1" y1="168.0" x2="570.1" y2="176.0" />
+  <text class="mult" x="716" y="176.0">12.5x</text>
+  <text class="detail" x="782" y="176.0">(161µs -&gt; 12.8µs)</text>
+  <text class="label" x="24" y="212.0">Task tail_rec_m 100 sync from_fn</text>
+  <rect x="330" y="199.0" width="157.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="484.4" y1="208.0" x2="491.4" y2="208.0" />
+  <line class="ci" x1="484.4" y1="204.0" x2="484.4" y2="212.0" />
+  <line class="ci" x1="491.4" y1="204.0" x2="491.4" y2="212.0" />
+  <text class="mult" x="716" y="212.0">5.38x</text>
+  <text class="detail" x="782" y="212.0">(6.56µs -&gt; 1.21µs)</text>
+  <text class="label" x="24"
+    y="248.0">AsyncIterableT pipeline find (1000)</text>
+  <rect x="330" y="235.0" width="141.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="468.0" y1="244.0" x2="472.8" y2="244.0" />
+  <line class="ci" x1="468.0" y1="240.0" x2="468.0" y2="248.0" />
+  <line class="ci" x1="472.8" y1="240.0" x2="472.8" y2="248.0" />
+  <text class="mult" x="716" y="248.0">4.54x</text>
+  <text class="detail" x="782" y="248.0">(31.7µs -&gt; 6.99µs)</text>
+  <text class="label" x="24"
+    y="284.0">AsyncIterableT from_sync_factory to_array</text>
+  <rect x="330" y="271.0" width="129.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="457.4" y1="280.0" x2="462.4" y2="280.0" />
+  <line class="ci" x1="457.4" y1="276.0" x2="457.4" y2="284.0" />
+  <line class="ci" x1="462.4" y1="276.0" x2="462.4" y2="284.0" />
+  <text class="mult" x="716" y="284.0">3.99x</text>
+  <text class="detail" x="782" y="284.0">(40.1µs -&gt; 10.1µs)</text>
+  <text class="label" x="24" y="320.0">Task 100 sync from_fn bind</text>
+  <rect x="330" y="307.0" width="69.4" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="398.7" y1="316.0" x2="401.7" y2="316.0" />
+  <line class="ci" x1="398.7" y1="312.0" x2="398.7" y2="320.0" />
+  <line class="ci" x1="401.7" y1="312.0" x2="401.7" y2="320.0" />
+  <text class="mult" x="716" y="320.0">2.10x</text>
+  <text class="detail" x="782" y="320.0">(5.75µs -&gt; 2.72µs)</text>
+  <text class="label" x="24" y="356.0">Stm 200 bind+map (prebuilt tx)</text>
+  <rect x="330" y="343.0" width="22.4" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="350.3" y1="352.0" x2="353.7" y2="352.0" />
+  <line class="ci" x1="350.3" y1="348.0" x2="350.3" y2="356.0" />
+  <line class="ci" x1="353.7" y1="348.0" x2="353.7" y2="356.0" />
+  <text class="mult" x="716" y="356.0">1.27x</text>
+  <text class="detail" x="782" y="356.0">(6.52µs -&gt; 5.18µs)</text>
+  <text class="label" x="24"
+    y="392.0">Stm atomically read+write (primitive)</text>
+  <rect x="330" y="379.0" width="16.4" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="344.1" y1="388.0" x2="353.1" y2="388.0" />
+  <line class="ci" x1="344.1" y1="384.0" x2="344.1" y2="392.0" />
+  <line class="ci" x1="353.1" y1="384.0" x2="353.1" y2="392.0" />
+  <text class="mult" x="716" y="392.0">1.19x</text>
+  <text class="detail" x="782" y="392.0">(103ns -&gt; 87.0ns)</text>
+  <text class="label" x="24" y="428.0">Stm Do(Stm) 50 TVar rw</text>
+  <rect x="330" y="415.0" width="6.7" height="18" rx="4" fill="url(#barGrad)" />
+  <line class="ci" x1="332.8" y1="424.0" x2="339.9" y2="424.0" />
+  <line class="ci" x1="332.8" y1="420.0" x2="332.8" y2="428.0" />
+  <line class="ci" x1="339.9" y1="420.0" x2="339.9" y2="428.0" />
+  <text class="mult" x="716" y="428.0">1.07x</text>
+  <text class="detail" x="782" y="428.0">(7.51µs -&gt; 7.12µs)</text>
+</svg>
