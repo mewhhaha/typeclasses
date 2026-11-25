@@ -703,17 +703,9 @@ function register_state_traversal(dictionary: unknown): void {
       fn: (item: from) => Data<AsState<unknown>, to>,
       build: (items: Iterable<to>) => result,
     ): Data<AsState<unknown>, result> => {
-      let fns: RawState<unknown, to>[];
-      if (Array.isArray(items)) {
-        fns = new Array<RawState<unknown, to>>(items.length);
-        for (let i = 0; i < items.length; i += 1) {
-          fns[i] = fn(items[i]).value() as RawState<unknown, to>;
-        }
-      } else {
-        fns = [];
-        for (const item of items) {
-          fns.push(fn(item).value() as RawState<unknown, to>);
-        }
+      const fns: RawState<unknown, to>[] = [];
+      for (const item of items) {
+        fns.push(fn(item).value() as RawState<unknown, to>);
       }
       return dict((initial: unknown) => {
         const out = new Array<to>(fns.length);

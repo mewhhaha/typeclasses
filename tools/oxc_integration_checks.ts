@@ -3176,6 +3176,31 @@ Deno.test("Codex Wave 2 transformer review regressions (Task eager construction,
     "  const view = ArrayT(ys).concat(ArrayT((ys[0] = 9, [3]))).value();",
     "  return { snap, view };",
     "}",
+    "export async function eager_catch_error_order_and_recovery() {",
+    "  const trace: string[] = [];",
+    "  const make_cb = () => {",
+    "    trace.push('task');",
+    "    return (): number => { throw new Error('boom'); };",
+    "  };",
+    "  const make_handler = () => {",
+    "    trace.push('handler');",
+    "    return (_e: unknown) => succeed(4);",
+    "  };",
+    "  const t = from_fn(make_cb()).catch_error(make_handler()).map((n) => n + 1);",
+    "  trace.push('built');",
+    "  const value = await run_task(t);",
+    "  return { trace, value };",
+    "}",
+    "export async function regex_literal_preserved_across_runs() {",
+    "  const t = succeed(/x/g).map((re) => re.test('x'));",
+    "  return [await run_task(t), await run_task(t)];",
+    "}",
+    "type NonNullable<T> = { wrong: T };",
+    "export function shadowed_nonnullable_traverse(xs: number[]) {",
+    "  const _check: NonNullable<number> = { wrong: 1 };",
+    "  void _check;",
+    "  return run_task(traverse_task(xs, 2, (x) => from_fn(() => x + 1)));",
+    "}",
   ].join("\n");
 
   const result = transform_do_program_source(
@@ -3257,4 +3282,20 @@ Deno.test("Codex Wave 2 transformer review regressions (Task eager construction,
   );
   assert_equals(mod_tx.concat_snapshot_and_view().snap, [1, 2, 3]);
   assert_equals(mod_tx.concat_snapshot_and_view().view, [9, 2, 3]);
+  assert_equals(
+    await mod_tx.eager_catch_error_order_and_recovery(),
+    await mod_orig.eager_catch_error_order_and_recovery(),
+  );
+  assert_equals(
+    await mod_tx.regex_literal_preserved_across_runs(),
+    await mod_orig.regex_literal_preserved_across_runs(),
+  );
+  assert_equals(
+    await mod_tx.regex_literal_preserved_across_runs(),
+    [true, false],
+  );
+  assert_equals(
+    await mod_tx.shadowed_nonnullable_traverse([1, 2, 3]),
+    await mod_orig.shadowed_nonnullable_traverse([1, 2, 3]),
+  );
 });

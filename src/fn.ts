@@ -146,19 +146,13 @@ function create_fn(): FnConstructor {
     const first_raw = first.value();
     let claimed = false;
     return Fn((input: unknown) => {
+      const first_result = first_raw(input);
       let iter = first_iterator;
-      let first_result: unknown;
       if (claimed) {
         iter = run();
         const head = iter.next();
         if (head.done) return head.value;
-        first_result = (head.value as Data<AsFn<unknown>, unknown>).value()(
-          input,
-        );
-      } else {
-        first_result = first_raw(input);
-        claimed = true;
-      }
+      } else claimed = true;
       let next = iter.next(first_result);
       while (!next.done) {
         next = iter.next(

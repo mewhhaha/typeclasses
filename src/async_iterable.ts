@@ -712,6 +712,7 @@ type OpenedSource = {
   readonly kind: number;
   arr?: readonly unknown[];
   idx: number;
+  first_pending?: PromiseLike<unknown>;
   sync_iter?: Iterator<unknown>;
   chunk_iter?: AsyncIterator<readonly unknown[]>;
   stream_reader?: ReadableStreamDefaultReader<unknown>;
@@ -1417,7 +1418,13 @@ function drive_concurrent_to_array<item>(
       for (let i = 0; i < iter.length; i += 1) {
         const raw_item = iter[i];
         if (is_promise_like(raw_item)) {
-          preopened = { kind: 1, arr: iter, idx: i, prevent_cancel: false };
+          preopened = {
+            kind: 1,
+            arr: iter,
+            idx: i + 1,
+            first_pending: raw_item,
+            prevent_cancel: false,
+          };
           existing_controller = controller;
           break;
         }
@@ -1772,7 +1779,11 @@ async function drive_concurrent_ordered_push<item, result>(
   let head_seq = 0;
   let count = 0;
   let in_flight = 0;
-  let index = preopened !== undefined ? preopened.idx : 0;
+  let index = preopened !== undefined
+    ? (preopened.first_pending !== undefined
+      ? preopened.idx - 1
+      : preopened.idx)
+    : 0;
   let ended = false;
   let opened: OpenedSource | undefined = preopened;
   let has_failure = false;
@@ -1828,12 +1839,18 @@ async function drive_concurrent_ordered_push<item, result>(
       ) {
         let value: unknown;
         if (src_kind === 1) {
-          const arr = opened.arr!;
-          if (opened.idx >= arr.length) {
-            ended = true;
-            break;
+          let raw_item: unknown;
+          if (opened.first_pending !== undefined) {
+            raw_item = opened.first_pending;
+            opened.first_pending = undefined;
+          } else {
+            const arr = opened.arr!;
+            if (opened.idx >= arr.length) {
+              ended = true;
+              break;
+            }
+            raw_item = arr[opened.idx++];
           }
-          const raw_item = arr[opened.idx++];
           value = is_promise_like(raw_item)
             ? await race_async(raw_item)
             : raw_item;
@@ -2044,7 +2061,11 @@ async function drive_concurrent_unordered_push<item, result>(
   let ready_head = 0;
   let ready_count = 0;
   let admitted = 0;
-  let index = preopened !== undefined ? preopened.idx : 0;
+  let index = preopened !== undefined
+    ? (preopened.first_pending !== undefined
+      ? preopened.idx - 1
+      : preopened.idx)
+    : 0;
   let ended = false;
   let reading = false;
   let read: IteratorResult<unknown> | undefined;
@@ -2145,11 +2166,17 @@ async function drive_concurrent_unordered_push<item, result>(
           !ended && admitted < concurrency && !reading && !has_failure &&
           !aborted
         ) {
-          if (opened.idx >= arr.length) {
-            ended = true;
-            break;
+          let raw_item: unknown;
+          if (opened.first_pending !== undefined) {
+            raw_item = opened.first_pending;
+            opened.first_pending = undefined;
+          } else {
+            if (opened.idx >= arr.length) {
+              ended = true;
+              break;
+            }
+            raw_item = arr[opened.idx++];
           }
-          const raw_item = arr[opened.idx++];
           if (is_promise_like(raw_item)) {
             await_item_thenable(raw_item);
             break;
@@ -4450,10 +4477,23 @@ export function from_sync_factory<item>(
               return Promise.resolve({ done: true, value: undefined });
             }
             if (is_promise_like(next.value)) {
-              return Promise.resolve(next.value).then((resolved) => ({
-                done: false,
-                value: resolved as item,
-              }));
+              return Promise.resolve(next.value).then(
+                (resolved) => ({
+                  done: false,
+                  value: resolved as item,
+                }),
+                (error) => {
+                  if (!closed && !ended) {
+                    closed = true;
+                    try {
+                      sync?.return?.();
+                    } catch {
+                      // Suppress cleanup error in favor of primary error.
+                    }
+                  }
+                  throw error;
+                },
+              );
             }
             return Promise.resolve(next);
           } catch (error) {

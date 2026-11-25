@@ -46,12 +46,8 @@ export function register_traversal<dictionary extends Applicative<dictionary>>(
 }
 
 type Tree<item> =
-  | { readonly tag: "leaf"; readonly item: item }
-  | {
-    readonly tag: "branch";
-    readonly left: Tree<item>;
-    readonly right: Tree<item>;
-  };
+  | readonly [item]
+  | readonly [Tree<item>, Tree<item>];
 
 type TaggedItem<to> = {
   readonly [tagged_tag]?: PropertyKey;
@@ -80,11 +76,11 @@ function unwrap_fast<to>(
 }
 
 function make_leaf<item>(item: item): Tree<item> {
-  return { tag: "leaf", item };
+  return [item];
 }
 
 function make_branch<item>(left: Tree<item>, right: Tree<item>): Tree<item> {
-  return { tag: "branch", left, right };
+  return [left, right];
 }
 
 function identity_array<item>(out: Iterable<item>): item[] {
@@ -122,8 +118,6 @@ export function traverse_items_into<
     | TraverseItems<applicative>
     | undefined;
   if (specialized !== undefined) return specialized(items, fn, build);
-  const is_canon = Array.isArray(items) &&
-    items[Symbol.iterator] === array_iterator;
   const dict = applicative as unknown as {
     readonly [do_runner_method]?: FastDoSpec;
     readonly pure?: unknown;
@@ -153,28 +147,35 @@ export function traverse_items_into<
     }
     pending[level] = action;
   };
-  if (is_canon && items.length === 1) {
-    const first = fn(items[0]);
-    if (items.length <= 1) {
-      return functor_map(first, (item) => build([item]));
+  let iterable: Iterable<from> = items;
+  if (Array.isArray(items) && items.length === 1) {
+    const iter = items[Symbol.iterator];
+    if (iter === array_iterator) {
+      const first = fn(items[0]);
+      if (items.length <= 1) return functor_map(first, (v) => build([v]));
+      pending[0] = functor_map(first, make_leaf);
+      for (let i = 1; i < items.length; i += 1) {
+        push(functor_map(fn(items[i]), make_leaf));
+      }
+      iterable = [];
+    } else {
+      iterable = { [Symbol.iterator]: () => iter.call(items) };
     }
-    pending[0] = functor_map(first, make_leaf);
-    for (let i = 1; i < items.length; i += 1) {
-      push(functor_map(fn(items[i]), make_leaf));
-    }
-  } else {
-    // Binary carry combines adjacent groups, without buffering the input first.
-    for (const item of items) push(functor_map(fn(item), make_leaf));
   }
+  // Binary carry combines adjacent groups, without buffering the input first.
+  for (const item of iterable) push(functor_map(fn(item), make_leaf));
   let result: Data<applicative, Tree<to>> | undefined;
   for (let level = pending.length - 1; level >= 0; level -= 1) {
     const action = pending[level];
-    if (action === undefined) continue;
-    if (result === undefined) result = action;
-    else result = Applicative.lift(make_branch, result, action);
+    if (action !== undefined) {
+      result = result === undefined
+        ? action
+        : Applicative.lift(make_branch, result, action);
+    }
   }
-  if (result === undefined) return applicative_pure(applicative, build([]));
-  return functor_map(result, (tree) => build(tree_to_array(tree)));
+  return result === undefined
+    ? applicative_pure(applicative, build([]))
+    : functor_map(result, (tree) => build(tree_to_array(tree)));
 }
 
 /**
@@ -241,12 +242,12 @@ export function traverse_sequential<
 }
 
 function tree_to_array<item>(tree: Tree<item>): item[] {
-  const pending = [tree];
+  const pending: Tree<item>[] = [tree];
   const out: item[] = [];
   while (pending.length > 0) {
     const current = pending.pop()!;
-    if (current.tag === "leaf") out.push(current.item);
-    else pending.push(current.right, current.left);
+    if (current.length === 1) out.push(current[0]);
+    else pending.push(current[1], current[0]);
   }
   return out;
 }

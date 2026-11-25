@@ -2017,6 +2017,7 @@ export function traverse_task<input, output>(
             idx,
             undefined,
             task,
+            sync_ctrl,
           );
         }
         if (is_thenable(out)) {
@@ -2026,7 +2027,13 @@ export function traverse_task<input, output>(
             parent_signal === undefined &&
             opt_signal === undefined
           ) {
-            return continue_sequential_array(array_inputs, results, idx, p);
+            return continue_sequential_array(
+              array_inputs,
+              results,
+              idx,
+              p,
+              sync_ctrl,
+            );
           }
           return traverse_async(
             parent_signal,
@@ -2036,6 +2043,7 @@ export function traverse_task<input, output>(
             idx,
             p,
             undefined,
+            sync_ctrl,
           );
         }
         if (parent_signal?.aborted) {
@@ -2125,30 +2133,37 @@ export function traverse_task<input, output>(
     results: output[],
     start_idx: number,
     first_pending: Promise<unknown>,
+    existing_controller?: AbortController,
   ): Promise<readonly output[]> {
-    results[start_idx] = await first_pending as output;
-    let idx = start_idx + 1;
-    while (idx < array_inputs.length) {
-      const task = fn(array_inputs[idx], idx).value();
-      const out = eval_signal_free_with_options(
-        task as RawTask<unknown>,
-        options,
-      );
-      if (out === not_signal_free) {
-        return await traverse_async(
-          undefined,
-          array_inputs,
-          undefined,
-          results,
-          idx,
-          undefined,
-          task,
+    try {
+      results[start_idx] = await first_pending as output;
+      let idx = start_idx + 1;
+      while (idx < array_inputs.length) {
+        const task = fn(array_inputs[idx], idx).value();
+        const out = eval_signal_free_with_options(
+          task as RawTask<unknown>,
+          options,
         );
+        if (out === not_signal_free) {
+          return await traverse_async(
+            undefined,
+            array_inputs,
+            undefined,
+            results,
+            idx,
+            undefined,
+            task,
+            existing_controller,
+          );
+        }
+        results[idx] = (is_thenable(out) ? await out : out) as output;
+        idx += 1;
       }
-      results[idx] = (is_thenable(out) ? await out : out) as output;
-      idx += 1;
+      return results;
+    } catch (error) {
+      existing_controller?.abort(error);
+      throw error;
     }
-    return results;
   }
 
   function traverse_async(
@@ -2159,8 +2174,9 @@ export function traverse_task<input, output>(
     start_index: number,
     first_pending?: Promise<unknown>,
     first_task?: RawTask<output>,
+    existing_controller?: AbortController,
   ): Promise<readonly output[]> {
-    const controller = new AbortController();
+    const controller = existing_controller ?? new AbortController();
     let signal = controller.signal;
     if (
       parent_signal !== undefined && options.signal !== undefined &&
@@ -3011,14 +3027,8 @@ register_traversal(
     fn: (item: from) => Data<AsTask, to>,
     build: (items: Iterable<to>) => result,
   ): Data<AsTask, result> => {
-    let tasks: RawTask<to>[];
-    if (Array.isArray(items)) {
-      tasks = new Array<RawTask<to>>(items.length);
-      for (let i = 0; i < items.length; i += 1) tasks[i] = fn(items[i]).value();
-    } else {
-      tasks = [];
-      for (const item of items) tasks.push(fn(item).value());
-    }
+    const tasks: RawTask<to>[] = [];
+    for (const item of items) tasks.push(fn(item).value());
     return Task(wrap_sync_task((signal) => {
       const len = tasks.length;
       const out = new Array<to>(len);
@@ -3091,14 +3101,8 @@ register_traversal(
     fn: (item: from) => Data<AsParallelTask, to>,
     build: (items: Iterable<to>) => result,
   ): Data<AsParallelTask, result> => {
-    let tasks: RawTask<unknown>[];
-    if (Array.isArray(items)) {
-      tasks = new Array<RawTask<unknown>>(items.length);
-      for (let i = 0; i < items.length; i += 1) tasks[i] = fn(items[i]).value();
-    } else {
-      tasks = [];
-      for (const item of items) tasks.push(fn(item).value());
-    }
+    const tasks: RawTask<unknown>[] = [];
+    for (const item of items) tasks.push(fn(item).value());
     return ParallelTask(wrap_sync_task((signal) =>
       run_concurrently_maybe_sync(
         tasks,

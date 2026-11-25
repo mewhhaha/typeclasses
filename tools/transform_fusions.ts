@@ -431,11 +431,14 @@ export function create_round5_fusions(
 
   function is_const_literal_expr(expr: Expression): boolean {
     const e = unwrap(expr);
-    return e.type === "Literal" ||
-      (e.type === "UnaryExpression" &&
-        (e.operator === "-" || e.operator === "+" || e.operator === "!" ||
-          e.operator === "void") &&
-        e.argument.type === "Literal");
+    if (e.type === "Literal") {
+      return !("regex" in e && e.regex != null);
+    }
+    return e.type === "UnaryExpression" &&
+      (e.operator === "-" || e.operator === "+" || e.operator === "!" ||
+        e.operator === "void") &&
+      e.argument.type === "Literal" &&
+      !("regex" in e.argument && e.argument.regex != null);
   }
 
   function is_pure_first_yield_expr(
@@ -485,17 +488,15 @@ export function create_round5_fusions(
         return { ...tk, error: hoist_expr(tk.error) };
       case "catch_error": {
         const inner = classify_task_yield(tk.task, false);
+        const task_expr = inner !== undefined &&
+            (inner.kind === "from_fn" || inner.kind === "task_ctor") &&
+            is_inline_fn_expr(inner.fn)
+          ? tk.task
+          : hoist_expr(tk.task);
         const handler_expr = is_inline_fn_expr(tk.handler)
           ? tk.handler
           : hoist_expr(tk.handler);
-        if (
-          inner !== undefined &&
-          (inner.kind === "from_fn" || inner.kind === "task_ctor") &&
-          is_inline_fn_expr(inner.fn)
-        ) {
-          return { ...tk, handler: handler_expr };
-        }
-        return { ...tk, task: hoist_expr(tk.task), handler: handler_expr };
+        return { ...tk, task: task_expr, handler: handler_expr };
       }
       case "arbitrary":
         return { ...tk, expr: hoist_expr(tk.expr) };
@@ -1981,7 +1982,7 @@ export function create_round5_fusions(
         ];
         const h_arrow = extract_unary_arrow(classified.handler);
         let rec_val: Expression | undefined;
-        if (h_arrow !== undefined) {
+        if (h_arrow !== undefined && h_arrow.call_ref === undefined) {
           const rec_body = h_arrow.param_decl !== null
             ? substitute_ident(
               h_arrow.body,
@@ -2004,10 +2005,55 @@ export function create_round5_fusions(
           }
         }
         if (rec_val === undefined) {
+          let h_ref: IdentifierReference;
+          if (classified.handler.type === "Identifier") {
+            h_ref = classified.handler;
+          } else {
+            h_ref = services.fresh("task_ce_h");
+            catch_stmts.push(variable(h_ref, classified.handler, "const"));
+          }
+          const h_cast: Expression = node({
+            type: "TSAsExpression",
+            expression: h_ref,
+            typeAnnotation: node({
+              type: "TSFunctionType",
+              typeParameters: null,
+              params: [
+                {
+                  ...id("error"),
+                  typeAnnotation: node({
+                    type: "TSTypeAnnotation",
+                    typeAnnotation: node({ type: "TSUnknownKeyword" }),
+                  }),
+                } as BindingPattern,
+              ],
+              returnType: node({
+                type: "TSTypeAnnotation",
+                typeAnnotation: node({
+                  type: "TSTypeReference",
+                  typeName: id("ReturnType"),
+                  typeArguments: node({
+                    type: "TSTypeParameterInstantiation",
+                    params: Array.from<TSType>([
+                      node({
+                        type: "TSTypeQuery",
+                        exprName: h_ref,
+                        typeArguments: null,
+                      }),
+                    ]),
+                  }),
+                }),
+              }),
+            }),
+          });
+          const handler_call = call(
+            node({ type: "ParenthesizedExpression", expression: h_cast }),
+            [err_id],
+          );
           rec_val = node({
             type: "AwaitExpression",
             argument: call(
-              call(member(call(classified.handler, [err_id]), "value"), []),
+              call(member(handler_call, "value"), []),
               sig_id !== undefined ? [sig_id] : [],
             ),
           });
@@ -3407,7 +3453,9 @@ export function create_round5_fusions(
           cur.callee.property.name === "bind")
       ) {
         const parsed = extract_unary_arrow(cur.arguments[0] as Expression);
-        if (parsed === undefined) return undefined;
+        if (parsed === undefined || parsed.call_ref !== undefined) {
+          return undefined;
+        }
         stages_rev.push({
           kind: cur.callee.property.name,
           param_decl: parsed.param_decl,
@@ -4173,45 +4221,133 @@ export function create_round5_fusions(
         computed: true,
         optional: false,
       });
+      const infer_r = services.fresh("TTR");
+      const infer_v = services.fresh("TTV");
       const out_arr_type: TSType = node({
         type: "TSArrayType",
         elementType: node({
-          type: "TSIndexedAccessType",
-          objectType: node({
-            type: "TSTypeReference",
-            typeName: id("NonNullable"),
-            typeArguments: node({
-              type: "TSTypeParameterInstantiation",
-              params: Array.from<TSType>([
-                node({
-                  type: "TSTypeReference",
-                  typeName: id("Awaited"),
-                  typeArguments: node({
-                    type: "TSTypeParameterInstantiation",
-                    params: Array.from<TSType>([
-                      node({
-                        type: "TSTypeReference",
-                        typeName: id("ReturnType"),
-                        typeArguments: node({
-                          type: "TSTypeParameterInstantiation",
-                          params: Array.from<TSType>([
-                            node({
-                              type: "TSTypeQuery",
-                              exprName: worker_id,
-                              typeArguments: null,
-                            }),
-                          ]),
-                        }),
-                      }),
-                    ]),
-                  }),
-                }),
-              ]),
+          type: "TSParenthesizedType",
+          typeAnnotation: node({
+            type: "TSConditionalType",
+            checkType: node({
+              type: "TSTypeQuery",
+              exprName: worker_id,
+              typeArguments: null,
             }),
-          }),
-          indexType: node({
-            type: "TSLiteralType",
-            literal: node({ type: "Literal", value: 0, raw: "0" }),
+            extendsType: node({
+              type: "TSFunctionType",
+              typeParameters: null,
+              params: [
+                node({
+                  type: "RestElement",
+                  argument: id("args"),
+                  typeAnnotation: node({
+                    type: "TSTypeAnnotation",
+                    typeAnnotation: node({
+                      type: "TSArrayType",
+                      elementType: node({ type: "TSNeverKeyword" }),
+                    }),
+                  }),
+                }) as unknown as BindingPattern,
+              ],
+              returnType: node({
+                type: "TSTypeAnnotation",
+                typeAnnotation: node({
+                  type: "TSTypeLiteral",
+                  members: Array.from([
+                    node({
+                      type: "TSMethodSignature",
+                      key: id("then"),
+                      computed: false,
+                      optional: false,
+                      readonly: false,
+                      static: false,
+                      accessibility: null,
+                      kind: "method",
+                      params: [
+                        {
+                          ...id("onfulfilled"),
+                          typeAnnotation: node({
+                            type: "TSTypeAnnotation",
+                            typeAnnotation: node({
+                              type: "TSFunctionType",
+                              typeParameters: null,
+                              params: Array.from<BindingPattern>([
+                                {
+                                  ...id("value"),
+                                  typeAnnotation: node({
+                                    type: "TSTypeAnnotation",
+                                    typeAnnotation: node({
+                                      type: "TSInferType",
+                                      typeParameter: node({
+                                        type: "TSTypeParameter",
+                                        name: infer_r,
+                                        constraint: null,
+                                        default: null,
+                                        in: false,
+                                        out: false,
+                                        const: false,
+                                      }),
+                                    }),
+                                  }),
+                                } as BindingPattern,
+                              ]),
+                              returnType: node({
+                                type: "TSTypeAnnotation",
+                                typeAnnotation: node({
+                                  type: "TSUnknownKeyword",
+                                }),
+                              }),
+                            }),
+                          }),
+                        } as BindingPattern,
+                      ],
+                      typeParameters: null,
+                      returnType: node({
+                        type: "TSTypeAnnotation",
+                        typeAnnotation: node({ type: "TSUnknownKeyword" }),
+                      }),
+                    }),
+                  ]),
+                }),
+              }),
+            }),
+            trueType: node({
+              type: "TSConditionalType",
+              checkType: node({
+                type: "TSTypeReference",
+                typeName: infer_r,
+                typeArguments: null,
+              }),
+              extendsType: node({
+                type: "TSTypeOperator",
+                operator: "readonly",
+                typeAnnotation: node({
+                  type: "TSTupleType",
+                  elementTypes: Array.from<TSType>([
+                    node({
+                      type: "TSInferType",
+                      typeParameter: node({
+                        type: "TSTypeParameter",
+                        name: infer_v,
+                        constraint: null,
+                        default: null,
+                        in: false,
+                        out: false,
+                        const: false,
+                      }),
+                    }),
+                  ]),
+                }),
+              }),
+              trueType: node({
+                type: "TSTypeReference",
+                typeName: infer_v,
+                typeArguments: null,
+              }),
+              falseType: node({ type: "TSNeverKeyword" }),
+            }),
+            falseType: node({ type: "TSNeverKeyword" }),
           }),
         }),
       });
@@ -11511,7 +11647,9 @@ export function create_round5_fusions(
                   const next_id = services.fresh("stm_next");
                   const tv_arg = prim.call.arguments[0] as Expression;
                   const read_c = call(r_id, [j_id, tv_arg]);
-                  const next_expr = parsed_fn.param_decl !== null
+                  const next_expr = parsed_fn.call_ref !== undefined
+                    ? call(parsed_fn.call_ref, [cur_id])
+                    : parsed_fn.param_decl !== null
                     ? substitute_ident(
                       parsed_fn.body,
                       parsed_fn.param_decl,
@@ -11893,7 +12031,9 @@ export function create_round5_fusions(
                 const cur_id = services.fresh("stm_cur");
                 const next_id = services.fresh("stm_next");
                 const read_c = call(read_j_id, [journal_id, tv_ref]);
-                const next_expr = parsed_fn.param_decl !== null
+                const next_expr = parsed_fn.call_ref !== undefined
+                  ? call(parsed_fn.call_ref, [cur_id])
+                  : parsed_fn.param_decl !== null
                   ? substitute_ident(
                     parsed_fn.body,
                     parsed_fn.param_decl,

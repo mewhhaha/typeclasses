@@ -330,6 +330,41 @@ const serialize_error = (error) => ({ name: error.name, message: error.message, 
   const closed = it2.return!();
   await Promise.all([pending_first, closed]);
   assert_equals(await it2.next(), { done: true, value: undefined });
+
+  // Reentrant stream.return() called synchronously inside source.next()
+  let reentrant_reads = 0;
+  let reentrant_closed = false;
+  const reentrant_ref: { current?: AsyncIterator<number> } = {};
+  const reentrant_src: Iterable<number> = {
+    [Symbol.iterator]() {
+      return {
+        next() {
+          reentrant_reads += 1;
+          if (reentrant_reads === 1) {
+            void reentrant_ref.current!.return!();
+            return { value: 1, done: false };
+          }
+          if (reentrant_reads === 2) return { value: 2, done: false };
+          return { value: undefined, done: true };
+        },
+        return() {
+          reentrant_closed = true;
+          return { value: undefined, done: true };
+        },
+      };
+    },
+  };
+  const reentrant_stream = pool.stream(reentrant_src, { window_size: 2 })[
+    Symbol.asyncIterator
+  ]();
+  reentrant_ref.current = reentrant_stream;
+  const first_step = await reentrant_stream.next();
+  assert_equals(first_step, { value: 1, done: false });
+  assert_equals(await reentrant_stream.next(), {
+    value: undefined,
+    done: true,
+  });
+  assert_true(reentrant_closed, "reentrant return closes source");
 });
 
 Deno.test("serve_worker preserves legacy range replies for mixed-version clients", async () => {
@@ -347,9 +382,10 @@ const serialize_error = (error) => ({ name: error.name, message: error.message, 
           resolve(event.data);
         };
       });
-    // Wait for ready handshake
+    // Wait for ready handshake and verify distinct range_compact capability
     const ready = await wait_reply() as readonly unknown[];
     assert_equals(ready[0], "ready");
+    assert_equals((ready[1] as Record<string, unknown>).range_compact, true);
 
     // Legacy client sends ["range", ...] and expects ["range-results", ...]
     const legacy_p = wait_reply();

@@ -677,8 +677,9 @@ export function to_array<
 ): DataItem<dictionary, item>[] {
   if (is_canonical_array_fold(value)) {
     const src = value.value() as readonly DataItem<dictionary, item>[];
-    if (src[Symbol.iterator] !== Array.prototype[Symbol.iterator]) {
-      return Array.from(src);
+    const iter = src[Symbol.iterator];
+    if (iter !== Array.prototype[Symbol.iterator]) {
+      return [...{ [Symbol.iterator]: () => iter.call(src) }];
     }
     const out = new Array<DataItem<dictionary, item>>(src.length);
     for (let i = 0; i < src.length; i += 1) out[i] = src[i];

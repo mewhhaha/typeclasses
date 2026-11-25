@@ -315,7 +315,7 @@ export function create_worker_pool<input, output>(
     readonly worker: Worker;
     alive: boolean;
     range: boolean;
-    range_ok: boolean;
+    range_compact: boolean;
     compact: boolean;
     cooperative: boolean;
     ready: boolean;
@@ -336,7 +336,7 @@ export function create_worker_pool<input, output>(
         worker: new Worker(worker_href_value, { type: "module" }),
         alive: true,
         range: false,
-        range_ok: false,
+        range_compact: false,
         compact: false,
         cooperative: false,
         ready: false,
@@ -435,7 +435,7 @@ export function create_worker_pool<input, output>(
       worker: new Worker(worker_href_value, { type: "module" }),
       alive: true,
       range: false,
-      range_ok: false,
+      range_compact: false,
       compact: false,
       cooperative: false,
       ready: false,
@@ -570,7 +570,7 @@ export function create_worker_pool<input, output>(
             ? request.inputs
             : request.inputs.slice(start, end);
           const msg = [
-            slot.range_ok ? "range-compact" : "range",
+            slot.range_compact ? "range-compact" : "range",
             request.batch,
             start,
             slice,
@@ -642,7 +642,7 @@ export function create_worker_pool<input, output>(
       if (Array.isArray(message) && message[0] === "ready") {
         const capabilities = message[1];
         if (capabilities?.range === true) slot.range = true;
-        if (capabilities?.range_ok === true) slot.range_ok = true;
+        if (capabilities?.range_compact === true) slot.range_compact = true;
         if (capabilities?.compact === true) slot.compact = true;
         if (capabilities?.cooperative === true) slot.cooperative = true;
         if (!all_ready) mark_ready(slot);
@@ -1130,17 +1130,38 @@ export function create_worker_pool<input, output>(
         op: () => Promise<result>,
       ): Promise<result> => {
         const prev = pending_op;
-        const next_promise = prev === undefined ? op() : prev.then(op, op);
-        pending_op = next_promise;
-        void next_promise.then(
-          () => {
-            if (pending_op === next_promise) pending_op = undefined;
-          },
-          () => {
-            if (pending_op === next_promise) pending_op = undefined;
-          },
-        );
-        return next_promise;
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const next_entry = prev === undefined
+          ? gate
+          : prev.then(() => gate, () => gate);
+        pending_op = next_entry;
+        const finish = () => {
+          if (pending_op === next_entry) pending_op = undefined;
+          release();
+        };
+        const invoke = (): Promise<result> => {
+          let promise: Promise<result>;
+          try {
+            promise = op();
+          } catch (error) {
+            finish();
+            return Promise.reject(error);
+          }
+          return promise.then(
+            (res) => {
+              finish();
+              return res;
+            },
+            (error) => {
+              finish();
+              throw error;
+            },
+          );
+        };
+        return prev === undefined ? invoke() : prev.then(invoke, invoke);
       };
 
       const step_next = (): Promise<IteratorResult<output, void>> => {
@@ -1691,7 +1712,7 @@ export function serve_worker<input, output>(
     "ready",
     {
       range: true,
-      range_ok: true,
+      range_compact: true,
       compact: true,
       cooperative,
     },

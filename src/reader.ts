@@ -626,17 +626,9 @@ function register_reader_traversal(dictionary: unknown): void {
       fn: (item: from) => Data<AsReader<unknown>, to>,
       build: (items: Iterable<to>) => result,
     ): Data<AsReader<unknown>, result> => {
-      let fns: RawReader<unknown, to>[];
-      if (Array.isArray(items)) {
-        fns = new Array<RawReader<unknown, to>>(items.length);
-        for (let i = 0; i < items.length; i += 1) {
-          fns[i] = fn(items[i]).value() as RawReader<unknown, to>;
-        }
-      } else {
-        fns = [];
-        for (const item of items) {
-          fns.push(fn(item).value() as RawReader<unknown, to>);
-        }
+      const fns: RawReader<unknown, to>[] = [];
+      for (const item of items) {
+        fns.push(fn(item).value() as RawReader<unknown, to>);
       }
       return dict((environment: unknown) => {
         const out = new Array<to>(fns.length);

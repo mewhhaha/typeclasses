@@ -3192,4 +3192,159 @@ Deno.test("Codex Wave 2 review regressions (STM, Writer, Task, AsyncIterableT, F
     assert_equals(out.result, 99);
     assert_equals(getter_reads, 4);
   }
+
+  // Codex signoff follow-up regressions (5 P1s + 5 P2s)
+  {
+    // 1. Task traverse_task sync-to-async handoff shares the same AbortController & aborts sibling
+    let sig0: AbortSignal | undefined;
+    let sig1: AbortSignal | undefined;
+    let rejected = false;
+    try {
+      await run_task(
+        traverse_task([0, 1], 2, (item) =>
+          from_fn((signal) => {
+            if (item === 0) {
+              sig0 = signal;
+              return new Promise<number>(() => {});
+            }
+            sig1 = signal;
+            return Promise.reject(new Error("sibling boom"));
+          })),
+      );
+    } catch {
+      rejected = true;
+    }
+    assert_true(rejected, "traverse_task rejects on sibling failure");
+    assert_true(sig0 !== undefined && sig0 === sig1, "siblings share signal");
+    assert_true(
+      sig0!.aborted,
+      "first sibling signal aborted on second failure",
+    );
+
+    // 2. Concurrent AsyncIterable reads getter-backed promised array element only once
+    const getter_arr: unknown[] = [1, 0];
+    let elem_reads = 0;
+    Object.defineProperty(getter_arr, "1", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        elem_reads += 1;
+        return elem_reads === 1 ? Promise.resolve(7) : 9;
+      },
+    });
+    const ord_once = await ai_to_array(
+      map_concurrent(
+        from_sync_factory(() => getter_arr as number[]),
+        2,
+        (x) => x,
+      ),
+    );
+    assert_equals(elem_reads, 1);
+    assert_equals(ord_once, [1, 7]);
+
+    elem_reads = 0;
+    const unord_once = await ai_to_array(
+      map_concurrent_unordered(
+        from_sync_factory(() => getter_arr as number[]),
+        2,
+        (x) => x,
+      ),
+    );
+    assert_equals(elem_reads, 1);
+    assert_equals(unord_once.slice().sort((a, b) => a - b), [1, 7]);
+
+    // 3. Fn replay preserves original first action result
+    const FnNum = Fn.with_input<number>();
+    let fn_prefix = 0;
+    const fn_replay = Do(FnNum, function* () {
+      const n = ++fn_prefix;
+      return yield* FnNum(() => n);
+    });
+    assert_equals(
+      [fn_replay.value()(0), fn_replay.value()(0), fn_replay.value()(0)],
+      [1, 1, 1],
+    );
+
+    // 4. Raw sync iterator yielding rejected promise closes upstream once on rejection
+    let sync_closed = 0;
+    const rej_src = from_sync_factory(() => ({
+      [Symbol.iterator]() {
+        let yielded = false;
+        return {
+          next() {
+            if (!yielded) {
+              yielded = true;
+              return {
+                done: false,
+                value: Promise.reject(
+                  new Error("raw rej"),
+                ) as unknown as number,
+              };
+            }
+            return { done: true, value: undefined };
+          },
+          return() {
+            sync_closed += 1;
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    }));
+    const raw_it = rej_src.value()()[Symbol.asyncIterator]();
+    let raw_threw = false;
+    try {
+      await raw_it.next();
+    } catch {
+      raw_threw = true;
+    }
+    assert_true(raw_threw, "raw sync iterator rejected promise rejects next()");
+    assert_equals(sync_closed, 1);
+
+    // 5. Collection Symbol.iterator getter is read at most once
+    const make_getter_arr = () => {
+      const arr = [1] as number[];
+      let reads = 0;
+      Object.defineProperty(arr, Symbol.iterator, {
+        configurable: true,
+        get() {
+          reads += 1;
+          const tag = reads;
+          return function* () {
+            yield tag * 10;
+          };
+        },
+      });
+      return { arr, get_reads: () => reads };
+    };
+    const g1 = make_getter_arr();
+    assert_equals(prelude_to_array(ArrayT(g1.arr)), [10]);
+    assert_equals(g1.get_reads(), 1);
+
+    const g2 = make_getter_arr();
+    assert_equals(ArrayT(g2.arr).concat(ArrayT([3])).value(), [10, 3]);
+    assert_equals(g2.get_reads(), 1);
+
+    const g3 = make_getter_arr();
+    const StateNum = State.with_state<number>();
+    const [g3_out] = Traversable.traverse(
+      ArrayT(g3.arr),
+      StateNum,
+      (n) => StateNum((s: number) => [n + s, s + 1] as const),
+    ).value()(0);
+    assert_equals(g3_out.value(), [10]);
+    assert_equals(g3.get_reads(), 1);
+
+    // Also test generic binary-carry singleton traversal path (List has no specialization)
+    const { List, to_array: list_to_array } = await import("./list.ts");
+    const g4 = make_getter_arr();
+    const g4_res = list_to_array(
+      Traversable.traverse(
+        ArrayT(g4.arr),
+        List,
+        (n) => List.pure(n),
+      ),
+    );
+    assert_equals(g4_res.map((a) => a.value()), [[10]]);
+    assert_equals(g4.get_reads(), 1);
+  }
 });

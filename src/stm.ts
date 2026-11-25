@@ -928,16 +928,8 @@ register_traversal(
     fn: (item: from) => Data<AsStm, to>,
     build: (items: Iterable<to>) => result,
   ): Data<AsStm, result> => {
-    let fns: RawStm<to>[];
-    if (Array.isArray(items)) {
-      fns = new Array<RawStm<to>>(items.length);
-      for (let i = 0; i < items.length; i += 1) {
-        fns[i] = fn(items[i]).value();
-      }
-    } else {
-      fns = [];
-      for (const item of items) fns.push(fn(item).value());
-    }
+    const fns: RawStm<to>[] = [];
+    for (const item of items) fns.push(fn(item).value());
     return trusted_stm((journal) => {
       const out = new Array<to>(fns.length);
       for (let i = 0; i < fns.length; i += 1) out[i] = fns[i](journal);

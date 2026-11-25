@@ -338,11 +338,14 @@ function create_array(): AsArray {
   ): Data<AsArray, item> {
     const left = this.value();
     const right_value = right.value();
-    const iter = Array.prototype[Symbol.iterator];
-    if (
-      left[Symbol.iterator] !== iter || right_value[Symbol.iterator] !== iter
-    ) {
-      return ArrayT([...left, ...right_value]);
+    const def = Array.prototype[Symbol.iterator];
+    const li = left[Symbol.iterator];
+    const ri = right_value[Symbol.iterator];
+    if (li !== def || ri !== def) {
+      const it = (a: readonly item[], f: () => Iterator<item>) => ({
+        [Symbol.iterator]: () => f.call(a),
+      });
+      return ArrayT([...it(left, li), ...it(right_value, ri)]);
     }
     const n = left.length;
     const out = new Array<item>(n + right_value.length);
