@@ -1,14 +1,20 @@
 // Persistent Reader/State composition. Compile the requested static segment once;
 // execution cursors belong to the invocation, so recursive runs remain isolated.
 type Raw = (context: unknown) => unknown;
-type Frame =
+type Plan =
   | {
     readonly tag: "map" | "state_map";
     readonly apply: (value: unknown) => unknown;
+    readonly source: Raw;
+    readonly state: boolean;
+    runs: number;
   }
   | {
     readonly tag: "reader_bind" | "state_bind";
     readonly apply: (value: unknown) => Raw;
+    readonly source: Raw;
+    readonly state: boolean;
+    runs: number;
   }
   | {
     readonly tag: "bind";
@@ -16,11 +22,13 @@ type Frame =
       value: unknown,
       context: unknown,
     ) => readonly [Raw, unknown];
+    readonly source: Raw;
+    readonly state: false;
+    runs: number;
   };
-type Plan = { readonly source: Raw; readonly frame: Frame; runs: number };
 type Compiled = {
   readonly source: Raw;
-  readonly frames: readonly Frame[];
+  readonly frames: readonly Plan[];
   readonly state: boolean;
 };
 const computation_plan = Symbol("Computation.plan");
@@ -34,9 +42,12 @@ export function map_computation<context, from, to>(
   source: (context: context) => from,
   fn: (value: from) => to,
 ): (context: context) => to {
-  return compose(source as Raw, {
+  return compose({
     tag: "map",
     apply: fn as (value: unknown) => unknown,
+    source: source as Raw,
+    state: false,
+    runs: 0,
   }) as (context: context) => to;
 }
 
@@ -47,9 +58,12 @@ export function bind_computation<context, from, to>(
     context: context,
   ) => readonly [(context: context) => to, context],
 ): (context: context) => to {
-  return compose(source as Raw, {
+  return compose({
     tag: "bind",
     apply: fn as (value: unknown, context: unknown) => readonly [Raw, unknown],
+    source: source as Raw,
+    state: false,
+    runs: 0,
   }) as (context: context) => to;
 }
 
@@ -58,9 +72,12 @@ export function bind_reader_computation<context, from, to>(
   source: (context: context) => from,
   fn: (value: from) => (context: context) => to,
 ): (context: context) => to {
-  return compose(source as Raw, {
+  return compose({
     tag: "reader_bind",
     apply: fn as (value: unknown) => Raw,
+    source: source as Raw,
+    state: false,
+    runs: 0,
   }) as (context: context) => to;
 }
 
@@ -69,9 +86,12 @@ export function map_state_computation<state, from, to>(
   source: (state: state) => readonly [from, state],
   fn: (value: from) => to,
 ): (state: state) => readonly [to, state] {
-  return compose(source as Raw, {
+  return compose({
     tag: "state_map",
     apply: fn as (value: unknown) => unknown,
+    source: source as Raw,
+    state: true,
+    runs: 0,
   }) as (state: state) => readonly [to, state];
 }
 /** @ignore */
@@ -79,52 +99,46 @@ export function bind_state_computation<state, from, to>(
   source: (state: state) => readonly [from, state],
   fn: (value: from) => (state: state) => readonly [to, state],
 ): (state: state) => readonly [to, state] {
-  return compose(source as Raw, {
+  return compose({
     tag: "state_bind",
     apply: fn as (value: unknown) => Raw,
+    source: source as Raw,
+    state: true,
+    runs: 0,
   }) as (state: state) => readonly [to, state];
 }
 
-function compose(source: Raw, frame: Frame): Raw {
-  const plan: Plan = { source, frame, runs: 0 };
+function compose(plan: Plan): Raw {
   const composed: PlannedRaw = (context) => run_plan(plan, context);
   composed[computation_plan] = plan;
   return composed;
-}
-
-function is_state_frame(frame: Frame): boolean {
-  return frame.tag === "state_map" || frame.tag === "state_bind";
 }
 
 function run_plan(initial_plan: Plan, initial_context: unknown): unknown {
   let plan = initial_plan;
   let context = initial_context;
   while (true) {
-    const state = is_state_frame(plan.frame);
     const source_plan = plan_of(plan.source);
-    if (
-      source_plan !== undefined &&
-      is_state_frame(source_plan.frame) === state
-    ) {
-      return evaluate(compile(plan), context);
+    if (source_plan !== undefined && source_plan.state === plan.state) {
+      const compiled = compile(plan);
+      return compiled.state
+        ? evaluate_state(compiled, context)
+        : evaluate_reader(compiled, context);
     }
-    const frame = plan.frame;
-    switch (frame.tag) {
+    switch (plan.tag) {
       case "map":
-        return frame.apply(plan.source(context));
+        return plan.apply(plan.source(context));
       case "state_map": {
         const [value, next_state] = plan.source(context) as readonly [
           unknown,
           unknown,
         ];
-        return [frame.apply(value), next_state];
+        return [plan.apply(value), next_state];
       }
       case "reader_bind": {
-        const next = frame.apply(plan.source(context));
+        const next = plan.apply(plan.source(context));
         const next_plan = plan_of(next);
-        if (next_plan === undefined || is_state_frame(next_plan.frame)) {
-          return next(context);
-        }
+        if (next_plan === undefined || next_plan.state) return next(context);
         plan = next_plan;
         continue;
       }
@@ -134,21 +148,17 @@ function run_plan(initial_plan: Plan, initial_context: unknown): unknown {
           unknown,
         ];
         context = next_state;
-        const next = frame.apply(value);
+        const next = plan.apply(value);
         const next_plan = plan_of(next);
-        if (next_plan === undefined || !is_state_frame(next_plan.frame)) {
-          return next(context);
-        }
+        if (next_plan === undefined || !next_plan.state) return next(context);
         plan = next_plan;
         continue;
       }
       case "bind": {
-        const [next, next_context] = frame.apply(plan.source(context), context);
+        const [next, next_context] = plan.apply(plan.source(context), context);
         context = next_context;
         const next_plan = plan_of(next);
-        if (next_plan === undefined || is_state_frame(next_plan.frame)) {
-          return next(context);
-        }
+        if (next_plan === undefined || next_plan.state) return next(context);
         plan = next_plan;
         continue;
       }
@@ -161,12 +171,12 @@ function compile(plan: Plan): Compiled {
   if (cached !== undefined) {
     return cached;
   }
-  const state = is_state_frame(plan.frame);
-  const frames = [plan.frame];
+  const state = plan.state;
+  const frames: Plan[] = [plan];
   let source = plan.source;
   let nested = plan_of(source);
-  while (nested !== undefined && is_state_frame(nested.frame) === state) {
-    frames.push(nested.frame);
+  while (nested !== undefined && nested.state === state) {
+    frames.push(nested);
     source = nested.source;
     nested = plan_of(source);
   }
@@ -196,19 +206,61 @@ function retain_hot(plan: Plan, segment: Compiled): void {
   }
 }
 
-function evaluate(segment: Compiled, context: unknown): unknown {
-  // Most binds return a raw primitive and need no suspended segment at all.
+function evaluate_state(
+  initial_segment: Compiled,
+  initial_state: unknown,
+): readonly [unknown, unknown] {
+  let segment = initial_segment;
   let pending: { segment: Compiled; index: number }[] | undefined;
   let index = 0;
-  let value = segment.source(context);
-  if (segment.state) [value, context] = value as readonly [unknown, unknown];
+  let [value, state] = segment.source(initial_state) as readonly [
+    unknown,
+    unknown,
+  ];
   while (true) {
     if (index === segment.frames.length) {
       const previous = pending?.pop();
-      if (previous === undefined) {
-        if (segment.state) return [value, context];
-        return value;
+      if (previous === undefined) return [value, state];
+      segment = previous.segment;
+      index = previous.index;
+      continue;
+    }
+    const frame = segment.frames[index++];
+    if (frame.tag === "state_map") {
+      value = frame.apply(value);
+      continue;
+    }
+    const source =
+      (frame as Extract<Plan, { tag: "reader_bind" | "state_bind" }>)
+        .apply(value);
+    const plan = plan_of(source);
+    if (plan === undefined || !plan.state) {
+      [value, state] = source(state) as readonly [unknown, unknown];
+    } else {
+      if (index < segment.frames.length) {
+        pending ??= [];
+        pending.push({ segment, index });
       }
+      segment = compile(plan);
+      index = 0;
+      [value, state] = segment.source(state) as readonly [unknown, unknown];
+    }
+  }
+}
+
+function evaluate_reader(
+  initial_segment: Compiled,
+  initial_context: unknown,
+): unknown {
+  let segment = initial_segment;
+  let context = initial_context;
+  let pending: { segment: Compiled; index: number }[] | undefined;
+  let index = 0;
+  let value = segment.source(context);
+  while (true) {
+    if (index === segment.frames.length) {
+      const previous = pending?.pop();
+      if (previous === undefined) return value;
       segment = previous.segment;
       index = previous.index;
       continue;
@@ -216,32 +268,12 @@ function evaluate(segment: Compiled, context: unknown): unknown {
     const frame = segment.frames[index++];
     switch (frame.tag) {
       case "map":
-      case "state_map":
         value = frame.apply(value);
         break;
-      case "state_bind": {
-        const source = frame.apply(value);
-        const plan = plan_of(source);
-        if (plan === undefined || !is_state_frame(plan.frame)) {
-          [value, context] = source(context) as readonly [unknown, unknown];
-        } else {
-          if (index < segment.frames.length) {
-            pending ??= [];
-            pending.push({ segment, index });
-          }
-          segment = compile(plan);
-          index = 0;
-          [value, context] = segment.source(context) as readonly [
-            unknown,
-            unknown,
-          ];
-        }
-        break;
-      }
       case "reader_bind": {
         const source = frame.apply(value);
         const plan = plan_of(source);
-        if (plan === undefined || is_state_frame(plan.frame)) {
+        if (plan === undefined || plan.state) {
           value = source(context);
         } else {
           if (index < segment.frames.length) {
@@ -258,7 +290,7 @@ function evaluate(segment: Compiled, context: unknown): unknown {
         const [source, next_context] = frame.apply(value, context);
         context = next_context;
         const plan = plan_of(source);
-        if (plan === undefined || is_state_frame(plan.frame)) {
+        if (plan === undefined || plan.state) {
           value = source(context);
         } else {
           if (index < segment.frames.length) {

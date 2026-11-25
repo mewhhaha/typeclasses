@@ -1,4 +1,3 @@
-import { register_traversal } from "./traversal.ts";
 import {
   type As,
   type Data,
@@ -153,16 +152,6 @@ function create_identity(): AsIdentity {
     extend(fn) {
       return identity(fn(this));
     },
-  });
-
-  register_traversal(Identity, <from, to, result>(
-    items: Iterable<from>,
-    fn: (item: from) => Data<AsIdentity, to>,
-    build: (items: Iterable<to>) => result,
-  ): Data<AsIdentity, result> => {
-    const out: to[] = [];
-    for (const item of items) out.push(fn(item).value());
-    return Identity(build(out));
   });
 
   return Identity;

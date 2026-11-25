@@ -15,7 +15,8 @@ import { monad_error_typeclass } from "./monad_error.ts";
 /** Runtime token for the Monad typeclass. */
 export const monad_typeclass = /* @__PURE__ */ Symbol("Monad");
 
-type FastDoSpec = readonly [
+/** @ignore */
+export type FastDoSpec = readonly [
   mode: 0 | 1 | 2,
   wrap: (value: unknown) => unknown,
   fail: ((error: unknown) => unknown) | undefined,

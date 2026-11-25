@@ -1,7 +1,11 @@
 import type { Data } from "./typeclass.ts";
 import { Applicative } from "./typeclasses/applicative.ts";
 import { Functor } from "./typeclasses/functor.ts";
-import { Monad } from "./typeclasses/monad.ts";
+import {
+  do_runner_method,
+  type FastDoSpec,
+  Monad,
+} from "./typeclasses/monad.ts";
 
 type TraverseItems<dictionary extends Applicative<dictionary>> = <
   from,
@@ -60,6 +64,31 @@ export function traverse_items_into<
     | TraverseItems<applicative>
     | undefined;
   if (specialized !== undefined) return specialized(items, fn, build);
+  const dict = applicative as unknown as {
+    readonly [do_runner_method]?: FastDoSpec;
+    readonly pure?: unknown;
+  };
+  const spec = dict[do_runner_method];
+  if (spec !== undefined && dict.pure === spec[4]) {
+    const [mode, wrap] = spec;
+    const fail_tag = mode === 0 ? "Nothing" : "Left";
+    let failed: Data<applicative, unknown> | undefined;
+    const out: to[] = [];
+    const step = (current: Data<applicative, to>) => {
+      if (mode === 2) out.push(current.value() as to);
+      else if (failed === undefined) {
+        const raw = current.value() as readonly [string, to];
+        if (raw[0] === fail_tag) failed = current;
+        else out.push(raw[1]);
+      }
+    };
+    if (Array.isArray(items)) {
+      for (let i = 0; i < items.length; i += 1) step(fn(items[i]));
+    } else {
+      for (const item of items) step(fn(item));
+    }
+    return (failed ?? wrap(build(out))) as Data<applicative, result>;
+  }
   // Binary carry combines adjacent groups, without buffering the input first.
   const pending: (Data<applicative, Tree<to>> | undefined)[] = [];
   for (const item of items) {
@@ -115,6 +144,27 @@ export function traverse_sequential<
   monad: Monad<monad>,
   fn: (item: from) => Data<monad, to>,
 ): Data<monad, to[]> {
+  const dict = monad as unknown as {
+    readonly [do_runner_method]?: FastDoSpec;
+    readonly bind?: unknown;
+    readonly pure?: unknown;
+  };
+  const spec = dict[do_runner_method];
+  if (spec !== undefined && dict.bind === spec[3] && dict.pure === spec[4]) {
+    const [mode, wrap] = spec;
+    const fail_tag = mode === 0 ? "Nothing" : "Left";
+    const out = new Array<to>(items.length);
+    for (let i = 0; i < items.length; i += 1) {
+      const current = fn(items[i]);
+      if (mode === 2) out[i] = current.value() as to;
+      else {
+        const raw = current.value() as readonly [string, to];
+        if (raw[0] === fail_tag) return current as unknown as Data<monad, to[]>;
+        out[i] = raw[1];
+      }
+    }
+    return wrap(out) as Data<monad, to[]>;
+  }
   type Chain = { readonly item: to; readonly previous?: Chain };
   let result = Applicative.pure<monad, Chain | undefined>(
     monad as monad,

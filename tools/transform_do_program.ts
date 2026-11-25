@@ -130,21 +130,26 @@ function transform_do_program_checked(
   const headers = scan_import_headers(program, config);
   const has_unicode = source.includes("\\u");
   const has_iterable = config.optimizations?.iterable_map !== false &&
-    might_contain_iterable_maps(source);
-  const scope_declarations = source.includes("scope") || has_unicode
-    ? scan_scope_declarations(program, headers)
-    : new Map<string, number>();
+    (has_unicode || might_contain_iterable_maps(source, false));
+  const scope_declarations =
+    (headers.program_names.size > 0 || headers.namespaces.size > 0) &&
+      (has_unicode || source.includes("scope"))
+      ? scan_scope_declarations(program, headers)
+      : new Map<string, number>();
 
   let skipped_statements = false;
   let skip_statement: ((statement: Statement) => boolean) | undefined;
-  if (!has_iterable && !has_unicode && headers.leading_imports_end >= 0) {
+  if (!has_unicode && headers.leading_imports_end >= 0) {
     const scan_from = headers.leading_imports_end;
+    const has_effect_interp = headers.effect_names.size > 0 ||
+      headers.namespaces.size > 0;
+    const has_collect = headers.collect_functions.size > 0 ||
+      headers.collect_namespaces.size > 0;
+    const has_lift = headers.applicative_objects.size > 0 ||
+      headers.applicative_namespaces.size > 0;
     const target_tokens: string[] = [
       "Do",
       "Program",
-      "run",
-      "handle_with",
-      "value",
       ...headers.do_names,
       ...headers.program_names,
       ...headers.namespaces,
@@ -156,7 +161,42 @@ function transform_do_program_checked(
       ...headers.operation_runner_namespaces.keys(),
       ...headers.state_eval_functions.keys(),
       ...headers.state_eval_namespaces.keys(),
+      ...headers.collect_functions,
+      ...headers.collect_namespaces,
+      ...headers.applicative_objects,
+      ...headers.applicative_namespaces,
     ];
+    if (has_effect_interp) {
+      target_tokens.push("run", "handle_with", "value");
+    } else if (
+      headers.direct_reader_dictionaries.size > 0 ||
+      headers.direct_state_dictionaries.size > 0 ||
+      headers.cell_factories.size > 0 ||
+      headers.cell_namespaces.size > 0
+    ) {
+      target_tokens.push("run");
+    }
+    if (has_collect) target_tokens.push("collect");
+    if (has_lift) target_tokens.push("lift");
+    if (has_iterable) {
+      target_tokens.push(
+        "IterableT",
+        "from_array",
+        "from_array_view",
+        "from_factory",
+        "from_iterable",
+        "from_snapshot",
+        "filter",
+        "take",
+        "to_array",
+        "compile_fold",
+        "Foldable",
+        "iterable",
+        ".map",
+        ".fold",
+        ...headers.iterable_locals,
+      );
+    }
     let has_target_token = false;
     for (let index = 0; index < target_tokens.length; index += 1) {
       if (source.indexOf(target_tokens[index], scan_from) >= 0) {
@@ -187,6 +227,7 @@ function transform_do_program_checked(
         ...headers.loop_dictionaries,
         ...headers.direct_maybe_dictionaries,
         ...headers.just_constructors,
+        ...headers.nothing_constructors,
         ...headers.direct_either_dictionaries,
         ...headers.left_constructors,
         ...headers.right_constructors,
@@ -195,6 +236,7 @@ function transform_do_program_checked(
         ...headers.array_constructors,
         ...headers.direct_reader_dictionaries,
         ...headers.direct_state_dictionaries,
+        ...headers.iterable_locals,
         ...scope_declarations.keys(),
       ];
       const has_relevant = create_span_scanner(
@@ -247,6 +289,7 @@ function transform_do_program_checked(
             headers.cell_runners.has(callee.name) ||
             headers.operation_runners.has(callee.name) ||
             headers.state_eval_functions.has(callee.name) ||
+            headers.collect_functions.has(callee.name) ||
             callee.name === "Do" ||
             callee.name === "Program")
         ) {
@@ -262,9 +305,12 @@ function transform_do_program_checked(
             property === "Do" || property === "Program" || property === "run" ||
             property === "handle_with" || property === "value" ||
             property === "run_cells" || property === "prepare_cells" ||
+            property === "handle_cells" ||
+            property === "prepare_handle_cells" ||
             property === "handle_operations" ||
             property === "prepare_operations" ||
-            property === "eval_state" || property === "exec_state"
+            property === "eval_state" || property === "exec_state" ||
+            property === "collect" || property === "lift"
           ) {
             candidate = true;
             return false;
@@ -310,6 +356,7 @@ function transform_do_program_checked(
     names,
     minimal: true,
     skip_statement,
+    record_top_level_scopes: has_iterable,
     on_node(current) {
       if (current.type !== "ImportDeclaration") shadow_tracker.observe(current);
     },
@@ -486,15 +533,14 @@ function transform_do_program_checked(
   };
   const terminals = create_terminal_transform(services, skip_statement);
   let iterable: ReturnType<typeof create_iterable_map_fusion> | undefined;
-  if (
-    config.optimizations?.iterable_map !== false &&
-    might_contain_iterable_maps(source)
-  ) {
+  if (has_iterable) {
     iterable = create_iterable_map_fusion(
       program,
       config.library_specifiers,
       bindings,
       (prefix) => fresh(prefix).name,
+      skip_statement,
+      source,
     );
   }
   let transformed = 0;
@@ -1183,7 +1229,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "9:oxc-parser@0.154.0:esrap@2.4.0";
+  "10:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

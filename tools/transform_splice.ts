@@ -55,17 +55,63 @@ const safe_unwrapped_expressions = new Set([
   "ParenthesizedExpression",
 ]);
 
+function make_nomap_language(
+  base_lang: ReturnType<typeof ts_language>,
+): ReturnType<typeof ts_language> {
+  const previous = base_lang._;
+  base_lang._ = (current, context, visitor) => {
+    const previous_location = context.location;
+    context.location = () => {};
+    try {
+      if (previous !== undefined) previous(current, context, visitor);
+      else visitor(current);
+    } finally {
+      context.location = previous_location;
+    }
+  };
+  return base_lang;
+}
+
+const cached_ts_map = /* @__PURE__ */ ts_language({
+  quotes: "double",
+  comments: [],
+});
+const cached_tsx_map = /* @__PURE__ */ tsx_language({
+  quotes: "double",
+  comments: [],
+});
+const cached_ts_nomap = /* @__PURE__ */ make_nomap_language(
+  ts_language({ quotes: "double", comments: [] }),
+);
+const cached_tsx_nomap = /* @__PURE__ */ make_nomap_language(
+  tsx_language({ quotes: "double", comments: [] }),
+);
+
 /** Fast monotonic line/column lookup supporting all ECMAScript line terminators. */
-export function create_source_positions(source: string): PositionLookup {
+export function create_source_positions(
+  source: string,
+  has_non_lf?: boolean,
+): PositionLookup {
   const starts = [0];
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source.charCodeAt(index);
-    if (character === 13) {
-      if (source.charCodeAt(index + 1) === 10) index += 1;
-      starts.push(index + 1);
-    } else if (
-      character === 10 || character === 0x2028 || character === 0x2029
-    ) starts.push(index + 1);
+  const non_lf = has_non_lf ??
+    (source.includes("\r") || source.includes("\u2028") ||
+      source.includes("\u2029"));
+  if (!non_lf) {
+    let pos = source.indexOf("\n");
+    while (pos >= 0) {
+      starts.push(pos + 1);
+      pos = source.indexOf("\n", pos + 1);
+    }
+  } else {
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source.charCodeAt(index);
+      if (character === 13) {
+        if (source.charCodeAt(index + 1) === 10) index += 1;
+        starts.push(index + 1);
+      } else if (
+        character === 10 || character === 0x2028 || character === 0x2029
+      ) starts.push(index + 1);
+    }
   }
   let cached = 0;
   return (offset: number) => {
@@ -197,14 +243,14 @@ export function splice_edits(
   });
 
   const base = basename(file_name);
-  let position = source_map
-    ? (position_lookup ?? create_source_positions(source))
-    : position_lookup;
-  function get_position(): PositionLookup {
-    return position ??= create_source_positions(source);
-  }
   const has_non_lf = source.includes("\r") || source.includes("\u2028") ||
     source.includes("\u2029");
+  let position = source_map
+    ? (position_lookup ?? create_source_positions(source, has_non_lf))
+    : position_lookup;
+  function get_position(): PositionLookup {
+    return position ??= create_source_positions(source, has_non_lf);
+  }
 
   const code_chunks: string[] = [];
   const mapping_parts: string[] = [];
@@ -301,9 +347,17 @@ export function splice_edits(
     cursor = nl + 1;
     orig_line += 1;
 
+    let aaca_run = 0;
+    const flush_aaca = () => {
+      if (aaca_run > 0) {
+        mapping_parts.push("AACA;".repeat(aaca_run));
+        aaca_run = 0;
+      }
+    };
     while (cursor < text.length) {
       nl = text.indexOf("\n", cursor);
       if (nl < 0) {
+        flush_aaca();
         if (
           out_src === 0 && out_orig_col === 0 && orig_line === out_orig_line + 1
         ) {
@@ -316,21 +370,28 @@ export function splice_edits(
         current_gen_col = text.length - cursor;
         return;
       }
+      if (
+        nl > cursor && out_src === 0 && out_orig_col === 0 &&
+        orig_line === out_orig_line + 1
+      ) {
+        aaca_run += 1;
+        out_orig_line = orig_line;
+        current_gen_col = 0;
+        out_gen_col = 0;
+        line_has_seg = false;
+        cursor = nl + 1;
+        orig_line += 1;
+        continue;
+      }
+      flush_aaca();
       if (nl > cursor) {
-        if (
-          out_src === 0 && out_orig_col === 0 && orig_line === out_orig_line + 1
-        ) {
-          mapping_parts.push("AACA");
-          out_orig_line = orig_line;
-          line_has_seg = true;
-        } else {
-          emit_segment(0, orig_line, 0);
-        }
+        emit_segment(0, orig_line, 0);
       }
       emit_newline();
       cursor = nl + 1;
       orig_line += 1;
     }
+    flush_aaca();
   }
 
   function stitch_edit_map(
@@ -450,21 +511,16 @@ export function splice_edits(
     target: Node,
     edit_comments: ReturnType<typeof comments_in_range>,
   ) {
-    const language = lang === "tsx"
-      ? tsx_language({ quotes: "double", comments: edit_comments })
-      : ts_language({ quotes: "double", comments: edit_comments });
-    if (!source_map) {
-      const previous = language._;
-      language._ = (current, context, visitor) => {
-        const previous_location = context.location;
-        context.location = () => {};
-        try {
-          if (previous !== undefined) previous(current, context, visitor);
-          else visitor(current);
-        } finally {
-          context.location = previous_location;
-        }
-      };
+    let language: ReturnType<typeof ts_language>;
+    if (edit_comments.length === 0) {
+      language = lang === "tsx"
+        ? (source_map ? cached_tsx_map : cached_tsx_nomap)
+        : (source_map ? cached_ts_map : cached_ts_nomap);
+    } else {
+      language = lang === "tsx"
+        ? tsx_language({ quotes: "double", comments: edit_comments })
+        : ts_language({ quotes: "double", comments: edit_comments });
+      if (!source_map) make_nomap_language(language);
     }
     if (!source_map) {
       return print(target, language, { indent: "  " });

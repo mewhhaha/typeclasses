@@ -922,8 +922,7 @@ export function has_canonical_array_concat(
 
 /** @ignore */
 export function is_canonical_array_concat_method(): boolean {
-  return Object.getOwnPropertyDescriptor(ArrayT, "concat")?.value ===
-    canonical_array_concat;
+  return ArrayT.concat === canonical_array_concat;
 }
 
 /** @ignore */
@@ -932,7 +931,12 @@ export function append_array_log(
   values: Iterable<unknown>,
 ): void {
   if (Array.isArray(values)) {
-    for (let index = 0; index < values.length; index += 1) {
+    const len = values.length;
+    if (len === 1) {
+      buffer.push(values[0]);
+      return;
+    }
+    for (let index = 0; index < len; index += 1) {
       buffer.push(values[index]);
     }
     return;

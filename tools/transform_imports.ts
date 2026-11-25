@@ -65,6 +65,7 @@ for (
     "except",
     "handlers",
     "identity",
+    "iterable",
     "maybe",
     "mod",
     "reader",
@@ -80,10 +81,17 @@ for (
     source_specifiers.set(url.pathname, name);
   } catch { /* Bundled data URLs use package or relative matches. */ }
 }
+for (const name of ["applicative", "foldable"]) {
+  try {
+    const url = new URL(`../src/typeclasses/${name}.ts`, import.meta.url);
+    source_specifiers.set(url.href, name);
+    source_specifiers.set(url.pathname, name);
+  } catch { /* Bundled data URLs use package or relative matches. */ }
+}
 
 function source_module(specifier: string): string | undefined {
   return source_specifiers.get(specifier) ??
-    specifier.match(/^(?:\.\.?\/)+src\/(\w+)(?:\.ts)?$/)?.[1];
+    specifier.match(/^(?:\.\.?\/)+src\/(?:typeclasses\/)?(\w+)(?:\.ts)?$/)?.[1];
 }
 function package_module(specifier: string): string | undefined {
   const match = /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(\w+))?\/?$/
@@ -208,6 +216,8 @@ function cell_factory_kind_for(
 const cell_runner_names = new Set<CellRunnerName>([
   "run_cells",
   "prepare_cells",
+  "handle_cells",
+  "prepare_handle_cells",
 ]);
 
 function cell_runner_exports(
@@ -281,6 +291,7 @@ export type UnverifiedImports = {
   readonly cell_provider_namespaces: Map<string, ReadonlySet<CellFactoryKind>>;
   readonly direct_maybe_dictionaries: Set<string>;
   readonly just_constructors: Set<string>;
+  readonly nothing_constructors: Set<string>;
   readonly direct_either_dictionaries: Set<string>;
   readonly left_constructors: Set<string>;
   readonly right_constructors: Set<string>;
@@ -289,6 +300,11 @@ export type UnverifiedImports = {
   readonly array_constructors: Set<string>;
   readonly direct_reader_dictionaries: Set<string>;
   readonly direct_state_dictionaries: Set<string>;
+  readonly collect_functions: Set<string>;
+  readonly collect_namespaces: Set<string>;
+  readonly applicative_objects: Set<string>;
+  readonly applicative_namespaces: Set<string>;
+  readonly iterable_locals: Set<string>;
   readonly program_module?: string;
   readonly import_declarations: Map<string, ImportDeclaration>;
   readonly loop_dictionaries: Set<string>;
@@ -303,28 +319,52 @@ export function create_span_scanner(
   tokens: readonly string[],
   start_offset = 0,
 ): (start: number, end: number) => boolean {
-  const unique = [...new Set(tokens)].filter((token) => token.length > 0);
-  if (unique.length === 0) return () => false;
-  const next = unique.map((token) => source.indexOf(token, start_offset));
+  const seen = new Set<string>();
+  const active_tokens: string[] = [];
+  const next: number[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.length === 0 || seen.has(token)) continue;
+    seen.add(token);
+    const pos = source.indexOf(token, start_offset);
+    if (pos >= 0) {
+      active_tokens.push(token);
+      next.push(pos);
+    }
+  }
+  let active = active_tokens.length;
+  if (active === 0) return () => false;
+  let min_pos = next[0];
+  for (let i = 1; i < active; i += 1) {
+    if (next[i] < min_pos) min_pos = next[i];
+  }
   return (start: number, end: number): boolean => {
+    if (active === 0 || min_pos >= end) return false;
     let hit = false;
-    for (let index = 0; index < unique.length; index += 1) {
+    let new_min = Infinity;
+    for (let index = 0; index < active; index += 1) {
       let pos = next[index];
-      if (pos >= 0 && pos < start) {
-        pos = source.indexOf(unique[index], start);
+      if (pos < start) {
+        pos = source.indexOf(active_tokens[index], start);
+        if (pos < 0) {
+          active -= 1;
+          active_tokens[index] = active_tokens[active];
+          next[index] = next[active];
+          index -= 1;
+          continue;
+        }
         next[index] = pos;
       }
-      if (pos >= 0 && pos < end) hit = true;
+      if (pos < end) hit = true;
+      if (pos < new_min) new_min = pos;
     }
+    min_pos = new_min;
     return hit;
   };
 }
 
 /** Cheap pre-parse filter shared by the CLI and bundler plugins. */
 export function might_contain_transform_target(source: string): boolean {
-  if (might_contain_iterable_maps(source) || source.includes("\\u")) {
-    return true;
-  }
   if (
     (source.includes("Do") || source.includes("Program")) &&
     /\b(?:Do|Program)\b/.test(source)
@@ -335,6 +375,8 @@ export function might_contain_transform_target(source: string): boolean {
         source.includes("run_writer") || source.includes("run_cells") ||
         source.includes("run_except"))) ||
     source.includes("prepare_cells") ||
+    source.includes("handle_cells") ||
+    source.includes("prepare_handle_cells") ||
     source.includes("handle_operations") ||
     source.includes("prepare_operations")
   ) {
@@ -346,8 +388,17 @@ export function might_contain_transform_target(source: string): boolean {
   if (source.includes("eval_state") || source.includes("exec_state")) {
     return true;
   }
-  return source.includes("Effect") &&
-    (source.includes("interpret") || source.includes("handle_with"));
+  if (source.includes("collect") && /\bcollect\s*\(/.test(source)) {
+    return true;
+  }
+  if (
+    source.includes("Applicative") && /\bApplicative\s*\.\s*lift\b/.test(source)
+  ) return true;
+  if (
+    source.includes("Effect") &&
+    (source.includes("interpret") || source.includes("handle_with"))
+  ) return true;
+  return might_contain_iterable_maps(source);
 }
 
 /** Scan only top-level ImportDeclarations (O(imports), no deep AST walk). */
@@ -396,6 +447,7 @@ export function scan_import_headers(
   >();
   const direct_maybe_dictionaries = new Set<string>();
   const just_constructors = new Set<string>();
+  const nothing_constructors = new Set<string>();
   const direct_either_dictionaries = new Set<string>();
   const left_constructors = new Set<string>();
   const right_constructors = new Set<string>();
@@ -404,6 +456,11 @@ export function scan_import_headers(
   const array_constructors = new Set<string>();
   const direct_reader_dictionaries = new Set<string>();
   const direct_state_dictionaries = new Set<string>();
+  const collect_functions = new Set<string>();
+  const collect_namespaces = new Set<string>();
+  const applicative_objects = new Set<string>();
+  const applicative_namespaces = new Set<string>();
+  const iterable_locals = new Set<string>();
   const import_declarations = new Map<string, ImportDeclaration>();
   const loop_dictionaries = new Set<string>();
   const loop_tasks = new Set<string>();
@@ -480,12 +537,45 @@ export function scan_import_headers(
           namespaces.add(local);
           program_module ??= specifier;
         }
+        if (
+          loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "applicative"
+        ) {
+          collect_namespaces.add(local);
+          applicative_namespaces.add(local);
+        }
+        if (
+          loop_kind === "iterable" || loop_kind === "mod" ||
+          loop_kind === "typeclasses" || loop_kind === "foldable"
+        ) {
+          iterable_locals.add(local);
+        }
         continue;
       }
       if (binding.type !== "ImportSpecifier" || binding.importKind === "type") {
         continue;
       }
       const imported = import_name(binding)!;
+      if (
+        loop_kind === "iterable" ||
+        ((loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "foldable") &&
+          (imported === "iterable" || imported === "Foldable"))
+      ) {
+        iterable_locals.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "applicative") && imported === "collect"
+      ) {
+        collect_functions.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "applicative") && imported === "Applicative"
+      ) {
+        applicative_objects.add(local);
+      }
       if (
         loop_kind !== undefined &&
         (imported === "Maybe" || imported === "Either" ||
@@ -502,6 +592,11 @@ export function scan_import_headers(
         (loop_kind === "mod" || loop_kind === "maybe") && imported === "Just"
       ) {
         just_constructors.add(local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") && imported === "Nothing"
+      ) {
+        nothing_constructors.add(local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Left"
@@ -610,6 +705,7 @@ export function scan_import_headers(
     cell_provider_namespaces,
     direct_maybe_dictionaries,
     just_constructors,
+    nothing_constructors,
     direct_either_dictionaries,
     left_constructors,
     right_constructors,
@@ -618,6 +714,11 @@ export function scan_import_headers(
     array_constructors,
     direct_reader_dictionaries,
     direct_state_dictionaries,
+    collect_functions,
+    collect_namespaces,
+    applicative_objects,
+    applicative_namespaces,
+    iterable_locals,
     program_module,
     import_declarations,
     loop_dictionaries,
@@ -700,6 +801,7 @@ export function create_import_shadow_tracker(
     ...headers.cell_provider_namespaces.keys(),
     ...headers.direct_maybe_dictionaries,
     ...headers.just_constructors,
+    ...headers.nothing_constructors,
     ...headers.direct_either_dictionaries,
     ...headers.left_constructors,
     ...headers.right_constructors,
@@ -708,6 +810,11 @@ export function create_import_shadow_tracker(
     ...headers.array_constructors,
     ...headers.direct_reader_dictionaries,
     ...headers.direct_state_dictionaries,
+    ...headers.collect_functions,
+    ...headers.collect_namespaces,
+    ...headers.applicative_objects,
+    ...headers.applicative_namespaces,
+    ...headers.iterable_locals,
     ...headers.loop_dictionaries,
     ...scope_declarations.keys(),
   ]);
@@ -784,6 +891,7 @@ export function create_import_shadow_tracker(
         headers.cell_provider_namespaces.delete(name);
         headers.direct_maybe_dictionaries.delete(name);
         headers.just_constructors.delete(name);
+        headers.nothing_constructors.delete(name);
         headers.direct_either_dictionaries.delete(name);
         headers.left_constructors.delete(name);
         headers.right_constructors.delete(name);
@@ -792,6 +900,11 @@ export function create_import_shadow_tracker(
         headers.array_constructors.delete(name);
         headers.direct_reader_dictionaries.delete(name);
         headers.direct_state_dictionaries.delete(name);
+        headers.collect_functions.delete(name);
+        headers.collect_namespaces.delete(name);
+        headers.applicative_objects.delete(name);
+        headers.applicative_namespaces.delete(name);
+        headers.iterable_locals.delete(name);
         headers.loop_dictionaries.delete(name);
         headers.loop_tasks.delete(name);
       }
@@ -829,6 +942,7 @@ export function create_import_shadow_tracker(
           cell_provider_namespaces: headers.cell_provider_namespaces,
           direct_maybe_dictionaries: headers.direct_maybe_dictionaries,
           just_constructors: headers.just_constructors,
+          nothing_constructors: headers.nothing_constructors,
           direct_either_dictionaries: headers.direct_either_dictionaries,
           left_constructors: headers.left_constructors,
           right_constructors: headers.right_constructors,
@@ -837,6 +951,11 @@ export function create_import_shadow_tracker(
           array_constructors: headers.array_constructors,
           direct_reader_dictionaries: headers.direct_reader_dictionaries,
           direct_state_dictionaries: headers.direct_state_dictionaries,
+          collect_functions: headers.collect_functions,
+          collect_namespaces: headers.collect_namespaces,
+          applicative_objects: headers.applicative_objects,
+          applicative_namespaces: headers.applicative_namespaces,
+          iterable_locals: headers.iterable_locals,
           program_module: headers.program_module,
           effect_helper_shadowed:
             (headers.program_names.size > 0 || headers.namespaces.size > 0) &&

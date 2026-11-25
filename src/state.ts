@@ -29,6 +29,7 @@ import {
   type NominalKey,
   type WithoutCell,
 } from "./cell.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -285,6 +286,8 @@ function make_state_cell<key extends PropertyKey, state>(
       );
     },
   });
+
+  register_state_traversal(dictionary);
 
   return dictionary;
 
@@ -653,3 +656,41 @@ Monad.instance(State)({
     );
   },
 });
+
+function register_state_traversal(dictionary: unknown): void {
+  register_traversal(
+    dictionary as AsState<unknown>,
+    <from, to, result>(
+      items: Iterable<from>,
+      fn: (item: from) => Data<AsState<unknown>, to>,
+      build: (items: Iterable<to>) => result,
+    ): Data<AsState<unknown>, result> => {
+      let fns: RawState<unknown, to>[];
+      if (Array.isArray(items)) {
+        fns = new Array<RawState<unknown, to>>(items.length);
+        for (let i = 0; i < items.length; i += 1) {
+          fns[i] = fn(items[i]).value() as RawState<unknown, to>;
+        }
+      } else {
+        fns = [];
+        for (const item of items) {
+          fns.push(fn(item).value() as RawState<unknown, to>);
+        }
+      }
+      return (dictionary as (
+        v: RawState<unknown, result>,
+      ) => Data<AsState<unknown>, result>)((initial: unknown) => {
+        const out = new Array<to>(fns.length);
+        let current = initial;
+        for (let i = 0; i < fns.length; i += 1) {
+          const [value, next] = fns[i](current);
+          out[i] = value;
+          current = next;
+        }
+        return [build(out), current] as const;
+      });
+    },
+  );
+}
+
+register_state_traversal(State);

@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 628" width="980"
+  height="628" role="img"
+  aria-label="Round 4: Core Runtime &amp; Transformer Speedups (vs main @ v0.20.0)">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+  <style>
+  .bg {
+    fill: #0d1117;
+    stroke: #30363d;
+    stroke-width: 1;
+  }
+  .title {
+    font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #f0f6fc;
+  }
+  .subtitle {
+    font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #8b949e;
+  }
+  .label {
+    font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #e6edf3;
+  }
+  .mult {
+    font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #38bdf8;
+  }
+  .detail {
+    font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .tick {
+    font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .grid {
+    stroke: #21262d;
+    stroke-width: 1;
+  }
+  .baseline {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+  .ci {
+    stroke: #f0f6fc;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.78;
+  }
+  .row-alt {
+    fill: #161b22;
+  }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="979" height="627" rx="12" />
+  <text class="title" x="24"
+    y="34">Round 4: Core Runtime &amp; Transformer Speedups (vs main @ v0.20.0)</text>
+  <text class="subtitle" x="24"
+    y="54">Paired ABBA benchmarks · Specialized traversals, dense collect, Task/Computation plans, Writer concat, span/splice</text>
+  <line x1="24" y1="68" x2="956" y2="68" stroke="#21262d" stroke-width="1" />
+  <rect class="row-alt" x="12" y="120" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="196" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="272" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="348" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="424" width="956" height="38" rx="4" />
+  <rect class="row-alt" x="12" y="500" width="956" height="38" rx="4" />
+  <line class="baseline" x1="310.0" y1="78" x2="310.0" y2="580" />
+  <text class="tick" x="310.0" y="596" text-anchor="middle">1x</text>
+  <line class="grid" x1="367.2" y1="78" x2="367.2" y2="580" />
+  <text class="tick" x="367.2" y="596" text-anchor="middle">2x</text>
+  <line class="grid" x1="442.8" y1="78" x2="442.8" y2="580" />
+  <text class="tick" x="442.8" y="596" text-anchor="middle">5x</text>
+  <line class="grid" x1="500.0" y1="78" x2="500.0" y2="580" />
+  <text class="tick" x="500.0" y="596" text-anchor="middle">10x</text>
+  <line class="grid" x1="557.2" y1="78" x2="557.2" y2="580" />
+  <text class="tick" x="557.2" y="596" text-anchor="middle">20x</text>
+  <line class="grid" x1="632.8" y1="78" x2="632.8" y2="580" />
+  <text class="tick" x="632.8" y="596" text-anchor="middle">50x</text>
+  <line class="grid" x1="690.0" y1="78" x2="690.0" y2="580" />
+  <text class="tick" x="690.0" y="596" text-anchor="middle">100x</text>
+  <text class="label" x="24" y="105.5">Traversable.traverse Task x200</text>
+  <rect x="310" y="92.0" width="327.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="611.6" y1="101.0" x2="660.5" y2="101.0" />
+  <line class="ci" x1="611.6" y1="97.0" x2="611.6" y2="105.0" />
+  <line class="ci" x1="660.5" y1="97.0" x2="660.5" y2="105.0" />
+  <text class="mult" x="716" y="105.5">52.7x</text>
+  <text class="detail" x="782" y="105.5">(337.7µs -&gt; 6.41µs)</text>
+  <text class="label" x="24"
+    y="143.5">Traversable.traverse Validation x200</text>
+  <rect x="310" y="130.0" width="241.8" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="547.8" y1="139.0" x2="558.0" y2="139.0" />
+  <line class="ci" x1="547.8" y1="135.0" x2="547.8" y2="143.0" />
+  <line class="ci" x1="558.0" y1="135.0" x2="558.0" y2="143.0" />
+  <text class="mult" x="716" y="143.5">18.7x</text>
+  <text class="detail" x="782" y="143.5">(17.9µs -&gt; 955ns)</text>
+  <text class="label" x="24" y="181.5">Traversable.traverse Maybe x200</text>
+  <rect x="310" y="168.0" width="204.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="507.2" y1="177.0" x2="518.0" y2="177.0" />
+  <line class="ci" x1="507.2" y1="173.0" x2="507.2" y2="181.0" />
+  <line class="ci" x1="518.0" y1="173.0" x2="518.0" y2="181.0" />
+  <text class="mult" x="716" y="181.5">12.0x</text>
+  <text class="detail" x="782" y="181.5">(17.5µs -&gt; 1.46µs)</text>
+  <text class="label" x="24" y="219.5">Traversable.traverse State x200</text>
+  <rect x="310" y="206.0" width="203.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="510.0" y1="215.0" x2="516.2" y2="215.0" />
+  <line class="ci" x1="510.0" y1="211.0" x2="510.0" y2="219.0" />
+  <line class="ci" x1="516.2" y1="211.0" x2="516.2" y2="219.0" />
+  <text class="mult" x="716" y="219.5">11.7x</text>
+  <text class="detail" x="782" y="219.5">(24.9µs -&gt; 2.12µs)</text>
+  <text class="label" x="24" y="257.5">Task short map+bind chain</text>
+  <rect x="310" y="244.0" width="186.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="473.8" y1="253.0" x2="515.0" y2="253.0" />
+  <line class="ci" x1="473.8" y1="249.0" x2="473.8" y2="257.0" />
+  <line class="ci" x1="515.0" y1="249.0" x2="515.0" y2="257.0" />
+  <text class="mult" x="716" y="257.5">9.64x</text>
+  <text class="detail" x="782" y="257.5">(1.87µs -&gt; 194ns)</text>
+  <text class="label" x="24" y="295.5">traverse_sequential Maybe x200</text>
+  <rect x="310" y="282.0" width="185.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="492.0" y1="291.0" x2="496.9" y2="291.0" />
+  <line class="ci" x1="492.0" y1="287.0" x2="492.0" y2="295.0" />
+  <line class="ci" x1="496.9" y1="287.0" x2="496.9" y2="295.0" />
+  <text class="mult" x="716" y="295.5">9.44x</text>
+  <text class="detail" x="782" y="295.5">(5.61µs -&gt; 594ns)</text>
+  <text class="label" x="24" y="333.5">Traversable.traverse Either x200</text>
+  <rect x="310" y="320.0" width="152.0" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="457.6" y1="329.0" x2="463.4" y2="329.0" />
+  <line class="ci" x1="457.6" y1="325.0" x2="457.6" y2="333.0" />
+  <line class="ci" x1="463.4" y1="325.0" x2="463.4" y2="333.0" />
+  <text class="mult" x="716" y="333.5">6.31x</text>
+  <text class="detail" x="782" y="333.5">(17.8µs -&gt; 2.82µs)</text>
+  <text class="label" x="24" y="371.5">collect([Just x5]) (untransformed)</text>
+  <rect x="310" y="358.0" width="97.8" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="405.1" y1="367.0" x2="411.8" y2="367.0" />
+  <line class="ci" x1="405.1" y1="363.0" x2="405.1" y2="371.0" />
+  <line class="ci" x1="411.8" y1="363.0" x2="411.8" y2="371.0" />
+  <text class="mult" x="716" y="371.5">3.27x</text>
+  <text class="detail" x="782" y="371.5">(1.11µs -&gt; 340ns)</text>
+  <text class="label" x="24"
+    y="409.5">Transformer: Iterable + 4k fns (map=true)</text>
+  <rect x="310" y="396.0" width="47.4" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="348.4" y1="405.0" x2="372.9" y2="405.0" />
+  <line class="ci" x1="348.4" y1="401.0" x2="348.4" y2="409.0" />
+  <line class="ci" x1="372.9" y1="401.0" x2="372.9" y2="409.0" />
+  <text class="mult" x="716" y="409.5">1.78x</text>
+  <text class="detail" x="782" y="409.5">(12.59ms -&gt; 7.09ms)</text>
+  <text class="label" x="24" y="447.5">Writer ArrayT tell x200</text>
+  <rect x="310" y="434.0" width="15.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="321.6" y1="443.0" x2="329.4" y2="443.0" />
+  <line class="ci" x1="321.6" y1="439.0" x2="321.6" y2="447.0" />
+  <line class="ci" x1="329.4" y1="439.0" x2="329.4" y2="447.0" />
+  <text class="mult" x="716" y="447.5">1.21x</text>
+  <text class="detail" x="782" y="447.5">(35.5µs -&gt; 29.4µs)</text>
+  <text class="label" x="24"
+    y="485.5">Transformer: 50-site multi-edit (map=true)</text>
+  <rect x="310" y="472.0" width="13.2" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="316.1" y1="481.0" x2="334.2" y2="481.0" />
+  <line class="ci" x1="316.1" y1="477.0" x2="316.1" y2="485.0" />
+  <line class="ci" x1="334.2" y1="477.0" x2="334.2" y2="485.0" />
+  <text class="mult" x="716" y="485.5">1.17x</text>
+  <text class="detail" x="782" y="485.5">(1.84ms -&gt; 1.57ms)</text>
+  <text class="label" x="24" y="523.5">State direct bind+map x100</text>
+  <rect x="310" y="510.0" width="12.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="310.9" y1="519.0" x2="329.7" y2="519.0" />
+  <line class="ci" x1="310.9" y1="515.0" x2="310.9" y2="523.0" />
+  <line class="ci" x1="329.7" y1="515.0" x2="329.7" y2="523.0" />
+  <text class="mult" x="716" y="523.5">1.16x</text>
+  <text class="detail" x="782" y="523.5">(13.2µs -&gt; 11.4µs)</text>
+  <text class="label" x="24"
+    y="561.5">Transformer: Terminal + 4k fns (map=true)</text>
+  <rect x="310" y="548.0" width="8.4" height="18" rx="4" fill="url(#barGrad)" />
+  <line class="ci" x1="310.0" y1="557.0" x2="330.8" y2="557.0" />
+  <line class="ci" x1="310.0" y1="553.0" x2="310.0" y2="561.0" />
+  <line class="ci" x1="330.8" y1="553.0" x2="330.8" y2="561.0" />
+  <text class="mult" x="716" y="561.5">1.11x</text>
+  <text class="detail" x="782" y="561.5">(5.86ms -&gt; 5.29ms)</text>
+  <text class="subtitle" x="24"
+    y="616">Log10 speedup scale · 8 paired ABBA blocks (16 samples each) with 95% bootstrap CI whiskers · Deno 2.9.7 / V8 15.0.245.2-rusty</text>
+</svg>
