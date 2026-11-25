@@ -404,7 +404,7 @@ export function map_concurrent<from, to>(
     type Outcome =
       | { readonly ok: true; readonly value: to }
       | { readonly ok: false; readonly error: unknown };
-    const pending: (Promise<Outcome> | undefined)[] = [];
+    const pending: (Promise<Outcome> | Outcome | undefined)[] = [];
     let pending_head = 0;
     let pending_count = 0;
     const waiter = traversal_waiter(signal);
@@ -428,27 +428,39 @@ export function map_concurrent<from, to>(
             break;
           }
           const task_index = index++;
-          const task = Promise.resolve().then(() => {
+          let task: Promise<Outcome> | Outcome;
+          try {
             signal.throwIfAborted();
-            return fn(next.value, task_index, signal);
-          }).then(
-            (value): Outcome => ({ ok: true, value }),
-            (error): Outcome => {
-              failure = { error };
-              controller.abort(error);
-              return { ok: false, error };
-            },
-          );
+            const raw = fn(next.value, task_index, signal);
+            if (is_promise_like(raw)) {
+              task = Promise.resolve(raw).then(
+                (value): Outcome => ({ ok: true, value }),
+                (error): Outcome => {
+                  failure = { error };
+                  controller.abort(error);
+                  return { ok: false, error };
+                },
+              );
+            } else {
+              task = { ok: true, value: raw };
+            }
+          } catch (error) {
+            failure = { error };
+            controller.abort(error);
+            task = { ok: false, error };
+          }
           pending[(pending_head + pending_count) % concurrency] = task;
           pending_count += 1;
         }
         if (failure !== undefined) throw failure.error;
         if (pending_count === 0) return;
-        const task = pending[pending_head]!;
+        const slot = pending[pending_head]!;
         pending[pending_head] = undefined;
         pending_head = (pending_head + 1) % concurrency;
         pending_count -= 1;
-        const outcome = await waiter.wait(task);
+        const outcome = slot instanceof Promise
+          ? await waiter.wait(slot)
+          : slot;
         if (!outcome.ok) throw outcome.error;
         signal.throwIfAborted();
         yield outcome.value;
@@ -1311,17 +1323,25 @@ export function map_concurrent_unordered<from, to>(
           else {
             const id = index++;
             admitted += 1;
-            Promise.resolve().then(() => {
+            try {
               signal.throwIfAborted();
-              return fn(next.value, id, signal);
-            }).then(
-              (value) => {
-                ready[(ready_head + ready_count) % concurrency] = value;
+              const raw = fn(next.value, id, signal);
+              if (is_promise_like(raw)) {
+                Promise.resolve(raw).then(
+                  (value) => {
+                    ready[(ready_head + ready_count) % concurrency] = value;
+                    ready_count += 1;
+                    wake?.();
+                  },
+                  fail,
+                );
+              } else {
+                ready[(ready_head + ready_count) % concurrency] = raw;
                 ready_count += 1;
-                wake?.();
-              },
-              fail,
-            );
+              }
+            } catch (error) {
+              fail(error);
+            }
           }
           continue;
         }

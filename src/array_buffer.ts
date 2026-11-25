@@ -1,4 +1,9 @@
 import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
+import {
   type As,
   as_data,
   type Data,
@@ -92,15 +97,41 @@ Monoid.instance(ArrayBufferT)({
 });
 
 Foldable.instance(ArrayBufferT)({
+  [some_method](predicate) {
+    const bytes = new Uint8Array(this.value());
+    for (let i = 0; i < bytes.length; i += 1) {
+      if (predicate(bytes[i])) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    const bytes = new Uint8Array(this.value());
+    for (let i = 0; i < bytes.length; i += 1) {
+      const byte = bytes[i];
+      if (predicate(byte)) return byte;
+    }
+    return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    const bytes = new Uint8Array(this.value());
+    let state = initial;
+    for (let i = 0; i < bytes.length; i += 1) {
+      const step = fn(state, bytes[i]);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
+  },
   fold<item, output>(
     this: Data<AsArrayBuffer, item>,
     initial: output,
     fn: (state: output, item: number) => output,
   ) {
+    const bytes = new Uint8Array(this.value());
     let state = initial;
 
-    for (const byte of new Uint8Array(this.value())) {
-      state = fn(state, byte);
+    for (let i = 0; i < bytes.length; i += 1) {
+      state = fn(state, bytes[i]);
     }
 
     return state;

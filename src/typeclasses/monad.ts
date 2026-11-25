@@ -26,6 +26,13 @@ export type FastDoSpec = readonly [
   err: unknown,
 ];
 
+/** @ignore Custom iterative Do runner hook for deferred or accumulating monads. */
+export type CustomDoRunner = (
+  first_value: unknown,
+  first_iterator: Generator<unknown, unknown, unknown>,
+  run: () => Generator<unknown, unknown, unknown>,
+) => unknown;
+
 /** @ignore Internal fast iterative runner metadata for single-shot synchronous monads. */
 export const do_runner_method: unique symbol = /* @__PURE__ */ Symbol(
   "Monad.do_runner",
@@ -209,9 +216,16 @@ export function Do<dictionary extends Monad<dictionary>, result>(
   }
 
   const spec = (first_next.value as {
-    readonly [do_runner_method]?: FastDoSpec;
+    readonly [do_runner_method]?: FastDoSpec | CustomDoRunner;
   })?.[do_runner_method];
-  if (spec !== undefined) {
+  if (typeof spec === "function") {
+    const custom = spec(
+      first_next.value,
+      first_iterator as Generator<unknown, unknown, unknown>,
+      run as () => Generator<unknown, unknown, unknown>,
+    );
+    if (custom !== undefined) return custom as Data<dictionary, result>;
+  } else if (spec !== undefined) {
     const [mode, wrap, fail, c_bind, c_pure, c_map, c_err] = spec;
     let current = first_next.value;
     let path: DoPath | undefined;

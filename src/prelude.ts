@@ -1,4 +1,9 @@
-import type { Data, DataItem } from "./typeclass.ts";
+import { array_concat_method, ArrayT } from "./array.ts";
+import { from_array as list_from_array, List, type RawList } from "./list.ts";
+import { MapT } from "./map.ts";
+import { SetT } from "./set.ts";
+import { as_data, type Data, type DataItem, kind } from "./typeclass.ts";
+import { do_runner_method, type FastDoSpec } from "./typeclasses/monad.ts";
 export { from_maybe, maybe, to_either, to_nullable } from "./maybe.ts";
 export { either, from_left, from_right, hush, note } from "./either.ts";
 import {
@@ -109,18 +114,33 @@ export function bind<
   return Monad.bind(value, fn);
 }
 
+const canonical_array_fold: unknown = /* @__PURE__ */ (() => ArrayT.fold)();
+const canonical_set_fold: unknown = /* @__PURE__ */ (() => SetT.fold)();
+const canonical_map_fold: unknown = /* @__PURE__ */ (() => MapT.fold)();
+const canonical_array_empty = /* @__PURE__ */ (() => ArrayT.empty)();
+const canonical_list_concat = /* @__PURE__ */ (() => List.concat)();
+const canonical_list_empty = /* @__PURE__ */ (() => List.empty)();
+const canonical_set_concat = /* @__PURE__ */ (() => SetT.concat)();
+const canonical_set_empty = /* @__PURE__ */ (() => SetT.empty)();
+const canonical_map_concat = /* @__PURE__ */ (() => MapT.concat)();
+const canonical_map_empty = /* @__PURE__ */ (() => MapT.empty)();
+const identity_fn = <T>(value: T): T => value;
+const return_undefined = (): undefined => undefined;
+const keep_first = <first, second>(kept: first, _: second): first => kept;
+const keep_second = <first, second>(_: first, kept: second): second => kept;
+
 /** Haskell `join :: Monad m => m (m a) -> m a`. */
 export function join<dictionary extends MonadDictionary<dictionary>, item>(
   value: Data<dictionary, Data<dictionary, item>>,
 ): Data<dictionary, item> {
-  return Monad.bind(value, (inner) => inner);
+  return Monad.bind(value, identity_fn);
 }
 
 /** Haskell `void :: Functor f => f a -> f ()`. */
 export function voided<dictionary extends FunctorDictionary<dictionary>>(
   value: Data<dictionary, unknown>,
 ): Data<dictionary, undefined> {
-  return Functor.map(value, () => undefined);
+  return Functor.map(value, return_undefined);
 }
 
 /** Haskell `when :: Applicative f => Bool -> f () -> f ()`. */
@@ -172,7 +192,7 @@ export function ap_first<
   left: Data<dictionary, first>,
   right: Data<dictionary, second>,
 ): Data<dictionary, first> {
-  return Applicative.lift((kept: first, _: second) => kept, left, right);
+  return Applicative.lift(keep_first<first, second>, left, right);
 }
 
 /** Haskell `*>`: sequence two effects and keep the value on the right. */
@@ -184,7 +204,7 @@ export function ap_second<
   left: Data<dictionary, first>,
   right: Data<dictionary, second>,
 ): Data<dictionary, second> {
-  return Applicative.lift((_: first, kept: second) => kept, left, right);
+  return Applicative.lift(keep_second<first, second>, left, right);
 }
 
 /** Sequence monadic computations and keep the right context. */
@@ -223,11 +243,85 @@ export function fold_map<
   fn: (value: DataItem<dictionary, item>) => Data<monoid, result>,
   value: Data<dictionary, item>,
 ): Data<monoid, result> {
-  return Foldable.fold(
-    value,
-    Monoid.empty<monoid, result>(monoid as monoid),
-    (state, item) => Semigroup.concat(state, fn(item)),
-  );
+  const mk = (monoid as unknown as { [kind]?: unknown })[kind];
+  if (
+    mk === ArrayT[kind] &&
+    (monoid as unknown as typeof ArrayT).concat === array_concat_method &&
+    (monoid as unknown as typeof ArrayT).empty === canonical_array_empty
+  ) {
+    const out: unknown[] = [];
+    Foldable.fold(value, undefined, (_s, item) => {
+      const part = fn(item).value() as readonly unknown[];
+      for (let i = 0; i < part.length; i += 1) out.push(part[i]);
+      return undefined;
+    });
+    return as_data(ArrayT, out) as unknown as Data<monoid, result>;
+  }
+  if (
+    mk === List[kind] &&
+    (monoid as unknown as typeof List).concat === canonical_list_concat &&
+    (monoid as unknown as typeof List).empty === canonical_list_empty
+  ) {
+    const out: unknown[] = [];
+    Foldable.fold(value, undefined, (_s, item) => {
+      let cur = fn(item).value() as RawList<unknown>;
+      while (cur[0] === "Cons") {
+        out.push(cur[1]);
+        cur = cur[2];
+      }
+      return undefined;
+    });
+    return list_from_array(out) as unknown as Data<monoid, result>;
+  }
+  if (
+    mk === SetT[kind] &&
+    (monoid as unknown as typeof SetT).concat === canonical_set_concat &&
+    (monoid as unknown as typeof SetT).empty === canonical_set_empty
+  ) {
+    const out = new Set<unknown>();
+    Foldable.fold(value, undefined, (_s, item) => {
+      for (const el of fn(item).value() as ReadonlySet<unknown>) out.add(el);
+      return undefined;
+    });
+    return as_data(SetT, out) as unknown as Data<monoid, result>;
+  }
+  if (
+    mk === MapT[kind] &&
+    (monoid as unknown as typeof MapT).concat === canonical_map_concat &&
+    (monoid as unknown as typeof MapT).empty === canonical_map_empty
+  ) {
+    const out = new Map<unknown, unknown>();
+    Foldable.fold(value, undefined, (_s, item) => {
+      for (const [k, v] of fn(item).value() as ReadonlyMap<unknown, unknown>) {
+        out.set(k, v);
+      }
+      return undefined;
+    });
+    return as_data(MapT, out) as unknown as Data<monoid, result>;
+  }
+  // Balanced binary carry avoids O(N^2) left-associated concat on custom Monoids.
+  const pending: (Data<monoid, result> | undefined)[] = [];
+  Foldable.fold(value, undefined, (_s, item) => {
+    let acc = fn(item);
+    let level = 0;
+    while (true) {
+      const earlier = pending[level];
+      if (earlier === undefined) break;
+      acc = Semigroup.concat(earlier, acc);
+      pending[level] = undefined;
+      level += 1;
+    }
+    pending[level] = acc;
+    return undefined;
+  });
+  let total: Data<monoid, result> | undefined;
+  for (let level = pending.length - 1; level >= 0; level -= 1) {
+    const chunk = pending[level];
+    if (chunk !== undefined) {
+      total = total === undefined ? chunk : Semigroup.concat(total, chunk);
+    }
+  }
+  return total ?? Monoid.empty<monoid, result>(monoid as monoid);
 }
 
 /** Haskell `mconcat :: Monoid m => [m] -> m`. */
@@ -239,7 +333,7 @@ export function mconcat<
   monoid: MonoidDictionary<monoid>,
   values: Data<dictionary, Data<monoid, item>>,
 ): Data<monoid, item> {
-  return fold_map(monoid, (value) => value, values);
+  return fold_map(monoid, identity_fn, values);
 }
 
 /** Haskell `toList :: Foldable t => t a -> [a]`. */
@@ -249,6 +343,19 @@ export function to_array<
 >(
   value: Data<dictionary, item>,
 ): DataItem<dictionary, item>[] {
+  const vk = (value as unknown as { [kind]?: unknown })[kind];
+  if (vk === ArrayT[kind] && value.fold === canonical_array_fold) {
+    return (value.value() as readonly DataItem<dictionary, item>[]).slice();
+  }
+  if (vk === SetT[kind] && value.fold === canonical_set_fold) {
+    return [...(value.value() as ReadonlySet<DataItem<dictionary, item>>)];
+  }
+  if (vk === MapT[kind] && value.fold === canonical_map_fold) {
+    return [
+      ...(value.value() as ReadonlyMap<unknown, DataItem<dictionary, item>>)
+        .values(),
+    ];
+  }
   return Foldable.fold(
     value,
     [] as DataItem<dictionary, item>[],
@@ -263,6 +370,16 @@ export function to_array<
 export function length<dictionary extends FoldableDictionary<dictionary>>(
   value: Data<dictionary, unknown>,
 ): number {
+  const vk = (value as unknown as { [kind]?: unknown })[kind];
+  if (vk === ArrayT[kind] && value.fold === canonical_array_fold) {
+    return (value.value() as readonly unknown[]).length;
+  }
+  if (vk === SetT[kind] && value.fold === canonical_set_fold) {
+    return (value.value() as ReadonlySet<unknown>).size;
+  }
+  if (vk === MapT[kind] && value.fold === canonical_map_fold) {
+    return (value.value() as ReadonlyMap<unknown, unknown>).size;
+  }
   return Foldable.fold(value, 0, (count) => count + 1);
 }
 
@@ -348,6 +465,25 @@ export function traverse_<
   applicative: ApplicativeDictionary<applicative>,
   value: Data<dictionary, item>,
 ): Data<applicative, undefined> {
+  const dict = applicative as unknown as {
+    readonly [do_runner_method]?: FastDoSpec;
+    readonly pure?: unknown;
+  };
+  const spec = dict[do_runner_method];
+  if (Array.isArray(spec) && dict.pure === spec[4]) {
+    const [mode, wrap] = spec;
+    const fail_tag = mode === 0 ? "Nothing" : "Left";
+    let failed: Data<applicative, unknown> | undefined;
+    Foldable.fold(value, undefined, (_s, item) => {
+      const current = fn(item);
+      if (mode !== 2 && failed === undefined) {
+        const raw = current.value() as readonly [string, unknown];
+        if (raw[0] === fail_tag) failed = current;
+      }
+      return undefined;
+    });
+    return (failed ?? wrap(undefined)) as Data<applicative, undefined>;
+  }
   // Merge equally sized groups as a binary carry. Callbacks still run in the
   // source's fold order, while deferred execution needs only logarithmic depth.
   const pending: (Data<applicative, undefined> | undefined)[] = [];

@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import {
   type As,
   type Data,
@@ -153,6 +157,16 @@ Foldable.instance(TypedArrayT)({
       if (predicate(item)) return item;
     }
     return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    const arr = this.value();
+    let state = initial;
+    for (let i = 0; i < arr.length; i += 1) {
+      const step = fn(state, arr[i]);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
   },
   fold<item, output>(
     this: Data<AsTypedArray, item>,

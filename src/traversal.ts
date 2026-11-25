@@ -17,14 +17,27 @@ type TraverseItems<dictionary extends Applicative<dictionary>> = <
   build: (items: Iterable<to>) => result,
 ) => Data<dictionary, result>;
 
+type SequentialTraverse<dictionary extends Applicative<dictionary>> = <
+  from,
+  to,
+>(
+  items: readonly from[],
+  fn: (item: from) => Data<dictionary, to>,
+) => Data<dictionary, to[]>;
+
 const specializations = new WeakMap<object, unknown>();
+const sequential_specializations = new WeakMap<object, unknown>();
 
 /** @ignore Register a concrete dictionary's traversal without a module cycle. */
 export function register_traversal<dictionary extends Applicative<dictionary>>(
   dictionary: dictionary,
   traverse: TraverseItems<dictionary>,
+  sequential?: SequentialTraverse<dictionary>,
 ): void {
   specializations.set(dictionary, traverse);
+  if (sequential !== undefined) {
+    sequential_specializations.set(dictionary, sequential);
+  }
 }
 
 type Tree<item> =
@@ -45,7 +58,7 @@ export function traverse_items<
   applicative: applicative,
   fn: (item: from) => Data<applicative, to>,
 ): Data<applicative, to[]> {
-  return traverse_items_into(items, applicative, fn, (items) => [...items]);
+  return traverse_items_into(items, applicative, fn, (out) => out as to[]);
 }
 
 /** Traverse into a final collection without an intermediate output array. */
@@ -69,7 +82,7 @@ export function traverse_items_into<
     readonly pure?: unknown;
   };
   const spec = dict[do_runner_method];
-  if (spec !== undefined && dict.pure === spec[4]) {
+  if (Array.isArray(spec) && dict.pure === spec[4]) {
     const [mode, wrap] = spec;
     const fail_tag = mode === 0 ? "Nothing" : "Left";
     let failed: Data<applicative, unknown> | undefined;
@@ -112,7 +125,7 @@ export function traverse_items_into<
     else result = merge(result, action);
   }
   if (result === undefined) return Applicative.pure(applicative, build([]));
-  return Functor.map(result, (tree) => build(tree_items(tree)));
+  return Functor.map(result, (tree) => build(tree_to_array(tree)));
 
   function merge(
     left: Data<applicative, Tree<to>>,
@@ -144,13 +157,17 @@ export function traverse_sequential<
   monad: Monad<monad>,
   fn: (item: from) => Data<monad, to>,
 ): Data<monad, to[]> {
+  const specialized = sequential_specializations.get(monad) as
+    | SequentialTraverse<monad>
+    | undefined;
+  if (specialized !== undefined) return specialized(items, fn);
   const dict = monad as unknown as {
     readonly [do_runner_method]?: FastDoSpec;
     readonly bind?: unknown;
     readonly pure?: unknown;
   };
   const spec = dict[do_runner_method];
-  if (spec !== undefined && dict.bind === spec[3] && dict.pure === spec[4]) {
+  if (Array.isArray(spec) && dict.bind === spec[3] && dict.pure === spec[4]) {
     const [mode, wrap] = spec;
     const fail_tag = mode === 0 ? "Nothing" : "Left";
     const out = new Array<to>(items.length);
@@ -188,17 +205,19 @@ export function traverse_sequential<
   });
 }
 
-function* tree_items<item>(tree: Tree<item>): Generator<item> {
+function tree_to_array<item>(tree: Tree<item>): item[] {
   const pending = [tree];
+  const out: item[] = [];
   while (pending.length > 0) {
     const current = pending.pop()!;
     switch (current.tag) {
       case "leaf":
-        yield current.item;
+        out.push(current.item);
         break;
       case "branch":
         pending.push(current.right, current.left);
         break;
     }
   }
+  return out;
 }

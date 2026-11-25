@@ -1,5 +1,6 @@
 import type {
   Argument,
+  ArrowFunctionExpression,
   BindingPattern,
   BlockStatement,
   CallExpression,
@@ -201,6 +202,10 @@ export function create_terminal_transform(
   const has_r5_task = services.task_dictionaries.size > 0 ||
     (imp.task_run_functions?.size ?? 0) > 0 ||
     (imp.task_run_exit_functions?.size ?? 0) > 0 ||
+    (imp.parallel_task_dictionaries?.size ?? 0) > 0 ||
+    (imp.task_parallel_functions?.size ?? 0) > 0 ||
+    (imp.task_sequential_functions?.size ?? 0) > 0 ||
+    (imp.task_from_fn_functions?.size ?? 0) > 0 ||
     (imp.task_namespaces?.size ?? 0) > 0 ||
     imp.namespaces.size > 0;
   const has_r5_traverse = r5_hints !== undefined
@@ -228,26 +233,47 @@ export function create_terminal_transform(
       (imp.cons_constructors?.size ?? 0) > 0
     );
   const has_r5_stm = (imp.stm_dictionaries?.size ?? 0) > 0 ||
-    (imp.stm_namespaces?.size ?? 0) > 0;
+    (imp.stm_namespaces?.size ?? 0) > 0 ||
+    (imp.stm_atomically_functions?.size ?? 0) > 0 ||
+    (imp.stm_primitive_functions?.size ?? 0) > 0;
   const has_r5_chain = r5_hints !== undefined ? r5_hints.chain : (
     services.source.includes(".map(") || services.source.includes(".bind(") ||
     services.source.includes("from_maybe") ||
-    services.source.includes("to_nullable")
+    services.source.includes("to_nullable") ||
+    services.source.includes("get_or_else") ||
+    services.source.includes("from_right") ||
+    services.source.includes("from_left") ||
+    services.source.includes("recover_or_else") ||
+    services.source.includes("maybe(") ||
+    services.source.includes("either(")
   ) && (
     (imp.just_constructors?.size ?? 0) > 0 ||
     (imp.nothing_constructors?.size ?? 0) > 0 ||
     (imp.from_nullable_functions?.size ?? 0) > 0 ||
     (imp.from_maybe_functions?.size ?? 0) > 0 ||
     (imp.to_nullable_functions?.size ?? 0) > 0 ||
+    (imp.maybe_get_or_else_functions?.size ?? 0) > 0 ||
+    (imp.maybe_fold_functions?.size ?? 0) > 0 ||
+    (imp.maybe_filter_functions?.size ?? 0) > 0 ||
     (imp.left_constructors?.size ?? 0) > 0 ||
     (imp.right_constructors?.size ?? 0) > 0 ||
+    (imp.either_fold_functions?.size ?? 0) > 0 ||
+    (imp.either_from_right_functions?.size ?? 0) > 0 ||
+    (imp.either_from_left_functions?.size ?? 0) > 0 ||
+    (imp.either_recover_functions?.size ?? 0) > 0 ||
     (imp.direct_maybe_dictionaries?.size ?? 0) > 0 ||
     (imp.direct_either_dictionaries?.size ?? 0) > 0 ||
     (imp.tagged_type_names?.size ?? 0) > 0
   );
   const has_r5_array = r5_hints !== undefined ? r5_hints.array : (
     (imp.array_constructors?.size ?? 0) > 0 ||
-    (imp.array_view_functions?.size ?? 0) > 0
+    (imp.array_from_array_functions?.size ?? 0) > 0 ||
+    (imp.array_view_functions?.size ?? 0) > 0 ||
+    (imp.array_namespaces?.size ?? 0) > 0 ||
+    (imp.typed_array_constructors?.size ?? 0) > 0 ||
+    (imp.set_constructors?.size ?? 0) > 0 ||
+    (imp.map_constructors?.size ?? 0) > 0 ||
+    (imp.record_constructors?.size ?? 0) > 0
   ) && (
     services.source.includes(".map(") || services.source.includes(".fold(") ||
     services.source.includes("Foldable") || services.source.includes("to_array")
@@ -266,6 +292,9 @@ export function create_terminal_transform(
     imp.namespaces.size > 0 ||
     (imp.direct_reader_dictionaries?.size ?? 0) > 0 ||
     (imp.direct_state_dictionaries?.size ?? 0) > 0 ||
+    (imp.direct_writer_dictionaries?.size ?? 0) > 0 ||
+    imp.primitive_functions.size > 0 ||
+    imp.primitive_namespaces.size > 0 ||
     (imp.cell_factories?.size ?? 0) > 0 ||
     (imp.cell_namespaces?.size ?? 0) > 0;
   const has_any_interp = imp.effect_names.size > 0 || imp.namespaces.size > 0;
@@ -276,8 +305,11 @@ export function create_terminal_transform(
     imp.namespaces.size > 0;
   const has_r5 = has_r5_task || has_r5_traverse || has_r5_match || has_r5_stm ||
     has_r5_chain || has_r5_array;
+  const has_after = has_any_terminal || has_any_lift || has_any_interp ||
+    has_r5_traverse || has_r5_match;
   if (!has_any_terminal && !has_any_interp && !has_any_lift && !has_r5) {
     return {
+      has_after: false,
       lower(): { expression: Expression; direct: boolean } | undefined {
         return undefined;
       },
@@ -297,7 +329,16 @@ export function create_terminal_transform(
   }
   const removed = new Set<Node>();
   const hoisted_statements = new Map<Node, Statement[]>();
-  const round5 = has_r5 ? create_round5_fusions(services) : undefined;
+  const round5 = has_r5
+    ? create_round5_fusions(services, {
+      task: has_r5_task,
+      stm: has_r5_stm,
+      chain: has_r5_chain,
+      array: has_r5_array,
+      traverse: has_r5_traverse,
+      match: has_r5_match,
+    })
+    : undefined;
   const prepared_cells = ((imp.cell_runners?.size ?? 0) > 0 ||
       (imp.cell_runner_namespaces?.size ?? 0) > 0 ||
       imp.namespaces.size > 0)
@@ -308,7 +349,8 @@ export function create_terminal_transform(
       imp.namespaces.size > 0)
     ? collect_prepared_operations()
     : new Map<Node, PreparedOpsEntry>();
-  const named = has_any_terminal
+  const named = has_any_terminal &&
+      (imp.program_names.size > 0 || imp.namespaces.size > 0)
     ? collect_named()
     : new Map<Node, NamedProgramCandidate>();
 
@@ -1374,20 +1416,67 @@ export function create_terminal_transform(
     }
     return undefined;
   }
-  function extract_array_t_literal(
+  function extract_array_t_call(
     expression: Expression,
-  ): ArrayBufferSpec | undefined {
+  ):
+    | {
+      readonly array_ctor: IdentifierReference;
+      readonly arg: Expression;
+      readonly element_type?: TSType;
+    }
+    | undefined {
     const value = parentheses(expression);
     if (
       value.type !== "CallExpression" || value.optional ||
       value.arguments.length !== 1 ||
-      value.callee.type !== "Identifier" ||
-      !services.imports.array_constructors?.has(value.callee.name) ||
-      !services.bindings.imported(value.callee)
+      value.arguments[0].type === "SpreadElement"
     ) return undefined;
     const type_params = value.typeArguments?.params;
     if (type_params !== undefined && type_params.length !== 1) return undefined;
-    const arg = parentheses(value.arguments[0] as Expression);
+    const callee = parentheses(value.callee);
+    let array_ctor: IdentifierReference | undefined;
+    if (callee.type === "Identifier" && services.bindings.imported(callee)) {
+      if (services.imports.array_constructors?.has(callee.name)) {
+        array_ctor = callee;
+      } else if (
+        services.imports.array_from_array_functions?.has(callee.name) ||
+        services.imports.array_view_functions?.has(callee.name)
+      ) {
+        const existing = services.imports.array_constructors?.values().next()
+          .value;
+        array_ctor = existing !== undefined
+          ? id(existing)
+          : services.import_from_module?.(callee.name, "array", "ArrayT");
+      }
+    } else if (
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.object.type === "Identifier" &&
+      callee.property.type === "Identifier" &&
+      services.bindings.imported(callee.object) &&
+      (services.imports.array_namespaces?.has(callee.object.name) &&
+        (callee.property.name === "ArrayT" ||
+          callee.property.name === "from_array" ||
+          callee.property.name === "from_array_view"))
+    ) {
+      const existing = services.imports.array_constructors?.values().next()
+        .value;
+      array_ctor = existing !== undefined
+        ? id(existing)
+        : services.import_from_module?.(callee.object.name, "array", "ArrayT");
+    }
+    if (array_ctor === undefined) return undefined;
+    return {
+      array_ctor,
+      arg: value.arguments[0] as Expression,
+      element_type: type_params?.[0],
+    };
+  }
+  function extract_array_t_literal(
+    expression: Expression,
+  ): ArrayBufferSpec | undefined {
+    const call_info = extract_array_t_call(expression);
+    if (call_info === undefined) return undefined;
+    const arg = parentheses(call_info.arg);
     if (arg.type !== "ArrayExpression") return undefined;
     const elements: Expression[] = [];
     for (const el of arg.elements) {
@@ -1395,9 +1484,9 @@ export function create_terminal_transform(
       elements.push(el);
     }
     return {
-      array_ctor: value.callee,
+      array_ctor: call_info.array_ctor,
       init_elements: elements,
-      element_type: type_params?.[0],
+      element_type: call_info.element_type,
     };
   }
   function writer_cell_array_init(
@@ -1447,14 +1536,6 @@ export function create_terminal_transform(
           saw_write = true;
           const op = matched.operation;
           if (op.name !== "tell" && op.name !== "writer") {
-            valid = false;
-            return false;
-          }
-          const log_arg = op.name === "tell"
-            ? op.arguments[0]
-            : op.arguments[1];
-          const lit = extract_array_t_literal(log_arg);
-          if (lit === undefined) {
             valid = false;
             return false;
           }
@@ -2894,28 +2975,80 @@ export function create_terminal_transform(
         const log_arg = operation.name === "tell"
           ? operation.arguments[0]
           : operation.arguments[1];
-        const lit = extract_array_t_literal(log_arg)!;
-        const elem_temps = lit.init_elements.map((el, idx) => {
-          const lowered_el = lower_expr(el, target_stmts);
-          const tmp = services.fresh(operation.name + "_item_" + idx);
+        const lit = extract_array_t_literal(log_arg);
+        if (lit !== undefined) {
+          const elem_temps = lit.init_elements.map((el, idx) => {
+            const lowered_el = lower_expr(el, target_stmts);
+            const tmp = services.fresh(operation.name + "_item_" + idx);
+            target_stmts.push(
+              variable(
+                tmp,
+                node({
+                  type: "SequenceExpression",
+                  expressions: [void_zero(), lowered_el],
+                }),
+                "const",
+              ),
+            );
+            return tmp;
+          });
+          emit_slot_ensure(slot, target_stmts);
+          if (elem_temps.length > 0) {
+            target_stmts.push(
+              node({
+                type: "ExpressionStatement",
+                expression: call(member(slot.current, "push"), elem_temps),
+              }),
+            );
+          }
+        } else {
+          const call_info = extract_array_t_call(log_arg);
+          const lowered_src = call_info !== undefined
+            ? lower_expr(call_info.arg, target_stmts)
+            : call(member(lower_expr(log_arg, target_stmts), "value"), []);
+          const items_tmp = services.fresh(operation.name + "_items");
+          const idx_tmp = services.fresh(operation.name + "_i");
           target_stmts.push(
             variable(
-              tmp,
+              items_tmp,
               node({
                 type: "SequenceExpression",
-                expressions: [void_zero(), lowered_el],
+                expressions: [void_zero(), lowered_src],
               }),
               "const",
             ),
           );
-          return tmp;
-        });
-        emit_slot_ensure(slot, target_stmts);
-        if (elem_temps.length > 0) {
+          emit_slot_ensure(slot, target_stmts);
           target_stmts.push(
             node({
-              type: "ExpressionStatement",
-              expression: call(member(slot.current, "push"), elem_temps),
+              type: "ForStatement",
+              init: variable(idx_tmp, literal(0), "let"),
+              test: node({
+                type: "BinaryExpression",
+                operator: "<",
+                left: idx_tmp,
+                right: member(items_tmp, "length"),
+              }),
+              update: node({
+                type: "AssignmentExpression",
+                operator: "+=",
+                left: idx_tmp,
+                right: literal(1),
+              }),
+              body: block([
+                node({
+                  type: "ExpressionStatement",
+                  expression: call(member(slot.current, "push"), [
+                    node({
+                      type: "MemberExpression",
+                      object: items_tmp,
+                      property: idx_tmp,
+                      computed: true,
+                      optional: false,
+                    }),
+                  ]),
+                }),
+              ]),
             }),
           );
         }
@@ -4468,12 +4601,13 @@ export function create_terminal_transform(
       services.config.optimizations?.terminal_body === false
     ) return undefined;
 
-    // Case A: Do(...).run(input), eval_state(Do(...), input), exec_state(Do(...), input),
-    //         run_reader_terminal(Do(...), env), run_state_terminal(Do(...), init)
+    // Case A: Do(...).run(input), Do(...).value(), eval_state(Do(...), input), exec_state(Do(...), input),
+    //         run_reader_terminal(Do(...), env), run_state_terminal(Do(...), init), run_writer_terminal(Do(...), empty)
     let do_call: CallExpression | undefined;
     let run_input: Expression | undefined;
     let state_eval_mode: StateEvalName | undefined;
-    let expected_terminal_kind: "reader" | "state" | undefined;
+    let expected_terminal_kind: "reader" | "state" | "writer" | undefined;
+    let unwrap_writer_value = false;
     if (plain_call(outer, 2)) {
       const eval_kind = state_eval_target(outer.callee);
       if (eval_kind !== undefined) {
@@ -4494,7 +4628,8 @@ export function create_terminal_transform(
         if (
           direct_handler !== undefined &&
           (direct_handler.imported === "run_reader_terminal" ||
-            direct_handler.imported === "run_state_terminal")
+            direct_handler.imported === "run_state_terminal" ||
+            direct_handler.imported === "run_writer_terminal")
         ) {
           const target_expr = parentheses(outer.arguments[0] as Expression);
           if (
@@ -4506,7 +4641,9 @@ export function create_terminal_transform(
             expected_terminal_kind =
               direct_handler.imported === "run_reader_terminal"
                 ? "reader"
-                : "state";
+                : direct_handler.imported === "run_state_terminal"
+                ? "state"
+                : "writer";
             if (lexical_hazard(run_input) || contains_await_yield(run_input)) {
               return undefined;
             }
@@ -4532,6 +4669,21 @@ export function create_terminal_transform(
           return undefined;
         }
       }
+    } else if (
+      do_call === undefined &&
+      plain_call(outer, 0) && outer.callee.type === "MemberExpression" &&
+      !outer.callee.computed && !outer.callee.optional &&
+      outer.callee.property.type === "Identifier" &&
+      outer.callee.property.name === "value"
+    ) {
+      const target_expr = parentheses(outer.callee.object);
+      if (
+        target_expr.type === "CallExpression" &&
+        services.kind(target_expr) === "do"
+      ) {
+        do_call = target_expr;
+        unwrap_writer_value = true;
+      }
     } else if (do_call === undefined && services.kind(outer) === "do") {
       do_call = outer;
     }
@@ -4551,34 +4703,72 @@ export function create_terminal_transform(
       lexical_hazard(run.body!)
     ) return undefined;
 
-    let kind: "reader" | "state" | undefined;
+    let kind: "reader" | "state" | "writer" | undefined;
     let cell:
       | { readonly identifier: IdentifierReference; readonly declaration: Node }
       | undefined;
     let wrap_dictionary: Expression | undefined;
+    let writer_empty_expr: Expression | undefined;
+    let writer_explicit_with = false;
+
+    const match_writer_with = (
+      expr: Expression,
+    ):
+      | { readonly dict_expr: Expression; readonly empty: Expression }
+      | undefined => {
+      if (
+        expr.type !== "CallExpression" || expr.optional ||
+        expr.typeArguments != null || expr.arguments.length !== 1 ||
+        expr.arguments[0].type === "SpreadElement" ||
+        expr.callee.type !== "MemberExpression" || expr.callee.computed ||
+        expr.callee.optional || expr.callee.property.type !== "Identifier" ||
+        expr.callee.property.name !== "with" ||
+        expr.callee.object.type !== "Identifier" ||
+        !services.imports.direct_writer_dictionaries?.has(
+          expr.callee.object.name,
+        ) || !services.bindings.imported(expr.callee.object)
+      ) return undefined;
+      return { dict_expr: expr, empty: expr.arguments[0] as Expression };
+    };
 
     if (explicit !== undefined) {
-      if (explicit.type !== "Identifier") return undefined;
-      if (services.imports.direct_reader_dictionaries?.has(explicit.name)) {
-        kind = "reader";
-        wrap_dictionary = explicit;
-      } else if (
-        services.imports.direct_state_dictionaries?.has(explicit.name)
-      ) {
-        kind = "state";
-        wrap_dictionary = explicit;
-      } else {
-        const resolved = resolve_any_cell(explicit);
+      const w_with = match_writer_with(explicit);
+      if (w_with !== undefined) {
         if (
-          resolved !== undefined &&
-          (resolved.kind === "reader" || resolved.kind === "state")
+          lexical_hazard(w_with.empty) || contains_await_yield(w_with.empty)
         ) {
-          kind = resolved.kind;
-          cell = resolved;
-          wrap_dictionary = explicit;
-        } else {
           return undefined;
         }
+        kind = "writer";
+        writer_empty_expr = w_with.empty;
+        writer_explicit_with = true;
+        wrap_dictionary = w_with.dict_expr;
+      } else if (explicit.type === "Identifier") {
+        if (services.imports.direct_reader_dictionaries?.has(explicit.name)) {
+          kind = "reader";
+          wrap_dictionary = explicit;
+        } else if (
+          services.imports.direct_state_dictionaries?.has(explicit.name)
+        ) {
+          kind = "state";
+          wrap_dictionary = explicit;
+        } else if (
+          services.imports.direct_writer_dictionaries?.has(explicit.name)
+        ) {
+          kind = "writer";
+          wrap_dictionary = explicit;
+        } else {
+          const resolved = resolve_any_cell(explicit);
+          if (resolved !== undefined) {
+            kind = resolved.kind;
+            cell = resolved;
+            wrap_dictionary = explicit;
+          } else {
+            return undefined;
+          }
+        }
+      } else {
+        return undefined;
       }
     } else {
       // Infer from first top-level or nested yield*.
@@ -4597,12 +4787,13 @@ export function create_terminal_transform(
       const op = primitive(first_expr);
       if (op !== undefined) {
         const pk = primitive_kind(op.name);
-        if (pk !== "reader" && pk !== "state") return undefined;
         kind = pk;
-        if (run_input === undefined) {
+        if (run_input === undefined && !unwrap_writer_value) {
           const dict_set = kind === "reader"
             ? services.imports.direct_reader_dictionaries
-            : services.imports.direct_state_dictionaries;
+            : kind === "state"
+            ? services.imports.direct_state_dictionaries
+            : services.imports.direct_writer_dictionaries;
           const dict_name = dict_set !== undefined && dict_set.size > 0
             ? dict_set.values().next().value
             : undefined;
@@ -4616,15 +4807,13 @@ export function create_terminal_transform(
           unwrapped.callee.type !== "MemberExpression"
         ) return undefined;
         const resolved = resolve_any_cell(unwrapped.callee.object);
-        if (
-          resolved === undefined ||
-          (resolved.kind !== "reader" && resolved.kind !== "state")
-        ) return undefined;
+        if (resolved === undefined) return undefined;
         kind = resolved.kind;
         cell = resolved;
         wrap_dictionary = resolved.identifier;
       }
     }
+    if (unwrap_writer_value && kind !== "writer") return undefined;
     if (state_eval_mode !== undefined && kind !== "state") return undefined;
     if (
       expected_terminal_kind !== undefined && kind !== expected_terminal_kind
@@ -4646,6 +4835,113 @@ export function create_terminal_transform(
 
     const analysis = analyze_control_body(run.body!, match_yield);
     if (analysis === undefined) return undefined;
+
+    if (kind === "writer") {
+      // Writer is eager: Do(Writer.with(empty), ...), Do(writer_cell, ...),
+      // run_writer_terminal(Do(...), empty), and Do(Writer, ...).value() / Do(Writer, ...).
+      const effective_empty = run_input ?? writer_empty_expr;
+      let init_spec: ArrayBufferSpec | undefined;
+      if (effective_empty !== undefined) {
+        init_spec = extract_array_t_literal(effective_empty);
+      } else if (cell !== undefined) {
+        init_spec = writer_cell_array_init(cell.declaration);
+      } else if (first_statement_is_yield(run.body!)) {
+        // Bare Do(Writer, fn) / untagged writer Do: find first yield* ArrayT<T>(...) spec.
+        let first_yield_expr: Expression | undefined;
+        walk(run.body!, (child) => {
+          if (first_yield_expr !== undefined || function_like(child)) {
+            return false;
+          }
+          if (
+            child.type === "YieldExpression" && child.delegate &&
+            child.argument !== null
+          ) {
+            first_yield_expr = child.argument;
+            return false;
+          }
+        });
+        const first_matched = first_yield_expr !== undefined
+          ? match_yield(first_yield_expr)
+          : undefined;
+        if (first_matched?.kind === "cell") {
+          const log_arg = first_matched.operation.name === "tell"
+            ? first_matched.operation.arguments[0]
+            : first_matched.operation.arguments[1];
+          const call_info = extract_array_t_call(log_arg);
+          if (
+            call_info !== undefined && call_info.element_type !== undefined
+          ) {
+            init_spec = {
+              array_ctor: call_info.array_ctor,
+              init_elements: [],
+              element_type: call_info.element_type,
+            };
+          }
+        }
+      }
+      const array_buffer = check_writer_slot_array_buffer(
+        run.body!,
+        match_yield,
+        0,
+        init_spec,
+      );
+      if (array_buffer === undefined && effective_empty === undefined) {
+        return undefined;
+      }
+      const current = services.fresh("writer_log");
+      const slot: EmitSlot = array_buffer !== undefined
+        ? {
+          kind: "writer",
+          current,
+          input_expr: effective_empty ??
+            call(array_buffer.array_ctor, [
+              node({ type: "ArrayExpression", elements: Array.from([]) }),
+            ]),
+          array_buffer,
+        }
+        : {
+          kind: "writer",
+          current,
+          input_expr: effective_empty!,
+        };
+      const raw_tuple_expr = emit_multi_control(
+        run.body!,
+        [slot],
+        match_yield,
+        (value) => output(value, slot_output_expr(slot), "writer"),
+        { eager_init: true },
+      );
+      if (run_input !== undefined || unwrap_writer_value) {
+        return { expression: raw_tuple_expr, direct: true };
+      }
+      if (wrap_dictionary === undefined) return undefined;
+      if (writer_explicit_with) {
+        // Preserve Writer.with(empty) configured dictionary semantics while avoiding
+        // double-evaluating `empty` when `empty` is non-pure.
+        if (array_buffer !== undefined && is_pure_literal(writer_empty_expr!)) {
+          return {
+            expression: call(wrap_dictionary, [raw_tuple_expr]),
+            direct: true,
+          };
+        }
+        const dict_tmp = services.fresh("writer_dict");
+        return {
+          expression: call(
+            arrow(
+              [dict_tmp],
+              call(dict_tmp, [raw_tuple_expr]),
+            ),
+            [wrap_dictionary],
+          ),
+          direct: true,
+        };
+      }
+      return {
+        expression: call(wrap_dictionary, [raw_tuple_expr]),
+        direct: true,
+      };
+    }
+
     const resolved_type = cell !== undefined
       ? cell_input_type(cell.identifier, kind)
       : input_type_in_block(run.body!, kind);
@@ -5147,6 +5443,155 @@ export function create_terminal_transform(
       return undefined;
     };
 
+    const match_ctor_mode_only = (
+      expression: Expression,
+    ): { readonly mode: DirectMode; readonly anchor: string } | undefined => {
+      const val = parentheses(expression);
+      if (val.type === "ConditionalExpression") {
+        const c = match_ctor_mode_only(val.consequent);
+        const a = match_ctor_mode_only(val.alternate);
+        if (c !== undefined && a !== undefined && c.mode === a.mode) return c;
+        return undefined;
+      }
+      if (
+        val.type !== "CallExpression" || val.optional ||
+        val.arguments.some((a) => a.type === "SpreadElement")
+      ) return undefined;
+      const callee = parentheses(val.callee);
+      if (callee.type === "Identifier" && services.bindings.imported(callee)) {
+        const name = callee.name;
+        if (
+          (services.imports.valid_constructors?.has(name) &&
+            val.arguments.length === 1) ||
+          (services.imports.invalid_messages_constructors?.has(name) &&
+            val.arguments.length >= 1) ||
+          (services.imports.invalid_constructors?.has(name) &&
+            val.arguments.length === 2)
+        ) return { mode: "validation", anchor: name };
+        if (
+          (services.imports.just_constructors?.has(name) &&
+            val.arguments.length === 1) ||
+          (services.imports.nothing_constructors?.has(name) &&
+            val.arguments.length === 0)
+        ) return { mode: "maybe", anchor: name };
+        if (
+          (services.imports.right_constructors?.has(name) ||
+            services.imports.left_constructors?.has(name)) &&
+          val.arguments.length === 1
+        ) return { mode: "either", anchor: name };
+        if (
+          services.imports.identity_constructors?.has(name) &&
+          val.arguments.length === 1
+        ) return { mode: "identity", anchor: name };
+      } else if (
+        callee.type === "MemberExpression" && !callee.computed &&
+        !callee.optional && callee.object.type === "Identifier" &&
+        callee.property.type === "Identifier" &&
+        services.bindings.imported(callee.object)
+      ) {
+        const obj = callee.object.name;
+        const prop = callee.property.name;
+        if (
+          services.imports.direct_validation_dictionaries?.has(obj) &&
+          (prop === "Valid" || prop === "pure" || prop === "Invalid")
+        ) return { mode: "validation", anchor: obj };
+        if (
+          services.imports.direct_maybe_dictionaries?.has(obj) &&
+          (prop === "Just" || prop === "pure" || prop === "Nothing" ||
+            prop === "empty")
+        ) return { mode: "maybe", anchor: obj };
+        if (
+          services.imports.direct_either_dictionaries?.has(obj) &&
+          (prop === "Right" || prop === "pure" || prop === "Left")
+        ) return { mode: "either", anchor: obj };
+      }
+      return undefined;
+    };
+
+    const helper_mode_cache = new Map<
+      Node,
+      { readonly mode: DirectMode; readonly anchor: string } | null
+    >();
+
+    const infer_direct_mode = (
+      expression: Expression,
+    ): { readonly mode: DirectMode; readonly anchor: string } | undefined => {
+      const direct = match_ctor_mode_only(expression);
+      if (direct !== undefined) return direct;
+      const val = parentheses(expression);
+      if (
+        val.type === "CallExpression" && !val.optional &&
+        val.callee.type === "Identifier" &&
+        !services.bindings.imported(val.callee)
+      ) {
+        const decl = services.bindings.resolve(val.callee);
+        if (decl === null) return undefined;
+        const cached = helper_mode_cache.get(decl);
+        if (cached !== undefined) return cached ?? undefined;
+        let fn_node: FunctionNode | ArrowFunctionExpression | undefined;
+        if (decl.type === "FunctionDeclaration") {
+          fn_node = decl;
+        } else if (
+          decl.type === "VariableDeclarator" && decl.init !== null
+        ) {
+          const parent = services.bindings.parent(decl);
+          if (
+            parent?.type === "VariableDeclaration" && parent.kind === "const"
+          ) {
+            const init = parentheses(decl.init);
+            if (
+              init.type === "ArrowFunctionExpression" ||
+              init.type === "FunctionExpression"
+            ) fn_node = init;
+          }
+        }
+        if (
+          fn_node === undefined || fn_node.async || fn_node.generator ||
+          fn_node.body == null
+        ) {
+          helper_mode_cache.set(decl, null);
+          return undefined;
+        }
+        let inferred:
+          | { readonly mode: DirectMode; readonly anchor: string }
+          | undefined;
+        if (
+          fn_node.type === "ArrowFunctionExpression" &&
+          fn_node.body.type !== "BlockStatement"
+        ) {
+          inferred = match_ctor_mode_only(fn_node.body as Expression);
+        } else {
+          let saw_return = false;
+          let failed = false;
+          walk(fn_node.body, (child) => {
+            if (failed || function_like(child)) return false;
+            if (child.type === "ReturnStatement") {
+              saw_return = true;
+              if (child.argument === null) {
+                failed = true;
+                return false;
+              }
+              const m = match_ctor_mode_only(child.argument);
+              if (m === undefined) {
+                failed = true;
+                return false;
+              }
+              if (inferred === undefined) inferred = m;
+              else if (inferred.mode !== m.mode) {
+                failed = true;
+                return false;
+              }
+              return false;
+            }
+          });
+          if (!saw_return || failed) inferred = undefined;
+        }
+        helper_mode_cache.set(decl, inferred ?? null);
+        return inferred;
+      }
+      return undefined;
+    };
+
     const substitute_many_idents = (
       expr: Expression,
       map: ReadonlyMap<Node, Expression>,
@@ -5599,24 +6044,108 @@ export function create_terminal_transform(
             alternate: null,
           }),
         );
-        const errs_id = services.fresh("val_errs");
-        const sgs_id = services.fresh("val_sgs");
+        const first_inv_id = services.fresh("val_first");
+        const first_idx_id = services.fresh("val_fi");
         const base_sg_id = services.fresh("val_sg");
         const acc_err_id = services.fresh("val_err");
-        const err_idx = services.fresh("val_k");
+        const is_inv = (raw_id: IdentifierReference): Expression =>
+          node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw_id,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal("invalid"),
+          });
+        const last_raw = checked_raws[checked_raws.length - 1];
+        const invalid_tuple_type: TSType = node({
+          type: "TSTypeOperator",
+          operator: "readonly",
+          typeAnnotation: node({
+            type: "TSTupleType",
+            elementTypes: Array.from<TSType>([
+              node({
+                type: "TSLiteralType",
+                literal: node({
+                  type: "Literal",
+                  value: "invalid",
+                  raw: '"invalid"',
+                }),
+              }),
+              node({ type: "TSUnknownKeyword" }),
+              node({ type: "TSUnknownKeyword" }),
+            ]),
+          }),
+        });
+        let first_inv_expr: Expression = node({
+          type: "TSAsExpression",
+          expression: last_raw,
+          typeAnnotation: node({
+            type: "TSTypeReference",
+            typeName: id("Extract"),
+            typeArguments: node({
+              type: "TSTypeParameterInstantiation",
+              params: Array.from<TSType>([
+                node({
+                  type: "TSTypeQuery",
+                  exprName: last_raw,
+                  typeArguments: null,
+                }),
+                invalid_tuple_type,
+              ]),
+            }),
+          }),
+        });
+        let first_idx_expr: Expression = literal(checked_raws.length - 1);
+        for (let k = checked_raws.length - 2; k >= 0; k -= 1) {
+          const raw_id = checked_raws[k];
+          first_inv_expr = node({
+            type: "ConditionalExpression",
+            test: is_inv(raw_id),
+            consequent: raw_id,
+            alternate: first_inv_expr,
+          });
+          first_idx_expr = node({
+            type: "ConditionalExpression",
+            test: is_inv(raw_id),
+            consequent: literal(k),
+            alternate: first_idx_expr,
+          });
+        }
         stmts.push(
+          variable(first_inv_id, first_inv_expr, "const"),
+          ...(checked_raws.length > 1
+            ? [variable(first_idx_id, first_idx_expr, "const")]
+            : []),
           variable(
-            errs_id,
-            node({ type: "ArrayExpression", elements: Array.from([]) }),
+            base_sg_id,
+            node({
+              type: "MemberExpression",
+              object: first_inv_id,
+              property: literal(2),
+              computed: true,
+              optional: false,
+            }),
             "const",
           ),
           variable(
-            sgs_id,
-            node({ type: "ArrayExpression", elements: Array.from([]) }),
-            "const",
+            acc_err_id,
+            node({
+              type: "MemberExpression",
+              object: first_inv_id,
+              property: literal(1),
+              computed: true,
+              optional: false,
+            }),
+            "let",
           ),
         );
-        for (const raw_id of checked_raws) {
+        for (let k = 1; k < checked_raws.length; k += 1) {
+          const raw_id = checked_raws[k];
           const raw_err: Expression = node({
             type: "MemberExpression",
             object: raw_id,
@@ -5635,25 +6164,50 @@ export function create_terminal_transform(
             node({
               type: "IfStatement",
               test: node({
-                type: "BinaryExpression",
-                operator: "===",
+                type: "LogicalExpression",
+                operator: "&&",
                 left: node({
-                  type: "MemberExpression",
-                  object: raw_id,
-                  property: literal(0),
-                  computed: true,
-                  optional: false,
+                  type: "BinaryExpression",
+                  operator: "<",
+                  left: first_idx_id,
+                  right: literal(k),
                 }),
-                right: literal("invalid"),
+                right: is_inv(raw_id),
               }),
               consequent: block([
                 node({
-                  type: "ExpressionStatement",
-                  expression: call(member(errs_id, "push"), [raw_err]),
+                  type: "IfStatement",
+                  test: node({
+                    type: "BinaryExpression",
+                    operator: "!==",
+                    left: base_sg_id,
+                    right: raw_sg,
+                  }),
+                  consequent: node({
+                    type: "ThrowStatement",
+                    argument: node({
+                      type: "NewExpression",
+                      callee: id("TypeError"),
+                      arguments: [
+                        literal(
+                          "Cannot combine Validation errors created with different semigroups",
+                        ),
+                      ],
+                    }),
+                  }),
+                  alternate: null,
                 }),
                 node({
                   type: "ExpressionStatement",
-                  expression: call(member(sgs_id, "push"), [raw_sg]),
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: acc_err_id,
+                    right: call(member(base_sg_id, "concat"), [
+                      acc_err_id,
+                      raw_err,
+                    ]),
+                  }),
                 }),
               ]),
               alternate: null,
@@ -5661,92 +6215,6 @@ export function create_terminal_transform(
           );
         }
         stmts.push(
-          variable(
-            base_sg_id,
-            node({
-              type: "MemberExpression",
-              object: sgs_id,
-              property: literal(0),
-              computed: true,
-              optional: false,
-            }),
-            "const",
-          ),
-          variable(
-            acc_err_id,
-            node({
-              type: "MemberExpression",
-              object: errs_id,
-              property: literal(0),
-              computed: true,
-              optional: false,
-            }),
-            "let",
-          ),
-          node({
-            type: "ForStatement",
-            init: variable(err_idx, literal(1), "let"),
-            test: node({
-              type: "BinaryExpression",
-              operator: "<",
-              left: err_idx,
-              right: member(errs_id, "length"),
-            }),
-            update: node({
-              type: "AssignmentExpression",
-              operator: "+=",
-              left: err_idx,
-              right: literal(1),
-            }),
-            body: block([
-              node({
-                type: "IfStatement",
-                test: node({
-                  type: "BinaryExpression",
-                  operator: "!==",
-                  left: base_sg_id,
-                  right: node({
-                    type: "MemberExpression",
-                    object: sgs_id,
-                    property: err_idx,
-                    computed: true,
-                    optional: false,
-                  }),
-                }),
-                consequent: node({
-                  type: "ThrowStatement",
-                  argument: node({
-                    type: "NewExpression",
-                    callee: id("TypeError"),
-                    arguments: [
-                      literal(
-                        "Cannot combine Validation errors created with different semigroups",
-                      ),
-                    ],
-                  }),
-                }),
-                alternate: null,
-              }),
-              node({
-                type: "ExpressionStatement",
-                expression: node({
-                  type: "AssignmentExpression",
-                  operator: "=",
-                  left: acc_err_id,
-                  right: call(member(base_sg_id, "concat"), [
-                    acc_err_id,
-                    node({
-                      type: "MemberExpression",
-                      object: errs_id,
-                      property: err_idx,
-                      computed: true,
-                      optional: false,
-                    }),
-                  ]),
-                }),
-              }),
-            ]),
-          }),
           ret(
             as_const(
               node({
@@ -5986,7 +6454,7 @@ export function create_terminal_transform(
         if (mode === undefined) {
           if (items.length === 0) return undefined;
           for (const item of items) {
-            const m = match_direct_ctor(item);
+            const m = infer_direct_mode(item);
             if (m === undefined) return undefined;
             if (mode === undefined) {
               mode = m.mode;
@@ -6036,7 +6504,7 @@ export function create_terminal_transform(
         if (mode === undefined) {
           if (items.length === 0) return undefined;
           for (const item of items) {
-            const m = match_direct_ctor(item);
+            const m = infer_direct_mode(item);
             if (m === undefined) return undefined;
             if (mode === undefined) {
               mode = m.mode;
@@ -6100,7 +6568,7 @@ export function create_terminal_transform(
       let mode: DirectMode | undefined;
       let anchor = "";
       for (const item of items) {
-        const m = match_direct_ctor(item);
+        const m = infer_direct_mode(item);
         if (m === undefined) continue;
         if (mode === undefined) {
           mode = m.mode;
@@ -6111,13 +6579,16 @@ export function create_terminal_transform(
       // Check if fn_expr can be inlined directly as an expression-body arrow.
       const fn_unwrapped = parentheses(fn_expr);
       let inline_arrow:
-        | { readonly param_decls: readonly Node[]; readonly body: Expression }
+        | {
+          readonly param_decls: readonly Node[];
+          readonly body: Expression;
+          readonly return_type?: TSType;
+        }
         | undefined;
       if (
         fn_unwrapped.type === "ArrowFunctionExpression" &&
         !fn_unwrapped.async && !fn_unwrapped.generator &&
         fn_unwrapped.typeParameters == null &&
-        fn_unwrapped.returnType == null &&
         fn_unwrapped.body.type !== "BlockStatement" &&
         fn_unwrapped.params.length === items.length &&
         fn_unwrapped.params.every((p) =>
@@ -6139,6 +6610,7 @@ export function create_terminal_transform(
           inline_arrow = {
             param_decls: decls,
             body: fn_unwrapped.body as Expression,
+            return_type: fn_unwrapped.returnType?.typeAnnotation,
           };
         }
       }
@@ -6160,7 +6632,23 @@ export function create_terminal_transform(
                 sub_map.set(inline_arrow!.param_decls[k], tmp);
               }
             }
-            return substitute_many_idents(inline_arrow!.body, sub_map);
+            const body_expr = substitute_many_idents(
+              inline_arrow!.body,
+              sub_map,
+            );
+            if (inline_arrow!.return_type !== undefined) {
+              const res_tmp = services.fresh("lift_res");
+              target_stmts.push(
+                variable(
+                  res_tmp,
+                  body_expr,
+                  "const",
+                  inline_arrow!.return_type,
+                ),
+              );
+              return res_tmp;
+            }
+            return body_expr;
           },
         );
         if (expression === undefined) return undefined;
@@ -6950,13 +7438,107 @@ export function create_terminal_transform(
     }
     if (candidates.size === 0) return candidates;
 
+    // Top-level non-exported Programs may be consumed inside top-level function blocks
+    // that don't mention `Program`; collect those inner blocks using candidate names.
+    const top_level_cand_names: string[] = [];
+    for (const candidate of candidates.values()) {
+      if (candidate.owner === services.program) {
+        top_level_cand_names.push((candidate.name as IdentifierReference).name);
+      }
+    }
+    if (top_level_cand_names.length > 0) {
+      const has_top_cand = create_span_scanner(
+        services.source,
+        top_level_cand_names,
+      );
+      for (const stmt of services.program.body) {
+        if (stmt.type === "ImportDeclaration") continue;
+        if (skip_statement?.(stmt as Statement)) continue;
+        const s = stmt as Statement;
+        if (has_prog(s.start, s.end)) continue;
+        if (!has_top_cand(s.start, s.end)) continue;
+        walk(s, (parent) => {
+          if (parent.type !== "BlockStatement") return;
+          for (const inner of parent.body) {
+            if (
+              inner.type !== "ExpressionStatement" ||
+              !("directive" in inner && inner.directive != null)
+            ) nodes.push({ statement: inner as Statement, owner: parent });
+          }
+        });
+      }
+    }
+
     const allowed = new Set<Node>();
     const used = new Set<Node | null>();
+    const program_free_names = new Map<Node, Set<string>>();
+    const owner_declared_names = new Map<Node, Set<string>>();
+    const get_program_free_names = (program_node: Node): Set<string> => {
+      const cached = program_free_names.get(program_node);
+      if (cached !== undefined) return cached;
+      const free = new Set<string>();
+      walk(program_node, (child, parent) => {
+        if (child.type !== "Identifier") return;
+        if (
+          parent?.type === "MemberExpression" && !parent.computed &&
+          parent.property === child
+        ) return;
+        if (
+          parent?.type === "Property" && !parent.computed &&
+          parent.key === child && !parent.shorthand
+        ) return;
+        const decl = services.bindings.resolve(child);
+        if (
+          decl === null || decl.start < program_node.start ||
+          decl.end > program_node.end
+        ) free.add(child.name);
+      });
+      program_free_names.set(program_node, free);
+      return free;
+    };
+    const is_compatible_owner = (
+      candidate: NamedProgramCandidate,
+      owner: Node,
+      cursor: Node,
+    ): boolean => {
+      if (candidate.program.end >= cursor.start) return false;
+      if (candidate.owner === owner) return true;
+      if (candidate.owner !== services.program) return false;
+      // Allow top-level non-exported `const p = Program(...)` to be fused inside
+      // a subsequent block when none of its free variables are shadowed.
+      const free = get_program_free_names(candidate.program);
+      let scope_node: Node | null = owner;
+      while (scope_node !== null && scope_node !== services.program) {
+        let declared = owner_declared_names.get(scope_node);
+        if (declared === undefined) {
+          declared = collect_declared_names(scope_node);
+          owner_declared_names.set(scope_node, declared);
+        }
+        for (const name of free) {
+          if (declared.has(name)) return false;
+        }
+        scope_node = services.bindings.parent(scope_node);
+      }
+      return true;
+    };
     const match_program_use = (
-      expression: Expression | null | undefined,
+      raw_expression: Expression | null | undefined,
       owner: Node,
     ) => {
+      let expression = raw_expression;
+      if (expression?.type === "AwaitExpression") {
+        expression = expression.argument;
+      }
       if (expression == null || expression.type !== "CallExpression") return;
+      if (
+        has_any_interp &&
+        services.config.optimizations?.interpreter !== false
+      ) {
+        const eff = effect_lower(expression);
+        if (eff !== undefined && eff.type === "CallExpression") {
+          expression = eff;
+        }
+      }
       // 1. run(run_*(p, input)), run_task(run_*(p, input)), run(run_except(p)), ...
       if (
         plain_call(expression, 1) &&
@@ -7057,8 +7639,8 @@ export function create_terminal_transform(
           const key = services.bindings.resolve(cursor);
           const candidate = candidates.get(key);
           if (
-            candidate !== undefined && candidate.owner === owner &&
-            candidate.program.end < cursor.start
+            candidate !== undefined &&
+            is_compatible_owner(candidate, owner, cursor)
           ) {
             // For single unkeyed reader/state/writer calls, validate same-kind compatibility eagerly so
             // mismatched named Programs never get marked skip().
@@ -7130,8 +7712,8 @@ export function create_terminal_transform(
             const key = services.bindings.resolve(name);
             const candidate = candidates.get(key);
             if (
-              candidate !== undefined && candidate.owner === owner &&
-              candidate.program.end < name.start
+              candidate !== undefined &&
+              is_compatible_owner(candidate, owner, name)
             ) {
               if (!keyed) {
                 const run_fn = candidate.program.arguments[0] as FunctionNode;
@@ -7186,8 +7768,8 @@ export function create_terminal_transform(
           const key = services.bindings.resolve(name);
           const candidate = candidates.get(key);
           if (
-            candidate !== undefined && candidate.owner === owner &&
-            candidate.program.end < name.start &&
+            candidate !== undefined &&
+            is_compatible_owner(candidate, owner, name) &&
             parse_cell_bindings_object(
                 expression.arguments[1] as Expression,
               ) !==
@@ -7213,8 +7795,8 @@ export function create_terminal_transform(
             const key = services.bindings.resolve(name);
             const candidate = candidates.get(key);
             if (
-              candidate !== undefined && candidate.owner === owner &&
-              candidate.program.end < name.start
+              candidate !== undefined &&
+              is_compatible_owner(candidate, owner, name)
             ) {
               allowed.add(name);
               used.add(key);
@@ -7280,11 +7862,107 @@ export function create_terminal_transform(
   for (const candidate of named.values()) {
     named_statements.add(candidate.statement);
   }
+  const use_fast_before_filter = imp.namespaces.size === 0 &&
+    prepared_cells.size === 0 && prepared_ops.size === 0;
+  let before_idents: Set<string> | undefined;
+  let before_props: Set<string> | undefined;
+  if (use_fast_before_filter) {
+    before_idents = new Set<string>();
+    before_props = new Set<string>();
+    if (has_any_terminal || has_r5_task || has_r5_stm) {
+      for (const n of imp.do_names) before_idents.add(n);
+    }
+    if (has_any_terminal) {
+      for (const n of imp.terminal_functions.keys()) before_idents.add(n);
+      for (const n of imp.cell_runners?.keys() ?? []) before_idents.add(n);
+      for (const n of imp.operation_runners?.keys() ?? []) before_idents.add(n);
+      for (const n of imp.state_eval_functions?.keys() ?? []) {
+        before_idents.add(n);
+      }
+      before_props.add("run");
+      before_props.add("value");
+      for (const s of imp.terminal_namespaces.values()) {
+        for (const n of s) before_props.add(n);
+      }
+      for (const s of imp.cell_runner_namespaces?.values() ?? []) {
+        for (const n of s) before_props.add(n);
+      }
+      for (const s of imp.operation_runner_namespaces?.values() ?? []) {
+        for (const n of s) before_props.add(n);
+      }
+      for (const s of imp.state_eval_namespaces?.values() ?? []) {
+        for (const n of s) before_props.add(n);
+      }
+    }
+    if (has_any_lift) {
+      for (const n of imp.collect_functions ?? []) before_idents.add(n);
+      before_props.add("collect");
+      before_props.add("lift");
+    }
+    if (has_any_interp) {
+      before_props.add("run");
+      before_props.add("value");
+      before_props.add("handle_with");
+    }
+    if (has_r5_task) {
+      for (const n of imp.task_run_functions ?? []) before_idents.add(n);
+      for (const n of imp.task_run_exit_functions ?? []) before_idents.add(n);
+      before_props.add("run");
+      before_props.add("run_task");
+      before_props.add("run_task_exit");
+    }
+    if (has_r5_stm) {
+      for (const n of imp.stm_atomically_functions ?? []) before_idents.add(n);
+      before_props.add("atomically");
+    }
+    if (has_r5_chain) {
+      for (const n of imp.from_maybe_functions ?? []) before_idents.add(n);
+      for (const n of imp.to_nullable_functions ?? []) before_idents.add(n);
+      for (const n of imp.maybe_get_or_else_functions ?? []) {
+        before_idents.add(n);
+      }
+      for (const n of imp.maybe_fold_functions ?? []) before_idents.add(n);
+      for (const n of imp.maybe_filter_functions ?? []) before_idents.add(n);
+      for (const n of imp.either_fold_functions ?? []) before_idents.add(n);
+      for (const n of imp.either_from_right_functions ?? []) {
+        before_idents.add(n);
+      }
+      for (const n of imp.either_from_left_functions ?? []) {
+        before_idents.add(n);
+      }
+      for (const n of imp.either_recover_functions ?? []) before_idents.add(n);
+      for (const n of imp.match_functions ?? []) before_idents.add(n);
+      before_props.add("map");
+      before_props.add("bind");
+      before_props.add("match");
+    }
+    if (has_r5_array) {
+      for (const n of imp.array_to_array_functions ?? []) before_idents.add(n);
+      before_props.add("map");
+      before_props.add("fold");
+      before_props.add("fold_while");
+      before_props.add("some");
+      before_props.add("find");
+      before_props.add("value");
+    }
+  }
   return {
+    has_after,
     lower(
       value: CallExpression,
       phase: "before" | "after" = "after",
     ): { expression: Expression; direct: boolean } | undefined {
+      if (phase === "before" && use_fast_before_filter) {
+        const callee = value.callee;
+        if (callee.type === "Identifier") {
+          if (!before_idents!.has(callee.name)) return undefined;
+        } else if (
+          callee.type === "MemberExpression" && !callee.computed &&
+          callee.property.type === "Identifier"
+        ) {
+          if (!before_props!.has(callee.property.name)) return undefined;
+        }
+      }
       if (services.config.optimizations?.terminal !== false) {
         if (
           phase === "before" && round5 !== undefined &&

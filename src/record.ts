@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import {
   type As,
   as_data,
@@ -178,26 +182,38 @@ Monoid.instance(RecordT)({
 Foldable.instance(RecordT)({
   [some_method](predicate) {
     const record = this.value();
-    for (const key of Object.keys(record)) {
-      if (predicate(record[key])) return true;
+    for (const key in record) {
+      if (Object.hasOwn(record, key) && predicate(record[key])) return true;
     }
     return false;
   },
   [find_method](predicate) {
     const record = this.value();
-    for (const key of Object.keys(record)) {
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
       const item = record[key];
       if (predicate(item)) return item;
     }
     return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    const record = this.value();
+    let state = initial;
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
+      const step = fn(state, record[key]);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
   },
 
   fold(initial, fn) {
     const record = this.value();
     let state = initial;
 
-    for (const key of Object.keys(record)) {
-      state = fn(state, record[key]);
+    for (const key in record) {
+      if (Object.hasOwn(record, key)) state = fn(state, record[key]);
     }
 
     return state;

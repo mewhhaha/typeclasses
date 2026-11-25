@@ -29,6 +29,7 @@ import {
   walk,
 } from "./transform_ast.ts";
 import { create_binding_analysis } from "./transform_bindings.ts";
+import { await_if_thenable_expr } from "./transform_fusions.ts";
 
 const constructors = new Set([
   "IterableT",
@@ -100,7 +101,78 @@ export function might_contain_iterable_maps(
   }
   return /\.\s*(?:map|fold)\b/.test(source) ||
     source.includes("to_array") || source.includes("preview") ||
-    source.includes("compile_fold") || source.includes("Foldable");
+    source.includes("compile_fold") || source.includes("Foldable") ||
+    source.includes("fold_while") || source.includes("find") ||
+    source.includes("some");
+}
+
+type AsyncIterRootKind = "sync_factory" | "chunks" | "async_factory";
+type AsyncIterStage =
+  | { readonly tag: "map"; readonly fn: Expression }
+  | { readonly tag: "map_sync"; readonly fn: Expression }
+  | { readonly tag: "filter"; readonly fn: Expression }
+  | { readonly tag: "filter_map"; readonly fn: Expression }
+  | { readonly tag: "take"; readonly count: Expression };
+type AsyncIterRoot = {
+  readonly kind: AsyncIterRootKind;
+  readonly arg: Expression;
+};
+type AsyncIterTerminal =
+  | {
+    readonly kind: "to_array";
+    readonly pipeline: Expression;
+    readonly extra_take?: Expression;
+  }
+  | {
+    readonly kind: "fold_while";
+    readonly pipeline: Expression;
+    readonly init: Expression;
+    readonly step: Expression;
+  }
+  | {
+    readonly kind: "some" | "find";
+    readonly pipeline: Expression;
+    readonly pred: Expression;
+    readonly anchor: string;
+  };
+
+function async_root_kind_for(name: string): AsyncIterRootKind | undefined {
+  switch (name) {
+    case "from_sync_factory":
+      return "sync_factory";
+    case "from_chunks":
+      return "chunks";
+    case "from_factory":
+    case "AsyncIterableT":
+      return "async_factory";
+  }
+  return undefined;
+}
+
+function is_sync_non_thenable_expr(expression: Expression): boolean {
+  const val = unwrap(expression);
+  switch (val.type) {
+    case "Literal":
+    case "TemplateLiteral":
+    case "BinaryExpression":
+    case "UpdateExpression":
+    case "ArrayExpression":
+    case "ObjectExpression":
+      return true;
+    case "UnaryExpression":
+      return true;
+    case "LogicalExpression":
+      return is_sync_non_thenable_expr(val.left) &&
+        is_sync_non_thenable_expr(val.right);
+    case "ConditionalExpression":
+      return is_sync_non_thenable_expr(val.consequent) &&
+        is_sync_non_thenable_expr(val.alternate);
+    case "Identifier":
+      return val.name === "undefined" || val.name === "NaN" ||
+        val.name === "Infinity";
+    default:
+      return false;
+  }
 }
 
 /** @ignore */
@@ -111,6 +183,11 @@ export function create_iterable_map_fusion(
   fresh?: (name: string) => string,
   skip_statement?: (statement: Statement) => boolean,
   source?: string,
+  import_from_module?: (
+    anchor_local: string,
+    sub_module: string,
+    imported: string,
+  ) => IdentifierReference | undefined,
 ) {
   const functions = new Set<string>();
   const namespaces = new Set<string>();
@@ -125,6 +202,17 @@ export function create_iterable_map_fusion(
   const foldable_namespaces = new Set<string>();
   const just_locals = new Set<string>();
   const nothing_locals = new Set<string>();
+  const async_namespaces = new Set<string>();
+  const async_roots = new Set<string>();
+  const async_root_locals = new Map<string, AsyncIterRootKind>();
+  const async_stage_locals = new Map<
+    string,
+    "map_sync" | "filter" | "filter_map" | "take"
+  >();
+  const async_term_locals = new Map<
+    string,
+    "to_array" | "preview" | "fold_while" | "find" | "some"
+  >();
 
   for (const statement of program.body) {
     if (
@@ -134,6 +222,9 @@ export function create_iterable_map_fusion(
     const module = source_module(specifier);
     const iterable = module === "iterable" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/iterable$/
+        .test(specifier);
+    const async_iter = module === "async_iterable" ||
+      /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/async_iterable$/
         .test(specifier);
     const maybe_mod = module === "maybe" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/maybe$/
@@ -145,10 +236,13 @@ export function create_iterable_map_fusion(
       module === "foldable" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/(?:typeclasses|foldable)$/
         .test(specifier);
-    if (!iterable && !root && !foldable_mod && !maybe_mod) continue;
+    if (!iterable && !async_iter && !root && !foldable_mod && !maybe_mod) {
+      continue;
+    }
     for (const binding of statement.specifiers) {
       if (binding.type === "ImportNamespaceSpecifier") {
         if (iterable) namespaces.add(binding.local.name);
+        else if (async_iter) async_namespaces.add(binding.local.name);
         else if (root) {
           root_namespaces.add(binding.local.name);
           foldable_namespaces.add(binding.local.name);
@@ -175,6 +269,22 @@ export function create_iterable_map_fusion(
             compile_fold_locals.add(binding.local.name);
           }
         }
+        if (async_iter) {
+          const ark = async_root_kind_for(name);
+          if (ark !== undefined) async_root_locals.set(binding.local.name, ark);
+          if (
+            name === "map_sync" || name === "filter" ||
+            name === "filter_map" || name === "take"
+          ) {
+            async_stage_locals.set(binding.local.name, name);
+          }
+          if (
+            name === "to_array" || name === "preview" ||
+            name === "fold_while" || name === "find" || name === "some"
+          ) {
+            async_term_locals.set(binding.local.name, name);
+          }
+        }
         if ((root || maybe_mod) && name === "Just") {
           just_locals.add(binding.local.name);
         }
@@ -182,6 +292,9 @@ export function create_iterable_map_fusion(
           nothing_locals.add(binding.local.name);
         }
         if (root && name === "iterable") roots.add(binding.local.name);
+        if (root && name === "async_iterable") {
+          async_roots.add(binding.local.name);
+        }
         if (foldable_mod && name === "Foldable") {
           foldable_locals.add(binding.local.name);
         }
@@ -189,8 +302,11 @@ export function create_iterable_map_fusion(
     }
   }
 
-  const enabled =
+  const sync_enabled =
     functions.size + namespaces.size + roots.size + root_namespaces.size > 0;
+  const async_enabled = async_root_locals.size + async_namespaces.size +
+      async_roots.size + root_namespaces.size + async_term_locals.size > 0;
+  const enabled = sync_enabled || async_enabled;
   if (!enabled) {
     return {
       enabled: false,
@@ -1257,7 +1373,7 @@ export function create_iterable_map_fusion(
             );
             current_val = next_val;
           }
-        } else {
+        } else if (stage.tag === "take") {
           after_take = true;
           if (!needs_stop_flag && i === lowered_stages.length - 1) {
             trailing_take_rem = stage.rem_id;
@@ -1541,6 +1657,1216 @@ export function create_iterable_map_fusion(
     return call(arrow([], block(setup_stmts)), []);
   }
 
+  function is_async_iterable_namespace(receiver: Expression): boolean {
+    if (
+      receiver.type === "Identifier" &&
+      (async_namespaces.has(receiver.name) || async_roots.has(receiver.name)) &&
+      bindings.imported(receiver)
+    ) return true;
+    return static_member(receiver) &&
+      receiver.property.name === "async_iterable" &&
+      receiver.object.type === "Identifier" &&
+      root_namespaces.has(receiver.object.name) &&
+      bindings.imported(receiver.object);
+  }
+
+  function async_ns_anchor(receiver: Expression): string | undefined {
+    if (
+      receiver.type === "Identifier" &&
+      (async_namespaces.has(receiver.name) || async_roots.has(receiver.name)) &&
+      bindings.imported(receiver)
+    ) return receiver.name;
+    if (
+      static_member(receiver) &&
+      receiver.property.name === "async_iterable" &&
+      receiver.object.type === "Identifier" &&
+      root_namespaces.has(receiver.object.name) &&
+      bindings.imported(receiver.object)
+    ) return receiver.object.name;
+    return undefined;
+  }
+
+  function match_async_root(expression: Expression): AsyncIterRoot | undefined {
+    const current = unwrap(expression);
+    if (
+      current.type !== "CallExpression" || current.optional ||
+      current.typeArguments != null || current.arguments.length !== 1 ||
+      current.arguments[0].type === "SpreadElement"
+    ) return undefined;
+    const callee = unwrap(current.callee);
+    let rk: AsyncIterRootKind | undefined;
+    if (callee.type === "Identifier" && bindings.imported(callee)) {
+      rk = async_root_locals.get(callee.name);
+    } else if (
+      static_member(callee) &&
+      is_async_iterable_namespace(unwrap(callee.object))
+    ) {
+      rk = async_root_kind_for(callee.property.name);
+    }
+    if (rk === undefined) return undefined;
+    return { kind: rk, arg: current.arguments[0] as Expression };
+  }
+
+  function extract_async_pipeline(
+    expression: Expression,
+  ):
+    | {
+      readonly root: AsyncIterRoot;
+      readonly stages: readonly AsyncIterStage[];
+    }
+    | undefined {
+    const stages: AsyncIterStage[] = [];
+    let cursor = unwrap(expression);
+    while (true) {
+      const root = match_async_root(cursor);
+      if (root !== undefined) {
+        stages.reverse();
+        return { root, stages };
+      }
+      if (
+        cursor.type !== "CallExpression" || cursor.optional ||
+        cursor.typeArguments != null
+      ) return undefined;
+      const callee = unwrap(cursor.callee);
+      if (
+        static_member(callee) && cursor.arguments.length === 1 &&
+        cursor.arguments[0].type !== "SpreadElement"
+      ) {
+        const method = callee.property.name;
+        if (method === "map" || method === "filter") {
+          stages.push({ tag: method, fn: cursor.arguments[0] as Expression });
+          cursor = unwrap(callee.object);
+          continue;
+        }
+        if (method === "take") {
+          stages.push({
+            tag: "take",
+            count: cursor.arguments[0] as Expression,
+          });
+          cursor = unwrap(callee.object);
+          continue;
+        }
+      }
+      if (
+        cursor.arguments.length === 2 &&
+        cursor.arguments[0].type !== "SpreadElement" &&
+        cursor.arguments[1].type !== "SpreadElement"
+      ) {
+        let stage_tag:
+          | "map_sync"
+          | "filter"
+          | "filter_map"
+          | "take"
+          | undefined;
+        if (callee.type === "Identifier" && bindings.imported(callee)) {
+          stage_tag = async_stage_locals.get(callee.name);
+        } else if (
+          static_member(callee) &&
+          (callee.property.name === "map_sync" ||
+            callee.property.name === "filter" ||
+            callee.property.name === "filter_map" ||
+            callee.property.name === "take") &&
+          is_async_iterable_namespace(unwrap(callee.object))
+        ) {
+          stage_tag = callee.property.name;
+        }
+        if (stage_tag !== undefined) {
+          if (stage_tag === "take") {
+            stages.push({
+              tag: "take",
+              count: cursor.arguments[1] as Expression,
+            });
+          } else {
+            stages.push({
+              tag: stage_tag,
+              fn: cursor.arguments[1] as Expression,
+            });
+          }
+          cursor = unwrap(cursor.arguments[0] as Expression);
+          continue;
+        }
+      }
+      return undefined;
+    }
+  }
+
+  function match_async_terminal(
+    current: CallExpression,
+  ): AsyncIterTerminal | undefined {
+    if (
+      current.optional || current.typeArguments != null ||
+      current.arguments.some((arg) => arg.type === "SpreadElement")
+    ) return undefined;
+    const callee = unwrap(current.callee);
+    let kind:
+      | "to_array"
+      | "preview"
+      | "fold_while"
+      | "find"
+      | "some"
+      | undefined;
+    let anchor = "";
+    if (callee.type === "Identifier" && bindings.imported(callee)) {
+      kind = async_term_locals.get(callee.name);
+      anchor = callee.name;
+    } else if (static_member(callee)) {
+      const a = async_ns_anchor(unwrap(callee.object));
+      if (a !== undefined) {
+        const m = callee.property.name;
+        if (
+          m === "to_array" || m === "preview" || m === "fold_while" ||
+          m === "find" || m === "some"
+        ) {
+          kind = m;
+          anchor = a;
+        }
+      }
+    }
+    if (kind === undefined) return undefined;
+    if (kind === "to_array" && current.arguments.length === 1) {
+      return {
+        kind: "to_array",
+        pipeline: current.arguments[0] as Expression,
+      };
+    }
+    if (
+      kind === "preview" &&
+      (current.arguments.length === 1 || current.arguments.length === 2)
+    ) {
+      return {
+        kind: "to_array",
+        pipeline: current.arguments[0] as Expression,
+        extra_take: current.arguments.length === 2
+          ? current.arguments[1] as Expression
+          : literal(100),
+      };
+    }
+    if (kind === "fold_while" && current.arguments.length === 3) {
+      return {
+        kind: "fold_while",
+        pipeline: current.arguments[0] as Expression,
+        init: current.arguments[1] as Expression,
+        step: current.arguments[2] as Expression,
+      };
+    }
+    if (
+      (kind === "find" || kind === "some") && current.arguments.length === 2
+    ) {
+      return {
+        kind,
+        pipeline: current.arguments[0] as Expression,
+        pred: current.arguments[1] as Expression,
+        anchor,
+      };
+    }
+    return undefined;
+  }
+
+  function inline_async_unary(
+    callback: Expression,
+    arg_id: IdentifierReference,
+    allow_async: boolean,
+  ): { readonly expr: Expression; readonly is_async: boolean } | undefined {
+    const fn = unwrap(callback);
+    if (
+      fn.type !== "ArrowFunctionExpression" || fn.generator ||
+      (!allow_async && fn.async) || fn.typeParameters != null ||
+      fn.returnType != null || fn.body.type === "BlockStatement" ||
+      fn.params.length !== 1
+    ) return undefined;
+    const param = fn.params[0];
+    if (
+      param.type !== "Identifier" || param.optional ||
+      param.typeAnnotation != null ||
+      (param.decorators !== undefined && param.decorators.length > 0)
+    ) return undefined;
+    const body = fn.body as Expression;
+    if (has_lexical_hazard(body)) return undefined;
+    if (!fn.async && has_await_or_yield(body)) return undefined;
+    return {
+      expr: substitute_ident(body, param, arg_id, bindings),
+      is_async: fn.async,
+    };
+  }
+
+  function inline_async_binary(
+    callback: Expression,
+    acc_id: IdentifierReference,
+    val_id: IdentifierReference,
+  ): { readonly expr: Expression; readonly is_async: boolean } | undefined {
+    const fn = unwrap(callback);
+    if (
+      fn.type !== "ArrowFunctionExpression" || fn.generator ||
+      fn.typeParameters != null || fn.returnType != null ||
+      fn.body.type === "BlockStatement" || fn.params.length !== 2
+    ) return undefined;
+    const p0 = fn.params[0];
+    const p1 = fn.params[1];
+    if (
+      p0.type !== "Identifier" || p0.optional ||
+      p1.type !== "Identifier" || p1.optional ||
+      (p0.decorators !== undefined && p0.decorators.length > 0) ||
+      (p1.decorators !== undefined && p1.decorators.length > 0)
+    ) return undefined;
+    const body = fn.body as Expression;
+    if (has_lexical_hazard(body) || contains_function(body)) return undefined;
+    if (!fn.async && has_await_or_yield(body)) return undefined;
+    return {
+      expr: substitute_two_idents(body, p0, acc_id, p1, val_id, bindings),
+      is_async: fn.async,
+    };
+  }
+
+  function fuse_async_terminal(
+    current: CallExpression,
+  ): Expression | undefined {
+    if (!async_enabled) return undefined;
+    const term = match_async_terminal(current);
+    if (term === undefined) return undefined;
+    const extra_take = term.kind === "to_array" ? term.extra_take : undefined;
+    const parsed = extract_async_pipeline(term.pipeline);
+    if (parsed === undefined) return undefined;
+    const root = parsed.root;
+    const stages: readonly AsyncIterStage[] = extra_take !== undefined
+      ? [...parsed.stages, { tag: "take", count: extra_take }]
+      : parsed.stages;
+    if (
+      stages.length === 0 && root.kind === "async_factory" &&
+      term.kind === "to_array"
+    ) return undefined;
+    if (has_lexical_hazard(root.arg) || has_await_or_yield(root.arg)) {
+      return undefined;
+    }
+    for (const stage of stages) {
+      const expr = stage.tag === "take" ? stage.count : stage.fn;
+      if (has_lexical_hazard(expr) || has_await_or_yield(expr)) {
+        return undefined;
+      }
+    }
+    if (term.kind === "fold_while") {
+      if (
+        has_lexical_hazard(term.init) || has_await_or_yield(term.init) ||
+        has_lexical_hazard(term.step) || has_await_or_yield(term.step)
+      ) return undefined;
+      const step_unwrapped = unwrap(term.step);
+      let acc_type: TSType | undefined;
+      if (
+        (step_unwrapped.type === "ArrowFunctionExpression" ||
+          step_unwrapped.type === "FunctionExpression") &&
+        step_unwrapped.params.length >= 1
+      ) {
+        const p0 = step_unwrapped.params[0];
+        if (p0.type !== "TSParameterProperty") {
+          acc_type = p0.typeAnnotation?.typeAnnotation;
+        }
+      }
+      const init_unwrapped = unwrap(term.init);
+      if (
+        acc_type === undefined &&
+        ((init_unwrapped.type === "ArrayExpression" &&
+          init_unwrapped.elements.length === 0) ||
+          (init_unwrapped.type === "Literal" &&
+            init_unwrapped.value === null) ||
+          (init_unwrapped.type === "Identifier" &&
+            init_unwrapped.name === "undefined"))
+      ) return undefined;
+    } else if (term.kind === "find" || term.kind === "some") {
+      if (has_lexical_hazard(term.pred) || has_await_or_yield(term.pred)) {
+        return undefined;
+      }
+    }
+
+    // Resolve Just/Nothing for async `find` (returns Promise<Maybe<T>>).
+    let find_just_id: IdentifierReference | undefined;
+    let find_nothing_id: IdentifierReference | undefined;
+    if (term.kind === "find") {
+      const existing_j = just_locals.values().next().value;
+      const existing_n = nothing_locals.values().next().value;
+      find_just_id = existing_j !== undefined
+        ? id(existing_j)
+        : import_from_module?.(term.anchor, "maybe", "Just");
+      find_nothing_id = existing_n !== undefined
+        ? id(existing_n)
+        : import_from_module?.(term.anchor, "maybe", "Nothing");
+      if (find_just_id === undefined || find_nothing_id === undefined) {
+        return undefined;
+      }
+    }
+
+    // Pre-validate callbacks and hoist sync `take` validation outside async IIFE.
+    const sync_setup_stmts: Statement[] = [];
+    const async_setup_stmts: Statement[] = [];
+
+    type LoweredAsyncStage =
+      | {
+        readonly tag: "map" | "map_sync" | "filter" | "filter_map";
+        readonly inline_cb?: Expression;
+        readonly fn_id?: IdentifierReference;
+      }
+      | {
+        readonly tag: "take";
+        readonly count_id: IdentifierReference;
+        readonly rem_id: IdentifierReference;
+      };
+
+    const lowered_stages: LoweredAsyncStage[] = [];
+    const take_count_ids: IdentifierReference[] = [];
+    let first_take_index = -1;
+
+    // Hoist root factory expression in sync scope (matches eager argument evaluation).
+    let inlined_sync_source_expr: Expression | undefined;
+    const root_fn_unwrapped = unwrap(root.arg);
+    if (
+      root.kind === "sync_factory" &&
+      root_fn_unwrapped.type === "ArrowFunctionExpression" &&
+      !root_fn_unwrapped.async && !root_fn_unwrapped.generator &&
+      root_fn_unwrapped.typeParameters == null &&
+      root_fn_unwrapped.returnType == null &&
+      root_fn_unwrapped.params.length === 0 &&
+      root_fn_unwrapped.body.type !== "BlockStatement"
+    ) {
+      inlined_sync_source_expr = root_fn_unwrapped.body as Expression;
+    }
+    const factory_id = inlined_sync_source_expr === undefined
+      ? make_fresh("aiter_src")
+      : undefined;
+    if (factory_id !== undefined) {
+      sync_setup_stmts.push(variable("const", factory_id, root.arg));
+    }
+
+    for (let i = 0; i < stages.length; i += 1) {
+      const stage = stages[i];
+      if (stage.tag === "take") {
+        if (first_take_index < 0) first_take_index = i;
+        const count_id = make_fresh("aiter_take");
+        const rem_id = make_fresh("aiter_rem");
+        take_count_ids.push(count_id);
+        sync_setup_stmts.push(
+          node({
+            type: "VariableDeclaration",
+            kind: "const",
+            declarations: [
+              node({
+                type: "VariableDeclarator",
+                id: {
+                  ...count_id,
+                  typeAnnotation: node({
+                    type: "TSTypeAnnotation",
+                    typeAnnotation: node({ type: "TSNumberKeyword" }),
+                  }),
+                },
+                init: stage.count,
+              }),
+            ],
+          }),
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "LogicalExpression",
+              operator: "||",
+              left: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: call(member(id("Number"), "isSafeInteger"), [
+                  count_id,
+                ]),
+              }),
+              right: node({
+                type: "BinaryExpression",
+                operator: "<",
+                left: count_id,
+                right: literal(0),
+              }),
+            }),
+            consequent: node({
+              type: "ThrowStatement",
+              argument: node({
+                type: "NewExpression",
+                callee: id("RangeError"),
+                arguments: [
+                  literal("take count must be a nonnegative safe integer"),
+                ],
+              }),
+            }),
+            alternate: null,
+          }),
+        );
+        lowered_stages.push({ tag: "take", count_id, rem_id });
+      } else {
+        const allow_async = stage.tag === "map" || stage.tag === "filter";
+        const can_inline =
+          inline_async_unary(stage.fn, id("_"), allow_async) !== undefined;
+        if (can_inline) {
+          lowered_stages.push({ tag: stage.tag, inline_cb: stage.fn });
+        } else {
+          const fn = unwrap(stage.fn);
+          if (
+            (fn.type === "ArrowFunctionExpression" ||
+              fn.type === "FunctionExpression") &&
+            fn.params.some((p) =>
+              p.type !== "TSParameterProperty" && p.typeAnnotation == null
+            )
+          ) return undefined;
+          const fn_id = make_fresh("aiter_fn");
+          sync_setup_stmts.push(variable("const", fn_id, stage.fn));
+          lowered_stages.push({ tag: stage.tag, fn_id });
+        }
+      }
+    }
+
+    let out_id: IdentifierReference | undefined;
+    let acc_id: IdentifierReference | undefined;
+    let step_fn_id: IdentifierReference | undefined;
+    let pred_fn_id: IdentifierReference | undefined;
+
+    if (term.kind === "to_array") {
+      out_id = make_fresh("aiter_out");
+      async_setup_stmts.push(
+        variable(
+          "const",
+          out_id,
+          node({
+            type: "ArrayExpression",
+            elements: Array.from<Expression>([]),
+          }),
+        ),
+      );
+    } else if (term.kind === "fold_while") {
+      acc_id = make_fresh("aiter_acc");
+      const step_unwrapped = unwrap(term.step);
+      let acc_type: TSType | undefined;
+      if (
+        (step_unwrapped.type === "ArrowFunctionExpression" ||
+          step_unwrapped.type === "FunctionExpression") &&
+        step_unwrapped.params.length >= 1
+      ) {
+        const p0 = step_unwrapped.params[0];
+        if (p0.type !== "TSParameterProperty") {
+          acc_type = p0.typeAnnotation?.typeAnnotation;
+        }
+      }
+      const acc_binding = acc_type !== undefined
+        ? {
+          ...acc_id,
+          typeAnnotation: node({
+            type: "TSTypeAnnotation",
+            typeAnnotation: acc_type,
+          }),
+        }
+        : acc_id;
+      async_setup_stmts.push(
+        node({
+          type: "VariableDeclaration",
+          kind: "let",
+          declarations: [
+            node({
+              type: "VariableDeclarator",
+              id: acc_binding,
+              init: term.init,
+            }),
+          ],
+        }),
+      );
+      if (inline_async_binary(term.step, acc_id, id("_")) === undefined) {
+        const step_fn = unwrap(term.step);
+        if (
+          (step_fn.type === "ArrowFunctionExpression" ||
+            step_fn.type === "FunctionExpression") &&
+          step_fn.params.some((p) =>
+            p.type !== "TSParameterProperty" && p.typeAnnotation == null
+          )
+        ) return undefined;
+        step_fn_id = make_fresh("aiter_step");
+        sync_setup_stmts.push(variable("const", step_fn_id, term.step));
+      }
+    } else {
+      if (inline_async_unary(term.pred, id("_"), true) === undefined) {
+        const pred_fn = unwrap(term.pred);
+        if (
+          (pred_fn.type === "ArrowFunctionExpression" ||
+            pred_fn.type === "FunctionExpression") &&
+          pred_fn.params.some((p) =>
+            p.type !== "TSParameterProperty" && p.typeAnnotation == null
+          )
+        ) return undefined;
+        pred_fn_id = make_fresh("aiter_pred");
+        sync_setup_stmts.push(variable("const", pred_fn_id, term.pred));
+      }
+    }
+
+    const needs_stop_flag = first_take_index >= 0 &&
+      (first_take_index < lowered_stages.length - 1 ||
+        term.kind === "some" || term.kind === "find" ||
+        term.kind === "fold_while");
+    const stop_id = needs_stop_flag ? make_fresh("aiter_stop") : undefined;
+
+    const loop_prefix: Statement[] = [];
+    for (const stage of lowered_stages) {
+      if (stage.tag === "take") {
+        loop_prefix.push(variable("let", stage.rem_id, stage.count_id));
+      }
+    }
+    if (stop_id !== undefined) {
+      loop_prefix.push(variable("let", stop_id, literal(false)));
+    }
+
+    const outer_label = root.kind === "chunks" &&
+        (first_take_index >= 0 || term.kind === "fold_while")
+      ? make_fresh("aiter_loop")
+      : undefined;
+    const make_break = (): Statement =>
+      node({ type: "BreakStatement", label: outer_label ?? null });
+
+    const emit_async_body = (initial_val: IdentifierReference): Statement[] => {
+      const body: Statement[] = [];
+      let current_val = initial_val;
+      let after_take = false;
+      let trailing_take_rem: IdentifierReference | undefined;
+
+      for (let i = 0; i < lowered_stages.length; i += 1) {
+        const stage = lowered_stages[i];
+        if (stage.tag === "map" || stage.tag === "map_sync") {
+          const next_val = make_fresh("aiter_v");
+          if (stage.inline_cb !== undefined) {
+            const inl = inline_async_unary(
+              stage.inline_cb,
+              current_val,
+              stage.tag === "map",
+            )!;
+            if (
+              stage.tag === "map_sync" ||
+              (!inl.is_async && is_sync_non_thenable_expr(inl.expr))
+            ) {
+              body.push(variable("const", next_val, inl.expr));
+            } else if (inl.is_async) {
+              body.push(
+                variable(
+                  "const",
+                  next_val,
+                  node({ type: "AwaitExpression", argument: inl.expr }),
+                ),
+              );
+            } else {
+              const raw_id = make_fresh("aiter_raw");
+              body.push(
+                variable("const", raw_id, inl.expr),
+                variable("const", next_val, await_if_thenable_expr(raw_id)),
+              );
+            }
+          } else {
+            const call_expr = call(stage.fn_id!, [current_val]);
+            if (stage.tag === "map_sync") {
+              body.push(variable("const", next_val, call_expr));
+            } else {
+              const raw_id = make_fresh("aiter_raw");
+              body.push(
+                variable("const", raw_id, call_expr),
+                variable("const", next_val, await_if_thenable_expr(raw_id)),
+              );
+            }
+          }
+          current_val = next_val;
+        } else if (stage.tag === "filter") {
+          let cond: Expression;
+          if (stage.inline_cb !== undefined) {
+            const inl = inline_async_unary(stage.inline_cb, current_val, true)!;
+            if (!inl.is_async && is_sync_non_thenable_expr(inl.expr)) {
+              cond = inl.expr;
+            } else if (inl.is_async) {
+              cond = node({ type: "AwaitExpression", argument: inl.expr });
+            } else {
+              const raw_id = make_fresh("aiter_ok");
+              body.push(variable("const", raw_id, inl.expr));
+              cond = await_if_thenable_expr(raw_id);
+            }
+          } else {
+            const raw_id = make_fresh("aiter_ok");
+            body.push(
+              variable("const", raw_id, call(stage.fn_id!, [current_val])),
+            );
+            cond = await_if_thenable_expr(raw_id);
+          }
+          const fail_branch: Statement = after_take && stop_id !== undefined
+            ? block([
+              node({
+                type: "IfStatement",
+                test: stop_id,
+                consequent: make_break(),
+                alternate: null,
+              }),
+              node({ type: "ContinueStatement", label: null }),
+            ])
+            : node({ type: "ContinueStatement", label: null });
+          body.push(
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: cond,
+              }),
+              consequent: fail_branch,
+              alternate: null,
+            }),
+          );
+        } else if (stage.tag === "filter_map") {
+          const next_val = make_fresh("aiter_v");
+          const fail_branch: Statement = after_take && stop_id !== undefined
+            ? block([
+              node({
+                type: "IfStatement",
+                test: stop_id,
+                consequent: make_break(),
+                alternate: null,
+              }),
+              node({ type: "ContinueStatement", label: null }),
+            ])
+            : node({ type: "ContinueStatement", label: null });
+          const inlined = stage.inline_cb !== undefined
+            ? inline_async_unary(stage.inline_cb, current_val, false)!.expr
+            : undefined;
+          let elided_fm = false;
+          if (inlined !== undefined) {
+            const direct = match_maybe_ctor(inlined);
+            if (direct !== undefined) {
+              if (direct.ok) {
+                body.push(variable("const", next_val, direct.arg));
+                current_val = next_val;
+                elided_fm = true;
+              } else {
+                body.push(fail_branch);
+                elided_fm = true;
+              }
+            } else {
+              const cond_node = unwrap(inlined);
+              if (cond_node.type === "ConditionalExpression") {
+                const c_yes = match_maybe_ctor(cond_node.consequent);
+                const c_no = match_maybe_ctor(cond_node.alternate);
+                if (
+                  c_yes !== undefined && c_no !== undefined &&
+                  c_yes.ok !== c_no.ok
+                ) {
+                  const keep_test = c_yes.ok ? cond_node.test : node({
+                    type: "UnaryExpression",
+                    operator: "!",
+                    prefix: true,
+                    argument: cond_node.test,
+                  });
+                  const ok_expr = c_yes.ok
+                    ? c_yes.arg
+                    : (c_no as { readonly ok: true; readonly arg: Expression })
+                      .arg;
+                  body.push(
+                    node({
+                      type: "IfStatement",
+                      test: node({
+                        type: "UnaryExpression",
+                        operator: "!",
+                        prefix: true,
+                        argument: keep_test,
+                      }),
+                      consequent: fail_branch,
+                      alternate: null,
+                    }),
+                    variable("const", next_val, ok_expr),
+                  );
+                  current_val = next_val;
+                  elided_fm = true;
+                }
+              }
+            }
+          }
+          if (!elided_fm) {
+            const fm_raw = make_fresh("aiter_fm");
+            const step_call = inlined !== undefined
+              ? inlined
+              : call(stage.fn_id!, [current_val]);
+            body.push(
+              variable("const", fm_raw, call(member(step_call, "value"), [])),
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "===",
+                  left: node({
+                    type: "MemberExpression",
+                    object: fm_raw,
+                    property: literal(0),
+                    computed: true,
+                    optional: false,
+                  }),
+                  right: literal("Nothing"),
+                }),
+                consequent: fail_branch,
+                alternate: null,
+              }),
+              variable(
+                "const",
+                next_val,
+                node({
+                  type: "MemberExpression",
+                  object: fm_raw,
+                  property: literal(1),
+                  computed: true,
+                  optional: false,
+                }),
+              ),
+            );
+            current_val = next_val;
+          }
+        } else if (stage.tag === "take") {
+          after_take = true;
+          if (!needs_stop_flag && i === lowered_stages.length - 1) {
+            trailing_take_rem = stage.rem_id;
+          } else {
+            body.push(
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "===",
+                  left: node({
+                    type: "UpdateExpression",
+                    operator: "--",
+                    prefix: true,
+                    argument: stage.rem_id,
+                  }),
+                  right: literal(0),
+                }),
+                consequent: node({
+                  type: "ExpressionStatement",
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: stop_id!,
+                    right: literal(true),
+                  }),
+                }),
+                alternate: null,
+              }),
+            );
+          }
+        }
+      }
+
+      // Terminal action
+      if (term.kind === "to_array") {
+        body.push(
+          node({
+            type: "ExpressionStatement",
+            expression: call(member(out_id!, "push"), [current_val]),
+          }),
+        );
+      } else if (term.kind === "fold_while") {
+        const inlined = step_fn_id === undefined
+          ? inline_async_binary(term.step, acc_id!, current_val)!
+          : undefined;
+        let elided_fw = false;
+        if (inlined !== undefined && !inlined.is_async) {
+          const cond_node = unwrap(inlined.expr);
+          if (cond_node.type === "ConditionalExpression") {
+            const c_yes = match_fold_step_tuple(cond_node.consequent);
+            const c_no = match_fold_step_tuple(cond_node.alternate);
+            if (
+              c_yes !== undefined && c_no !== undefined &&
+              c_yes.tag !== c_no.tag
+            ) {
+              const done_test = c_yes.tag === "Done" ? cond_node.test : node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: cond_node.test,
+              });
+              const done_val = c_yes.tag === "Done" ? c_yes.next : c_no.next;
+              const cont_val = c_yes.tag === "Continue"
+                ? c_yes.next
+                : c_no.next;
+              body.push(
+                node({
+                  type: "IfStatement",
+                  test: done_test,
+                  consequent: block([
+                    node({
+                      type: "ExpressionStatement",
+                      expression: node({
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: acc_id!,
+                        right: done_val,
+                      }),
+                    }),
+                    make_break(),
+                  ]),
+                  alternate: null,
+                }),
+                node({
+                  type: "ExpressionStatement",
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: acc_id!,
+                    right: cont_val,
+                  }),
+                }),
+              );
+              elided_fw = true;
+            }
+          }
+        }
+        if (!elided_fw) {
+          const fw_raw = make_fresh("aiter_fwr");
+          const fw_step = make_fresh("aiter_step");
+          if (inlined !== undefined) {
+            if (inlined.is_async) {
+              body.push(
+                variable(
+                  "const",
+                  fw_step,
+                  node({ type: "AwaitExpression", argument: inlined.expr }),
+                ),
+              );
+            } else if (is_sync_non_thenable_expr(inlined.expr)) {
+              body.push(variable("const", fw_step, inlined.expr));
+            } else {
+              body.push(
+                variable("const", fw_raw, inlined.expr),
+                variable("const", fw_step, await_if_thenable_expr(fw_raw)),
+              );
+            }
+          } else {
+            body.push(
+              variable(
+                "const",
+                fw_raw,
+                call(step_fn_id!, [acc_id!, current_val]),
+              ),
+              variable("const", fw_step, await_if_thenable_expr(fw_raw)),
+            );
+          }
+          body.push(
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: acc_id!,
+                right: node({
+                  type: "MemberExpression",
+                  object: fw_step,
+                  property: literal(1),
+                  computed: true,
+                  optional: false,
+                }),
+              }),
+            }),
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "BinaryExpression",
+                operator: "===",
+                left: node({
+                  type: "MemberExpression",
+                  object: fw_step,
+                  property: literal(0),
+                  computed: true,
+                  optional: false,
+                }),
+                right: literal("Done"),
+              }),
+              consequent: make_break(),
+              alternate: null,
+            }),
+          );
+        }
+      } else {
+        let pred_test: Expression;
+        if (pred_fn_id !== undefined) {
+          const raw_id = make_fresh("aiter_ok");
+          body.push(variable("const", raw_id, call(pred_fn_id, [current_val])));
+          pred_test = await_if_thenable_expr(raw_id);
+        } else {
+          const inl = inline_async_unary(term.pred, current_val, true)!;
+          if (!inl.is_async && is_sync_non_thenable_expr(inl.expr)) {
+            pred_test = inl.expr;
+          } else if (inl.is_async) {
+            pred_test = node({ type: "AwaitExpression", argument: inl.expr });
+          } else {
+            const raw_id = make_fresh("aiter_ok");
+            body.push(variable("const", raw_id, inl.expr));
+            pred_test = await_if_thenable_expr(raw_id);
+          }
+        }
+        body.push(
+          node({
+            type: "IfStatement",
+            test: pred_test,
+            consequent: ret(
+              term.kind === "some"
+                ? literal(true)
+                : call(find_just_id!, [current_val]),
+            ),
+            alternate: null,
+          }),
+        );
+      }
+
+      if (trailing_take_rem !== undefined) {
+        body.push(
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "BinaryExpression",
+              operator: "===",
+              left: node({
+                type: "UpdateExpression",
+                operator: "--",
+                prefix: true,
+                argument: trailing_take_rem,
+              }),
+              right: literal(0),
+            }),
+            consequent: make_break(),
+            alternate: null,
+          }),
+        );
+      } else if (stop_id !== undefined) {
+        body.push(
+          node({
+            type: "IfStatement",
+            test: stop_id,
+            consequent: make_break(),
+            alternate: null,
+          }),
+        );
+      }
+      return body;
+    };
+
+    let loop_stmt: Statement;
+    if (root.kind === "sync_factory") {
+      const iter_id = make_fresh("aiter_it");
+      const open_expr = inlined_sync_source_expr !== undefined
+        ? inlined_sync_source_expr
+        : call(factory_id!, []);
+      const idx_id = make_fresh("aiter_i");
+      const arr_v = make_fresh("aiter_v");
+      const arr_loop: Statement = node({
+        type: "ForStatement",
+        init: variable("let", idx_id, literal(0)),
+        test: node({
+          type: "BinaryExpression",
+          operator: "<",
+          left: idx_id,
+          right: member(iter_id, "length"),
+        }),
+        update: node({
+          type: "AssignmentExpression",
+          operator: "+=",
+          left: idx_id,
+          right: literal(1),
+        }),
+        body: block([
+          variable(
+            "const",
+            arr_v,
+            node({
+              type: "MemberExpression",
+              object: iter_id,
+              property: idx_id,
+              computed: true,
+              optional: false,
+            }),
+          ),
+          ...emit_async_body(arr_v),
+        ]),
+      });
+      if (
+        inlined_sync_source_expr !== undefined &&
+        unwrap(inlined_sync_source_expr).type === "ArrayExpression"
+      ) {
+        loop_stmt = block([
+          variable("const", iter_id, open_expr),
+          arr_loop,
+        ]);
+      } else {
+        const gen_v = make_fresh("aiter_v");
+        const gen_loop: Statement = node({
+          type: "ForOfStatement",
+          await: false,
+          left: node({
+            type: "VariableDeclaration",
+            kind: "const",
+            declarations: [
+              node({ type: "VariableDeclarator", id: gen_v, init: null }),
+            ],
+          }),
+          right: iter_id,
+          body: block(emit_async_body(gen_v)),
+        });
+        const is_canon_arr: Expression = node({
+          type: "LogicalExpression",
+          operator: "&&",
+          left: call(member(id("Array"), "isArray"), [iter_id]),
+          right: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: iter_id,
+              property: member(id("Symbol"), "iterator"),
+              computed: true,
+              optional: false,
+            }),
+            right: node({
+              type: "MemberExpression",
+              object: member(id("Array"), "prototype"),
+              property: member(id("Symbol"), "iterator"),
+              computed: true,
+              optional: false,
+            }),
+          }),
+        });
+        loop_stmt = block([
+          variable("const", iter_id, open_expr),
+          node({
+            type: "IfStatement",
+            test: is_canon_arr,
+            consequent: arr_loop,
+            alternate: gen_loop,
+          }),
+        ]);
+      }
+    } else if (root.kind === "chunks") {
+      const chunk_id = make_fresh("aiter_chunk");
+      const idx_id = make_fresh("aiter_i");
+      const raw_v = make_fresh("aiter_rawv");
+      const first_v = make_fresh("aiter_v");
+      const raw_loop: Statement = node({
+        type: "ForOfStatement",
+        await: true,
+        left: node({
+          type: "VariableDeclaration",
+          kind: "const",
+          declarations: [
+            node({ type: "VariableDeclarator", id: chunk_id, init: null }),
+          ],
+        }),
+        right: call(factory_id!, []),
+        body: block([
+          node({
+            type: "ForStatement",
+            init: variable("let", idx_id, literal(0)),
+            test: node({
+              type: "BinaryExpression",
+              operator: "<",
+              left: idx_id,
+              right: member(chunk_id, "length"),
+            }),
+            update: node({
+              type: "AssignmentExpression",
+              operator: "+=",
+              left: idx_id,
+              right: literal(1),
+            }),
+            body: block([
+              variable(
+                "const",
+                raw_v,
+                node({
+                  type: "MemberExpression",
+                  object: chunk_id,
+                  property: idx_id,
+                  computed: true,
+                  optional: false,
+                }),
+              ),
+              variable("const", first_v, await_if_thenable_expr(raw_v)),
+              ...emit_async_body(first_v),
+            ]),
+          }),
+        ]),
+      });
+      loop_stmt = outer_label !== undefined
+        ? node({
+          type: "LabeledStatement",
+          label: outer_label,
+          body: raw_loop,
+        })
+        : raw_loop;
+    } else {
+      const first_v = make_fresh("aiter_v");
+      loop_stmt = node({
+        type: "ForOfStatement",
+        await: true,
+        left: node({
+          type: "VariableDeclaration",
+          kind: "const",
+          declarations: [
+            node({ type: "VariableDeclarator", id: first_v, init: null }),
+          ],
+        }),
+        right: call(factory_id!, []),
+        body: block(emit_async_body(first_v)),
+      });
+    }
+
+    if (take_count_ids.length > 0) {
+      let guard: Expression = node({
+        type: "BinaryExpression",
+        operator: "!==",
+        left: take_count_ids[0],
+        right: literal(0),
+      });
+      for (let i = 1; i < take_count_ids.length; i += 1) {
+        guard = node({
+          type: "LogicalExpression",
+          operator: "&&",
+          left: guard,
+          right: node({
+            type: "BinaryExpression",
+            operator: "!==",
+            left: take_count_ids[i],
+            right: literal(0),
+          }),
+        });
+      }
+      async_setup_stmts.push(
+        node({
+          type: "IfStatement",
+          test: guard,
+          consequent: block([...loop_prefix, loop_stmt]),
+          alternate: null,
+        }),
+      );
+    } else {
+      async_setup_stmts.push(...loop_prefix, loop_stmt);
+    }
+
+    if (term.kind === "to_array") async_setup_stmts.push(ret(out_id!));
+    else if (term.kind === "fold_while") async_setup_stmts.push(ret(acc_id!));
+    else if (term.kind === "some") async_setup_stmts.push(ret(literal(false)));
+    else async_setup_stmts.push(ret(call(find_nothing_id!, [])));
+
+    const async_iife = call(
+      node({
+        type: "ArrowFunctionExpression",
+        id: null,
+        expression: false,
+        generator: false,
+        async: true,
+        params: [],
+        body: block(async_setup_stmts),
+        typeParameters: null,
+        returnType: null,
+      }) as ArrowFunctionExpression,
+      [],
+    );
+    if (sync_setup_stmts.length === 0) return async_iife;
+    return call(arrow([], block([...sync_setup_stmts, ret(async_iife)])), []);
+  }
+
   function mapper(expression: Expression): boolean {
     const current = unwrap(expression);
     if (current.type !== "Identifier") {
@@ -1601,9 +2927,11 @@ export function create_iterable_map_fusion(
 
   let helper: IdentifierReference | undefined;
   return {
-    enabled:
-      functions.size + namespaces.size + roots.size + root_namespaces.size > 0,
+    enabled,
     fuse(current: CallExpression): Expression | undefined {
+      const async_term = fuse_async_terminal(current);
+      if (async_term !== undefined) return async_term;
+      if (!sync_enabled) return undefined;
       const terminal = fuse_terminal(current);
       if (terminal !== undefined) return terminal;
       const maps: CallExpression[] = [];
@@ -1816,14 +3144,22 @@ function substitute_two_idents(
 
 function source_module(specifier: string): string | undefined {
   if (
-    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/
+    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|async_iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/
       .test(specifier)
   ) {
     return specifier.match(
-      /(iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/,
+      /(async_iterable|iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/,
     )?.[1];
   }
-  for (const module of ["iterable", "maybe", "mod", "typeclasses"]) {
+  for (
+    const module of [
+      "iterable",
+      "async_iterable",
+      "maybe",
+      "mod",
+      "typeclasses",
+    ]
+  ) {
     try {
       const url = new URL(`../src/${module}.ts`, import.meta.url);
       if (specifier === url.href || specifier === url.pathname) return module;

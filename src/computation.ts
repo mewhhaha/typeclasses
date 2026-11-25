@@ -236,6 +236,27 @@ function evaluate_state(
     const plan = plan_of(source);
     if (plan === undefined || !plan.state) {
       [value, state] = source(state) as readonly [unknown, unknown];
+    } else if (plan_of(plan.source) === undefined) {
+      [value, state] = plan.source(state) as readonly [unknown, unknown];
+      if (plan.tag === "state_map") {
+        value = plan.apply(value);
+      } else {
+        const next_source =
+          (plan as Extract<Plan, { tag: "reader_bind" | "state_bind" }>)
+            .apply(value);
+        const next_plan = plan_of(next_source);
+        if (next_plan === undefined || !next_plan.state) {
+          [value, state] = next_source(state) as readonly [unknown, unknown];
+        } else {
+          if (index < segment.frames.length) {
+            pending ??= [];
+            pending.push({ segment, index });
+          }
+          segment = compile(next_plan);
+          index = 0;
+          [value, state] = segment.source(state) as readonly [unknown, unknown];
+        }
+      }
     } else {
       if (index < segment.frames.length) {
         pending ??= [];
@@ -275,6 +296,8 @@ function evaluate_reader(
         const plan = plan_of(source);
         if (plan === undefined || plan.state) {
           value = source(context);
+        } else if (plan_of(plan.source) === undefined && plan.tag === "map") {
+          value = plan.apply(plan.source(context));
         } else {
           if (index < segment.frames.length) {
             pending ??= [];

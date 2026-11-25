@@ -17,6 +17,7 @@ import type {
   OperationRunnerName,
   PrimitiveFunctionName,
   StateEvalName,
+  StmPrimitiveName,
   TerminalFunctionName,
   TransformConfig,
   TransformKind,
@@ -59,10 +60,19 @@ const operation_helper_set = new Set<OperationHelperName>([
   "send",
   "pure",
 ]);
+const stm_primitive_set = new Set<StmPrimitiveName>([
+  "read_tvar",
+  "write_tvar",
+  "modify_tvar",
+  "retry",
+  "abort",
+  "or_else",
+]);
 const source_specifiers = new Map<string, string>();
 for (
   const name of [
     "array",
+    "async_iterable",
     "effects",
     "either",
     "except",
@@ -70,15 +80,19 @@ for (
     "identity",
     "iterable",
     "list",
+    "map",
     "maybe",
     "mod",
     "reader",
+    "record",
+    "set",
     "state",
     "stm",
     "tagged",
     "task",
     "traversal",
     "typeclasses",
+    "typed_array",
     "validation",
     "writer",
   ]
@@ -303,23 +317,44 @@ export type UnverifiedImports = {
   readonly from_nullable_functions: Set<string>;
   readonly from_maybe_functions: Set<string>;
   readonly to_nullable_functions: Set<string>;
+  readonly maybe_get_or_else_functions: Set<string>;
+  readonly maybe_fold_functions: Set<string>;
+  readonly maybe_filter_functions: Set<string>;
   readonly direct_either_dictionaries: Set<string>;
   readonly left_constructors: Set<string>;
   readonly right_constructors: Set<string>;
+  readonly either_fold_functions: Set<string>;
+  readonly either_from_right_functions: Set<string>;
+  readonly either_from_left_functions: Set<string>;
+  readonly either_recover_functions: Set<string>;
   readonly direct_identity_dictionaries: Set<string>;
   readonly identity_constructors: Set<string>;
   readonly array_constructors: Set<string>;
+  readonly array_from_array_functions: Set<string>;
   readonly array_view_functions: Set<string>;
   readonly array_to_array_functions: Set<string>;
+  readonly array_namespaces: Set<string>;
+  readonly typed_array_constructors: Set<string>;
+  readonly set_constructors: Set<string>;
+  readonly map_constructors: Set<string>;
+  readonly record_constructors: Set<string>;
   readonly foldable_objects: Set<string>;
   readonly foldable_namespaces: Set<string>;
   readonly stm_dictionaries: Set<string>;
   readonly stm_namespaces: Set<string>;
+  readonly stm_atomically_functions: Set<string>;
+  readonly stm_primitive_functions: Map<string, StmPrimitiveName>;
   readonly list_constructors: Set<string>;
+  readonly list_from_array_functions: Set<string>;
+  readonly list_namespaces: Set<string>;
   readonly nil_constructors: Set<string>;
   readonly cons_constructors: Set<string>;
   readonly direct_reader_dictionaries: Set<string>;
   readonly direct_state_dictionaries: Set<string>;
+  readonly direct_writer_dictionaries: Set<string>;
+  readonly parallel_task_dictionaries: Set<string>;
+  readonly task_parallel_functions: Set<string>;
+  readonly task_sequential_functions: Set<string>;
   readonly task_from_fn_functions: Set<string>;
   readonly task_succeed_functions: Set<string>;
   readonly task_run_functions: Set<string>;
@@ -346,6 +381,7 @@ export type UnverifiedImports = {
   readonly applicative_objects: Set<string>;
   readonly applicative_namespaces: Set<string>;
   readonly iterable_locals: Set<string>;
+  readonly async_iterable_locals: Set<string>;
   readonly program_module?: string;
   readonly import_declarations: Map<string, ImportDeclaration>;
   readonly loop_dictionaries: Set<string>;
@@ -402,6 +438,90 @@ export function create_span_scanner(
     min_pos = new_min;
     return hit;
   };
+}
+
+function escape_regex_token(token: string): string {
+  return token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const ident_token_re = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * Word-boundary inverted token scan over `program.body` statements.
+ * Returns sorted indices of non-import top-level statements containing at least
+ * one token on a valid identifier boundary, skipping whole statements once hit.
+ */
+export function collect_active_statement_indices(
+  source: string,
+  body: Program["body"],
+  tokens: readonly string[],
+  start_offset: number,
+): number[] {
+  const seen = new Set<string>();
+  const ident_parts: string[] = [];
+  const other_parts: string[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    if (tok.length === 0 || seen.has(tok)) continue;
+    seen.add(tok);
+    if (ident_token_re.test(tok)) {
+      ident_parts.push(escape_regex_token(tok));
+    } else {
+      let escaped = tok.charCodeAt(0) === 46 /* . */
+        ? "\\.\\s*" + escape_regex_token(tok.slice(1))
+        : escape_regex_token(tok);
+      const last = tok.charCodeAt(tok.length - 1);
+      if (
+        (last >= 65 && last <= 90) || (last >= 97 && last <= 122) ||
+        (last >= 48 && last <= 57) || last === 95 || last === 36
+      ) {
+        escaped += "\\b";
+      }
+      other_parts.push(escaped);
+    }
+  }
+  const branches: string[] = [];
+  if (ident_parts.length > 0) {
+    branches.push("\\b(?:" + ident_parts.join("|") + ")\\b");
+  }
+  if (other_parts.length > 0) {
+    branches.push("(?:" + other_parts.join("|") + ")");
+  }
+  if (branches.length === 0) return [];
+  const re = new RegExp(branches.join("|"), "g");
+  re.lastIndex = start_offset;
+  const active: number[] = [];
+  const total = body.length;
+  let stmt_idx = 0;
+  // Advance past leading imports.
+  while (stmt_idx < total && body[stmt_idx].end <= start_offset) {
+    stmt_idx += 1;
+  }
+  let match: RegExpExecArray | null;
+  while (stmt_idx < total && (match = re.exec(source)) !== null) {
+    const pos = match.index;
+    if (pos < body[stmt_idx].start) continue;
+    if (pos >= body[stmt_idx].end) {
+      // Binary search for the statement containing `pos`.
+      let lo = stmt_idx + 1;
+      let hi = total;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (body[mid].end <= pos) lo = mid + 1;
+        else hi = mid;
+      }
+      stmt_idx = lo;
+      if (stmt_idx >= total) break;
+      if (pos < body[stmt_idx].start) continue;
+    }
+    const stmt = body[stmt_idx];
+    if (stmt.type !== "ImportDeclaration") {
+      active.push(stmt_idx);
+    }
+    re.lastIndex = stmt.end;
+    stmt_idx += 1;
+  }
+  return active;
 }
 
 /** Cheap pre-parse filter shared by the CLI and bundler plugins. */
@@ -462,19 +582,55 @@ export function might_contain_transform_target(
   ) return true;
   if (
     source.includes("from_maybe") || source.includes("to_nullable") ||
+    source.includes("get_or_else") || source.includes("from_right") ||
+    source.includes("from_left") || source.includes("recover_or_else") ||
+    source.includes("atomically") ||
+    (source.includes("maybe(") || source.includes("either(")) ||
     (source.includes(".map(") &&
       (source.includes("Just") || source.includes("Right") ||
         source.includes("Maybe") || source.includes("Either") ||
         source.includes("from_nullable") || source.includes("ArrayT") ||
-        source.includes("from_array_view"))) ||
+        source.includes("from_array"))) ||
     (source.includes(".bind(") &&
       (source.includes("Just") || source.includes("Right") ||
         source.includes("Maybe") || source.includes("Either") ||
         source.includes("from_nullable"))) ||
-    ((source.includes("ArrayT") || source.includes("from_array_view")) &&
+    ((source.includes("ArrayT") || source.includes("from_array") ||
+      source.includes("TypedArrayT") || source.includes("from_typed_array") ||
+      source.includes("SetT") || source.includes("from_set") ||
+      source.includes("MapT") || source.includes("from_map_view") ||
+      source.includes("RecordT") || source.includes("from_record_view") ||
+      source.includes("from_snapshot")) &&
       (source.includes("Foldable") || source.includes(".fold(")))
   ) return true;
   return might_contain_iterable_maps(source);
+}
+
+const EMPTY_SET: Set<string> = new Set<string>();
+const EMPTY_MAP: Map<string, never> = new Map<string, never>();
+
+function add_set(current: Set<string>, value: string): Set<string> {
+  if (current === EMPTY_SET) {
+    const next = new Set<string>();
+    next.add(value);
+    return next;
+  }
+  current.add(value);
+  return current;
+}
+
+function set_map<V>(
+  current: Map<string, V>,
+  key: string,
+  value: V,
+): Map<string, V> {
+  if (current === (EMPTY_MAP as unknown as Map<string, V>)) {
+    const next = new Map<string, V>();
+    next.set(key, value);
+    return next;
+  }
+  current.set(key, value);
+  return current;
 }
 
 /** Scan only top-level ImportDeclarations (O(imports), no deep AST walk). */
@@ -482,97 +638,128 @@ export function scan_import_headers(
   program: Program,
   config: TransformConfig,
 ): UnverifiedImports {
-  const do_names = new Set<string>();
-  const program_names = new Set<string>();
-  const effect_names = new Set<string>();
-  const namespaces = new Set<string>();
-  const terminal_functions = new Map<
+  let do_names = EMPTY_SET;
+  let program_names = EMPTY_SET;
+  let effect_names = EMPTY_SET;
+  let namespaces = EMPTY_SET;
+  let terminal_functions = EMPTY_MAP as Map<
     string,
     { imported: TerminalFunctionName }
-  >();
-  const terminal_namespaces = new Map<
+  >;
+  let terminal_namespaces = EMPTY_MAP as Map<
     string,
     ReadonlySet<TerminalFunctionName>
-  >();
-  const primitive_functions = new Map<string, PrimitiveFunctionName>();
-  const primitive_namespaces = new Map<
+  >;
+  let primitive_functions = EMPTY_MAP as Map<string, PrimitiveFunctionName>;
+  let primitive_namespaces = EMPTY_MAP as Map<
     string,
     ReadonlySet<PrimitiveFunctionName>
-  >();
-  const except_primitives = new Map<string, ExceptPrimitiveName>();
-  const except_namespaces = new Map<
+  >;
+  let except_primitives = EMPTY_MAP as Map<string, ExceptPrimitiveName>;
+  let except_namespaces = EMPTY_MAP as Map<
     string,
     ReadonlySet<ExceptPrimitiveName>
-  >();
-  const state_eval_functions = new Map<string, StateEvalName>();
-  const state_eval_namespaces = new Map<string, ReadonlySet<StateEvalName>>();
-  const operation_runners = new Map<string, OperationRunnerName>();
-  const operation_runner_namespaces = new Map<
+  >;
+  let state_eval_functions = EMPTY_MAP as Map<string, StateEvalName>;
+  let state_eval_namespaces = EMPTY_MAP as Map<
+    string,
+    ReadonlySet<StateEvalName>
+  >;
+  let operation_runners = EMPTY_MAP as Map<string, OperationRunnerName>;
+  let operation_runner_namespaces = EMPTY_MAP as Map<
     string,
     ReadonlySet<OperationRunnerName>
-  >();
-  const operation_helpers = new Map<string, OperationHelperName>();
-  const cell_factories = new Map<string, CellFactoryKind>();
-  const cell_namespaces = new Map<string, ReadonlySet<CellFactoryKind>>();
-  const cell_runners = new Map<string, CellRunnerName>();
-  const cell_runner_namespaces = new Map<string, ReadonlySet<CellRunnerName>>();
-  const cell_providers = new Map<string, CellFactoryKind>();
-  const cell_provider_namespaces = new Map<
+  >;
+  let operation_helpers = EMPTY_MAP as Map<string, OperationHelperName>;
+  let cell_factories = EMPTY_MAP as Map<string, CellFactoryKind>;
+  let cell_namespaces = EMPTY_MAP as Map<
     string,
     ReadonlySet<CellFactoryKind>
-  >();
-  const direct_maybe_dictionaries = new Set<string>();
-  const just_constructors = new Set<string>();
-  const nothing_constructors = new Set<string>();
-  const from_nullable_functions = new Set<string>();
-  const from_maybe_functions = new Set<string>();
-  const to_nullable_functions = new Set<string>();
-  const direct_either_dictionaries = new Set<string>();
-  const left_constructors = new Set<string>();
-  const right_constructors = new Set<string>();
-  const direct_identity_dictionaries = new Set<string>();
-  const identity_constructors = new Set<string>();
-  const array_constructors = new Set<string>();
-  const array_view_functions = new Set<string>();
-  const array_to_array_functions = new Set<string>();
-  const foldable_objects = new Set<string>();
-  const foldable_namespaces = new Set<string>();
-  const stm_dictionaries = new Set<string>();
-  const stm_namespaces = new Set<string>();
-  const list_constructors = new Set<string>();
-  const nil_constructors = new Set<string>();
-  const cons_constructors = new Set<string>();
-  const direct_reader_dictionaries = new Set<string>();
-  const direct_state_dictionaries = new Set<string>();
-  const task_from_fn_functions = new Set<string>();
-  const task_succeed_functions = new Set<string>();
-  const task_run_functions = new Set<string>();
-  const task_run_exit_functions = new Set<string>();
-  const task_is_cancellation_functions = new Set<string>();
-  const task_namespaces = new Set<string>();
-  const traversable_objects = new Set<string>();
-  const traversable_namespaces = new Set<string>();
-  const traverse_sequential_functions = new Set<string>();
-  const traverse_sequential_namespaces = new Set<string>();
-  const match_functions = new Set<string>();
-  const match_namespaces = new Set<string>();
-  const tagged_type_names = new Map<
+  >;
+  let cell_runners = EMPTY_MAP as Map<string, CellRunnerName>;
+  let cell_runner_namespaces = EMPTY_MAP as Map<
+    string,
+    ReadonlySet<CellRunnerName>
+  >;
+  let cell_providers = EMPTY_MAP as Map<string, CellFactoryKind>;
+  let cell_provider_namespaces = EMPTY_MAP as Map<
+    string,
+    ReadonlySet<CellFactoryKind>
+  >;
+  let direct_maybe_dictionaries = EMPTY_SET;
+  let just_constructors = EMPTY_SET;
+  let nothing_constructors = EMPTY_SET;
+  let from_nullable_functions = EMPTY_SET;
+  let from_maybe_functions = EMPTY_SET;
+  let to_nullable_functions = EMPTY_SET;
+  let maybe_get_or_else_functions = EMPTY_SET;
+  let maybe_fold_functions = EMPTY_SET;
+  let maybe_filter_functions = EMPTY_SET;
+  let direct_either_dictionaries = EMPTY_SET;
+  let left_constructors = EMPTY_SET;
+  let right_constructors = EMPTY_SET;
+  let either_fold_functions = EMPTY_SET;
+  let either_from_right_functions = EMPTY_SET;
+  let either_from_left_functions = EMPTY_SET;
+  let either_recover_functions = EMPTY_SET;
+  let direct_identity_dictionaries = EMPTY_SET;
+  let identity_constructors = EMPTY_SET;
+  let array_constructors = EMPTY_SET;
+  let array_from_array_functions = EMPTY_SET;
+  let array_view_functions = EMPTY_SET;
+  let array_to_array_functions = EMPTY_SET;
+  let array_namespaces = EMPTY_SET;
+  let typed_array_constructors = EMPTY_SET;
+  let set_constructors = EMPTY_SET;
+  let map_constructors = EMPTY_SET;
+  let record_constructors = EMPTY_SET;
+  let foldable_objects = EMPTY_SET;
+  let foldable_namespaces = EMPTY_SET;
+  let stm_dictionaries = EMPTY_SET;
+  let stm_namespaces = EMPTY_SET;
+  let stm_atomically_functions = EMPTY_SET;
+  let stm_primitive_functions = EMPTY_MAP as Map<string, StmPrimitiveName>;
+  let list_constructors = EMPTY_SET;
+  let list_from_array_functions = EMPTY_SET;
+  let list_namespaces = EMPTY_SET;
+  let nil_constructors = EMPTY_SET;
+  let cons_constructors = EMPTY_SET;
+  let direct_reader_dictionaries = EMPTY_SET;
+  let direct_state_dictionaries = EMPTY_SET;
+  let direct_writer_dictionaries = EMPTY_SET;
+  let parallel_task_dictionaries = EMPTY_SET;
+  let task_parallel_functions = EMPTY_SET;
+  let task_sequential_functions = EMPTY_SET;
+  let task_from_fn_functions = EMPTY_SET;
+  let task_succeed_functions = EMPTY_SET;
+  let task_run_functions = EMPTY_SET;
+  let task_run_exit_functions = EMPTY_SET;
+  let task_is_cancellation_functions = EMPTY_SET;
+  let task_namespaces = EMPTY_SET;
+  let traversable_objects = EMPTY_SET;
+  let traversable_namespaces = EMPTY_SET;
+  let traverse_sequential_functions = EMPTY_SET;
+  let traverse_sequential_namespaces = EMPTY_SET;
+  let match_functions = EMPTY_SET;
+  let match_namespaces = EMPTY_SET;
+  let tagged_type_names = EMPTY_MAP as Map<
     string,
     "maybe" | "either" | "validation" | "list"
-  >();
-  const validation_constructors = new Set<string>();
-  const direct_validation_dictionaries = new Set<string>();
-  const valid_constructors = new Set<string>();
-  const invalid_constructors = new Set<string>();
-  const invalid_messages_constructors = new Set<string>();
-  const collect_functions = new Set<string>();
-  const collect_namespaces = new Set<string>();
-  const applicative_objects = new Set<string>();
-  const applicative_namespaces = new Set<string>();
-  const iterable_locals = new Set<string>();
-  const import_declarations = new Map<string, ImportDeclaration>();
-  const loop_dictionaries = new Set<string>();
-  const loop_tasks = new Set<string>();
+  >;
+  let validation_constructors = EMPTY_SET;
+  let direct_validation_dictionaries = EMPTY_SET;
+  let valid_constructors = EMPTY_SET;
+  let invalid_constructors = EMPTY_SET;
+  let invalid_messages_constructors = EMPTY_SET;
+  let collect_functions = EMPTY_SET;
+  let collect_namespaces = EMPTY_SET;
+  let applicative_objects = EMPTY_SET;
+  let applicative_namespaces = EMPTY_SET;
+  let iterable_locals = EMPTY_SET;
+  let async_iterable_locals = EMPTY_SET;
+  let import_declarations = EMPTY_MAP as Map<string, ImportDeclaration>;
+  let loop_dictionaries = EMPTY_SET;
+  let loop_tasks = EMPTY_SET;
   let program_module: string | undefined;
   let loop_specifier: string | undefined;
   let leading_imports_end = 0;
@@ -600,19 +787,40 @@ export function scan_import_headers(
           if (
             imported === "Maybe" &&
             (type_kind === "mod" || type_kind === "maybe")
-          ) tagged_type_names.set(binding.local.name, "maybe");
-          else if (
+          ) {
+            tagged_type_names = set_map(
+              tagged_type_names,
+              binding.local.name,
+              "maybe",
+            );
+          } else if (
             imported === "Either" &&
             (type_kind === "mod" || type_kind === "either")
-          ) tagged_type_names.set(binding.local.name, "either");
-          else if (
+          ) {
+            tagged_type_names = set_map(
+              tagged_type_names,
+              binding.local.name,
+              "either",
+            );
+          } else if (
             imported === "Validation" &&
             (type_kind === "mod" || type_kind === "validation")
-          ) tagged_type_names.set(binding.local.name, "validation");
-          else if (
+          ) {
+            tagged_type_names = set_map(
+              tagged_type_names,
+              binding.local.name,
+              "validation",
+            );
+          } else if (
             imported === "List" &&
             (type_kind === "mod" || type_kind === "list")
-          ) tagged_type_names.set(binding.local.name, "list");
+          ) {
+            tagged_type_names = set_map(
+              tagged_type_names,
+              binding.local.name,
+              "list",
+            );
+          }
         }
       }
       continue;
@@ -641,73 +849,117 @@ export function scan_import_headers(
     for (const binding of statement.specifiers) {
       const local = binding.local.name;
       if (!import_declarations.has(local)) {
-        import_declarations.set(local, statement);
+        import_declarations = set_map(import_declarations, local, statement);
       }
       if (binding.type === "ImportNamespaceSpecifier") {
         if (available_terminals !== undefined) {
-          terminal_namespaces.set(local, available_terminals);
+          terminal_namespaces = set_map(
+            terminal_namespaces,
+            local,
+            available_terminals,
+          );
         }
         if (available_primitives !== undefined) {
-          primitive_namespaces.set(local, available_primitives);
+          primitive_namespaces = set_map(
+            primitive_namespaces,
+            local,
+            available_primitives,
+          );
         }
         if (available_except_primitives !== undefined) {
-          except_namespaces.set(local, available_except_primitives);
+          except_namespaces = set_map(
+            except_namespaces,
+            local,
+            available_except_primitives,
+          );
         }
         if (available_state_evals !== undefined) {
-          state_eval_namespaces.set(local, available_state_evals);
+          state_eval_namespaces = set_map(
+            state_eval_namespaces,
+            local,
+            available_state_evals,
+          );
         }
         if (available_op_runners !== undefined) {
-          operation_runner_namespaces.set(local, available_op_runners);
+          operation_runner_namespaces = set_map(
+            operation_runner_namespaces,
+            local,
+            available_op_runners,
+          );
         }
         if (available_cell_factories !== undefined) {
-          cell_namespaces.set(local, available_cell_factories);
+          cell_namespaces = set_map(
+            cell_namespaces,
+            local,
+            available_cell_factories,
+          );
         }
         if (available_cell_runners !== undefined) {
-          cell_runner_namespaces.set(local, available_cell_runners);
+          cell_runner_namespaces = set_map(
+            cell_runner_namespaces,
+            local,
+            available_cell_runners,
+          );
         }
         if (available_cell_providers !== undefined) {
-          cell_provider_namespaces.set(local, available_cell_providers);
+          cell_provider_namespaces = set_map(
+            cell_provider_namespaces,
+            local,
+            available_cell_providers,
+          );
         }
         if (is_library) {
-          namespaces.add(local);
+          namespaces = add_set(namespaces, local);
           program_module ??= specifier;
         }
         if (
           loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "applicative"
         ) {
-          collect_namespaces.add(local);
-          applicative_namespaces.add(local);
+          collect_namespaces = add_set(collect_namespaces, local);
+          applicative_namespaces = add_set(applicative_namespaces, local);
         }
         if (
           loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "traversable"
         ) {
-          traversable_namespaces.add(local);
+          traversable_namespaces = add_set(traversable_namespaces, local);
         }
         if (loop_kind === "mod" || loop_kind === "traversal") {
-          traverse_sequential_namespaces.add(local);
+          traverse_sequential_namespaces = add_set(
+            traverse_sequential_namespaces,
+            local,
+          );
         }
         if (loop_kind === "mod" || loop_kind === "tagged") {
-          match_namespaces.add(local);
+          match_namespaces = add_set(match_namespaces, local);
         }
         if (loop_kind === "mod" || loop_kind === "task") {
-          task_namespaces.add(local);
+          task_namespaces = add_set(task_namespaces, local);
         }
         if (
           loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "foldable"
         ) {
-          foldable_namespaces.add(local);
+          foldable_namespaces = add_set(foldable_namespaces, local);
         }
         if (loop_kind === "stm") {
-          stm_namespaces.add(local);
+          stm_namespaces = add_set(stm_namespaces, local);
+        }
+        if (loop_kind === "array") {
+          array_namespaces = add_set(array_namespaces, local);
+        }
+        if (loop_kind === "list") {
+          list_namespaces = add_set(list_namespaces, local);
         }
         if (
           loop_kind === "iterable" || loop_kind === "mod" ||
           loop_kind === "typeclasses" || loop_kind === "foldable"
         ) {
-          iterable_locals.add(local);
+          iterable_locals = add_set(iterable_locals, local);
+        }
+        if (loop_kind === "async_iterable" || loop_kind === "mod") {
+          async_iterable_locals = add_set(async_iterable_locals, local);
         }
         continue;
       }
@@ -717,18 +969,18 @@ export function scan_import_headers(
         if (
           imported === "Maybe" &&
           (loop_kind === "mod" || loop_kind === "maybe")
-        ) tagged_type_names.set(local, "maybe");
+        ) tagged_type_names = set_map(tagged_type_names, local, "maybe");
         else if (
           imported === "Either" &&
           (loop_kind === "mod" || loop_kind === "either")
-        ) tagged_type_names.set(local, "either");
+        ) tagged_type_names = set_map(tagged_type_names, local, "either");
         else if (
           imported === "Validation" &&
           (loop_kind === "mod" || loop_kind === "validation")
-        ) tagged_type_names.set(local, "validation");
+        ) tagged_type_names = set_map(tagged_type_names, local, "validation");
         else if (
           imported === "List" && (loop_kind === "mod" || loop_kind === "list")
-        ) tagged_type_names.set(local, "list");
+        ) tagged_type_names = set_map(tagged_type_names, local, "list");
         continue;
       }
       const imported = import_name(binding)!;
@@ -736,53 +988,88 @@ export function scan_import_headers(
         (loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "traversable") && imported === "Traversable"
       ) {
-        traversable_objects.add(local);
+        traversable_objects = add_set(traversable_objects, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "traversal") &&
         imported === "traverse_sequential"
       ) {
-        traverse_sequential_functions.add(local);
+        traverse_sequential_functions = add_set(
+          traverse_sequential_functions,
+          local,
+        );
       }
       if (
         (loop_kind === "mod" || loop_kind === "tagged") && imported === "match"
       ) {
-        match_functions.add(local);
+        match_functions = add_set(match_functions, local);
       }
+      if (
+        (loop_kind === "mod" || loop_kind === "task") &&
+        imported === "ParallelTask"
+      ) parallel_task_dictionaries = add_set(parallel_task_dictionaries, local);
+      if (
+        (loop_kind === "mod" || loop_kind === "task") &&
+        imported === "parallel"
+      ) task_parallel_functions = add_set(task_parallel_functions, local);
+      if (
+        (loop_kind === "mod" || loop_kind === "task") &&
+        imported === "sequential"
+      ) task_sequential_functions = add_set(task_sequential_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "task") &&
         imported === "from_fn"
-      ) task_from_fn_functions.add(local);
+      ) task_from_fn_functions = add_set(task_from_fn_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "task") &&
         imported === "succeed"
-      ) task_succeed_functions.add(local);
+      ) task_succeed_functions = add_set(task_succeed_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "task") &&
         imported === "run_task"
-      ) task_run_functions.add(local);
+      ) task_run_functions = add_set(task_run_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "task") &&
         imported === "run_task_exit"
-      ) task_run_exit_functions.add(local);
+      ) task_run_exit_functions = add_set(task_run_exit_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "task") &&
         imported === "is_task_cancellation"
-      ) task_is_cancellation_functions.add(local);
+      ) {
+        task_is_cancellation_functions = add_set(
+          task_is_cancellation_functions,
+          local,
+        );
+      }
       if (
         (loop_kind === "mod" || loop_kind === "list") && imported === "List"
       ) {
-        list_constructors.add(local);
-        tagged_type_names.set(local, "list");
+        list_constructors = add_set(list_constructors, local);
+        tagged_type_names = set_map(tagged_type_names, local, "list");
       }
       if ((loop_kind === "mod" || loop_kind === "list") && imported === "Nil") {
-        nil_constructors.add(local);
+        nil_constructors = add_set(nil_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "list") &&
         (imported === "Cons" || imported === "cons")
       ) {
-        cons_constructors.add(local);
+        cons_constructors = add_set(cons_constructors, local);
+      }
+      if (loop_kind === "list" && imported === "from_array") {
+        list_from_array_functions = add_set(list_from_array_functions, local);
+      }
+      if (loop_kind === "mod" && imported === "list") {
+        list_namespaces = add_set(list_namespaces, local);
+      }
+      if (loop_kind === "mod" && imported === "array") {
+        array_namespaces = add_set(array_namespaces, local);
+      }
+      if (
+        loop_kind === "async_iterable" ||
+        (loop_kind === "mod" && imported === "async_iterable")
+      ) {
+        async_iterable_locals = add_set(async_iterable_locals, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "validation") &&
@@ -790,43 +1077,49 @@ export function scan_import_headers(
           imported === "Invalid" || imported === "InvalidMessages" ||
           imported === "valid" || imported === "invalid")
       ) {
-        validation_constructors.add(local);
+        validation_constructors = add_set(validation_constructors, local);
         if (imported === "Validation") {
-          tagged_type_names.set(local, "validation");
-          direct_validation_dictionaries.add(local);
+          tagged_type_names = set_map(tagged_type_names, local, "validation");
+          direct_validation_dictionaries = add_set(
+            direct_validation_dictionaries,
+            local,
+          );
         } else if (imported === "Valid") {
-          valid_constructors.add(local);
+          valid_constructors = add_set(valid_constructors, local);
         } else if (imported === "Invalid") {
-          invalid_constructors.add(local);
+          invalid_constructors = add_set(invalid_constructors, local);
         } else if (imported === "InvalidMessages") {
-          invalid_messages_constructors.add(local);
+          invalid_messages_constructors = add_set(
+            invalid_messages_constructors,
+            local,
+          );
         }
       }
       if (
         (loop_kind === "mod" || loop_kind === "maybe") && imported === "Maybe"
-      ) tagged_type_names.set(local, "maybe");
+      ) tagged_type_names = set_map(tagged_type_names, local, "maybe");
       if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Either"
-      ) tagged_type_names.set(local, "either");
+      ) tagged_type_names = set_map(tagged_type_names, local, "either");
       if (
         loop_kind === "iterable" ||
         ((loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "foldable") &&
           (imported === "iterable" || imported === "Foldable"))
       ) {
-        iterable_locals.add(local);
+        iterable_locals = add_set(iterable_locals, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "applicative") && imported === "collect"
       ) {
-        collect_functions.add(local);
+        collect_functions = add_set(collect_functions, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "applicative") && imported === "Applicative"
       ) {
-        applicative_objects.add(local);
+        applicative_objects = add_set(applicative_objects, local);
       }
       if (
         loop_kind !== undefined &&
@@ -834,126 +1127,245 @@ export function scan_import_headers(
           imported === "Identity" || imported === "Task") &&
         (loop_kind === "mod" || loop_kind === imported.toLowerCase())
       ) {
-        loop_dictionaries.add(local);
-        if (imported === "Task") loop_tasks.add(local);
-        if (imported === "Maybe") direct_maybe_dictionaries.add(local);
-        if (imported === "Either") direct_either_dictionaries.add(local);
-        if (imported === "Identity") direct_identity_dictionaries.add(local);
+        loop_dictionaries = add_set(loop_dictionaries, local);
+        if (imported === "Task") loop_tasks = add_set(loop_tasks, local);
+        if (imported === "Maybe") {
+          direct_maybe_dictionaries = add_set(direct_maybe_dictionaries, local);
+        }
+        if (imported === "Either") {
+          direct_either_dictionaries = add_set(
+            direct_either_dictionaries,
+            local,
+          );
+        }
+        if (imported === "Identity") {
+          direct_identity_dictionaries = add_set(
+            direct_identity_dictionaries,
+            local,
+          );
+        }
       }
       if (
         (loop_kind === "mod" || loop_kind === "maybe") && imported === "Just"
       ) {
-        just_constructors.add(local);
+        just_constructors = add_set(just_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "maybe") && imported === "Nothing"
       ) {
-        nothing_constructors.add(local);
+        nothing_constructors = add_set(nothing_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "maybe") &&
         imported === "from_nullable"
-      ) from_nullable_functions.add(local);
+      ) from_nullable_functions = add_set(from_nullable_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "maybe") &&
         imported === "from_maybe"
-      ) from_maybe_functions.add(local);
+      ) from_maybe_functions = add_set(from_maybe_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "maybe") &&
         imported === "to_nullable"
-      ) to_nullable_functions.add(local);
+      ) to_nullable_functions = add_set(to_nullable_functions, local);
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") &&
+        imported === "get_or_else"
+      ) {
+        maybe_get_or_else_functions = add_set(
+          maybe_get_or_else_functions,
+          local,
+        );
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") &&
+        imported === "maybe"
+      ) maybe_fold_functions = add_set(maybe_fold_functions, local);
+      if (loop_kind === "maybe" && imported === "filter") {
+        maybe_filter_functions = add_set(maybe_filter_functions, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "either") &&
+        imported === "either"
+      ) either_fold_functions = add_set(either_fold_functions, local);
+      if (
+        (loop_kind === "mod" || loop_kind === "either") &&
+        imported === "from_right"
+      ) {
+        either_from_right_functions = add_set(
+          either_from_right_functions,
+          local,
+        );
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "either") &&
+        imported === "from_left"
+      ) either_from_left_functions = add_set(either_from_left_functions, local);
+      if (
+        (loop_kind === "mod" || loop_kind === "either") &&
+        imported === "recover_or_else"
+      ) either_recover_functions = add_set(either_recover_functions, local);
       if (
         (loop_kind === "mod" || loop_kind === "typeclasses" ||
           loop_kind === "foldable") && imported === "Foldable"
-      ) foldable_objects.add(local);
+      ) foldable_objects = add_set(foldable_objects, local);
+      if (loop_kind === "array" && imported === "from_array") {
+        array_from_array_functions = add_set(array_from_array_functions, local);
+      }
       if (loop_kind === "array" && imported === "from_array_view") {
-        array_view_functions.add(local);
+        array_view_functions = add_set(array_view_functions, local);
       }
       if (loop_kind === "array" && imported === "to_array") {
-        array_to_array_functions.add(local);
+        array_to_array_functions = add_set(array_to_array_functions, local);
       }
-      if (loop_kind === "stm" && imported === "Stm") {
-        stm_dictionaries.add(local);
+      if (
+        (loop_kind === "mod" || loop_kind === "typed_array") &&
+        (imported === "TypedArrayT" || imported === "from_typed_array")
+      ) {
+        typed_array_constructors = add_set(typed_array_constructors, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "set") &&
+        (imported === "SetT" || imported === "from_set")
+      ) {
+        set_constructors = add_set(set_constructors, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "map") &&
+        (imported === "MapT" || imported === "from_map_view" ||
+          imported === "from_snapshot")
+      ) {
+        map_constructors = add_set(map_constructors, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "record") &&
+        (imported === "RecordT" || imported === "from_record_view" ||
+          imported === "from_snapshot")
+      ) {
+        record_constructors = add_set(record_constructors, local);
+      }
+      if ((loop_kind === "mod" || loop_kind === "stm") && imported === "Stm") {
+        stm_dictionaries = add_set(stm_dictionaries, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "stm") &&
+        imported === "atomically"
+      ) {
+        stm_atomically_functions = add_set(stm_atomically_functions, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "stm") &&
+        stm_primitive_set.has(imported as StmPrimitiveName)
+      ) {
+        stm_primitive_functions = set_map(
+          stm_primitive_functions,
+          local,
+          imported as StmPrimitiveName,
+        );
       }
       if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Left"
       ) {
-        left_constructors.add(local);
+        left_constructors = add_set(left_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Right"
       ) {
-        right_constructors.add(local);
+        right_constructors = add_set(right_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "identity") &&
         (imported === "identity" || imported === "Identity")
       ) {
-        identity_constructors.add(local);
+        identity_constructors = add_set(identity_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "array") && imported === "ArrayT"
       ) {
-        array_constructors.add(local);
+        array_constructors = add_set(array_constructors, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "reader") && imported === "Reader"
       ) {
-        direct_reader_dictionaries.add(local);
+        direct_reader_dictionaries = add_set(direct_reader_dictionaries, local);
       }
       if (
         (loop_kind === "mod" || loop_kind === "state") && imported === "State"
       ) {
-        direct_state_dictionaries.add(local);
+        direct_state_dictionaries = add_set(direct_state_dictionaries, local);
+      }
+      if (
+        (loop_kind === "mod" || loop_kind === "writer") && imported === "Writer"
+      ) {
+        direct_writer_dictionaries = add_set(direct_writer_dictionaries, local);
       }
       if (available_terminals?.has(imported as TerminalFunctionName)) {
-        terminal_functions.set(local, {
+        terminal_functions = set_map(terminal_functions, local, {
           imported: imported as TerminalFunctionName,
         });
       }
       if (available_primitives?.has(imported as PrimitiveFunctionName)) {
-        primitive_functions.set(local, imported as PrimitiveFunctionName);
+        primitive_functions = set_map(
+          primitive_functions,
+          local,
+          imported as PrimitiveFunctionName,
+        );
       }
       if (available_except_primitives?.has(imported as ExceptPrimitiveName)) {
-        except_primitives.set(local, imported as ExceptPrimitiveName);
+        except_primitives = set_map(
+          except_primitives,
+          local,
+          imported as ExceptPrimitiveName,
+        );
       }
       if (available_state_evals?.has(imported as StateEvalName)) {
-        state_eval_functions.set(local, imported as StateEvalName);
+        state_eval_functions = set_map(
+          state_eval_functions,
+          local,
+          imported as StateEvalName,
+        );
       }
       if (available_op_runners?.has(imported as OperationRunnerName)) {
-        operation_runners.set(local, imported as OperationRunnerName);
+        operation_runners = set_map(
+          operation_runners,
+          local,
+          imported as OperationRunnerName,
+        );
       }
       if (available_op_helpers?.has(imported as OperationHelperName)) {
-        operation_helpers.set(local, imported as OperationHelperName);
+        operation_helpers = set_map(
+          operation_helpers,
+          local,
+          imported as OperationHelperName,
+        );
       }
       const factory_kind = cell_factory_kind_for(imported);
       if (
         factory_kind !== undefined &&
         available_cell_factories?.has(factory_kind)
       ) {
-        cell_factories.set(local, factory_kind);
+        cell_factories = set_map(cell_factories, local, factory_kind);
       }
       if (available_cell_runners?.has(imported as CellRunnerName)) {
-        cell_runners.set(local, imported as CellRunnerName);
+        cell_runners = set_map(cell_runners, local, imported as CellRunnerName);
       }
       const provider_kind = cell_provider_kind_for(imported);
       if (
         provider_kind !== undefined &&
         available_cell_providers?.has(provider_kind)
       ) {
-        cell_providers.set(local, provider_kind);
+        cell_providers = set_map(cell_providers, local, provider_kind);
       }
       if (!is_library) continue;
       switch (imported) {
         case "Do":
-          do_names.add(local);
+          do_names = add_set(do_names, local);
           break;
         case "Program":
-          program_names.add(local);
+          program_names = add_set(program_names, local);
           program_module ??= specifier;
           break;
         case "Effect":
-          effect_names.add(local);
+          effect_names = add_set(effect_names, local);
           break;
       }
     }
@@ -986,23 +1398,44 @@ export function scan_import_headers(
     from_nullable_functions,
     from_maybe_functions,
     to_nullable_functions,
+    maybe_get_or_else_functions,
+    maybe_fold_functions,
+    maybe_filter_functions,
     direct_either_dictionaries,
     left_constructors,
     right_constructors,
+    either_fold_functions,
+    either_from_right_functions,
+    either_from_left_functions,
+    either_recover_functions,
     direct_identity_dictionaries,
     identity_constructors,
     array_constructors,
+    array_from_array_functions,
     array_view_functions,
     array_to_array_functions,
+    array_namespaces,
+    typed_array_constructors,
+    set_constructors,
+    map_constructors,
+    record_constructors,
     foldable_objects,
     foldable_namespaces,
     stm_dictionaries,
     stm_namespaces,
+    stm_atomically_functions,
+    stm_primitive_functions,
     list_constructors,
+    list_from_array_functions,
+    list_namespaces,
     nil_constructors,
     cons_constructors,
     direct_reader_dictionaries,
     direct_state_dictionaries,
+    direct_writer_dictionaries,
+    parallel_task_dictionaries,
+    task_parallel_functions,
+    task_sequential_functions,
     task_from_fn_functions,
     task_succeed_functions,
     task_run_functions,
@@ -1026,6 +1459,7 @@ export function scan_import_headers(
     applicative_objects,
     applicative_namespaces,
     iterable_locals,
+    async_iterable_locals,
     program_module,
     import_declarations,
     loop_dictionaries,
@@ -1165,23 +1599,44 @@ export function create_import_shadow_tracker(
         headers.from_nullable_functions.delete(name);
         headers.from_maybe_functions.delete(name);
         headers.to_nullable_functions.delete(name);
+        headers.maybe_get_or_else_functions.delete(name);
+        headers.maybe_fold_functions.delete(name);
+        headers.maybe_filter_functions.delete(name);
         headers.direct_either_dictionaries.delete(name);
         headers.left_constructors.delete(name);
         headers.right_constructors.delete(name);
+        headers.either_fold_functions.delete(name);
+        headers.either_from_right_functions.delete(name);
+        headers.either_from_left_functions.delete(name);
+        headers.either_recover_functions.delete(name);
         headers.direct_identity_dictionaries.delete(name);
         headers.identity_constructors.delete(name);
         headers.array_constructors.delete(name);
+        headers.array_from_array_functions.delete(name);
         headers.array_view_functions.delete(name);
         headers.array_to_array_functions.delete(name);
+        headers.array_namespaces.delete(name);
+        headers.typed_array_constructors.delete(name);
+        headers.set_constructors.delete(name);
+        headers.map_constructors.delete(name);
+        headers.record_constructors.delete(name);
         headers.foldable_objects.delete(name);
         headers.foldable_namespaces.delete(name);
         headers.stm_dictionaries.delete(name);
         headers.stm_namespaces.delete(name);
+        headers.stm_atomically_functions.delete(name);
+        headers.stm_primitive_functions.delete(name);
         headers.list_constructors.delete(name);
+        headers.list_from_array_functions.delete(name);
+        headers.list_namespaces.delete(name);
         headers.nil_constructors.delete(name);
         headers.cons_constructors.delete(name);
         headers.direct_reader_dictionaries.delete(name);
         headers.direct_state_dictionaries.delete(name);
+        headers.direct_writer_dictionaries.delete(name);
+        headers.parallel_task_dictionaries.delete(name);
+        headers.task_parallel_functions.delete(name);
+        headers.task_sequential_functions.delete(name);
         headers.task_from_fn_functions.delete(name);
         headers.task_succeed_functions.delete(name);
         headers.task_run_functions.delete(name);
@@ -1204,18 +1659,27 @@ export function create_import_shadow_tracker(
         headers.applicative_objects.delete(name);
         headers.applicative_namespaces.delete(name);
         headers.iterable_locals.delete(name);
+        headers.async_iterable_locals.delete(name);
         headers.loop_dictionaries.delete(name);
         headers.loop_tasks.delete(name);
       }
-      if (headers.loop_specifier === undefined) {
+      if (
+        headers.loop_specifier === undefined &&
+        headers.loop_dictionaries.size > 0
+      ) {
         headers.loop_dictionaries.clear();
       }
-      const scopes = new Set(headers.program_names);
-      for (const name of scope_declarations.keys()) {
-        if (counts.get(name) === 1 && !tdz_violated.has(name)) {
-          scopes.add(name);
-        }
-      }
+      const scopes = scope_declarations.size === 0
+        ? headers.program_names
+        : (() => {
+          const next = new Set(headers.program_names);
+          for (const name of scope_declarations.keys()) {
+            if (counts.get(name) === 1 && !tdz_violated.has(name)) {
+              next.add(name);
+            }
+          }
+          return next;
+        })();
       return {
         imports: {
           do_names: headers.do_names,
@@ -1245,23 +1709,44 @@ export function create_import_shadow_tracker(
           from_nullable_functions: headers.from_nullable_functions,
           from_maybe_functions: headers.from_maybe_functions,
           to_nullable_functions: headers.to_nullable_functions,
+          maybe_get_or_else_functions: headers.maybe_get_or_else_functions,
+          maybe_fold_functions: headers.maybe_fold_functions,
+          maybe_filter_functions: headers.maybe_filter_functions,
           direct_either_dictionaries: headers.direct_either_dictionaries,
           left_constructors: headers.left_constructors,
           right_constructors: headers.right_constructors,
+          either_fold_functions: headers.either_fold_functions,
+          either_from_right_functions: headers.either_from_right_functions,
+          either_from_left_functions: headers.either_from_left_functions,
+          either_recover_functions: headers.either_recover_functions,
           direct_identity_dictionaries: headers.direct_identity_dictionaries,
           identity_constructors: headers.identity_constructors,
           array_constructors: headers.array_constructors,
+          array_from_array_functions: headers.array_from_array_functions,
           array_view_functions: headers.array_view_functions,
           array_to_array_functions: headers.array_to_array_functions,
+          array_namespaces: headers.array_namespaces,
+          typed_array_constructors: headers.typed_array_constructors,
+          set_constructors: headers.set_constructors,
+          map_constructors: headers.map_constructors,
+          record_constructors: headers.record_constructors,
           foldable_objects: headers.foldable_objects,
           foldable_namespaces: headers.foldable_namespaces,
           stm_dictionaries: headers.stm_dictionaries,
           stm_namespaces: headers.stm_namespaces,
+          stm_atomically_functions: headers.stm_atomically_functions,
+          stm_primitive_functions: headers.stm_primitive_functions,
           list_constructors: headers.list_constructors,
+          list_from_array_functions: headers.list_from_array_functions,
+          list_namespaces: headers.list_namespaces,
           nil_constructors: headers.nil_constructors,
           cons_constructors: headers.cons_constructors,
           direct_reader_dictionaries: headers.direct_reader_dictionaries,
           direct_state_dictionaries: headers.direct_state_dictionaries,
+          direct_writer_dictionaries: headers.direct_writer_dictionaries,
+          parallel_task_dictionaries: headers.parallel_task_dictionaries,
+          task_parallel_functions: headers.task_parallel_functions,
+          task_sequential_functions: headers.task_sequential_functions,
           task_from_fn_functions: headers.task_from_fn_functions,
           task_succeed_functions: headers.task_succeed_functions,
           task_run_functions: headers.task_run_functions,
@@ -1288,6 +1773,7 @@ export function create_import_shadow_tracker(
           applicative_objects: headers.applicative_objects,
           applicative_namespaces: headers.applicative_namespaces,
           iterable_locals: headers.iterable_locals,
+          async_iterable_locals: headers.async_iterable_locals,
           program_module: headers.program_module,
           effect_helper_shadowed:
             (headers.program_names.size > 0 || headers.namespaces.size > 0) &&

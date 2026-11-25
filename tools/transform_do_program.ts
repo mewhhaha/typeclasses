@@ -19,8 +19,8 @@ import {
 } from "./transform_ast.ts";
 import { create_binding_analysis } from "./transform_bindings.ts";
 import {
+  collect_active_statement_indices,
   create_import_shadow_tracker,
-  create_span_scanner,
   generator_kind,
   might_contain_transform_target,
   scan_import_headers,
@@ -167,6 +167,7 @@ function transform_do_program_checked(
 
   let skipped_statements = false;
   let skip_statement: ((statement: Statement) => boolean) | undefined;
+  let active_indices: number[] | undefined;
   let r5_hints: Round5TokenHints | undefined;
   if (!has_unicode && headers.leading_imports_end >= 0) {
     const scan_from = headers.leading_imports_end;
@@ -193,14 +194,27 @@ function transform_do_program_checked(
       headers.nil_constructors.size > 0 ||
       headers.cons_constructors.size > 0;
     const has_array_chain = headers.array_constructors.size > 0 ||
-      headers.array_view_functions.size > 0;
+      headers.array_from_array_functions.size > 0 ||
+      headers.array_view_functions.size > 0 ||
+      headers.array_namespaces.size > 0 ||
+      headers.typed_array_constructors.size > 0 ||
+      headers.set_constructors.size > 0 ||
+      headers.map_constructors.size > 0 ||
+      headers.record_constructors.size > 0;
     const has_maybe_either_chain = headers.just_constructors.size > 0 ||
       headers.nothing_constructors.size > 0 ||
       headers.from_nullable_functions.size > 0 ||
       headers.from_maybe_functions.size > 0 ||
       headers.to_nullable_functions.size > 0 ||
+      headers.maybe_get_or_else_functions.size > 0 ||
+      headers.maybe_fold_functions.size > 0 ||
+      headers.maybe_filter_functions.size > 0 ||
       headers.left_constructors.size > 0 ||
       headers.right_constructors.size > 0 ||
+      headers.either_fold_functions.size > 0 ||
+      headers.either_from_right_functions.size > 0 ||
+      headers.either_from_left_functions.size > 0 ||
+      headers.either_recover_functions.size > 0 ||
       headers.direct_maybe_dictionaries.size > 0 ||
       headers.direct_either_dictionaries.size > 0 ||
       headers.tagged_type_names.size > 0;
@@ -219,6 +233,8 @@ function transform_do_program_checked(
     push_set(target_tokens, headers.task_run_functions);
     push_set(target_tokens, headers.task_run_exit_functions);
     push_set(target_tokens, headers.task_namespaces);
+    push_set(target_tokens, headers.stm_atomically_functions);
+    push_set(target_tokens, headers.stm_namespaces);
     push_set(target_tokens, headers.collect_functions);
     push_set(target_tokens, headers.collect_namespaces);
     push_set(target_tokens, headers.applicative_objects);
@@ -231,17 +247,25 @@ function transform_do_program_checked(
     push_set(target_tokens, headers.match_namespaces);
     push_set(target_tokens, headers.from_maybe_functions);
     push_set(target_tokens, headers.to_nullable_functions);
+    push_set(target_tokens, headers.maybe_get_or_else_functions);
+    push_set(target_tokens, headers.maybe_fold_functions);
+    push_set(target_tokens, headers.maybe_filter_functions);
+    push_set(target_tokens, headers.either_fold_functions);
+    push_set(target_tokens, headers.either_from_right_functions);
+    push_set(target_tokens, headers.either_from_left_functions);
+    push_set(target_tokens, headers.either_recover_functions);
     push_set(target_tokens, headers.array_to_array_functions);
     if (has_effect_interp) {
       target_tokens.push("run", "handle_with", "value");
     } else if (
       headers.direct_reader_dictionaries.size > 0 ||
       headers.direct_state_dictionaries.size > 0 ||
+      headers.direct_writer_dictionaries.size > 0 ||
       headers.loop_tasks.size > 0 ||
       headers.cell_factories.size > 0 ||
       headers.cell_namespaces.size > 0
     ) {
-      target_tokens.push("run");
+      target_tokens.push("run", "value");
     }
     if (has_collect) target_tokens.push("collect");
     if (has_lift) target_tokens.push("lift");
@@ -275,7 +299,14 @@ function transform_do_program_checked(
     const hint_chain = has_maybe_either_chain && (
       has_dot_map || has_dot_bind ||
       headers.from_maybe_functions.size > 0 ||
-      headers.to_nullable_functions.size > 0
+      headers.to_nullable_functions.size > 0 ||
+      headers.maybe_get_or_else_functions.size > 0 ||
+      headers.maybe_fold_functions.size > 0 ||
+      headers.maybe_filter_functions.size > 0 ||
+      headers.either_fold_functions.size > 0 ||
+      headers.either_from_right_functions.size > 0 ||
+      headers.either_from_left_functions.size > 0 ||
+      headers.either_recover_functions.size > 0
     );
     const hint_array = has_array_chain && (
       has_dot_map || has_dot_fold || has_foldable_tok ||
@@ -296,11 +327,15 @@ function transform_do_program_checked(
     if (has_iterable) {
       target_tokens.push(
         "IterableT",
+        "AsyncIterableT",
         "from_array",
         "from_array_view",
         "from_factory",
+        "from_sync_factory",
+        "from_chunks",
         "from_iterable",
         "from_snapshot",
+        "map_sync",
         "filter",
         "filter_map",
         "take",
@@ -309,11 +344,15 @@ function transform_do_program_checked(
         "compile_fold",
         "Foldable",
         "iterable",
+        "async_iterable",
         ".map",
         ".fold",
         "fold_while",
+        "find",
+        "some",
       );
       push_set(target_tokens, headers.iterable_locals);
+      push_set(target_tokens, headers.async_iterable_locals);
     }
     let has_target_token = false;
     for (let index = 0; index < target_tokens.length; index += 1) {
@@ -327,7 +366,8 @@ function transform_do_program_checked(
     }
     if (
       !config.explain &&
-      config.optimizations?.candidate_scan !== false
+      config.optimizations?.candidate_scan !== false &&
+      program.body.length >= 16
     ) {
       const relevant_tokens: string[] = [...target_tokens, "Effect"];
       push_set(relevant_tokens, headers.effect_names);
@@ -351,37 +391,56 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.direct_identity_dictionaries);
       push_set(relevant_tokens, headers.identity_constructors);
       push_set(relevant_tokens, headers.array_constructors);
+      push_set(relevant_tokens, headers.array_from_array_functions);
+      push_set(relevant_tokens, headers.array_namespaces);
+      push_set(relevant_tokens, headers.typed_array_constructors);
+      push_set(relevant_tokens, headers.set_constructors);
+      push_set(relevant_tokens, headers.map_constructors);
+      push_set(relevant_tokens, headers.record_constructors);
       push_set(relevant_tokens, headers.list_constructors);
+      push_set(relevant_tokens, headers.list_from_array_functions);
+      push_set(relevant_tokens, headers.list_namespaces);
       push_set(relevant_tokens, headers.nil_constructors);
       push_set(relevant_tokens, headers.cons_constructors);
       push_set(relevant_tokens, headers.direct_reader_dictionaries);
       push_set(relevant_tokens, headers.direct_state_dictionaries);
+      push_set(relevant_tokens, headers.direct_writer_dictionaries);
+      push_set(relevant_tokens, headers.parallel_task_dictionaries);
+      push_set(relevant_tokens, headers.task_parallel_functions);
+      push_set(relevant_tokens, headers.task_sequential_functions);
       push_set(relevant_tokens, headers.task_from_fn_functions);
       push_set(relevant_tokens, headers.task_succeed_functions);
       push_set(relevant_tokens, headers.task_is_cancellation_functions);
+      push_set(relevant_tokens, headers.stm_dictionaries);
+      push_keys(relevant_tokens, headers.stm_primitive_functions);
       push_set(relevant_tokens, headers.validation_constructors);
       push_set(relevant_tokens, headers.direct_validation_dictionaries);
       push_set(relevant_tokens, headers.valid_constructors);
       push_set(relevant_tokens, headers.invalid_constructors);
       push_set(relevant_tokens, headers.invalid_messages_constructors);
       push_set(relevant_tokens, headers.iterable_locals);
+      push_set(relevant_tokens, headers.async_iterable_locals);
       push_keys(relevant_tokens, scope_declarations);
-      const has_relevant = create_span_scanner(
+      const found_active = collect_active_statement_indices(
         source,
+        program.body,
         relevant_tokens,
         scan_from,
       );
-      const skipped = new WeakSet<Statement>();
+      let non_import_count = 0;
       for (let index = 0; index < program.body.length; index += 1) {
-        const stmt = program.body[index] as Statement;
-        if (stmt.type === "ImportDeclaration") continue;
-        if (!has_relevant(stmt.start, stmt.end)) {
-          skipped.add(stmt);
-          skipped_statements = true;
+        if (program.body[index].type !== "ImportDeclaration") {
+          non_import_count += 1;
         }
       }
-      if (skipped_statements) {
-        skip_statement = (statement: Statement) => skipped.has(statement);
+      if (found_active.length < non_import_count) {
+        skipped_statements = true;
+        active_indices = found_active;
+        const active_set = new Set<Statement>();
+        for (let i = 0; i < found_active.length; i += 1) {
+          active_set.add(program.body[found_active[i]] as Statement);
+        }
+        skip_statement = (statement: Statement) => !active_set.has(statement);
       }
     }
   }
@@ -418,9 +477,20 @@ function transform_do_program_checked(
             headers.state_eval_functions.has(callee.name) ||
             headers.task_run_functions.has(callee.name) ||
             headers.task_run_exit_functions.has(callee.name) ||
+            headers.stm_atomically_functions.has(callee.name) ||
             headers.traverse_sequential_functions.has(callee.name) ||
             headers.match_functions.has(callee.name) ||
             headers.collect_functions.has(callee.name) ||
+            headers.from_maybe_functions.has(callee.name) ||
+            headers.to_nullable_functions.has(callee.name) ||
+            headers.maybe_get_or_else_functions.has(callee.name) ||
+            headers.maybe_fold_functions.has(callee.name) ||
+            headers.maybe_filter_functions.has(callee.name) ||
+            headers.either_fold_functions.has(callee.name) ||
+            headers.either_from_right_functions.has(callee.name) ||
+            headers.either_from_left_functions.has(callee.name) ||
+            headers.either_recover_functions.has(callee.name) ||
+            headers.array_to_array_functions.has(callee.name) ||
             callee.name === "Do" ||
             callee.name === "Program")
         ) {
@@ -442,20 +512,31 @@ function transform_do_program_checked(
             property === "prepare_operations" ||
             property === "eval_state" || property === "exec_state" ||
             property === "run_task" || property === "run_task_exit" ||
+            property === "atomically" ||
             property === "traverse" ||
             property === "traverse_sequential" || property === "match" ||
-            property === "collect" || property === "lift"
+            property === "collect" || property === "lift" ||
+            property === "map" || property === "bind" ||
+            property === "fold" || property === "fold_while" ||
+            property === "some" || property === "find"
           ) {
             candidate = true;
             return false;
           }
         }
       });
-    for (let index = 0; index < program.body.length; index += 1) {
-      const stmt = program.body[index] as Statement;
-      if (stmt.type === "ImportDeclaration" || skip_statement?.(stmt)) continue;
-      scan_candidate(stmt);
-      if (candidate) break;
+    if (active_indices !== undefined) {
+      for (let i = 0; i < active_indices.length; i += 1) {
+        scan_candidate(program.body[active_indices[i]] as Statement);
+        if (candidate) break;
+      }
+    } else {
+      for (let index = 0; index < program.body.length; index += 1) {
+        const stmt = program.body[index] as Statement;
+        if (stmt.type === "ImportDeclaration") continue;
+        scan_candidate(stmt);
+        if (candidate) break;
+      }
     }
     if (!candidate) return unchanged_transform_result(source);
   }
@@ -490,6 +571,7 @@ function transform_do_program_checked(
     names,
     minimal: true,
     skip_statement,
+    active_indices,
     record_top_level_scopes: has_iterable,
     on_node(current) {
       if (current.type !== "ImportDeclaration") shadow_tracker.observe(current);
@@ -497,10 +579,20 @@ function transform_do_program_checked(
   });
   const { imports, scopes, loop_support } = shadow_tracker.finish();
   const fresh_counts = new Map<string, number>();
+  const prefix_in_source = new Map<string, boolean>();
   function fresh(prefix: string): IdentifierReference {
     let count = (fresh_counts.get(prefix) ?? 0) + 1;
     let name = prefix + "_" + count;
-    while (names.has(name) || (skipped_statements && source.includes(name))) {
+    let check_source = false;
+    if (skipped_statements) {
+      let present = prefix_in_source.get(prefix);
+      if (present === undefined) {
+        present = source.includes(prefix + "_");
+        prefix_in_source.set(prefix, present);
+      }
+      check_source = present;
+    }
+    while (names.has(name) || (check_source && source.includes(name))) {
       count += 1;
       name = prefix + "_" + count;
     }
@@ -679,6 +771,7 @@ function transform_do_program_checked(
       (prefix) => fresh(prefix).name,
       skip_statement,
       source,
+      services.import_from_module,
     );
   }
   let transformed = 0;
@@ -778,7 +871,7 @@ function transform_do_program_checked(
         return current;
       }
       const visited = children(current);
-      if (visited.type === "CallExpression") {
+      if (terminals.has_after && visited.type === "CallExpression") {
         const lowered = terminals.lower(visited);
         if (lowered !== undefined) {
           terminal_report(current, lowered.direct);
@@ -817,6 +910,22 @@ function transform_do_program_checked(
     return children(current);
   }
   function children(current: Node): Node {
+    if (current === program && active_indices !== undefined) {
+      const body = program.body;
+      let items: Statement[] | undefined;
+      for (let i = 0; i < active_indices.length; i += 1) {
+        const idx = active_indices[i];
+        const statement = body[idx] as Statement;
+        const updated = visit(statement) as Statement;
+        if (updated !== statement) {
+          if (items === undefined) {
+            items = body.slice() as Statement[];
+          }
+          items[idx] = updated;
+        }
+      }
+      return items !== undefined ? { ...program, body: items } : program;
+    }
     if (current === program && skip_statement !== undefined) {
       const body = program.body;
       let items: Statement[] | undefined;
@@ -905,6 +1014,29 @@ function transform_do_program_checked(
     ) {
       const o_body = orig.body;
       const n_body = next.body;
+      if (
+        orig === program && active_indices !== undefined &&
+        !terminals.has_removals()
+      ) {
+        for (let i = 0; i < active_indices.length; i += 1) {
+          const index = active_indices[i];
+          const o_stmt = o_body[index] as Statement;
+          const n_stmt = n_body[index] as Statement;
+          if (o_stmt === n_stmt) continue;
+          const expanded = inline_statement(n_stmt);
+          if (expanded !== undefined) {
+            edits.push({
+              kind: "replace_statements",
+              start: o_stmt.start,
+              end: o_stmt.end,
+              statements: expanded.map((stmt) => inline_iifes(stmt)),
+            });
+            continue;
+          }
+          collect_ast_edits(o_stmt, n_stmt);
+        }
+        return;
+      }
       for (let index = 0; index < o_body.length; index += 1) {
         const o_stmt = o_body[index] as Statement;
         const n_stmt = n_body[index] as Statement;
@@ -1258,13 +1390,142 @@ function inline_statement(current: Statement): Statement[] | undefined {
 function inline_iifes<T extends Node>(root: T): T {
   function descend(current: Node): Node {
     const type = current.type;
-    if (
-      type === "Identifier" || type === "Literal" ||
-      type === "ThisExpression" || type === "TemplateElement" ||
-      type === "PrivateIdentifier" || type === "EmptyStatement" ||
-      type === "BreakStatement" || type === "ContinueStatement" ||
-      type.startsWith("TS")
-    ) return current;
+    switch (type) {
+      case "Identifier":
+      case "Literal":
+      case "ThisExpression":
+      case "TemplateElement":
+      case "PrivateIdentifier":
+      case "EmptyStatement":
+      case "BreakStatement":
+      case "ContinueStatement":
+        return current;
+      case "MemberExpression": {
+        const obj = descend(current.object) as Expression;
+        const prop = current.computed
+          ? descend(current.property) as Expression
+          : current.property;
+        if (obj === current.object && prop === current.property) return current;
+        return { ...current, object: obj, property: prop } as Node;
+      }
+      case "BinaryExpression": {
+        const left = current.left.type === "PrivateIdentifier"
+          ? current.left
+          : descend(current.left) as Expression;
+        const right = descend(current.right) as Expression;
+        if (left === current.left && right === current.right) return current;
+        return { ...current, left, right } as Node;
+      }
+      case "LogicalExpression": {
+        const left = descend(current.left) as Expression;
+        const right = descend(current.right) as Expression;
+        if (left === current.left && right === current.right) return current;
+        return { ...current, left, right };
+      }
+      case "UnaryExpression":
+      case "UpdateExpression": {
+        const arg = descend(current.argument) as Expression;
+        if (arg === current.argument) return current;
+        return { ...current, argument: arg } as Node;
+      }
+      case "ReturnStatement": {
+        if (current.argument === null) return current;
+        const arg = descend(current.argument) as Expression;
+        return arg === current.argument
+          ? current
+          : { ...current, argument: arg };
+      }
+      case "ExpressionStatement": {
+        const expr = descend(current.expression) as Expression;
+        return expr === current.expression
+          ? current
+          : { ...current, expression: expr };
+      }
+      case "VariableDeclarator": {
+        if (current.init === null) return current;
+        const init = descend(current.init) as Expression;
+        return init === current.init ? current : { ...current, init };
+      }
+      case "VariableDeclaration": {
+        const decls = current.declarations;
+        let next_decls: VariableDeclarator[] | undefined;
+        for (let i = 0; i < decls.length; i += 1) {
+          const d = decls[i];
+          const updated = descend(d) as VariableDeclarator;
+          if (updated !== d) {
+            if (next_decls === undefined) next_decls = decls.slice(0, i);
+            next_decls.push(updated);
+          } else if (next_decls !== undefined) next_decls.push(d);
+        }
+        return next_decls === undefined
+          ? current
+          : { ...current, declarations: next_decls };
+      }
+      case "CallExpression": {
+        const callee = descend(current.callee) as Expression;
+        const args = current.arguments;
+        let next_args: typeof args | undefined;
+        for (let i = 0; i < args.length; i += 1) {
+          const a = args[i];
+          const updated = descend(a) as typeof a;
+          if (updated !== a) {
+            if (next_args === undefined) next_args = args.slice(0, i);
+            next_args.push(updated);
+          } else if (next_args !== undefined) next_args.push(a);
+        }
+        if (callee === current.callee && next_args === undefined) {
+          return current;
+        }
+        return {
+          ...current,
+          callee,
+          arguments: next_args ?? args,
+        };
+      }
+      case "IfStatement": {
+        const test = descend(current.test) as Expression;
+        const cons = descend(current.consequent) as Statement;
+        const alt = current.alternate !== null
+          ? descend(current.alternate) as Statement
+          : null;
+        if (
+          test === current.test && cons === current.consequent &&
+          alt === current.alternate
+        ) return current;
+        return { ...current, test, consequent: cons, alternate: alt };
+      }
+      case "ArrowFunctionExpression": {
+        const body = descend(current.body) as typeof current.body;
+        return body === current.body ? current : { ...current, body };
+      }
+      case "BlockStatement":
+      case "Program": {
+        const orig_body = current.body;
+        let next_body: Statement[] | undefined;
+        for (let i = 0; i < orig_body.length; i += 1) {
+          const item = orig_body[i] as Statement;
+          const rewritten = descend(item) as Statement;
+          const expanded = inline_statement(rewritten);
+          if (expanded !== undefined) {
+            if (next_body === undefined) {
+              next_body = orig_body.slice(0, i) as Statement[];
+            }
+            next_body.push(...expanded);
+          } else if (rewritten !== item) {
+            if (next_body === undefined) {
+              next_body = orig_body.slice(0, i) as Statement[];
+            }
+            next_body.push(rewritten);
+          } else if (next_body !== undefined) {
+            next_body.push(item);
+          }
+        }
+        return next_body === undefined
+          ? current
+          : { ...current, body: next_body };
+      }
+    }
+    if (type.startsWith("TS")) return current;
     let result = current;
     const keys = value_visitor_keys[type];
     if (keys !== undefined && keys.length > 0) {
@@ -1300,24 +1561,7 @@ function inline_iifes<T extends Node>(root: T): T {
         if (next !== value) result = { ...result, [key]: next };
       }
     }
-    if (result.type !== "Program" && result.type !== "BlockStatement") {
-      return result;
-    }
-    let body: Statement[] | undefined;
-    for (let index = 0; index < result.body.length; index += 1) {
-      const item = result.body[index] as Statement;
-      const expanded = inline_statement(item);
-      if (expanded !== undefined) {
-        if (body === undefined) {
-          body = result.body.slice(0, index) as Statement[];
-        }
-        body.push(...expanded);
-      } else if (body !== undefined) {
-        body.push(item);
-      }
-    }
-    if (body === undefined) return result;
-    return { ...result, body };
+    return result;
   }
   return descend(root) as T;
 }
@@ -1375,7 +1619,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "13:oxc-parser@0.154.0:esrap@2.4.0";
+  "14:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

@@ -344,19 +344,29 @@ export function splice_edits(
   const names: string[] = [];
   const name_indices = new Map<string, number>();
 
-  let current_gen_col = 0;
-  let out_gen_col = 0;
   let out_src = 0;
-  let out_orig_line = 0;
-  let out_orig_col = 0;
   let out_name = 0;
-  let line_has_seg = false;
+
+  const fast_sink: FastPrintSink = {
+    source_map,
+    locator: fast_locator,
+    emit_segment(abs_gen_col, abs_orig_line, abs_orig_col) {
+      emit_segment(abs_gen_col, abs_orig_line, abs_orig_col);
+    },
+    emit_newline,
+    gen_col: 0,
+    out_gen_col: 0,
+    out_orig_line: 0,
+    out_orig_col: 0,
+    line_has_seg: false,
+    code_chunks,
+  };
 
   function emit_newline(): void {
     mapping_parts.push(";");
-    current_gen_col = 0;
-    out_gen_col = 0;
-    line_has_seg = false;
+    fast_sink.gen_col = 0;
+    fast_sink.out_gen_col = 0;
+    fast_sink.line_has_seg = false;
   }
 
   function emit_segment(
@@ -366,30 +376,30 @@ export function splice_edits(
     abs_name?: number,
   ): void {
     let segment = "";
-    if (line_has_seg) segment = ",";
-    segment += encode_vlq(abs_gen_col - out_gen_col) +
+    if (fast_sink.line_has_seg) segment = ",";
+    segment += encode_vlq(abs_gen_col - fast_sink.out_gen_col) +
       encode_vlq(-out_src) +
-      encode_vlq(abs_orig_line - out_orig_line) +
-      encode_vlq(abs_orig_col - out_orig_col);
+      encode_vlq(abs_orig_line - fast_sink.out_orig_line) +
+      encode_vlq(abs_orig_col - fast_sink.out_orig_col);
     if (abs_name !== undefined) {
       segment += encode_vlq(abs_name - out_name);
       out_name = abs_name;
     }
     mapping_parts.push(segment);
-    out_gen_col = abs_gen_col;
+    fast_sink.out_gen_col = abs_gen_col;
     out_src = 0;
-    out_orig_line = abs_orig_line;
-    out_orig_col = abs_orig_col;
-    line_has_seg = true;
+    fast_sink.out_orig_line = abs_orig_line;
+    fast_sink.out_orig_col = abs_orig_col;
+    fast_sink.line_has_seg = true;
   }
 
   function emit_unmapped_segment(abs_gen_col: number): void {
     let segment = "";
-    if (line_has_seg) segment = ",";
-    segment += encode_vlq(abs_gen_col - out_gen_col);
+    if (fast_sink.line_has_seg) segment = ",";
+    segment += encode_vlq(abs_gen_col - fast_sink.out_gen_col);
     mapping_parts.push(segment);
-    out_gen_col = abs_gen_col;
-    line_has_seg = true;
+    fast_sink.out_gen_col = abs_gen_col;
+    fast_sink.line_has_seg = true;
   }
 
   function emit_plain_text(text: string): void {
@@ -398,7 +408,7 @@ export function splice_edits(
     if (!source_map) return;
     let index = text.indexOf("\n");
     if (index < 0) {
-      current_gen_col += text.length;
+      fast_sink.gen_col += text.length;
       return;
     }
     let last = 0;
@@ -407,7 +417,7 @@ export function splice_edits(
       last = index + 1;
       index = text.indexOf("\n", last);
     }
-    current_gen_col = text.length - last;
+    fast_sink.gen_col = text.length - last;
   }
 
   function emit_untouched(start: number, end: number): void {
@@ -420,15 +430,77 @@ export function splice_edits(
     fast_locator!.lookup(start);
     let orig_line = fast_locator!.line - 1;
     const orig_col = fast_locator!.column;
+
+    if (!has_non_lf && cached_starts !== undefined) {
+      const starts = cached_starts;
+      const next_line_start = starts[orig_line + 1];
+      if (next_line_start === undefined || end < next_line_start) {
+        emit_segment(fast_sink.gen_col, orig_line, orig_col);
+        fast_sink.gen_col += end - start;
+        return;
+      }
+      if (next_line_start - 1 > start) {
+        emit_segment(fast_sink.gen_col, orig_line, orig_col);
+      }
+      emit_newline();
+      fast_locator!.lookup(end);
+      const end_line = fast_locator!.line - 1;
+      const end_col = fast_locator!.column;
+      orig_line += 1;
+
+      let aaca_run = 0;
+      while (orig_line < end_line) {
+        const non_empty = starts[orig_line + 1] - starts[orig_line] > 1;
+        if (
+          non_empty && out_src === 0 && fast_sink.out_orig_col === 0 &&
+          orig_line === fast_sink.out_orig_line + 1
+        ) {
+          aaca_run += 1;
+          fast_sink.out_orig_line = orig_line;
+          fast_sink.gen_col = 0;
+          fast_sink.out_gen_col = 0;
+          fast_sink.line_has_seg = false;
+          orig_line += 1;
+          continue;
+        }
+        if (aaca_run > 0) {
+          mapping_parts.push("AACA;".repeat(aaca_run));
+          aaca_run = 0;
+        }
+        if (non_empty) {
+          emit_segment(0, orig_line, 0);
+        }
+        emit_newline();
+        orig_line += 1;
+      }
+      if (aaca_run > 0) {
+        mapping_parts.push("AACA;".repeat(aaca_run));
+      }
+      if (end_col > 0) {
+        if (
+          out_src === 0 && fast_sink.out_orig_col === 0 &&
+          end_line === fast_sink.out_orig_line + 1
+        ) {
+          mapping_parts.push("AACA");
+          fast_sink.out_orig_line = end_line;
+          fast_sink.line_has_seg = true;
+        } else {
+          emit_segment(0, end_line, 0);
+        }
+        fast_sink.gen_col = end_col;
+      }
+      return;
+    }
+
     let cursor = 0;
     let nl = text.indexOf("\n");
     if (nl < 0) {
-      emit_segment(current_gen_col, orig_line, orig_col);
-      current_gen_col += text.length;
+      emit_segment(fast_sink.gen_col, orig_line, orig_col);
+      fast_sink.gen_col += text.length;
       return;
     }
     if (nl > 0) {
-      emit_segment(current_gen_col, orig_line, orig_col);
+      emit_segment(fast_sink.gen_col, orig_line, orig_col);
     }
     emit_newline();
     cursor = nl + 1;
@@ -446,26 +518,27 @@ export function splice_edits(
       if (nl < 0) {
         flush_aaca();
         if (
-          out_src === 0 && out_orig_col === 0 && orig_line === out_orig_line + 1
+          out_src === 0 && fast_sink.out_orig_col === 0 &&
+          orig_line === fast_sink.out_orig_line + 1
         ) {
           mapping_parts.push("AACA");
-          out_orig_line = orig_line;
-          line_has_seg = true;
+          fast_sink.out_orig_line = orig_line;
+          fast_sink.line_has_seg = true;
         } else {
           emit_segment(0, orig_line, 0);
         }
-        current_gen_col = text.length - cursor;
+        fast_sink.gen_col = text.length - cursor;
         return;
       }
       if (
-        nl > cursor && out_src === 0 && out_orig_col === 0 &&
-        orig_line === out_orig_line + 1
+        nl > cursor && out_src === 0 && fast_sink.out_orig_col === 0 &&
+        orig_line === fast_sink.out_orig_line + 1
       ) {
         aaca_run += 1;
-        out_orig_line = orig_line;
-        current_gen_col = 0;
-        out_gen_col = 0;
-        line_has_seg = false;
+        fast_sink.out_orig_line = orig_line;
+        fast_sink.gen_col = 0;
+        fast_sink.out_gen_col = 0;
+        fast_sink.line_has_seg = false;
         cursor = nl + 1;
         orig_line += 1;
         continue;
@@ -486,7 +559,7 @@ export function splice_edits(
     edit_mappings: string,
     edit_names: readonly string[],
   ): void {
-    const start_col = current_gen_col;
+    const start_col = fast_sink.gen_col;
     const mapped_names = edit_names.length > 0
       ? edit_names.map((name) => {
         let idx = name_indices.get(name);
@@ -586,7 +659,7 @@ export function splice_edits(
 
       const nl = edit_code.indexOf("\n", text_cursor);
       if (nl < 0) {
-        current_gen_col = col_offset + (edit_code.length - text_cursor);
+        fast_sink.gen_col = col_offset + (edit_code.length - text_cursor);
         break;
       }
       text_cursor = nl + 1;
@@ -618,46 +691,26 @@ export function splice_edits(
     });
   }
 
-  const fast_sink: FastPrintSink = {
-    source_map,
-    locator: fast_locator,
-    emit_segment(abs_gen_col, abs_orig_line, abs_orig_col) {
-      emit_segment(abs_gen_col, abs_orig_line, abs_orig_col);
-    },
-    emit_newline,
-    get_gen_col: () => current_gen_col,
-    set_gen_col: (c) => {
-      current_gen_col = c;
-    },
-    get_line_has_seg: () => line_has_seg,
-    get_out_orig_line: () => out_orig_line,
-    get_out_orig_col: () => out_orig_col,
-    get_out_gen_col: () => out_gen_col,
-    push_code: (text) => {
-      code_chunks.push(text);
-    },
-  };
-
   function try_fast_print(target: Node): boolean {
     const saved_code_len = code_chunks.length;
     const saved_map_len = mapping_parts.length;
-    const saved_gen_col = current_gen_col;
-    const saved_out_gen_col = out_gen_col;
+    const saved_gen_col = fast_sink.gen_col;
+    const saved_out_gen_col = fast_sink.out_gen_col;
     const saved_out_src = out_src;
-    const saved_out_orig_line = out_orig_line;
-    const saved_out_orig_col = out_orig_col;
+    const saved_out_orig_line = fast_sink.out_orig_line;
+    const saved_out_orig_col = fast_sink.out_orig_col;
     const saved_out_name = out_name;
-    const saved_line_has_seg = line_has_seg;
+    const saved_line_has_seg = fast_sink.line_has_seg;
     if (try_print_fast(target, fast_sink, lang)) return true;
     code_chunks.length = saved_code_len;
     mapping_parts.length = saved_map_len;
-    current_gen_col = saved_gen_col;
-    out_gen_col = saved_out_gen_col;
+    fast_sink.gen_col = saved_gen_col;
+    fast_sink.out_gen_col = saved_out_gen_col;
     out_src = saved_out_src;
-    out_orig_line = saved_out_orig_line;
-    out_orig_col = saved_out_orig_col;
+    fast_sink.out_orig_line = saved_out_orig_line;
+    fast_sink.out_orig_col = saved_out_orig_col;
     out_name = saved_out_name;
-    line_has_seg = saved_line_has_seg;
+    fast_sink.line_has_seg = saved_line_has_seg;
     return false;
   }
 
@@ -711,7 +764,7 @@ export function splice_edits(
       }
       if (fast_wrap) {
         code_chunks.pop();
-        if (source_map) current_gen_col -= 1;
+        if (source_map) fast_sink.gen_col -= 1;
       }
     }
     if (source_map || edit_comments.length > 0) {

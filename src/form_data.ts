@@ -1,5 +1,11 @@
 import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
+import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -52,7 +58,7 @@ export const FormDataT: AsFormData = data<AsFormData>(
 export function from_entries(
   entries: Iterable<FormDataEntry>,
 ): FormDataT {
-  return FormDataT(form_data_from_entries(entries)) as FormDataT;
+  return as_data(FormDataT, form_data_from_entries(entries)) as FormDataT;
 }
 
 /** Copy a wrapped form into an ordered array of entries. */
@@ -68,23 +74,17 @@ Show.instance(FormDataT)({
 
 Eq.instance(FormDataT)({
   eq(right) {
-    const left_entries = [...this.value().entries()];
-    const right_entries = [...right.value().entries()];
-
-    if (left_entries.length !== right_entries.length) {
-      return false;
-    }
-
-    for (let index = 0; index < left_entries.length; index += 1) {
-      const [left_key, left_value] = left_entries[index];
-      const [right_key, right_value] = right_entries[index];
-
-      if (left_key !== right_key || !Object.is(left_value, right_value)) {
+    const left_iter = this.value().entries();
+    const right_iter = right.value().entries();
+    while (true) {
+      const l = left_iter.next();
+      const r = right_iter.next();
+      if (l.done) return r.done === true;
+      if (r.done) return false;
+      if (l.value[0] !== r.value[0] || !Object.is(l.value[1], r.value[1])) {
         return false;
       }
     }
-
-    return true;
   },
 });
 
@@ -96,17 +96,38 @@ Semigroup.instance(FormDataT)({
       out.append(name, value);
     }
 
-    return FormDataT(out);
+    return as_data(FormDataT, out);
   },
 });
 
 Monoid.instance(FormDataT)({
   empty() {
-    return FormDataT(new FormData());
+    return as_data(FormDataT, new FormData());
   },
 });
 
 Foldable.instance(FormDataT)({
+  [some_method](predicate) {
+    for (const entry of this.value().entries()) {
+      if (predicate(entry)) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    for (const entry of this.value().entries()) {
+      if (predicate(entry)) return entry;
+    }
+    return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    let state = initial;
+    for (const entry of this.value().entries()) {
+      const step = fn(state, entry);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
+  },
   fold<item, output>(
     this: Data<AsFormData, item>,
     initial: output,

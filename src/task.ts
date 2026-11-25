@@ -3,6 +3,7 @@ import {
   type As,
   type Data,
   data,
+  kind,
   type type_data,
   type type_item,
 } from "./typeclass.ts";
@@ -30,6 +31,8 @@ import {
   MonadRec,
   Show,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
+import { monad_error_typeclass } from "./typeclasses/monad_error.ts";
 
 /** @ignore */
 export const task_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -734,19 +737,136 @@ MonadError.instance(Task)({
   },
 
   catch_error(handler) {
-    return Task((signal) => {
-      return start_task(this.value(), signal, "Task.catch_error").catch(
-        (error) => {
-          if (is_task_cancellation(error)) {
-            throw error;
+    const first = this.value();
+    const on_error = (signal: AbortSignal | undefined) => (error: unknown) => {
+      if (is_task_cancellation(error)) throw error;
+      return start_task(handler(error).value(), signal, "Task.catch_error");
+    };
+    const raw: PlannedTask = (signal) =>
+      start_task(first, signal, "Task.catch_error").catch(on_error(signal));
+    raw[task_sync] = (signal) => {
+      if (signal?.aborted) throw task_abort_error("Task.catch_error", signal);
+      const completed = completed_of(first);
+      if (completed !== undefined) return completed_item(completed);
+      const sync_fn = sync_fn_of(first);
+      if (sync_fn !== undefined) {
+        try {
+          const out = sync_fn(signal);
+          if (is_thenable(out)) {
+            const p = out instanceof Promise ? out : Promise.resolve(out);
+            return await_with_signal(p, signal, "Task.catch_error").catch(
+              on_error(signal),
+            );
           }
-
-          return start_task(handler(error).value(), signal, "Task.catch_error");
-        },
+          if (signal?.aborted) {
+            throw task_abort_error("Task.catch_error", signal);
+          }
+          return out;
+        } catch (error) {
+          if (is_task_cancellation(error)) throw error;
+          const recovery = handler(error).value();
+          const rc = completed_of(recovery);
+          if (rc !== undefined) return completed_item(rc);
+          const rs = sync_fn_of(recovery);
+          if (rs !== undefined) {
+            const rout = rs(signal);
+            if (is_thenable(rout)) {
+              const rp = rout instanceof Promise ? rout : Promise.resolve(rout);
+              return await_with_signal(rp, signal, "Task.catch_error");
+            }
+            if (signal?.aborted) {
+              throw task_abort_error("Task.catch_error", signal);
+            }
+            return rout;
+          }
+          return start_task(recovery, signal, "Task.catch_error");
+        }
+      }
+      return start_task(first, signal, "Task.catch_error").catch(
+        on_error(signal),
       );
-    });
+    };
+    return Task(raw);
   },
 });
+
+const task_kind = Task[kind];
+const canonical_task_bind = Task.bind;
+const canonical_task_pure = Task.pure;
+const canonical_task_map = Task.map;
+const canonical_task_err = (Task as unknown as Record<symbol, unknown>)[
+  monad_error_typeclass
+];
+const task_do: CustomDoRunner = (first_value, first_iterator, run) => {
+  const first = first_value as Task<unknown>;
+  if (
+    first[kind] !== task_kind ||
+    first.bind !== canonical_task_bind ||
+    first.pure !== canonical_task_pure ||
+    first.map !== canonical_task_map ||
+    (first as unknown as Record<symbol, unknown>)[monad_error_typeclass] !==
+      canonical_task_err
+  ) return undefined;
+  let first_claimed = false;
+  return Task(async (signal) => {
+    if (signal?.aborted) throw task_abort_error("Task", signal);
+    let iter: Generator<unknown, unknown, unknown>;
+    let current: unknown;
+    if (!first_claimed) {
+      first_claimed = true;
+      iter = first_iterator;
+      current = first_value;
+    } else {
+      iter = run();
+      const n0 = iter.next();
+      if (n0.done) return task_item(n0.value, "Task.pure");
+      current = n0.value;
+    }
+    while (true) {
+      if (signal?.aborted) throw task_abort_error("Task", signal);
+      const task = (current as Task<unknown>).value();
+      let failed = false;
+      let val: unknown;
+      let err: unknown;
+      const completed = completed_of(task);
+      if (completed !== undefined) {
+        val = completed_item(completed);
+      } else {
+        const sync_fn = sync_fn_of(task);
+        if (sync_fn !== undefined) {
+          try {
+            const raw = sync_fn(signal);
+            if (is_thenable(raw)) {
+              const p = raw instanceof Promise ? raw : Promise.resolve(raw);
+              val = await await_with_signal(p, signal, "Task.from_fn");
+            } else {
+              if (signal?.aborted) {
+                throw task_abort_error("Task.from_fn", signal);
+              }
+              val = raw;
+            }
+          } catch (error) {
+            if (is_task_cancellation(error)) throw error;
+            failed = true;
+            err = error;
+          }
+        } else {
+          try {
+            val = await start_task(task, signal, "Task");
+          } catch (error) {
+            if (is_task_cancellation(error)) throw error;
+            failed = true;
+            err = error;
+          }
+        }
+      }
+      const next = failed ? iter.throw(err) : iter.next(val);
+      if (next.done) return task_item(next.value, "Task.pure");
+      current = next.value;
+    }
+  });
+};
+Object.defineProperty(Task, do_runner_method, { value: task_do });
 
 function start_task<item>(
   task: RawTask<item>,
@@ -847,44 +967,102 @@ function run_concurrently<result>(
   }
 
   const controller = new AbortController();
-  const abort_from_parent = () => controller.abort(signal?.reason);
+  const child_signal = controller.signal;
 
-  if (signal?.aborted) {
-    controller.abort(signal.reason);
-  } else {
-    signal?.addEventListener("abort", abort_from_parent, { once: true });
-  }
+  return new Promise<TaskItem<result>>((resolve, reject) => {
+    let settled = false;
+    let remaining = len - sync_prefix;
 
-  let primary_failure: readonly [unknown] | undefined;
-  const on_err = (error: unknown) => {
-    if (primary_failure === undefined) {
-      primary_failure = [error];
-      controller.abort(error);
+    const cleanup = () => {
+      signal?.removeEventListener("abort", abort_from_parent);
+    };
+    const abort_from_parent = () => {
+      controller.abort(signal?.reason);
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(task_abort_error(operation, signal!));
+      }
+    };
+    const on_err = (error: unknown) => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        controller.abort(error);
+        reject(error);
+      }
+    };
+    const finish_if_done = () => {
+      if (remaining === 0 && !settled) {
+        settled = true;
+        cleanup();
+        try {
+          resolve(task_item(apply(values), operation));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    };
+
+    if (signal?.aborted) {
+      abort_from_parent();
+      return;
     }
-    throw primary_failure[0];
-  };
+    signal?.addEventListener("abort", abort_from_parent, { once: true });
 
-  const pending = new Array<Promise<unknown>>(len);
-  for (let index = 0; index < sync_prefix; index += 1) {
-    pending[index] = Promise.resolve(values[index]);
-  }
-  let start_from = sync_prefix;
-  if (first_settled !== undefined) {
-    pending[first_settled_index] = await_with_signal(
-      first_settled,
-      controller.signal,
-      operation,
-    ).catch(on_err);
-    start_from = first_settled_index + 1;
-  }
-  for (let index = start_from; index < len; index += 1) {
-    pending[index] = start_task(tasks[index], controller.signal, operation)
-      .catch(on_err);
-  }
+    const attach = (index: number, promise: Promise<unknown>) => {
+      promise.then(
+        (resolved) => {
+          if (settled) return;
+          values[index] = resolved;
+          remaining -= 1;
+          finish_if_done();
+        },
+        on_err,
+      );
+    };
 
-  return Promise.all(pending).finally(() => {
-    signal?.removeEventListener("abort", abort_from_parent);
-  }).then((resolved) => task_item(apply(resolved), operation));
+    let start_from = sync_prefix;
+    if (first_settled !== undefined) {
+      attach(first_settled_index, first_settled);
+      start_from = first_settled_index + 1;
+    }
+    for (let index = start_from; index < len; index += 1) {
+      const task = tasks[index];
+      const completed = completed_of(task);
+      if (completed !== undefined) {
+        values[index] = completed_item(completed);
+        remaining -= 1;
+        continue;
+      }
+      const sync_fn = sync_fn_of(task);
+      if (sync_fn !== undefined && sync_fn.length === 0) {
+        try {
+          const raw = sync_fn(undefined);
+          if (!is_thenable(raw)) {
+            values[index] = raw;
+            remaining -= 1;
+            continue;
+          }
+          attach(index, raw instanceof Promise ? raw : Promise.resolve(raw));
+        } catch (error) {
+          attach(index, Promise.reject(error));
+        }
+        continue;
+      }
+      let child: Promise<unknown>;
+      try {
+        const plan = plan_of(task);
+        child = plan !== undefined
+          ? evaluate_task(plan, child_signal, {})
+          : task(child_signal);
+      } catch (error) {
+        child = Promise.reject(error);
+      }
+      attach(index, child);
+    }
+    finish_if_done();
+  });
 }
 
 function task_item<item>(value: item, operation: string): TaskItem<item> {
@@ -960,6 +1138,34 @@ function task_abort_error(operation: string, signal: AbortSignal): Error {
 /** Tests whether an unknown failure represents Task cancellation. */
 export function is_task_cancellation(error: unknown): error is Error {
   return error instanceof Error && task_cancellation in error;
+}
+
+/** @ignore Throws a Task cancellation error when `signal` is already aborted. */
+export function task_check_signal(
+  signal: AbortSignal | undefined,
+  operation = "run_task",
+): void {
+  if (signal?.aborted) {
+    throw task_abort_error(operation, signal);
+  }
+}
+
+/** @ignore Awaits a value or PromiseLike while racing against an AbortSignal. */
+export function task_await_signal<item>(
+  value: item | PromiseLike<item>,
+  signal: AbortSignal | undefined,
+  operation = "Task.from_fn",
+): Promise<Awaited<item>> | item {
+  if (is_thenable(value)) {
+    const pending = value instanceof Promise ? value : Promise.resolve(value);
+    return await_with_signal(pending, signal, operation) as Promise<
+      Awaited<item>
+    >;
+  }
+  if (signal?.aborted) {
+    throw task_abort_error(operation, signal);
+  }
+  return value;
 }
 
 async function finalize_successful_effect(
@@ -1039,6 +1245,77 @@ export function traverse_task<input, output>(
   async function traverse(
     parent_signal: AbortSignal | undefined,
   ): Promise<readonly output[]> {
+    const array_inputs = Array.isArray(inputs)
+      ? (inputs as readonly input[])
+      : undefined;
+    if (
+      array_inputs !== undefined &&
+      parent_signal === undefined &&
+      options.signal === undefined
+    ) {
+      const len = array_inputs.length;
+      const sync_results = new Array<output>(len);
+      let idx = 0;
+      while (idx < len) {
+        const task = fn(array_inputs[idx], idx).value();
+        const completed = completed_of(task);
+        if (completed !== undefined) {
+          sync_results[idx] = completed_item(completed) as output;
+          idx += 1;
+          continue;
+        }
+        const sync_fn = sync_fn_of(task);
+        if (sync_fn !== undefined && sync_fn.length === 0) {
+          const raw = sync_fn(undefined);
+          if (!is_thenable(raw)) {
+            sync_results[idx] = raw as output;
+            idx += 1;
+            continue;
+          }
+          if (concurrency === 1) {
+            sync_results[idx] = await raw as output;
+            idx += 1;
+            continue;
+          }
+          return await traverse_async(
+            undefined,
+            array_inputs,
+            sync_results,
+            idx,
+            raw instanceof Promise ? raw : Promise.resolve(raw),
+          );
+        }
+        if (concurrency === 1 && plan_of(task) === undefined) {
+          sync_results[idx] = await task(undefined);
+          idx += 1;
+          continue;
+        }
+        return await traverse_async(
+          undefined,
+          array_inputs,
+          sync_results,
+          idx,
+          undefined,
+          task,
+        );
+      }
+      return sync_results;
+    }
+    return await traverse_async(
+      parent_signal,
+      array_inputs,
+      array_inputs !== undefined ? new Array<output>(array_inputs.length) : [],
+      0,
+    );
+  }
+  async function traverse_async(
+    parent_signal: AbortSignal | undefined,
+    array_inputs: readonly input[] | undefined,
+    results: output[],
+    start_index: number,
+    first_pending?: Promise<unknown>,
+    first_task?: RawTask<output>,
+  ): Promise<readonly output[]> {
     const controller = new AbortController();
     let signal = controller.signal;
     if (
@@ -1052,31 +1329,64 @@ export function traverse_task<input, output>(
       signal = AbortSignal.any([options.signal, signal]);
     }
     if (signal.aborted) throw task_abort_error("Task.traverse", signal);
-    const array_inputs = Array.isArray(inputs)
-      ? (inputs as readonly input[])
-      : undefined;
     const iterator = array_inputs === undefined
       ? inputs[Symbol.iterator]()
       : undefined;
-    const results: output[] = array_inputs !== undefined
-      ? new Array<output>(array_inputs.length)
-      : [];
-    let next_index = 0;
+    let next_index = start_index;
     let exhausted = false;
     let failed = false;
     let failure: unknown;
+    const waiting = new Set<(error: unknown) => void>();
+    const on_abort = () => {
+      const err = task_abort_error("Task.traverse", signal);
+      for (const reject_waiter of waiting) reject_waiter(err);
+      waiting.clear();
+    };
+    signal.addEventListener("abort", on_abort, { once: true });
+    function await_shared<T>(pending: Promise<T>): Promise<T> {
+      if (signal.aborted) {
+        void pending.catch(ignore_failure);
+        return Promise.reject(task_abort_error("Task.traverse", signal));
+      }
+      return new Promise<T>((resolve, reject) => {
+        waiting.add(reject);
+        pending.then(
+          (val) => {
+            waiting.delete(reject);
+            resolve(val);
+          },
+          (err) => {
+            waiting.delete(reject);
+            reject(err);
+          },
+        );
+      });
+    }
+    let pending_slot = first_pending;
+    let task_slot = first_task;
     async function worker(): Promise<void> {
       while (!signal.aborted && !failed && !exhausted) {
         try {
+          if (pending_slot !== undefined) {
+            const p = pending_slot;
+            pending_slot = undefined;
+            const index = next_index++;
+            results[index] = await await_shared(p) as output;
+            continue;
+          }
           let index: number;
-          let value: input;
-          if (array_inputs !== undefined) {
+          let task: RawTask<output>;
+          if (task_slot !== undefined) {
+            task = task_slot;
+            task_slot = undefined;
+            index = next_index++;
+          } else if (array_inputs !== undefined) {
             if (next_index >= array_inputs.length) {
               exhausted = true;
               return;
             }
             index = next_index++;
-            value = array_inputs[index];
+            task = fn(array_inputs[index], index).value();
           } else {
             const next = iterator!.next();
             if (next.done) {
@@ -1084,9 +1394,8 @@ export function traverse_task<input, output>(
               return;
             }
             index = next_index++;
-            value = next.value;
+            task = fn(next.value, index).value();
           }
-          const task = fn(value, index).value();
           const completed = completed_of(task);
           if (completed !== undefined) {
             results[index] = completed_item(completed) as output;
@@ -1098,24 +1407,21 @@ export function traverse_task<input, output>(
                 const pending = raw instanceof Promise
                   ? raw
                   : Promise.resolve(raw);
-                results[index] = await await_with_signal(
-                  pending,
-                  signal,
-                  "Task.from_fn",
-                ) as output;
+                results[index] = await await_shared(pending) as output;
               } else {
-                if (signal?.aborted) {
+                if (signal.aborted) {
                   throw task_abort_error("Task.from_fn", signal);
                 }
                 results[index] = raw as output;
               }
             } else {
-              results[index] = await start_task(
-                task,
-                signal,
-                "Task.traverse",
-                options,
-              );
+              const plan = plan_of(task as RawTask<unknown>);
+              const pending = plan !== undefined
+                ? (evaluate_task(plan, signal, options) as Promise<
+                  TaskItem<output>
+                >)
+                : task(signal);
+              results[index] = await await_shared(pending);
             }
           }
         } catch (error) {
@@ -1155,6 +1461,7 @@ export function traverse_task<input, output>(
       }
       throw error;
     } finally {
+      signal.removeEventListener("abort", on_abort);
       if (!exhausted) {
         exhausted = true;
         iterator?.return?.();
@@ -1364,8 +1671,14 @@ register_traversal(
     fn: (item: from) => Data<AsTask, to>,
     build: (items: Iterable<to>) => result,
   ): Data<AsTask, result> => {
-    const tasks: RawTask<to>[] = [];
-    for (const item of items) tasks.push(fn(item).value());
+    let tasks: RawTask<to>[];
+    if (Array.isArray(items)) {
+      tasks = new Array<RawTask<to>>(items.length);
+      for (let i = 0; i < items.length; i += 1) tasks[i] = fn(items[i]).value();
+    } else {
+      tasks = [];
+      for (const item of items) tasks.push(fn(item).value());
+    }
     return Task(async (signal) => {
       const out = new Array<to>(tasks.length);
       for (let i = 0; i < tasks.length; i += 1) {
@@ -1399,6 +1712,49 @@ register_traversal(
       return task_item(build(out), "Task.traverse");
     });
   },
+  <from, to>(
+    items: readonly from[],
+    fn: (item: from) => Data<AsTask, to>,
+  ): Data<AsTask, to[]> =>
+    Task(async (signal) => {
+      const len = items.length;
+      const out = new Array<to>(len);
+      for (let i = 0; i < len; i += 1) {
+        if (signal?.aborted) {
+          throw task_abort_error("Task.traverse_sequential", signal);
+        }
+        const current = fn(items[i]).value();
+        const completed = completed_of(current);
+        if (completed !== undefined) {
+          out[i] = completed_item(completed) as to;
+        } else {
+          const sync_fn = sync_fn_of(current);
+          if (sync_fn !== undefined) {
+            const raw = sync_fn(signal);
+            if (is_thenable(raw)) {
+              const p = raw instanceof Promise ? raw : Promise.resolve(raw);
+              out[i] = await await_with_signal(
+                p,
+                signal,
+                "Task.from_fn",
+              ) as to;
+            } else {
+              if (signal?.aborted) {
+                throw task_abort_error("Task.from_fn", signal);
+              }
+              out[i] = raw as to;
+            }
+          } else {
+            out[i] = await start_task(
+              current,
+              signal,
+              "Task.traverse_sequential",
+            );
+          }
+        }
+      }
+      return out;
+    }),
 );
 
 register_traversal(
@@ -1408,8 +1764,14 @@ register_traversal(
     fn: (item: from) => Data<AsParallelTask, to>,
     build: (items: Iterable<to>) => result,
   ): Data<AsParallelTask, result> => {
-    const tasks: RawTask<unknown>[] = [];
-    for (const item of items) tasks.push(fn(item).value());
+    let tasks: RawTask<unknown>[];
+    if (Array.isArray(items)) {
+      tasks = new Array<RawTask<unknown>>(items.length);
+      for (let i = 0; i < items.length; i += 1) tasks[i] = fn(items[i]).value();
+    } else {
+      tasks = [];
+      for (const item of items) tasks.push(fn(item).value());
+    }
     return ParallelTask((signal) =>
       run_concurrently(
         tasks,

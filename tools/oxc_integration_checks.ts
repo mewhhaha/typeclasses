@@ -2281,3 +2281,450 @@ Deno.test("round-6 post-plugin fusion covers Do(Maybe)/Do(Either) cond+nullable 
   assert_equals(mod.iter_bind_preview([1, 2], 0), []);
   assert_equals(mod.iter_bind_fold_while([2, 3, 4], 8), 8);
 });
+
+Deno.test("round-7 post-plugin fusion covers Writer Do/dynamic tell, AsyncIterableT terminals, ParallelTask & 2-arg signal, STM untagged/atomically, named Effect/helper lift/List/Array/non-Array Foldable/Maybe-Either chains, and T1-T4 word-boundary + fast-printer source maps", async () => {
+  const mod_url = new URL("../src/mod.ts", import.meta.url).href;
+  const task_url = new URL("../src/task.ts", import.meta.url).href;
+  const writer_url = new URL("../src/writer.ts", import.meta.url).href;
+  const reader_url = new URL("../src/reader.ts", import.meta.url).href;
+  const state_url = new URL("../src/state.ts", import.meta.url).href;
+  const stm_url = new URL("../src/stm.ts", import.meta.url).href;
+  const async_iterable_url = new URL(
+    "../src/async_iterable.ts",
+    import.meta.url,
+  ).href;
+  const array_url = new URL("../src/array.ts", import.meta.url).href;
+  const list_url = new URL("../src/list.ts", import.meta.url).href;
+  const maybe_url = new URL("../src/maybe.ts", import.meta.url).href;
+  const either_url = new URL("../src/either.ts", import.meta.url).href;
+  const typed_array_url = new URL("../src/typed_array.ts", import.meta.url)
+    .href;
+  const set_url = new URL("../src/set.ts", import.meta.url).href;
+  const map_url = new URL("../src/map.ts", import.meta.url).href;
+  const record_url = new URL("../src/record.ts", import.meta.url).href;
+  const handlers_url = new URL("../src/handlers.ts", import.meta.url).href;
+
+  // Include filler functions containing word-boundary near-miss tokens (isDone, running, getValue)
+  // to verify T1 word-boundary statement skipping & T4 cached_starts V3 source maps.
+  const filler_lines: string[] = [];
+  for (let i = 0; i < 60; i += 1) {
+    filler_lines.push(
+      `export function helper_filler_${i}(isDone: boolean, running: number, getValue: () => number) { return isDone ? running : getValue() + ${i}; }`,
+    );
+  }
+
+  const source = [
+    `import { Applicative, collect, Do, Foldable, from_nullable, InvalidMessages, Just, Nothing, Program, Traversable, Valid } from ${
+      JSON.stringify(mod_url)
+    };`,
+    `import { from_fn, parallel, ParallelTask, run_task, run_task_exit, sequential, Task } from ${
+      JSON.stringify(task_url)
+    };`,
+    `import { run_writer_terminal, tell, Writer, writer_cell } from ${
+      JSON.stringify(writer_url)
+    };`,
+    `import { reader } from ${JSON.stringify(reader_url)};`,
+    `import { state } from ${JSON.stringify(state_url)};`,
+    `import { atomically, modify_tvar, new_tvar, or_else, read_tvar, retry, write_tvar, type TVar } from ${
+      JSON.stringify(stm_url)
+    };`,
+    `import { filter, filter_map, find, fold_while, from_chunks, from_factory, from_sync_factory, map_sync, preview, some, take, to_array } from ${
+      JSON.stringify(async_iterable_url)
+    };`,
+    `import { ArrayT, from_array as array_from_array } from ${
+      JSON.stringify(array_url)
+    };`,
+    `import { from_array as list_from_array, List, to_array as list_to_array } from ${
+      JSON.stringify(list_url)
+    };`,
+    `import { filter as maybe_filter, get_or_else, maybe } from ${
+      JSON.stringify(maybe_url)
+    };`,
+    `import { either, type Either, from_left, from_right, recover_or_else } from ${
+      JSON.stringify(either_url)
+    };`,
+    `import { TypedArrayT } from ${JSON.stringify(typed_array_url)};`,
+    `import { SetT } from ${JSON.stringify(set_url)};`,
+    `import { MapT } from ${JSON.stringify(map_url)};`,
+    `import { RecordT } from ${JSON.stringify(record_url)};`,
+    `import { provide_reader, provide_state, run_cells } from ${
+      JSON.stringify(handlers_url)
+    };`,
+    ...filler_lines,
+    // R1: Writer Do / Writer.with / writer_cell / run_writer_terminal + dynamic tell
+    "const w_cell = writer_cell('r7_w', ArrayT<string>([]));",
+    "export function writer_do_with(xs: string[]) {",
+    "  return Do(Writer.with(ArrayT<string>([])), function* () {",
+    "    yield* tell(ArrayT(['head']));",
+    "    yield* tell(array_from_array(xs));",
+    "    return xs.length;",
+    "  }).value();",
+    "}",
+    "export function writer_cell_do(xs: string[]) {",
+    "  return Do(w_cell, function* () {",
+    "    const log_var = ArrayT(xs);",
+    "    yield* w_cell.tell(log_var);",
+    "    return { len() { return xs.length; } }.len();",
+    "  }).value();",
+    "}",
+    "export function writer_run_terminal(xs: string[]) {",
+    "  return run_writer_terminal(Do(function* () {",
+    "    yield* tell(ArrayT(xs));",
+    "    return xs.length * 2;",
+    "  }), ArrayT<string>([]));",
+    "}",
+    // R2: AsyncIterableT terminal pipelines
+    "export function ai_sync_to_array(xs: number[]) {",
+    "  return to_array(take(filter(map_sync(from_sync_factory(() => xs), (x) => x * 2), (y) => y > 4), 2));",
+    "}",
+    "export function ai_chunks_fold_while(chunks: number[][], cap: number) {",
+    "  return fold_while(filter_map(from_chunks(async function* () { for (const c of chunks) yield c; }), (x) => x > 0 ? Just(x * 3) : Nothing<number>()), 0, (acc, v) => acc + v >= cap ? ['Done', acc + v] : ['Continue', acc + v]);",
+    "}",
+    "export function ai_factory_find(xs: number[], target: number) {",
+    "  return find(from_factory(async function* () { for (const x of xs) yield await Promise.resolve(x); }).map((x) => x + 1), (x) => x === target);",
+    "}",
+    "export function ai_preview_some(xs: number[]) {",
+    "  return Promise.all([preview(from_sync_factory(() => xs).map((x) => x * 10), 2), some(from_sync_factory(() => xs), (x) => x === 3)]);",
+    "}",
+    "export function ai_take_neg(xs: number[]) {",
+    "  return to_array(take(from_sync_factory(() => xs), -1));",
+    "}",
+    "export function ai_take_zero(on_open: () => void) {",
+    "  return to_array(take(from_sync_factory(() => { on_open(); return [1, 2]; }), 0));",
+    "}",
+    // R3: ParallelTask + untagged Task Do + 2-arg signal
+    "export function par_traverse_run(xs: number[]) {",
+    "  return run_task(sequential(Traversable.traverse(ArrayT(xs), ParallelTask, (x) => parallel(from_fn(() => Promise.resolve(x * 2))))));",
+    "}",
+    "export function par_lift_run(a: number, b: number) {",
+    "  return run_task(sequential(Applicative.lift((x, y) => x + y, parallel(from_fn(() => a)), parallel(from_fn(() => Promise.resolve(b))))));",
+    "}",
+    "export function par_collect_run(a: number, b: number) {",
+    "  return run_task(sequential(collect(ParallelTask, { x: parallel(from_fn(() => a)), y: parallel(from_fn(() => b * 2)) })));",
+    "}",
+    "export function task_untagged_signal(x: number, signal?: AbortSignal) {",
+    "  return run_task(Do(function* () {",
+    "    const a = yield* from_fn(() => x + 1);",
+    "    const b = yield* from_fn(() => Promise.resolve(a * 2));",
+    "    return b;",
+    "  }), { signal });",
+    "}",
+    "export function task_exit_signal(x: number, signal?: AbortSignal) {",
+    "  return run_task_exit(Do(Task, function* () {",
+    "    const a = yield* from_fn(() => Promise.resolve(x + 5));",
+    "    return a;",
+    "  }), { signal });",
+    "}",
+    // R4: Untagged STM Do & atomically(Do(...))
+    "export function make_r7_tvar(v: number) { return new_tvar(v); }",
+    "export function stm_untagged_atomically(tv: TVar<number>, n: number) {",
+    "  return atomically(Do(function* () {",
+    "    let acc = 0;",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      const cur = yield* read_tvar(tv);",
+    "      yield* write_tvar(tv, cur + 1);",
+    "      acc += cur;",
+    "    }",
+    "    return acc;",
+    "  }));",
+    "}",
+    "export function stm_untagged_retry(tv: TVar<number>) {",
+    "  return atomically(or_else(Do(function* () {",
+    "    yield* modify_tvar(tv, (x) => x + 100);",
+    "    const cur = yield* read_tvar(tv);",
+    "    if (cur < 1000) return yield* retry<number>();",
+    "    return cur;",
+    "  }), read_tvar(tv)));",
+    "}",
+    // R5: Named top-level Program, helper-returning Validation lift, List/Array from_array, non-Array Foldable, Maybe/Either chains
+    "const r7_cfg = reader<{ mul: number }>()('r7_cfg');",
+    "const r7_cnt = state<number>()('r7_cnt');",
+    "const named_cell_prog = Program(function* () {",
+    "  const cfg = yield* r7_cfg.ask();",
+    "  yield* r7_cnt.modify((n) => n + cfg.mul);",
+    "  return yield* r7_cnt.get();",
+    "});",
+    "export function run_named_cell_prog(mul: number, init: number) {",
+    "  return run_cells(named_cell_prog, {",
+    "    cfg: provide_reader(r7_cfg, { mul }),",
+    "    cnt: provide_state(r7_cnt, init),",
+    "  });",
+    "}",
+    "function check_non_empty(s: string) {",
+    "  return s.length > 0 ? Valid(s) : InvalidMessages<string>('empty');",
+    "}",
+    "export function lift_helper_validation(a: string, b: string) {",
+    "  return Applicative.lift(",
+    "    (x, y): { x: string; y: string } => ({ x, y }),",
+    "    check_non_empty(a),",
+    "    check_non_empty(b),",
+    "  );",
+    "}",
+    "export function list_comp(xs: number[], ys: number[]) {",
+    "  return list_to_array(Do(List, function* () {",
+    "    const x = yield* list_from_array(xs);",
+    "    const y = yield* list_from_array(ys);",
+    "    return x + y;",
+    "  }));",
+    "}",
+    "function add_pair(acc: number, x: number): number { return acc + x; }",
+    "export function fold_fn_ref(xs: number[]) {",
+    "  return Foldable.fold(array_from_array(xs), 0, add_pair);",
+    "}",
+    "export function fold_typed_array(xs: Int32Array) {",
+    "  return Foldable.fold(TypedArrayT(xs), 0, (acc, n) => acc + n);",
+    "}",
+    "export function fold_set(s: Set<number>) {",
+    "  return Foldable.fold(SetT(s), 0, (acc, n) => acc + n);",
+    "}",
+    "export function fold_map_vals(m: Map<string, number>) {",
+    "  return Foldable.fold(MapT(m), 0, (acc, n) => acc + n);",
+    "}",
+    "export function fold_record_vals(r: Record<string, number>) {",
+    "  return Foldable.fold(RecordT(r), 0, (acc, n) => acc + n);",
+    "}",
+    "export function fold_set_mutating_callback(s: Set<number>) {",
+    "  return Foldable.fold(SetT(s), 0, (acc, n) => { s.add(n + 100); return acc + n; });",
+    "}",
+    "export function maybe_chain_r7(x: number | null) {",
+    "  return get_or_else(maybe_filter(from_nullable(x).map((n) => n * 2), (n) => n > 5), () => -1);",
+    "}",
+    "export function maybe_fold_r7(x: number | null) {",
+    "  return maybe('none', (n) => `val:${n}`, from_nullable(x).map((n) => n + 1));",
+    "}",
+    "export function either_chain_r7(e: Either<string, number>) {",
+    "  return recover_or_else(e.map((n) => n + 10), (err) => err.length);",
+    "}",
+    "export function either_fold_r7(e: Either<string, number>) {",
+    "  return [from_right(0, e.map((n) => n * 2)), from_left('ok', e.map((n) => n + 1)), either((l) => `L:${l}`, (r) => `R:${r}`, e.map((n) => n + 1))];",
+    "}",
+    "export function r7_tail_anchor(v: number) {",
+    "  return v + 13;",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round7_fusion.ts", {
+    source_map: true,
+  });
+  assert_equals(result.diagnostics, []);
+  assert_true(result.map !== null, "expected V3 source map");
+
+  // Structural checks for R1–R5 fusions
+  assert_true(
+    !/Do\(Writer\.with/.test(result.code) &&
+      !/Do\(w_cell/.test(result.code) &&
+      !/run_writer_terminal\(Do\(/.test(result.code),
+    "expected R1 Writer Do & dynamic tell fusions\n\n" + result.code,
+  );
+  assert_true(
+    !/\bto_array\(take\(/.test(result.code) &&
+      !/\bfold_while\(filter_map\(/.test(result.code) &&
+      !/\bfind\(from_factory\(/.test(result.code) &&
+      !/\bpreview\(from_sync_factory\(/.test(result.code) &&
+      !/\bsome\(from_sync_factory\(/.test(result.code),
+    "expected R2 AsyncIterableT terminal pipelines to fuse\n\n" + result.code,
+  );
+  assert_true(
+    !/Traversable\.traverse\(/.test(result.code) &&
+      !/collect\(ParallelTask/.test(result.code) &&
+      !/run_task\(Do\(/.test(result.code) &&
+      !/run_task_exit\(Do\(/.test(result.code) &&
+      result.code.includes("task_check_signal") &&
+      result.code.includes("task_await_signal"),
+    "expected R3 ParallelTask and 2-arg signal fusions\n\n" + result.code,
+  );
+  assert_true(
+    result.code.includes("stm_atomically_direct") &&
+      result.code.includes("stm_trusted") &&
+      result.code.includes("stm_read_journal") &&
+      result.code.includes("stm_write_journal") &&
+      result.code.includes("stm_modify_journal"),
+    "expected R4 STM trusted/direct journal fusions\n\n" + result.code,
+  );
+  assert_true(
+    !/run_cells\(named_cell_prog/.test(result.code) &&
+      !/Applicative\.lift\(/.test(result.code) &&
+      !/Do\(List/.test(result.code) &&
+      !/Foldable\.fold\(array_from_array/.test(result.code) &&
+      !/Foldable\.fold\(TypedArrayT/.test(result.code) &&
+      !/Foldable\.fold\(MapT/.test(result.code) &&
+      !/Foldable\.fold\(RecordT/.test(result.code) &&
+      !/get_or_else\(/.test(result.code) &&
+      !/recover_or_else\(/.test(result.code) &&
+      !/\bfrom_right\(/.test(result.code),
+    "expected R5 fusions across named cells, helper lift, List, non-Array Foldable, and Maybe/Either\n\n" +
+      result.code,
+  );
+  // Clone-safety invariant: fold_set_mutating_callback must NOT fuse directly over mutable Set
+  assert_true(
+    result.code.includes("Foldable.fold(SetT(s)"),
+    "expected mutating SetT callback to remain unfused for snapshot safety\n\n" +
+      result.code,
+  );
+
+  // V3 source-map verification (including cached_starts across skipped filler statements)
+  const smap = new SourceMap({
+    ...result.map!,
+    sources: [...result.map!.sources],
+    names: [...result.map!.names],
+    sourcesContent: [source],
+  });
+  const orig_lines = source.split("\n");
+  const gen_lines = result.code.split("\n");
+  const orig_filler_line = orig_lines.findIndex((l) =>
+    l.includes("helper_filler_50")
+  );
+  const gen_filler_line = gen_lines.findIndex((l) =>
+    l.includes("helper_filler_50")
+  );
+  assert_true(orig_filler_line > 0 && gen_filler_line > 0, "found filler line");
+  const mapped_filler = smap.findEntry(
+    gen_filler_line,
+    gen_lines[gen_filler_line].indexOf("helper_filler_50"),
+  );
+  assert_true(
+    "originalLine" in mapped_filler &&
+      mapped_filler.originalLine === orig_filler_line,
+    "expected skipped filler line to map accurately",
+  );
+  const orig_tail_line = orig_lines.findIndex((l) =>
+    l.includes("return v + 13;")
+  );
+  const gen_tail_line = gen_lines.findIndex((l) =>
+    l.includes("return v + 13;")
+  );
+  const mapped_tail = smap.findEntry(
+    gen_tail_line,
+    gen_lines[gen_tail_line].indexOf("return"),
+  );
+  assert_true(
+    "originalLine" in mapped_tail &&
+      mapped_tail.originalLine === orig_tail_line,
+    "expected untouched tail line to map accurately",
+  );
+
+  // Strict TypeScript check on generated Round 7 code
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round7-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Round 7 TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Execute generated code and verify every semantic invariant
+  const compiled = executable_typescript(result.code, "round7_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  const { Left, Right } = await import("../src/either.ts");
+
+  // R1 runtime checks
+  const [wd_v, wd_log] = mod.writer_do_with(["a", "b"]);
+  assert_equals(wd_v, 2);
+  assert_equals(wd_log.value(), ["head", "a", "b"]);
+  const [wc_v, wc_log] = mod.writer_cell_do(["x", "y", "z"]);
+  assert_equals(wc_v, 3);
+  assert_equals(wc_log.value(), ["x", "y", "z"]);
+  const [wt_v, wt_log] = mod.writer_run_terminal(["p", "q"]);
+  assert_equals(wt_v, 4);
+  assert_equals(wt_log.value(), ["p", "q"]);
+
+  // R2 runtime checks
+  assert_equals(await mod.ai_sync_to_array([1, 2, 3, 4, 5]), [6, 8]);
+  assert_equals(
+    await mod.ai_chunks_fold_while([[1, -2, 3], [4, 5]], 20),
+    24,
+  );
+  assert_equals((await mod.ai_factory_find([1, 2, 3], 3)).value(), ["Just", 3]);
+  assert_equals((await mod.ai_factory_find([1, 2, 3], 99)).value(), [
+    "Nothing",
+  ]);
+  assert_equals(await mod.ai_preview_some([1, 2, 3, 4]), [[10, 20], true]);
+  let neg_threw_sync = false;
+  try {
+    mod.ai_take_neg([1, 2]);
+  } catch (err) {
+    neg_threw_sync = err instanceof RangeError;
+  }
+  assert_true(
+    neg_threw_sync,
+    "take(-1) must throw RangeError synchronously before returning a Promise",
+  );
+  let opened = false;
+  assert_equals(
+    await mod.ai_take_zero(() => {
+      opened = true;
+    }),
+    [],
+  );
+  assert_equals(opened, false);
+
+  // R3 runtime checks
+  assert_equals((await mod.par_traverse_run([2, 3, 4])).value(), [4, 6, 8]);
+  assert_equals(await mod.par_lift_run(10, 32), 42);
+  assert_equals(await mod.par_collect_run(5, 6), { x: 5, y: 12 });
+  assert_equals(await mod.task_untagged_signal(10), 22);
+  const ac = new AbortController();
+  ac.abort(new Error("r7-abort"));
+  const exit_ok = await mod.task_exit_signal(7);
+  assert_equals(exit_ok, { status: "succeeded", value: 12 });
+  const exit_cancel = await mod.task_exit_signal(7, ac.signal);
+  assert_equals(exit_cancel.status, "cancelled");
+  let rej_cancel = false;
+  try {
+    await mod.task_untagged_signal(10, ac.signal);
+  } catch {
+    rej_cancel = true;
+  }
+  assert_true(rej_cancel, "aborted signal must reject run_task");
+
+  // R4 runtime checks
+  const tv = mod.make_r7_tvar(0);
+  assert_equals(mod.stm_untagged_atomically(tv, 5), 10);
+  assert_equals(mod.stm_untagged_retry(tv), 5);
+  assert_equals(mod.stm_untagged_atomically(tv, 3), 18);
+
+  // R5 runtime checks
+  const ncp = mod.run_named_cell_prog(4, 10);
+  assert_equals(ncp.result, 14);
+  assert_equals(ncp.states, { cnt: 14 });
+  assert_equals(mod.lift_helper_validation("hi", "there").value(), [
+    "valid",
+    { x: "hi", y: "there" },
+  ]);
+  const lhv_bad = mod.lift_helper_validation("", "").value();
+  assert_equals(lhv_bad[0], "invalid");
+  if (lhv_bad[0] === "invalid") assert_equals(lhv_bad[1], ["empty", "empty"]);
+  assert_equals(mod.list_comp([1, 2], [10, 20]), [11, 21, 12, 22]);
+  assert_equals(mod.fold_fn_ref([1, 2, 3, 4]), 10);
+  assert_equals(mod.fold_typed_array(new Int32Array([2, 4, 6])), 12);
+  assert_equals(mod.fold_set(new Set([3, 5, 7])), 15);
+  assert_equals(mod.fold_map_vals(new Map([["a", 4], ["b", 9]])), 13);
+  assert_equals(mod.fold_record_vals({ a: 2, b: 8, c: 5 }), 15);
+  const mut_set = new Set([1, 2, 3]);
+  assert_equals(mod.fold_set_mutating_callback(mut_set), 6);
+  assert_equals(mut_set.size, 6);
+  assert_equals(mod.maybe_chain_r7(4), 8);
+  assert_equals(mod.maybe_chain_r7(2), -1);
+  assert_equals(mod.maybe_chain_r7(null), -1);
+  assert_equals(mod.maybe_fold_r7(4), "val:5");
+  assert_equals(mod.maybe_fold_r7(null), "none");
+  assert_equals(mod.either_chain_r7(Right(5)), 15);
+  assert_equals(mod.either_chain_r7(Left("oops")), 4);
+  assert_equals(mod.either_fold_r7(Right(3)), [6, "ok", "R:4"]);
+  assert_equals(mod.either_fold_r7(Left("bad")), [0, "bad", "L:bad"]);
+});

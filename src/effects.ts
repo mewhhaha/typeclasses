@@ -970,13 +970,14 @@ export function handle_lift<
 function program<yielded, item>(
   run: () => Generator<yielded, item, unknown>,
 ): Effect<EffectRequirements<yielded>, item> {
-  const first = run_with(undefined);
+  const iterator = run();
+  const next = iterator.next();
 
-  if (first.next.done) {
-    return pure(first.next.value) as Effect<EffectRequirements<yielded>, item>;
+  if (next.done) {
+    return pure(next.value) as Effect<EffectRequirements<yielded>, item>;
   }
 
-  return step(undefined, first.next.value, first.iterator);
+  return step(undefined, next.value, iterator);
 
   function run_with(
     path: ProgramPath | undefined,

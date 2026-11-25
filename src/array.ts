@@ -6,7 +6,7 @@ import {
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import { traverse_items } from "./traversal.ts";
+import { traverse_items_into } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
 import {
@@ -428,20 +428,22 @@ function create_array(): AsArray {
     },
 
     fold(initial, fn) {
-      const array = this.value();
       let state = initial;
-
-      for (const item of array) {
-        state = fn(state, item);
-      }
-
+      for (const item of this.value()) state = fn(state, item);
       return state;
     },
   });
 
   Traversable.instance(ArrayT)({
     traverse(applicative, fn) {
-      return Functor.map(traverse_items(this.value(), applicative, fn), ArrayT);
+      return traverse_items_into(
+        this.value(),
+        applicative,
+        fn,
+        ArrayT as unknown as <item>(
+          items: Iterable<item>,
+        ) => Data<AsArray, item>,
+      );
     },
   });
   return ArrayT;

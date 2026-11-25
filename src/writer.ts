@@ -1,6 +1,7 @@
 import { array_concat_method, ArrayT } from "./array.ts";
 import {
   type As,
+  as_data,
   type Data,
   data,
   type Dictionary,
@@ -11,6 +12,8 @@ import {
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
+import { register_traversal } from "./traversal.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 import {
   type Effect,
   is_effect,
@@ -253,12 +256,26 @@ function make_writer_cell<
 
     [applicative_lift_method](fn, rest) {
       const [first, output] = this.value();
-      const values = [first];
+      const len = rest.length;
+      if (len === 0) return wrap(fn(first), output);
+      if (len === 1) {
+        const [second, second_output] = rest[0].value();
+        return wrap(fn(first, second), concat_output(output, second_output));
+      }
+      if (len === 2) {
+        const [second, second_output] = rest[0].value();
+        const [third, third_output] = rest[1].value();
+        return wrap(
+          fn(first, second, third),
+          concat_output(concat_output(output, second_output), third_output),
+        );
+      }
+      const values = new Array<unknown>(len + 1);
+      values[0] = first;
       let combined_output = output;
-
-      for (const current of rest) {
-        const [value, next_output] = current.value();
-        values.push(value);
+      for (let i = 0; i < len; i += 1) {
+        const [value, next_output] = rest[i].value();
+        values[i + 1] = value;
         combined_output = concat_output(combined_output, next_output);
       }
 
@@ -279,6 +296,11 @@ function make_writer_cell<
       return wrap(item, concat_output(left_output, right_output));
     },
   });
+
+  register_writer_fast_paths(
+    dictionary,
+    () => empty_output(empty) as Data<Dictionary, unknown>,
+  );
 
   return dictionary;
 
@@ -390,46 +412,35 @@ export function run_writer<
   readonly [item, Data<output, log> & WriterCellEmpty<requirements, key>]
 >;
 export function run_writer(
-  ...args:
-    | readonly [Effect<unknown, unknown>, unknown]
-    | readonly [
-      AsWriterCell<PropertyKey, Dictionary, unknown>,
-      Effect<unknown, unknown>,
-    ]
-    | readonly [
-      AsWriterCell<PropertyKey, Dictionary, unknown>,
-      Effect<unknown, unknown>,
-      unknown,
-    ]
+  first:
+    | Effect<unknown, unknown>
+    | AsWriterCell<PropertyKey, Dictionary, unknown>,
+  second: unknown,
+  third?: unknown,
 ): Effect<unknown, unknown> {
-  if (args.length === 2) {
-    if (writer_cell_empties.has(args[0] as object)) {
-      const [cell, effect] = args as readonly [
-        AsWriterCell<PropertyKey, Dictionary, unknown>,
-        Effect<unknown, unknown>,
-      ];
-
+  if (arguments.length === 2) {
+    if (writer_cell_empties.has(first as object)) {
+      const cell = first as AsWriterCell<PropertyKey, Dictionary, unknown>;
       return run_writer_kind(
-        effect,
+        second as Effect<unknown, unknown>,
         cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
         writer_cell_empty(cell),
       );
     }
 
-    const [effect, empty] = args as readonly [
-      Effect<unknown, unknown>,
-      unknown,
-    ];
-
-    return run_writer_kind(effect, writer_kind, empty);
+    return run_writer_kind(
+      first as Effect<unknown, unknown>,
+      writer_kind,
+      second,
+    );
   }
 
-  const [cell, effect, empty] = args;
-
   return run_writer_kind(
-    effect,
-    cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
-    empty,
+    second as Effect<unknown, unknown>,
+    (first as AsWriterCell<PropertyKey, Dictionary, unknown>)[
+      kind
+    ] as AsWriter<Dictionary, unknown>[typeof kind],
+    third,
   );
 }
 
@@ -450,7 +461,8 @@ function run_writer_kind<requirements, item>(
     switch (current[0]) {
       case "pure": {
         if (buffered_output !== undefined) {
-          current_output = ArrayT(
+          current_output = as_data(
+            ArrayT,
             buffered_output,
           ) as unknown as Data<Dictionary, unknown>;
         }
@@ -614,28 +626,32 @@ export function run_writer_terminal<
     & TerminalWriterCellEmpty<requirements, key>,
 ): readonly [item, Data<output, log>];
 export function run_writer_terminal(
-  ...args: readonly unknown[]
+  first: unknown,
+  second: unknown,
+  third?: unknown,
 ): readonly [unknown, unknown] {
-  if (args.length === 2 && writer_cell_empties.has(args[0] as object)) {
-    const cell = args[0] as AsWriterCell<PropertyKey, Dictionary, unknown>;
+  if (arguments.length === 2) {
+    if (writer_cell_empties.has(first as object)) {
+      const cell = first as AsWriterCell<PropertyKey, Dictionary, unknown>;
+      return run_writer_terminal_kind(
+        second as Effect<unknown, unknown>,
+        cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
+        writer_cell_empty(cell),
+      );
+    }
     return run_writer_terminal_kind(
-      args[1] as Effect<unknown, unknown>,
-      cell[kind] as AsWriter<Dictionary, unknown>[typeof kind],
-      writer_cell_empty(cell),
+      first as Effect<unknown, unknown>,
+      writer_kind,
+      second as Data<Dictionary, unknown>,
     );
   }
-  const [effect, empty, runtime_kind] = args.length === 2
-    ? [args[0], args[1], writer_kind] as const
-    : [
-      args[1],
-      args[2],
-      (args[0] as AsWriterCell<PropertyKey, Dictionary, unknown>)[kind],
-    ] as const;
 
   return run_writer_terminal_kind(
-    effect as Effect<unknown, unknown>,
-    runtime_kind as AsWriter<Dictionary, unknown>[typeof kind],
-    empty as Data<Dictionary, unknown>,
+    second as Effect<unknown, unknown>,
+    (first as AsWriterCell<PropertyKey, Dictionary, unknown>)[
+      kind
+    ] as AsWriter<Dictionary, unknown>[typeof kind],
+    third as Data<Dictionary, unknown>,
   );
 }
 
@@ -681,7 +697,8 @@ function run_writer_terminal_kind(
 
     if (current[0] === "pure") {
       if (buffered_output !== undefined) {
-        current_output = ArrayT(
+        current_output = as_data(
+          ArrayT,
           buffered_output,
         ) as unknown as typeof current_output;
       }
@@ -776,12 +793,30 @@ Applicative.instance(Writer)({
 
   [applicative_lift_method](fn, rest) {
     const [first, output] = this.value();
-    const values = [first];
+    const len = rest.length;
+    if (len === 0) return writer_any(fn(first), output);
+    if (len === 1) {
+      const [second, second_output] = rest[0].value();
+      return writer_any(
+        fn(first, second),
+        concat_output(output, second_output),
+      );
+    }
+    if (len === 2) {
+      const [second, second_output] = rest[0].value();
+      const [third, third_output] = rest[1].value();
+      return writer_any(
+        fn(first, second, third),
+        concat_output(concat_output(output, second_output), third_output),
+      );
+    }
+    const values = new Array<unknown>(len + 1);
+    values[0] = first;
     let combined_output = output;
 
-    for (const current of rest) {
-      const [value, next_output] = current.value();
-      values.push(value);
+    for (let i = 0; i < len; i += 1) {
+      const [value, next_output] = rest[i].value();
+      values[i + 1] = value;
       combined_output = concat_output(combined_output, next_output);
     }
 
@@ -802,6 +837,8 @@ Monad.instance(Writer)({
     return writer_any(item, concat_output(left_output, right_output));
   },
 });
+
+register_writer_do(Writer);
 
 /** Extracts the output dictionary required by Writer lifts. */
 export type WriterEffectOutput<requirements> = WriterOutput<requirements>;
@@ -865,12 +902,27 @@ function configured_writer<
 
     [applicative_lift_method](fn, rest) {
       const [first, output] = this.value();
-      const values = [first];
+      const len = rest.length;
+      if (len === 0) return wrap(fn(first), output);
+      if (len === 1) {
+        const [second, second_output] = rest[0].value();
+        return wrap(fn(first, second), output.concat(second_output));
+      }
+      if (len === 2) {
+        const [second, second_output] = rest[0].value();
+        const [third, third_output] = rest[1].value();
+        return wrap(
+          fn(first, second, third),
+          output.concat(second_output).concat(third_output),
+        );
+      }
+      const values = new Array<unknown>(len + 1);
+      values[0] = first;
       let combined_output = output;
 
-      for (const current of rest) {
-        const [value, next_output] = current.value();
-        values.push(value);
+      for (let i = 0; i < len; i += 1) {
+        const [value, next_output] = rest[i].value();
+        values[i + 1] = value;
         combined_output = combined_output.concat(next_output);
       }
 
@@ -891,6 +943,11 @@ function configured_writer<
       return wrap(item, left_output.concat(right_output));
     },
   });
+
+  register_writer_fast_paths(
+    dictionary,
+    () => empty.empty() as Data<Dictionary, unknown>,
+  );
 
   return dictionary;
 
@@ -942,4 +999,153 @@ export function append_array_log(
     return;
   }
   for (const value of values) buffer.push(value);
+}
+
+function register_writer_do(dictionary: unknown): void {
+  const dict = dictionary as AsWriter<Dictionary, unknown> & {
+    (
+      v: RawWriter<Dictionary, unknown, unknown>,
+    ): Data<AsWriter<Dictionary, unknown>, unknown>;
+  };
+  const d_kind = dict[kind];
+  const c_bind = dict.bind;
+  const c_pure = dict.pure;
+  const writer_do: CustomDoRunner = (first_value, first_iterator) => {
+    const first = first_value as Data<AsWriter<Dictionary, unknown>, unknown>;
+    if (
+      first[kind] !== d_kind || first.bind !== c_bind || first.pure !== c_pure
+    ) return undefined;
+    const [first_item, first_output] = first.value();
+    let current_output = first_output;
+    let bufferable = has_canonical_array_concat(current_output);
+    let buffered_output: unknown[] | undefined;
+    let next = first_iterator.next(first_item);
+    while (!next.done) {
+      const current = next.value as Data<
+        AsWriter<Dictionary, unknown>,
+        unknown
+      >;
+      const [val, next_output] = current.value();
+      if (
+        bufferable &&
+        is_canonical_array_concat_method() &&
+        is_kind_of(next_output, ArrayT)
+      ) {
+        if (buffered_output === undefined) {
+          buffered_output = [];
+          append_array_log(
+            buffered_output,
+            current_output.value() as readonly unknown[],
+          );
+        }
+        append_array_log(
+          buffered_output,
+          next_output.value() as readonly unknown[],
+        );
+      } else {
+        if (buffered_output !== undefined) {
+          current_output = as_data(
+            ArrayT,
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+          buffered_output = undefined;
+        }
+        bufferable = false;
+        current_output = concat_output(current_output, next_output);
+      }
+      next = first_iterator.next(val);
+    }
+    if (buffered_output !== undefined) {
+      current_output = as_data(
+        ArrayT,
+        buffered_output,
+      ) as unknown as Data<Dictionary, unknown>;
+    }
+    return dict([next.value, current_output] as const);
+  };
+  Object.defineProperty(dictionary as object, do_runner_method, {
+    value: writer_do,
+  });
+}
+
+function register_writer_fast_paths(
+  dictionary: unknown,
+  create_empty: () => Data<Dictionary, unknown>,
+): void {
+  register_writer_do(dictionary);
+  const dict = dictionary as AsWriter<Dictionary, unknown> & {
+    (
+      v: RawWriter<Dictionary, unknown, unknown>,
+    ): Data<AsWriter<Dictionary, unknown>, unknown>;
+  };
+  const traverse_impl = <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsWriter<Dictionary, unknown>, to>,
+    build: (items: Iterable<to>) => result,
+  ): Data<AsWriter<Dictionary, unknown>, result> => {
+    let current_output = create_empty();
+    let bufferable = has_canonical_array_concat(current_output);
+    let buffered_output: unknown[] | undefined;
+    const is_arr = Array.isArray(items);
+    const out: to[] = is_arr ? new Array<to>(items.length) : [];
+    const step = (
+      entry: Data<AsWriter<Dictionary, unknown>, to>,
+      idx: number,
+    ) => {
+      const [val, next_output] = entry.value();
+      if (is_arr) out[idx] = val;
+      else out.push(val);
+      if (
+        bufferable &&
+        is_canonical_array_concat_method() &&
+        is_kind_of(next_output, ArrayT)
+      ) {
+        if (buffered_output === undefined) {
+          buffered_output = [];
+          append_array_log(
+            buffered_output,
+            current_output.value() as readonly unknown[],
+          );
+        }
+        append_array_log(
+          buffered_output,
+          next_output.value() as readonly unknown[],
+        );
+      } else {
+        if (buffered_output !== undefined) {
+          current_output = as_data(
+            ArrayT,
+            buffered_output,
+          ) as unknown as Data<Dictionary, unknown>;
+          buffered_output = undefined;
+        }
+        bufferable = false;
+        current_output = concat_output(current_output, next_output);
+      }
+    };
+    if (is_arr) {
+      for (let i = 0; i < items.length; i += 1) step(fn(items[i]), i);
+    } else {
+      let i = 0;
+      for (const item of items) step(fn(item), i++);
+    }
+    if (buffered_output !== undefined) {
+      current_output = as_data(
+        ArrayT,
+        buffered_output,
+      ) as unknown as Data<Dictionary, unknown>;
+    }
+    return dict([build(out), current_output] as const) as Data<
+      AsWriter<Dictionary, unknown>,
+      result
+    >;
+  };
+  register_traversal(
+    dict,
+    traverse_impl,
+    <from, to>(
+      items: readonly from[],
+      fn: (item: from) => Data<AsWriter<Dictionary, unknown>, to>,
+    ) => traverse_impl(items, fn, (out) => out as to[]),
+  );
 }

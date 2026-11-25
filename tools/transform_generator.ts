@@ -1014,6 +1014,45 @@ function direct_single_shot_spec(
   return infer_from_expr(first_yield.argument);
 }
 
+function direct_typed_const(
+  name: IdentifierReference,
+  init: Expression,
+  type: TSType,
+): Statement {
+  return node({
+    type: "VariableDeclaration",
+    kind: "const",
+    declarations: [
+      node({
+        type: "VariableDeclarator",
+        id: {
+          ...name,
+          typeAnnotation: node({
+            type: "TSTypeAnnotation",
+            typeAnnotation: type,
+          }),
+        },
+        init,
+      }),
+    ],
+  });
+}
+
+function direct_negate_cond(expression: Expression): Expression {
+  const inner = unwrap(expression);
+  if (
+    inner.type === "UnaryExpression" && inner.operator === "!" && inner.prefix
+  ) {
+    return inner.argument;
+  }
+  return node({
+    type: "UnaryExpression",
+    operator: "!",
+    prefix: true,
+    argument: expression,
+  });
+}
+
 function direct_single_shot(
   body: BlockStatement | FunctionBody,
   state: State,
@@ -1048,44 +1087,8 @@ function direct_single_shot(
     identity_name !== undefined
       ? call(id(identity_name), [value])
       : call(get_dict()!, [value]);
-
-  const typed_const = (
-    name: IdentifierReference,
-    init: Expression,
-    type: TSType,
-  ): Statement =>
-    node({
-      type: "VariableDeclaration",
-      kind: "const",
-      declarations: [
-        node({
-          type: "VariableDeclarator",
-          id: {
-            ...name,
-            typeAnnotation: node({
-              type: "TSTypeAnnotation",
-              typeAnnotation: type,
-            }),
-          },
-          init,
-        }),
-      ],
-    });
-
-  const negate_cond = (expression: Expression): Expression => {
-    const inner = unwrap(expression);
-    if (
-      inner.type === "UnaryExpression" && inner.operator === "!" && inner.prefix
-    ) {
-      return inner.argument;
-    }
-    return node({
-      type: "UnaryExpression",
-      operator: "!",
-      prefix: true,
-      argument: expression,
-    });
-  };
+  const typed_const = direct_typed_const;
+  const negate_cond = direct_negate_cond;
 
   type SingleCtorMatch = {
     readonly ok: boolean;
@@ -3000,9 +3003,15 @@ function direct_list_dictionary(
   services: TransformServices,
 ): IdentifierReference | undefined {
   const ctors = services.imports.list_constructors;
-  if (ctors === undefined || ctors.size === 0) return undefined;
+  const from_arrays = services.imports.list_from_array_functions;
+  const list_ns = services.imports.list_namespaces;
+  const has_ctors = ctors !== undefined && ctors.size > 0;
+  const has_from_array = from_arrays !== undefined && from_arrays.size > 0;
+  const has_list_ns = list_ns !== undefined && list_ns.size > 0;
+  if (!has_ctors && !has_from_array && !has_list_ns) return undefined;
   if (explicit !== undefined) {
-    return explicit.type === "Identifier" && ctors.has(explicit.name)
+    return has_ctors && explicit.type === "Identifier" &&
+        ctors.has(explicit.name)
       ? explicit
       : undefined;
   }
@@ -3010,10 +3019,12 @@ function direct_list_dictionary(
   const arg = unwrap(first_yield.argument);
   if (arg.type !== "CallExpression" || arg.optional) return undefined;
   if (arg.callee.type === "Identifier") {
-    if (ctors.has(arg.callee.name)) return arg.callee;
+    if (has_ctors && ctors.has(arg.callee.name)) return arg.callee;
+    if (has_from_array && from_arrays.has(arg.callee.name)) return arg.callee;
     if (
-      services.imports.nil_constructors?.has(arg.callee.name) ||
-      services.imports.cons_constructors?.has(arg.callee.name)
+      has_ctors &&
+      (services.imports.nil_constructors?.has(arg.callee.name) ||
+        services.imports.cons_constructors?.has(arg.callee.name))
     ) {
       return id(ctors.values().next().value!);
     }
@@ -3021,14 +3032,23 @@ function direct_list_dictionary(
   if (
     arg.callee.type === "MemberExpression" && !arg.callee.computed &&
     !arg.callee.optional && arg.callee.object.type === "Identifier" &&
-    ctors.has(arg.callee.object.name) &&
-    arg.callee.property.type === "Identifier" &&
-    (arg.callee.property.name === "empty" ||
-      arg.callee.property.name === "pure" ||
-      arg.callee.property.name === "Nil" ||
-      arg.callee.property.name === "Cons")
+    arg.callee.property.type === "Identifier"
   ) {
-    return arg.callee.object;
+    if (
+      has_ctors && ctors.has(arg.callee.object.name) &&
+      (arg.callee.property.name === "empty" ||
+        arg.callee.property.name === "pure" ||
+        arg.callee.property.name === "Nil" ||
+        arg.callee.property.name === "Cons")
+    ) {
+      return arg.callee.object;
+    }
+    if (
+      has_list_ns && list_ns.has(arg.callee.object.name) &&
+      arg.callee.property.name === "from_array"
+    ) {
+      return arg.callee.object;
+    }
   }
   return undefined;
 }
@@ -3040,13 +3060,43 @@ function direct_list_comprehension(
 ): Result | undefined {
   if (body.body.length >= 128) return undefined;
   const ctors = services.imports.list_constructors;
-  if (ctors === undefined || ctors.size === 0) return undefined;
-  const from_array_id = services.import_from_module?.(
-    list_dict.name,
-    "list",
-    "from_array",
-  );
+  const from_arrays = services.imports.list_from_array_functions;
+  const list_ns = services.imports.list_namespaces;
+  const existing_from_array = from_arrays?.values().next().value;
+  const from_array_id: IdentifierReference | undefined =
+    existing_from_array !== undefined
+      ? id(existing_from_array)
+      : services.import_from_module?.(
+        list_dict.name,
+        "list",
+        "from_array",
+      );
   if (from_array_id === undefined) return undefined;
+
+  const unwrap_list_from_array = (
+    expression: Expression,
+  ): Expression | undefined => {
+    const inner = unwrap(expression);
+    if (
+      inner.type !== "CallExpression" || inner.optional ||
+      inner.typeArguments != null || inner.arguments.length !== 1 ||
+      inner.arguments[0].type === "SpreadElement"
+    ) return undefined;
+    const callee = unwrap(inner.callee);
+    if (
+      callee.type === "Identifier" &&
+      from_arrays?.has(callee.name) && services.bindings.imported(callee)
+    ) return inner.arguments[0] as Expression;
+    if (
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.object.type === "Identifier" &&
+      callee.property.type === "Identifier" &&
+      callee.property.name === "from_array" &&
+      list_ns?.has(callee.object.name) &&
+      services.bindings.imported(callee.object)
+    ) return inner.arguments[0] as Expression;
+    return undefined;
+  };
 
   type ListLiteralMatch =
     | { readonly kind: "empty" }
@@ -3063,6 +3113,7 @@ function direct_list_comprehension(
       inner.arguments.length === 0
     ) return { kind: "empty" };
     if (
+      ctors !== undefined &&
       inner.callee.type === "MemberExpression" && !inner.callee.computed &&
       !inner.callee.optional && inner.callee.object.type === "Identifier" &&
       ctors.has(inner.callee.object.name) &&
@@ -3113,6 +3164,52 @@ function direct_list_comprehension(
     binding_name: BindingPattern | undefined,
     body_stmts: Statement[],
   ): Statement => {
+    const raw_arr = unwrap_list_from_array(source_expr);
+    if (raw_arr !== undefined) {
+      const arr_id = services.fresh("list_arr");
+      const idx_id = services.fresh("list_i");
+      const loop_body: Statement[] = [];
+      if (binding_name !== undefined) {
+        const decl_kind = binding_stmt?.type === "VariableDeclaration" &&
+            binding_stmt.kind === "let"
+          ? "let"
+          : "const";
+        loop_body.push(
+          variable(
+            decl_kind,
+            binding_name,
+            node({
+              type: "MemberExpression",
+              object: arr_id,
+              property: idx_id,
+              computed: true,
+              optional: false,
+            }),
+          ),
+        );
+      }
+      loop_body.push(...body_stmts);
+      return block([
+        variable("const", arr_id, raw_arr),
+        node({
+          type: "ForStatement",
+          init: variable("let", idx_id, literal(0)),
+          test: node({
+            type: "BinaryExpression",
+            operator: "<",
+            left: idx_id,
+            right: member(arr_id, "length"),
+          }),
+          update: node({
+            type: "AssignmentExpression",
+            operator: "+=",
+            left: idx_id,
+            right: literal(1),
+          }),
+          body: block(loop_body),
+        }),
+      ]);
+    }
     const cur_id = services.fresh("list_c");
     const loop_body: Statement[] = [];
     if (binding_name !== undefined) {
@@ -3747,22 +3844,223 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
     in_loop: boolean,
     parent?: Node,
   ): void {
-    check_hazard(value, parent);
-    if (!nested && !in_yield_arg) {
-      if (value.type === "VariableDeclaration" && value.kind === "var") {
-        var_binding = value;
+    const type = value.type;
+    // Fast-path leaf nodes before running any checks or megamorphic key lookups.
+    if (
+      type === "Literal" || type === "TemplateElement" ||
+      type === "EmptyStatement" || type === "BreakStatement" ||
+      type === "ContinueStatement" || type === "PrivateIdentifier" ||
+      type === "DebuggerStatement"
+    ) return;
+    if (type === "Identifier") {
+      if (value.name === "arguments") {
+        const property = parent !== undefined &&
+          ((parent.type === "MemberExpression" && !parent.computed &&
+            parent.property === value) ||
+            (parent.type === "Property" && !parent.computed &&
+              parent.key === value));
+        if (!property) hazard = value;
       }
-      if (value.type === "YieldExpression" && !first_yield) {
-        first_yield = value;
+      if (
+        captures.length > 0 &&
+        !(parent !== undefined &&
+          ((parent.type === "MemberExpression" && parent.property === value &&
+            !parent.computed) ||
+            (parent.type === "Property" && parent.key === value &&
+              !parent.computed)))
+      ) {
+        lookup_capture(value.name)?.references.push(value.start);
+      }
+      return;
+    }
+    if (
+      type === "ThisExpression" || type === "Super" || type === "MetaProperty"
+    ) {
+      hazard = value;
+      return;
+    }
+    switch (type) {
+      case "BlockStatement": {
+        capture_scopes.push(new Map());
+        ends.push(value.end);
+        if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
+        const body_list = value.body;
+        for (let i = 0; i < body_list.length; i += 1) {
+          const part = body_list[i];
+          if (part.type === "VariableDeclaration") {
+            for (const declaration of part.declarations) {
+              declare_capture(
+                declaration.id,
+                declaration,
+                !!declaration.init && allocation(declaration.init),
+                nested,
+              );
+              if (!nested && !in_yield_arg) declare_prefix(declaration.id);
+            }
+          } else if (
+            (part.type === "FunctionDeclaration" ||
+              part.type === "ClassDeclaration") && part.id
+          ) declare_capture(part.id, part, true, nested);
+        }
+        for (let i = 0; i < body_list.length; i += 1) {
+          scan(body_list[i], nested, in_yield_arg, in_loop, value);
+        }
+        capture_scopes.pop();
+        ends.pop();
+        if (!nested && !in_yield_arg) prefix_scopes.pop();
+        return;
+      }
+      case "VariableDeclaration": {
+        if (!nested && !in_yield_arg && value.kind === "var") {
+          var_binding = value;
+        }
+        const decls = value.declarations;
+        for (let i = 0; i < decls.length; i += 1) {
+          scan(decls[i], nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      }
+      case "VariableDeclarator":
+        scan_pattern_hazards(value.id, nested, in_yield_arg, in_loop, value);
+        if (value.init !== null) {
+          scan(value.init, nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      case "ReturnStatement":
+        if (value.argument !== null) {
+          scan(value.argument, nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      case "ExpressionStatement":
+        scan(value.expression, nested, in_yield_arg, in_loop, value);
+        return;
+      case "YieldExpression":
+        if (!nested) {
+          if (!in_yield_arg && !first_yield) first_yield = value;
+          yields.push(value.start);
+          if (!in_yield_arg && value.start > max_prefix_yield) {
+            max_prefix_yield = value.start;
+          }
+        }
+        if (value.argument !== null) {
+          scan(value.argument, nested, true, in_loop, value);
+        }
+        return;
+      case "CallExpression": {
+        if (
+          !value.optional && value.callee.type === "Identifier" &&
+          value.callee.name === "eval"
+        ) hazard = value;
+        if (!nested && !in_yield_arg) {
+          prefix_effects.push({ node: value, loop: in_loop });
+        }
+        if (
+          value.callee.type === "MemberExpression" && !value.callee.computed &&
+          value.callee.property.type === "Identifier" &&
+          mutating_methods.has(value.callee.property.name)
+        ) write(value.callee.object, nested);
+        scan(value.callee, nested, in_yield_arg, in_loop, value);
+        const args = value.arguments;
+        for (let i = 0; i < args.length; i += 1) {
+          scan(args[i], nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      }
+      case "MemberExpression":
+        scan(value.object, nested, in_yield_arg, in_loop, value);
+        if (value.computed) {
+          scan(value.property, nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      case "BinaryExpression":
+        if (value.left.type !== "PrivateIdentifier") {
+          scan(value.left, nested, in_yield_arg, in_loop, value);
+        }
+        scan(value.right, nested, in_yield_arg, in_loop, value);
+        return;
+      case "LogicalExpression":
+        scan(value.left, nested, in_yield_arg, in_loop, value);
+        scan(value.right, nested, in_yield_arg, in_loop, value);
+        return;
+      case "UnaryExpression":
+        if (value.operator === "delete") {
+          if (!nested && !in_yield_arg) {
+            prefix_effects.push({ node: value, loop: in_loop });
+          }
+          write(value.argument, nested);
+        }
+        scan(value.argument, nested, in_yield_arg, in_loop, value);
+        return;
+      case "IfStatement":
+        scan(value.test, nested, in_yield_arg, in_loop, value);
+        scan(value.consequent, nested, in_yield_arg, in_loop, value);
+        if (value.alternate !== null) {
+          scan(value.alternate, nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      case "ConditionalExpression":
+        scan(value.test, nested, in_yield_arg, in_loop, value);
+        scan(value.consequent, nested, in_yield_arg, in_loop, value);
+        scan(value.alternate, nested, in_yield_arg, in_loop, value);
+        return;
+      case "ArrayExpression": {
+        const els = value.elements;
+        for (let i = 0; i < els.length; i += 1) {
+          const el = els[i];
+          if (el !== null) scan(el, nested, in_yield_arg, in_loop, value);
+        }
+        return;
+      }
+      case "ObjectExpression": {
+        const props = value.properties;
+        for (let i = 0; i < props.length; i += 1) {
+          const prop = props[i];
+          if (prop.type === "SpreadElement") {
+            scan(prop.argument, nested, in_yield_arg, in_loop, prop);
+          } else {
+            if (prop.computed) {
+              scan(prop.key, nested, in_yield_arg, in_loop, prop);
+            }
+            scan(prop.value, nested, in_yield_arg, in_loop, prop);
+          }
+        }
+        return;
+      }
+      case "AssignmentExpression":
+        if (!nested && !in_yield_arg && !is_prefix_local(value.left)) {
+          prefix_effects.push({ node: value, loop: in_loop });
+        }
+        write(value.left, nested);
+        scan(value.left, nested, in_yield_arg, in_loop, value);
+        scan(value.right, nested, in_yield_arg, in_loop, value);
+        return;
+      case "UpdateExpression":
+        if (!nested && !in_yield_arg && !is_prefix_local(value.argument)) {
+          prefix_effects.push({ node: value, loop: in_loop });
+        }
+        write(value.argument, nested);
+        scan(value.argument, nested, in_yield_arg, in_loop, value);
+        return;
+      case "NewExpression": {
+        if (!nested && !in_yield_arg) {
+          prefix_effects.push({ node: value, loop: in_loop });
+        }
+        scan(value.callee, nested, in_yield_arg, in_loop, value);
+        const args = value.arguments;
+        for (let i = 0; i < args.length; i += 1) {
+          scan(args[i], nested, in_yield_arg, in_loop, value);
+        }
+        return;
       }
     }
+    check_hazard(value, parent);
     if (function_like(value)) {
       capture_scopes.push(new Map());
       ends.push(value.end);
       if (
-        value.type === "FunctionDeclaration" ||
-        value.type === "FunctionExpression" ||
-        value.type === "ArrowFunctionExpression"
+        type === "FunctionDeclaration" ||
+        type === "FunctionExpression" ||
+        type === "ArrowFunctionExpression"
       ) {
         for (const param of value.params) {
           if (param.type === "RestElement") {
@@ -3777,35 +4075,9 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       ends.pop();
       return;
     }
-    if (value.type === "BlockStatement") {
-      capture_scopes.push(new Map());
-      ends.push(value.end);
-      if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
-      for (const part of value.body) {
-        if (part.type === "VariableDeclaration") {
-          for (const declaration of part.declarations) {
-            declare_capture(
-              declaration.id,
-              declaration,
-              !!declaration.init && allocation(declaration.init),
-              nested,
-            );
-            if (!nested && !in_yield_arg) declare_prefix(declaration.id);
-          }
-        } else if (
-          (part.type === "FunctionDeclaration" ||
-            part.type === "ClassDeclaration") && part.id
-        ) declare_capture(part.id, part, true, nested);
-      }
-      scan_children(value, nested, in_yield_arg, in_loop);
-      capture_scopes.pop();
-      ends.pop();
-      if (!nested && !in_yield_arg) prefix_scopes.pop();
-      return;
-    }
     if (
-      value.type === "ForStatement" || value.type === "ForOfStatement" ||
-      value.type === "ForInStatement"
+      type === "ForStatement" || type === "ForOfStatement" ||
+      type === "ForInStatement"
     ) {
       const next_loop = in_loop ||
         (!nested && !in_yield_arg && contains(value));
@@ -3813,7 +4085,7 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       ends.push(value.end);
       if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
       let initializer: Node | null;
-      if (value.type === "ForStatement") initializer = value.init;
+      if (type === "ForStatement") initializer = value.init;
       else initializer = value.left;
       if (initializer?.type === "VariableDeclaration") {
         for (const declaration of initializer.declarations) {
@@ -3826,7 +4098,7 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           if (!nested && !in_yield_arg) declare_prefix(declaration.id);
         }
       }
-      if (value.type === "ForStatement") {
+      if (type === "ForStatement") {
         if (value.init) {
           scan(value.init, nested, in_yield_arg, next_loop, value);
         }
@@ -3839,7 +4111,7 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
         }
         scan(value.body, nested, in_yield_arg, next_loop, value);
       } else {
-        if (value.type === "ForOfStatement") {
+        if (type === "ForOfStatement") {
           // ForOfStatement right is skipped by unsafe_prefix, scanned by capture/hazard.
           scan(value.right, nested, true, next_loop, value);
         } else {
@@ -3853,58 +4125,13 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       return;
     }
     if (
-      (value.type === "WhileStatement" || value.type === "DoWhileStatement") &&
+      (type === "WhileStatement" || type === "DoWhileStatement") &&
       !nested && !in_yield_arg
     ) {
       const next_loop = in_loop || contains(value);
       scan_children(value, nested, in_yield_arg, next_loop);
       return;
     }
-    if (value.type === "VariableDeclarator") {
-      // Check lexical hazards in destructuring default patterns while avoiding
-      // counting the declaration's own identifier as a read reference.
-      scan_pattern_hazards(value.id, nested, in_yield_arg, in_loop, value);
-      if (value.init) scan(value.init, nested, in_yield_arg, in_loop, value);
-      return;
-    }
-    if (value.type === "YieldExpression") {
-      if (!nested) {
-        yields.push(value.start);
-        if (!in_yield_arg && value.start > max_prefix_yield) {
-          max_prefix_yield = value.start;
-        }
-      }
-      // unsafe_prefix does not descend into YieldExpression.argument; capture/hazard do.
-      scan_children(value, nested, true, in_loop);
-      return;
-    }
-    if (!nested && !in_yield_arg) {
-      if (
-        value.type === "CallExpression" || value.type === "NewExpression" ||
-        value.type === "AssignmentExpression" && !is_prefix_local(value.left) ||
-        value.type === "UpdateExpression" && !is_prefix_local(value.argument) ||
-        value.type === "UnaryExpression" && value.operator === "delete"
-      ) prefix_effects.push({ node: value, loop: in_loop });
-    }
-    if (value.type === "AssignmentExpression") write(value.left, nested);
-    if (
-      value.type === "UpdateExpression" ||
-      value.type === "UnaryExpression" && value.operator === "delete"
-    ) write(value.argument, nested);
-    if (
-      value.type === "CallExpression" &&
-      value.callee.type === "MemberExpression" && !value.callee.computed &&
-      value.callee.property.type === "Identifier" &&
-      mutating_methods.has(value.callee.property.name)
-    ) write(value.callee.object, nested);
-    if (
-      value.type === "Identifier" &&
-      !(parent &&
-        (parent.type === "MemberExpression" && parent.property === value &&
-            !parent.computed ||
-          parent.type === "Property" && parent.key === value &&
-            !parent.computed))
-    ) lookup_capture(value.name)?.references.push(value.start);
     scan_children(value, nested, in_yield_arg, in_loop);
   }
   function scan_update(

@@ -126,6 +126,7 @@ function list_append<item>(
   right: RawList<item>,
 ): RawList<item> {
   if (left[0] === "Nil") return right;
+  if (right[0] === "Nil") return left;
   const out = new ListBuilder<item>();
   let source: RawList<item> = left;
   while (source[0] === "Cons") {

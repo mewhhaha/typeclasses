@@ -693,15 +693,8 @@ function is_union_definition<dictionary extends Dictionary>(
       >
     >,
 ): value is UnionDefinition<TaggedUnionShape<dictionary>> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return union_definition in value;
+  return typeof value === "object" && value !== null &&
+    union_definition in value;
 }
 
 function tagged_data_from_union<dictionary extends Dictionary>(
@@ -771,7 +764,7 @@ function tagged_variant<
           item
         >;
       default:
-        return factory.many(payloads_from_arguments(arguments)) as Data<
+        return factory.many(Array.from(arguments)) as Data<
           dictionary,
           item
         >;
@@ -851,16 +844,6 @@ function tagged_guard(
     }
     return value.length === expected_length && value[0] === tag;
   };
-}
-
-function payloads_from_arguments(args: IArguments): unknown[] {
-  const payloads = new Array<unknown>(args.length);
-
-  for (let index = 0; index < args.length; index += 1) {
-    payloads[index] = args[index];
-  }
-
-  return payloads;
 }
 
 function tagged_variant_factory<dictionary extends object>(
@@ -955,19 +938,44 @@ function create_tagged_variant_factory<dictionary extends object>(
 
   return {
     empty() {
-      return construct_empty();
+      return Object.create(empty_prototype) as WrappedData<
+        dictionary,
+        TaggedData,
+        unknown
+      >;
     },
 
     many(payloads) {
-      return construct_many(payloads);
+      return new (TaggedMany as unknown as {
+        new (payload: readonly unknown[]): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(payloads);
     },
 
     one(payload) {
-      return construct_one(payload);
+      return new (TaggedOne as unknown as {
+        new (payload: unknown): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(payload);
     },
 
     two(first, second) {
-      return construct_two(first, second);
+      return new (TaggedTwo as unknown as {
+        new (
+          first: unknown,
+          second: unknown,
+        ): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(first, second);
     },
 
     from_value(value) {
@@ -983,54 +991,6 @@ function create_tagged_variant_factory<dictionary extends object>(
       }
     },
   };
-
-  function construct_empty(): WrappedData<dictionary, TaggedData, unknown> {
-    return Object.create(empty_prototype) as WrappedData<
-      dictionary,
-      TaggedData,
-      unknown
-    >;
-  }
-
-  function construct_one(
-    payload: unknown,
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedOne as unknown as {
-      new (payload: unknown): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(payload);
-  }
-
-  function construct_many(
-    payloads: readonly unknown[],
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedMany as unknown as {
-      new (payload: readonly unknown[]): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(payloads);
-  }
-
-  function construct_two(
-    first: unknown,
-    second: unknown,
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedTwo as unknown as {
-      new (
-        first: unknown,
-        second: unknown,
-      ): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(first, second);
-  }
 }
 
 function tagged_data_prototype<
@@ -1119,8 +1079,21 @@ export function call_typeclass_method<self, args extends unknown[], result>(
   method: (this: self, ...args: args) => result,
   self: self,
   ...args: args
-): result {
-  return method.call(self, ...args);
+): result;
+export function call_typeclass_method(
+  method: (this: unknown, ...args: unknown[]) => unknown,
+  self: unknown,
+  a?: unknown,
+  b?: unknown,
+): unknown {
+  const n = arguments.length;
+  return n === 3
+    ? method.call(self, a)
+    : n === 4
+    ? method.call(self, a, b)
+    : n === 2
+    ? method.call(self)
+    : method.apply(self, [].slice.call(arguments, 2));
 }
 
 /** Attach a typeclass implementation to a data dictionary. */
@@ -1235,23 +1208,22 @@ function same_dictionary_method(
   method: (...args: unknown[]) => unknown,
   name: PropertyKey,
 ): (...args: unknown[]) => unknown {
-  return function (this: Dictionary, ...args: unknown[]): unknown {
-    const right = args[0];
-
+  return function (this: Dictionary, right?: unknown): unknown {
     if (
-      typeof right === "object" && right !== null && kind in right &&
-      right[kind as keyof typeof right] !== this[kind]
+      typeof right === "object" && right !== null &&
+      (right as Dictionary)[kind] !== this[kind] && kind in right
     ) {
       throw new TypeError(
         `${
           describe_property_key(name)
         } requires values from the same dictionary; left ${
           describe_runtime_kind(this[kind])
-        }, right ${describe_runtime_kind(right[kind as keyof typeof right])}`,
+        }, right ${describe_runtime_kind((right as Dictionary)[kind])}`,
       );
     }
 
-    return method.apply(this, args);
+    if (arguments.length === 1) return method.call(this, right);
+    return method.apply(this, arguments as unknown as unknown[]);
   };
 }
 
@@ -1377,7 +1349,11 @@ export function typeclass<token extends PropertyKey, methods extends object>(
 
   Object.defineProperties(definition, {
     instance: { value: definition.instance.bind(definition) },
-    instance_for: { value: definition.instance_for.bind(definition) },
+    instance_for: {
+      value: <receiver extends { [key in token]: object }>(
+        receiver: receiver,
+      ) => instance_for_token(token, receiver),
+    },
   });
 
   return definition;

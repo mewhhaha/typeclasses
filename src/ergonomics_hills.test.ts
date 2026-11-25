@@ -1437,3 +1437,357 @@ Deno.test("round-6 runtime speedups preserve Validation O(N) accumulation, List 
   assert_equals(run(handled_p3).result, 8);
   assert_equals(run(handled_p3).result, 8);
 });
+
+Deno.test("round-7 core runtime optimizations preserve Do runners, sequential traversals, prelude folds, collection short-circuits, and sync async-iterable concurrency", async () => {
+  const { Do, Foldable, MonadError, Traversable, Eq } = await import(
+    "./typeclasses.ts"
+  );
+  const {
+    Task,
+    ParallelTask,
+    parallel,
+    sequential,
+    succeed,
+    from_fn,
+    run_task,
+    run_task_exit,
+    traverse_task,
+    is_task_cancellation,
+  } = await import("./task.ts");
+  const { Writer, tell } = await import("./writer.ts");
+  const { State, get, put, modify } = await import("./state.ts");
+  const { Reader, ask, asks } = await import("./reader.ts");
+  const {
+    Stm,
+    new_tvar,
+    read_tvar,
+    write_tvar,
+    modify_tvar,
+    retry,
+    or_else,
+    atomically,
+    stm_trusted,
+    stm_read_journal,
+    stm_write_journal,
+    stm_modify_journal,
+    stm_atomically_direct,
+  } = await import("./stm.ts");
+  const { traverse_sequential } = await import("./traversal.ts");
+  const { fold_map, mconcat, length, to_array } = await import("./prelude.ts");
+  const { from_array: list_from_array, to_array: list_to_array } = await import(
+    "./list.ts"
+  );
+  const { SetT } = await import("./set.ts");
+  const { MapT } = await import("./map.ts");
+  const { RecordT } = await import("./record.ts");
+  const { TypedArrayT } = await import("./typed_array.ts");
+  const { from_bytes: ab_from_bytes } = await import(
+    "./array_buffer.ts"
+  );
+  const { from_bytes: dv_from_bytes } = await import(
+    "./data_view.ts"
+  );
+  const { URLSearchParamsT } = await import("./url_search_params.ts");
+  const { FormDataT } = await import("./form_data.ts");
+  const {
+    from_sync_factory,
+    map_concurrent,
+    map_concurrent_unordered,
+    to_array: ai_to_array,
+  } = await import("./async_iterable.ts");
+
+  // 1. Direct iterative Do(Task) runner: sync + async + replay + catch_error + cancellation
+  const task_prog = Do(Task, function* () {
+    let sum = 0;
+    for (let i = 1; i <= 40; i += 1) {
+      const v = yield* from_fn(() => (i % 10 === 0 ? Promise.resolve(i) : i));
+      sum += v;
+    }
+    return sum;
+  });
+  assert_equals(await run_task(task_prog), 820);
+  assert_equals(await run_task(task_prog), 820);
+
+  const recovered = MonadError.catch_error(
+    from_fn((): number => {
+      throw new Error("sync-boom");
+    }),
+    (err) => succeed((err as Error).message.length),
+  );
+  assert_equals(await run_task(recovered), 9);
+
+  const ac = new AbortController();
+  ac.abort(new Error("stop-now"));
+  const cancelled = await run_task_exit(task_prog, { signal: ac.signal });
+  assert_equals(cancelled.status, "cancelled");
+  if (cancelled.status === "cancelled") {
+    assert_true(
+      is_task_cancellation(cancelled.error),
+      "expected cancellation",
+    );
+    assert_equals((cancelled.reason as Error).message, "stop-now");
+  }
+
+  // ParallelTask lift & traverse_task with sync and async items
+  const par_lifted = sequential(
+    Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      parallel(from_fn(() => 10)),
+      parallel(from_fn(() => Promise.resolve(20))),
+      parallel(succeed(12)),
+    ),
+  );
+  assert_equals(await run_task(par_lifted), 42);
+  assert_equals(
+    await run_task(
+      traverse_task(
+        [1, 2, 3, 4],
+        2,
+        (n) => from_fn(() => (n % 2 === 0 ? Promise.resolve(n * 2) : n * 2)),
+      ),
+    ),
+    [2, 4, 6, 8],
+  );
+  assert_equals(
+    (await run_task(
+      sequential(
+        Traversable.traverse(
+          ArrayT([2, 3, 4]),
+          ParallelTask,
+          (n) => parallel(from_fn(() => n * 3)),
+        ),
+      ),
+    )).value(),
+    [6, 9, 12],
+  );
+
+  // 2. Direct Do(Writer) / Writer.with / writer_cell O(N) ArrayT buffering + sequential traversal
+  const w_dict = Writer.with(ArrayT<number>([]));
+  const w_prog = Do(w_dict, function* () {
+    let total = 0;
+    for (let i = 1; i <= 50; i += 1) {
+      yield* tell(ArrayT([i]));
+      total += i;
+    }
+    return total;
+  });
+  const [w_res, w_log] = w_prog.value();
+  assert_equals(w_res, 1275);
+  assert_equals(w_log.value().length, 50);
+  assert_equals(w_log.value()[49], 50);
+
+  const w_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    w_dict,
+    (n) => w_dict([n * 10, ArrayT([n])]),
+  );
+  const [wt_arr, wt_log] = w_trav.value();
+  assert_equals(wt_arr.value(), [10, 20, 30]);
+  assert_equals(wt_log.value(), [1, 2, 3]);
+
+  // 3. Do(State), Do(Reader), and sequential traversals (preserving fresh ask()/get() wrappers)
+  const st_prog = Do(State.with_state<number>(), function* () {
+    let sum = 0;
+    for (let i = 0; i < 30; i += 1) {
+      const cur = yield* get<number>();
+      yield* put<number>(cur + 1);
+      yield* modify<number>((n) => n + 1);
+      sum += cur;
+    }
+    return sum;
+  });
+  assert_equals(st_prog.run(0), [870, 60]);
+  assert_equals(
+    traverse_sequential(
+      [1, 2, 3],
+      State.with_state<number>(),
+      (n) => State((s: number) => [s + n, s + 1]),
+    ).run(10),
+    [[11, 13, 15], 13],
+  );
+
+  const rd_prog = Do(
+    Reader.with_environment<{ readonly n: number }>(),
+    function* () {
+      const base = yield* ask<{ readonly n: number }>();
+      const twice = yield* asks((e: { readonly n: number }) => e.n * 2);
+      return base.n + twice;
+    },
+  );
+  assert_equals(rd_prog.run({ n: 7 }), 21);
+  assert_equals(
+    traverse_sequential(
+      [1, 2, 3],
+      Reader.with_environment<number>(),
+      (n) => Reader((e: number) => e + n),
+    ).run(10),
+    [11, 12, 13],
+  );
+
+  // 4. Direct Do(Stm), pooled or_else rollback, record shapes, and trusted STM helpers
+  const tv_num = new_tvar(10);
+  const tv_rec = new_tvar({ count: 1, label: "a" });
+  const stm_prog = Do(Stm, function* () {
+    const cur = yield* read_tvar(tv_num);
+    yield* modify_tvar(tv_num, (n) => n + 5);
+    const rec = yield* read_tvar(tv_rec);
+    yield* write_tvar(tv_rec, { count: rec.count + 1, label: "b" });
+    return cur + rec.count;
+  });
+  assert_equals(atomically(stm_prog), 11);
+  assert_equals(atomically(read_tvar(tv_num)), 15);
+  assert_equals(atomically(read_tvar(tv_rec)), { count: 2, label: "b" });
+
+  // or_else must roll back mutations from the retried left branch
+  const rollback_res = atomically(
+    or_else(
+      Do(Stm, function* () {
+        yield* write_tvar(tv_num, 999);
+        return yield* retry<number>();
+      }),
+      read_tvar(tv_num),
+    ),
+  );
+  assert_equals(rollback_res, 15);
+
+  // Trusted STM helpers
+  const direct_stm = stm_trusted((journal) => {
+    const prev = stm_read_journal(journal, tv_num);
+    stm_modify_journal(journal, tv_num, (n) => n + 2);
+    stm_write_journal(journal, tv_num, prev + 3);
+    return stm_read_journal(journal, tv_num);
+  });
+  assert_equals(atomically(direct_stm), 18);
+  assert_equals(
+    stm_atomically_direct((journal) => stm_read_journal(journal, tv_num)),
+    18,
+  );
+  assert_equals(
+    atomically(
+      traverse_sequential([1, 2, 3], Stm, (n) =>
+        Do(Stm, function* () {
+          yield* modify_tvar(tv_num, (x) => x + n);
+          return yield* read_tvar(tv_num);
+        })),
+    ),
+    [19, 21, 24],
+  );
+
+  // 5. Prelude O(N) fold_map / mconcat / length / to_array
+  assert_equals(
+    fold_map(ArrayT, (n: number) => ArrayT([n, n * 10]), ArrayT([1, 2, 3]))
+      .value(),
+    [1, 10, 2, 20, 3, 30],
+  );
+  assert_equals(
+    mconcat(
+      ArrayT,
+      ArrayT([ArrayT([1, 2]), ArrayT([3]), ArrayT([4, 5])]),
+    ).value(),
+    [1, 2, 3, 4, 5],
+  );
+  const lst = list_from_array([1, 2, 3, 4]);
+  assert_equals(length(ArrayT([1, 2, 3])), 3);
+  assert_equals(length(lst), 4);
+  assert_equals(length(SetT(new Set([1, 2]))), 2);
+  assert_equals(length(MapT(new Map([["a", 1], ["b", 2]]))), 2);
+  assert_equals(to_array(lst), [1, 2, 3, 4]);
+  assert_equals(list_to_array(lst), [1, 2, 3, 4]);
+
+  // 6. Collection fold_while / some / find short-circuiting and Eq without exception throws
+  const ta = TypedArrayT(new Uint16Array([10, 20, 30, 40]));
+  let ta_steps = 0;
+  assert_equals(
+    Foldable.fold_while(ta, 0, (acc, n) => {
+      ta_steps += 1;
+      return acc + n >= 30 ? ["Done", acc + n] : ["Continue", acc + n];
+    }),
+    30,
+  );
+  assert_equals(ta_steps, 2);
+
+  const ab = ab_from_bytes([1, 2, 3, 4, 5]);
+  let ab_steps = 0;
+  assert_equals(
+    Foldable.find(ab, (b) => {
+      ab_steps += 1;
+      return b === 3;
+    }),
+    3,
+  );
+  assert_equals(ab_steps, 3);
+  assert_equals(Foldable.some(ab, (b) => b === 99), false);
+
+  const dv = dv_from_bytes([5, 6, 7, 8]);
+  let dv_steps = 0;
+  assert_equals(
+    Foldable.some(dv, (b) => {
+      dv_steps += 1;
+      return b === 6;
+    }),
+    true,
+  );
+  assert_equals(dv_steps, 2);
+
+  const rec = RecordT({ a: 1, b: 2, c: 3, d: 4 });
+  let rec_steps = 0;
+  assert_equals(
+    Foldable.find(rec, (v) => {
+      rec_steps += 1;
+      return v === 2;
+    }),
+    2,
+  );
+  assert_equals(rec_steps, 2);
+
+  const usp1 = URLSearchParamsT(new URLSearchParams([["a", "1"], ["b", "2"]]));
+  const usp2 = URLSearchParamsT(new URLSearchParams([["a", "1"], ["b", "2"]]));
+  const usp3 = URLSearchParamsT(new URLSearchParams([["a", "1"], ["b", "3"]]));
+  assert_equals(Eq.eq(usp1, usp2), true);
+  assert_equals(Eq.eq(usp1, usp3), false);
+  let usp_steps = 0;
+  assert_equals(
+    Foldable.some(usp1, ([k]) => {
+      usp_steps += 1;
+      return k === "a";
+    }),
+    true,
+  );
+  assert_equals(usp_steps, 1);
+
+  const fd_a = new FormData();
+  fd_a.append("k1", "v1");
+  fd_a.append("k2", "v2");
+  const fd_b = new FormData();
+  fd_b.append("k1", "v1");
+  fd_b.append("k2", "v2");
+  const fd_c = new FormData();
+  fd_c.append("k1", "v1");
+  assert_equals(Eq.eq(FormDataT(fd_a), FormDataT(fd_b)), true);
+  assert_equals(Eq.eq(FormDataT(fd_a), FormDataT(fd_c)), false);
+  let fd_steps = 0;
+  assert_equals(
+    Foldable.find(FormDataT(fd_a), ([k]) => {
+      fd_steps += 1;
+      return k === "k1";
+    }),
+    ["k1", "v1"],
+  );
+  assert_equals(fd_steps, 1);
+
+  // 7. AsyncIterableT map_concurrent & map_concurrent_unordered sync + async callbacks
+  const src_stream = from_sync_factory(() => [1, 2, 3, 4, 5]);
+  const ordered = await ai_to_array(
+    map_concurrent(
+      src_stream,
+      2,
+      (n) => n % 2 === 0 ? Promise.resolve(n * 10) : n * 10,
+    ),
+  );
+  assert_equals(ordered, [10, 20, 30, 40, 50]);
+
+  const unordered = await ai_to_array(
+    map_concurrent_unordered(src_stream, 3, (n) => n + 1),
+  );
+  assert_equals(unordered.sort((a, b) => a - b), [2, 3, 4, 5, 6]);
+});

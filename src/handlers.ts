@@ -1,4 +1,5 @@
 import { ArrayT } from "./array.ts";
+import { as_data, type Data, type Dictionary, kind } from "./typeclass.ts";
 import {
   bind,
   type Effect,
@@ -23,7 +24,6 @@ import {
   run_writer,
   writer_cell_empty,
 } from "./writer.ts";
-import { type Data, type Dictionary, kind } from "./typeclass.ts";
 import type { Monoid } from "./typeclasses/monoid.ts";
 
 type Selected<requirements, tag> = Extract<requirements, { readonly 0: tag }>;
@@ -221,28 +221,37 @@ type CellSpec =
     readonly cell: AsWriterCell<PropertyKey, Dictionary, unknown>;
   };
 
-const cell_binding_specs = new WeakMap<object, CellSpec>();
+const cell_spec_symbol = Symbol("Handlers.cell_spec");
+type BindingWithSpec = CellBinding<unknown, Family, unknown> & {
+  [cell_spec_symbol]?: CellSpec;
+};
+
+function attach_cell_spec<T extends object>(binding: T, spec: CellSpec): T {
+  Object.defineProperty(binding, cell_spec_symbol, { value: spec });
+  return binding;
+}
 
 /** Supply a Reader cell's environment. */
 export function provide_reader<key extends PropertyKey, environment>(
   cell: AsReaderCell<key, environment>,
   environment: NoInfer<environment>,
 ): CellBinding<Uses<typeof cell>, "reader", never> {
-  const binding: CellBinding<Uses<typeof cell>, "reader", never> = {
-    family: "reader",
-    handle: (effect) =>
-      run_reader(
-        cell,
-        effect as Effect<Uses<typeof cell>, unknown>,
-        environment,
-      ),
-  };
-  cell_binding_specs.set(binding, {
-    family: "reader",
-    runtime_kind: cell[kind],
-    value: environment,
-  });
-  return binding;
+  return attach_cell_spec(
+    {
+      family: "reader" as const,
+      handle: (effect: Effect<unknown, unknown>) =>
+        run_reader(
+          cell,
+          effect as Effect<Uses<typeof cell>, unknown>,
+          environment,
+        ),
+    },
+    {
+      family: "reader",
+      runtime_kind: cell[kind],
+      value: environment,
+    },
+  );
 }
 
 /** Supply a State cell's initial state and retain its final state by name. */
@@ -250,17 +259,18 @@ export function provide_state<key extends PropertyKey, state>(
   cell: AsCell<key, state>,
   initial: NoInfer<state>,
 ): CellBinding<Uses<typeof cell>, "state", state> {
-  const binding: CellBinding<Uses<typeof cell>, "state", state> = {
-    family: "state",
-    handle: (effect) =>
-      run_state(cell, effect as Effect<Uses<typeof cell>, unknown>, initial),
-  };
-  cell_binding_specs.set(binding, {
-    family: "state",
-    runtime_kind: cell[kind],
-    initial,
-  });
-  return binding;
+  return attach_cell_spec(
+    {
+      family: "state" as const,
+      handle: (effect: Effect<unknown, unknown>) =>
+        run_state(cell, effect as Effect<Uses<typeof cell>, unknown>, initial),
+    },
+    {
+      family: "state",
+      runtime_kind: cell[kind],
+      initial,
+    },
+  );
 }
 
 /** Supply a Writer cell's initial log (defaults to the cell's declared empty log). */
@@ -272,22 +282,23 @@ export function provide_writer<
   cell: AsWriterCell<key, output, log>,
   initial?: Data<NoInfer<output>, NoInfer<log>>,
 ): CellBinding<Uses<typeof cell>, "writer", Data<output, log>> {
-  const binding: CellBinding<Uses<typeof cell>, "writer", Data<output, log>> = {
-    family: "writer",
-    handle: (effect) =>
-      run_writer(
-        cell,
-        effect as Effect<Uses<typeof cell>, unknown>,
-        initial === undefined ? writer_cell_empty(cell) : initial,
-      ),
-  };
-  cell_binding_specs.set(binding, {
-    family: "writer",
-    runtime_kind: cell[kind],
-    initial: initial as Data<Dictionary, unknown> | undefined,
-    cell: cell as unknown as AsWriterCell<PropertyKey, Dictionary, unknown>,
-  });
-  return binding;
+  return attach_cell_spec(
+    {
+      family: "writer" as const,
+      handle: (effect: Effect<unknown, unknown>) =>
+        run_writer(
+          cell,
+          effect as Effect<Uses<typeof cell>, unknown>,
+          initial === undefined ? writer_cell_empty(cell) : initial,
+        ),
+    },
+    {
+      family: "writer",
+      runtime_kind: cell[kind],
+      initial: initial as Data<Dictionary, unknown> | undefined,
+      cell: cell as unknown as AsWriterCell<PropertyKey, Dictionary, unknown>,
+    },
+  );
 }
 
 type Bindings = Readonly<
@@ -340,23 +351,23 @@ function collect_ordered_bindings(bindings: Bindings): OrderedBinding[] {
   const out: OrderedBinding[] = [];
   for (let i = 0; i < string_keys.length; i += 1) {
     const key = string_keys[i];
-    const binding = bindings[key];
+    const binding = bindings[key] as BindingWithSpec;
     out.push({
       name: key,
       family: binding.family,
       handle: binding.handle,
-      spec: cell_binding_specs.get(binding),
+      spec: binding[cell_spec_symbol],
     });
   }
   for (let i = 0; i < symbol_keys.length; i += 1) {
     const key = symbol_keys[i];
     if (!Object.prototype.propertyIsEnumerable.call(bindings, key)) continue;
-    const binding = bindings[key];
+    const binding = bindings[key] as BindingWithSpec;
     out.push({
       name: key,
       family: binding.family,
       handle: binding.handle,
-      spec: cell_binding_specs.get(binding),
+      spec: binding[cell_spec_symbol],
     });
   }
   return out;
@@ -509,7 +520,7 @@ function flush_writer_buffers(
   for (let index = 0; index < buffers.length; index += 1) {
     const buffer = buffers[index];
     if (buffer !== undefined) {
-      values[index] = ArrayT(buffer);
+      values[index] = as_data(ArrayT, buffer);
       buffers[index] = undefined;
     }
   }

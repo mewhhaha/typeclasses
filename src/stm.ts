@@ -4,9 +4,11 @@ import {
   as_data_cached,
   type Data,
   data,
+  kind,
   type type_data,
   type type_item,
 } from "./typeclass.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -14,6 +16,7 @@ import {
   Monad,
   Show,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 
 /** @ignore */
 export const stm_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -54,7 +57,7 @@ export type StmJournal = {
 const journal_inline_limit = 8;
 
 class Journal implements StmJournal {
-  readonly parent?: StmJournal;
+  parent?: StmJournal;
   escaped = false;
   reads_map?: Map<TVar<unknown>, unknown>;
   writes_map?: Map<TVar<unknown>, unknown>;
@@ -218,18 +221,27 @@ class Journal implements StmJournal {
 }
 
 let reusable_journal: Journal | undefined;
+let reusable_child_journal: Journal | undefined;
 
 function create_journal(parent?: StmJournal): Journal {
-  if (parent === undefined && reusable_journal !== undefined) {
-    const journal = reusable_journal;
-    reusable_journal = undefined;
+  if (parent === undefined) {
+    if (reusable_journal !== undefined) {
+      const journal = reusable_journal;
+      reusable_journal = undefined;
+      return journal;
+    }
+    return new Journal(undefined);
+  }
+  if (reusable_child_journal !== undefined) {
+    const journal = reusable_child_journal;
+    reusable_child_journal = undefined;
+    journal.parent = parent;
     return journal;
   }
   return new Journal(parent);
 }
 
-function release_journal(journal: Journal): void {
-  if (journal.escaped || journal.parent !== undefined) return;
+function reset_journal(journal: Journal): void {
   journal.r0_k = undefined;
   journal.r0_v = undefined;
   journal.w0_k = undefined;
@@ -247,7 +259,19 @@ function release_journal(journal: Journal): void {
   if (journal.reads_map !== undefined) journal.reads_map = undefined;
   if (journal.writes_map !== undefined) journal.writes_map = undefined;
   if (journal.exposed_map !== undefined) journal.exposed_map = undefined;
+}
+
+function release_journal(journal: Journal): void {
+  if (journal.escaped || journal.parent !== undefined) return;
+  reset_journal(journal);
   reusable_journal = journal;
+}
+
+function release_child_journal(journal: Journal): void {
+  if (journal.escaped) return;
+  journal.parent = undefined;
+  reset_journal(journal);
+  reusable_child_journal = journal;
 }
 
 function journal_of(journal: StmJournal): Journal | undefined {
@@ -426,8 +450,64 @@ export function or_else<item>(
       }
 
       return run_stm(right, journal);
+    } finally {
+      release_child_journal(branch);
     }
   });
+}
+
+/** @ignore Create a trusted Stm value from compiler-generated journal code without disabling journal pooling. */
+export function stm_trusted<item>(transaction: RawStm<item>): Stm<item> {
+  return trusted_stm(transaction);
+}
+
+/** @ignore Read a TVar directly from an active STM journal (for compiler-lowered transactions). */
+export function stm_read_journal<item>(
+  journal: StmJournal,
+  variable: TVar<item>,
+): item {
+  return read_journal(journal, variable);
+}
+
+/** @ignore Write a TVar directly into an active STM journal (for compiler-lowered transactions). */
+export function stm_write_journal<item>(
+  journal: StmJournal,
+  variable: TVar<item>,
+  value: item,
+): void {
+  write_journal(journal, variable, value);
+}
+
+/** @ignore Modify a TVar directly in an active STM journal (for compiler-lowered transactions). */
+export function stm_modify_journal<item>(
+  journal: StmJournal,
+  variable: TVar<item>,
+  fn: (value: item) => item,
+): item {
+  const next = fn(read_journal(journal, variable));
+  write_journal(journal, variable, next);
+  return next;
+}
+
+/** @ignore Execute a compiler-lowered journal callback atomically without allocating a Stm wrapper. */
+export function stm_atomically_direct<item>(transaction: RawStm<item>): item {
+  if (transaction_depth !== 0) {
+    throw new StmError(
+      "Nested atomically calls cannot join the active transaction",
+    );
+  }
+
+  const journal = create_journal();
+  transaction_depth += 1;
+
+  try {
+    const value = transaction(journal);
+    commit_journal(journal);
+    return value;
+  } finally {
+    transaction_depth -= 1;
+    release_journal(journal);
+  }
 }
 
 /** Runs and commits a transaction as one synchronous atomic step. */
@@ -473,27 +553,30 @@ Applicative.instance(Stm)({
 
   [applicative_lift_method](fn, rest) {
     const first = this.value();
-    const transactions = rest.map((current) => current.value());
+    const len = rest.length;
 
-    if (transactions.length === 0) {
+    if (len === 0) {
       return trusted_stm((journal) => fn(first(journal)));
     }
-    if (transactions.length === 1) {
-      const second = transactions[0];
+    if (len === 1) {
+      const second = rest[0].value();
       return trusted_stm((journal) => fn(first(journal), second(journal)));
     }
-    if (transactions.length === 2) {
-      const [second, third] = transactions;
+    if (len === 2) {
+      const second = rest[0].value();
+      const third = rest[1].value();
       return trusted_stm((journal) =>
         fn(first(journal), second(journal), third(journal))
       );
     }
 
+    const transactions = rest.map((current) => current.value());
     return trusted_stm((journal) => {
-      const values = [first(journal)];
+      const values = new Array<unknown>(len + 1);
+      values[0] = first(journal);
 
-      for (const transaction of transactions) {
-        values.push(transaction(journal));
+      for (let i = 0; i < len; i += 1) {
+        values[i + 1] = transactions[i](journal);
       }
 
       return fn(...values);
@@ -513,6 +596,75 @@ Monad.instance(Stm)({
     return trusted_stm((journal) => fn(raw(journal)).value()(journal));
   },
 });
+
+const stm_kind = Stm[kind];
+const canonical_stm_bind = Stm.bind;
+const canonical_stm_pure = Stm.pure;
+const stm_do: CustomDoRunner = (first_value, first_iterator, run) => {
+  const first = first_value as Stm<unknown>;
+  if (
+    first[kind] !== stm_kind || first.bind !== canonical_stm_bind ||
+    first.pure !== canonical_stm_pure
+  ) return undefined;
+  let first_claimed = false;
+  return trusted_stm((journal) => {
+    let iter: Generator<unknown, unknown, unknown>;
+    let current: unknown;
+    if (!first_claimed) {
+      first_claimed = true;
+      iter = first_iterator;
+      current = first_value;
+    } else {
+      iter = run();
+      const n0 = iter.next();
+      if (n0.done) return n0.value;
+      current = n0.value;
+    }
+    while (true) {
+      const val = (current as Stm<unknown>).value()(journal);
+      const next = iter.next(val);
+      if (next.done) return next.value;
+      current = next.value;
+    }
+  });
+};
+Object.defineProperty(Stm, do_runner_method, { value: stm_do });
+
+register_traversal(
+  Stm,
+  <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsStm, to>,
+    build: (items: Iterable<to>) => result,
+  ): Data<AsStm, result> => {
+    let fns: RawStm<to>[];
+    if (Array.isArray(items)) {
+      fns = new Array<RawStm<to>>(items.length);
+      for (let i = 0; i < items.length; i += 1) {
+        fns[i] = fn(items[i]).value();
+      }
+    } else {
+      fns = [];
+      for (const item of items) fns.push(fn(item).value());
+    }
+    return trusted_stm((journal) => {
+      const out = new Array<to>(fns.length);
+      for (let i = 0; i < fns.length; i += 1) out[i] = fns[i](journal);
+      return build(out);
+    });
+  },
+  <from, to>(
+    items: readonly from[],
+    fn: (item: from) => Data<AsStm, to>,
+  ): Data<AsStm, to[]> =>
+    trusted_stm((journal) => {
+      const out = new Array<to>(items.length);
+      for (let i = 0; i < items.length; i += 1) {
+        out[i] = fn(items[i]).value()(journal);
+      }
+      return out;
+    }),
+);
 
 function run_stm<item>(
   transaction: Stm<item>,
@@ -698,63 +850,82 @@ function lookup_journal(
   return fallback;
 }
 
+function merge_journal_read(
+  journal: StmJournal,
+  target: Journal | undefined,
+  variable: TVar<unknown>,
+  value: unknown,
+): void {
+  if (target !== undefined) {
+    if (target.has_write(variable)) target.set_write(variable, value, true);
+    else target.set_read(variable, value);
+  } else if (writes_of(journal)?.has(variable)) {
+    journal.writes.set(variable, value);
+    expose(journal, variable);
+  } else {
+    journal.reads.set(variable, value);
+  }
+}
+
+function merge_journal_write(
+  journal: StmJournal,
+  target: Journal | undefined,
+  variable: TVar<unknown>,
+  value: unknown,
+  is_exposed: boolean,
+): void {
+  if (target !== undefined) {
+    target.set_write(variable, value, is_exposed);
+  } else {
+    journal.writes.set(variable, value);
+    if (is_exposed) expose(journal, variable);
+  }
+}
+
 function merge_journal(journal: StmJournal, branch: StmJournal): void {
   const target = journal_of(journal);
   const source = journal_of(branch);
-  const merge_read = (variable: TVar<unknown>, value: unknown) => {
-    if (target !== undefined) {
-      if (target.has_write(variable)) target.set_write(variable, value, true);
-      else target.set_read(variable, value);
-    } else if (writes_of(journal)?.has(variable)) {
-      journal.writes.set(variable, value);
-      expose(journal, variable);
-    } else {
-      journal.reads.set(variable, value);
-    }
-  };
-  const merge_write = (
-    variable: TVar<unknown>,
-    value: unknown,
-    is_exposed: boolean,
-  ) => {
-    if (target !== undefined) {
-      target.set_write(variable, value, is_exposed);
-    } else {
-      journal.writes.set(variable, value);
-      if (is_exposed) expose(journal, variable);
-    }
-  };
   if (source !== undefined) {
     if (source.reads_map !== undefined) {
       for (const [variable, value] of source.reads_map) {
-        merge_read(variable, value);
+        merge_journal_read(journal, target, variable, value);
       }
     } else if (source.r0_k !== undefined) {
-      merge_read(source.r0_k, source.r0_v);
+      merge_journal_read(journal, target, source.r0_k, source.r0_v);
       const r_keys = source.r_keys;
       if (r_keys !== undefined) {
         const r_vals = source.r_vals!;
         for (let index = 0; index < r_keys.length; index += 1) {
-          merge_read(r_keys[index], r_vals[index]);
+          merge_journal_read(journal, target, r_keys[index], r_vals[index]);
         }
       }
     }
     if (source.writes_map !== undefined) {
       for (const [variable, value] of source.writes_map) {
-        merge_write(
+        merge_journal_write(
+          journal,
+          target,
           variable,
           value,
           source.escaped || (source.exposed_map?.has(variable) ?? false),
         );
       }
     } else if (source.w0_k !== undefined) {
-      merge_write(source.w0_k, source.w0_v, source.escaped || source.w0_exp);
+      merge_journal_write(
+        journal,
+        target,
+        source.w0_k,
+        source.w0_v,
+        source.escaped || source.w0_exp,
+      );
       const w_keys = source.w_keys;
       if (w_keys !== undefined) {
         const w_vals = source.w_vals!;
         const w_exp = source.w_exp!;
         for (let index = 0; index < w_keys.length; index += 1) {
-          merge_write(
+          merge_journal_write(
+            journal,
+            target,
             w_keys[index],
             w_vals[index],
             source.escaped || w_exp[index],
@@ -766,11 +937,15 @@ function merge_journal(journal: StmJournal, branch: StmJournal): void {
   }
   const reads = reads_of(branch);
   if (reads !== undefined) {
-    for (const [variable, value] of reads) merge_read(variable, value);
+    for (const [variable, value] of reads) {
+      merge_journal_read(journal, target, variable, value);
+    }
   }
   const writes = writes_of(branch);
   if (writes !== undefined) {
-    for (const [variable, value] of writes) merge_write(variable, value, true);
+    for (const [variable, value] of writes) {
+      merge_journal_write(journal, target, variable, value, true);
+    }
   }
 }
 
@@ -905,14 +1080,32 @@ function isolate_tvar<item>(
 }
 
 const shape_mismatch = Symbol("snapshot shape mismatch");
+const record_shape_keys = new WeakMap<object, readonly string[]>();
+function record_shape_key_count(record: Record<string, SnapshotShape>): number {
+  let keys = record_shape_keys.get(record);
+  if (keys === undefined) {
+    keys = Object.keys(record);
+    record_shape_keys.set(record, keys);
+  }
+  return keys.length;
+}
 function snapshot_value<item>(
   value: item,
   operation: string,
   shape?: SnapshotShape,
 ): item {
   if (shape !== undefined) {
-    const copy = clone_shape(value, shape, new Map());
-    if (copy !== shape_mismatch) return copy as item;
+    if (typeof shape === "string") {
+      if (
+        (shape === "null" && value === null) ||
+        (shape === "number" && typeof value === "number") ||
+        (shape === "string" && typeof value === "string") ||
+        (shape === "boolean" && typeof value === "boolean")
+      ) return value;
+    } else {
+      const copy = clone_shape(value, shape, new Map());
+      if (copy !== shape_mismatch) return copy as item;
+    }
   }
   return isolate_value(value, operation);
 }
@@ -966,7 +1159,9 @@ function clone_shape(
     return shape_mismatch;
   }
   const keys = Reflect.ownKeys(value);
-  if (keys.length !== Object.keys(shape.record).length) return shape_mismatch;
+  if (keys.length !== record_shape_key_count(shape.record)) {
+    return shape_mismatch;
+  }
   const copy: Record<string, unknown> = {};
   copies.set(value, copy);
   for (const key of keys) {

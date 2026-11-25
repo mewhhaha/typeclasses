@@ -13,6 +13,7 @@ export type BindingAnalysisObserver = {
   readonly on_node?: (node: Node) => void;
   readonly minimal?: boolean;
   readonly skip_statement?: (statement: Statement) => boolean;
+  readonly active_indices?: readonly number[];
   readonly record_top_level_scopes?: boolean;
 };
 
@@ -28,8 +29,20 @@ export function create_binding_analysis(
   const on_node = observer?.on_node;
   const minimal = observer?.minimal === true;
   const skip_statement = observer?.skip_statement;
+  const active_indices = observer?.active_indices;
   const record_top_level_scopes = observer?.record_top_level_scopes === true;
   const key_table = minimal ? value_visitor_keys : visitorKeys;
+  const deferred_top_level: Statement[] = [];
+  let top_level_flushed = false;
+
+  function flush_deferred_top_level(): void {
+    if (top_level_flushed) return;
+    top_level_flushed = true;
+    for (let i = 0; i < deferred_top_level.length; i += 1) {
+      declare_top_level(deferred_top_level[i]);
+    }
+    deferred_top_level.length = 0;
+  }
 
   function set_binding(scope: Scope, name: string, declaration: Node): void {
     let bindings = scope.bindings;
@@ -233,6 +246,29 @@ export function create_binding_analysis(
         break;
     }
     if (record_scope) scopes.set(current, scope);
+    if (current === program && active_indices !== undefined) {
+      const body = program.body;
+      let active_ptr = 0;
+      const active_len = active_indices.length;
+      for (let index = 0; index < body.length; index += 1) {
+        const statement = body[index] as Statement;
+        if (statement.type === "ImportDeclaration") {
+          if (!minimal) parents.set(statement, program);
+          visit(statement, root, root);
+          continue;
+        }
+        if (active_ptr < active_len && active_indices[active_ptr] === index) {
+          active_ptr += 1;
+          if (!minimal || statement.type === "FunctionDeclaration") {
+            parents.set(statement, program);
+          }
+          visit(statement, root, root);
+        } else {
+          deferred_top_level.push(statement);
+        }
+      }
+      return;
+    }
     if (current === program && skip_statement !== undefined) {
       const body = program.body;
       for (let index = 0; index < body.length; index += 1) {
@@ -240,7 +276,7 @@ export function create_binding_analysis(
         if (
           statement.type !== "ImportDeclaration" && skip_statement(statement)
         ) {
-          declare_top_level(statement);
+          deferred_top_level.push(statement);
           continue;
         }
         if (!minimal || statement.type === "FunctionDeclaration") {
@@ -249,6 +285,26 @@ export function create_binding_analysis(
         visit(statement, root, root);
       }
       return;
+    }
+    if (minimal) {
+      if (type === "MemberExpression") {
+        visit(current.object, scope, function_scope);
+        if (current.computed) {
+          visit(current.property, scope, function_scope);
+        } else if (
+          names !== undefined && current.property.type === "Identifier"
+        ) {
+          names.add(current.property.name);
+        }
+        return;
+      }
+      if (type === "Property" && !current.computed && !current.shorthand) {
+        if (names !== undefined && current.key.type === "Identifier") {
+          names.add(current.key.name);
+        }
+        visit(current.value, scope, function_scope);
+        return;
+      }
     }
     const keys = key_table[type];
     if (keys === undefined || keys.length === 0) return;
@@ -302,6 +358,16 @@ export function create_binding_analysis(
           return declaration;
         }
       }
+      if (
+        scope === root && !top_level_flushed && deferred_top_level.length > 0
+      ) {
+        flush_deferred_top_level();
+        const declaration = root.bindings?.[id_name];
+        if (declaration !== undefined) {
+          resolved.set(identifier, declaration);
+          return declaration;
+        }
+      }
       scope = scope.parent;
     }
     resolved.set(identifier, null);
@@ -313,7 +379,15 @@ export function create_binding_analysis(
       return resolve(identifier)?.type === "ImportDeclaration";
     },
     scope(current: Node): Node | null {
-      return scopes.get(current)?.owner ?? null;
+      let found = scopes.get(current);
+      if (
+        found === undefined && record_top_level_scopes && !top_level_flushed &&
+        deferred_top_level.length > 0
+      ) {
+        flush_deferred_top_level();
+        found = scopes.get(current);
+      }
+      return found?.owner ?? null;
     },
     parent(current: Node): Node | null {
       return parents.get(current) ?? null;

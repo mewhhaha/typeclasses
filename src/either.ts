@@ -380,7 +380,7 @@ export function bind_widen<
   >;
   switch (raw[0]) {
     case "Left":
-      return Left(raw[1]) as Output;
+      return same_context(value) as unknown as Output;
     case "Right":
       return fn(raw[1] as item) as Output;
   }
@@ -400,9 +400,7 @@ export function map_left<value extends Either<AnyLeft, unknown>, next_left>(
         fn(payload as EitherLeft<ReturnType<value["value"]>>),
       ) as Output;
     case "Right":
-      return Right<next_left, EitherRight<ReturnType<value["value"]>>>(
-        payload as EitherRight<ReturnType<value["value"]>>,
-      ) as Output;
+      return same_context(value) as unknown as Output;
   }
 }
 
@@ -600,7 +598,7 @@ function create_either(): EitherConstructor {
 
         switch (either_tag) {
           case "Left":
-            return Either<unknown, output>(["Left", loop_step]);
+            return same_context(current);
           case "Right": {
             const [loop_tag, value] = loop_step;
 
@@ -663,7 +661,7 @@ function create_either(): EitherConstructor {
 
       switch (tag) {
         case "Left":
-          return Applicative.pure(applicative, Left<unknown, to>(payload));
+          return Applicative.pure(applicative, same_context(this));
         case "Right":
           return Functor.map(fn(payload), (value) => Right<unknown, to>(value));
       }

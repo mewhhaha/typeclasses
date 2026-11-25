@@ -45,9 +45,11 @@ export function flatten_chunk_log<item>(log: ChunkLog<item>): readonly item[] {
     switch (current.tag) {
       case "empty":
         break;
-      case "leaf":
-        for (const item of current.items) output.push(item);
+      case "leaf": {
+        const items = current.items;
+        for (let i = 0; i < items.length; i += 1) output.push(items[i]);
         break;
+      }
       case "concat":
         pending.push(current.right, current.left);
         break;
@@ -64,8 +66,9 @@ Semigroup.instance(ChunkLog)({
     return ChunkLog({ tag: "concat", left, right: other });
   },
 });
+const empty_chunk_log = /* @__PURE__ */ ChunkLog({ tag: "empty" });
 Monoid.instance(ChunkLog)({
   empty() {
-    return ChunkLog({ tag: "empty" });
+    return empty_chunk_log as ChunkLog<never>;
   },
 });
