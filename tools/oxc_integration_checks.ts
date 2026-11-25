@@ -1850,3 +1850,434 @@ Deno.test("round-5b post-plugin fusion covers stacked async run_task, Maybe/Eith
   assert_equals(mod.stm_do_loop(tv, 5), 35);
   assert_equals(mod.stm_do_retry_fallback(tv), 10);
 });
+
+Deno.test("round-6 post-plugin fusion covers Do(Maybe)/Do(Either) cond+nullable elision, Validation/Task traverse, run_task_exit, standalone Do(Reader)/Do(State) prefix, Validation collect/lift, IterableT.bind, and fast-printer source maps", async () => {
+  const mod_url = new URL("../src/mod.ts", import.meta.url).href;
+  const task_url = new URL("../src/task.ts", import.meta.url).href;
+  const reader_url = new URL("../src/reader.ts", import.meta.url).href;
+  const state_url = new URL("../src/state.ts", import.meta.url).href;
+  const handlers_url = new URL("../src/handlers.ts", import.meta.url).href;
+  const array_url = new URL("../src/array.ts", import.meta.url).href;
+  const iterable_url = new URL("../src/iterable.ts", import.meta.url).href;
+  const traversal_url = new URL("../src/traversal.ts", import.meta.url).href;
+  const validation_url = new URL("../src/validation.ts", import.meta.url).href;
+
+  const source = [
+    `import { Applicative, collect, Do, Effect, Either, Foldable, from_nullable, Invalid, InvalidMessages, Just, Left, Maybe, Nothing, Program, Right, Traversable, Valid, Validation } from ${
+      JSON.stringify(mod_url)
+    };`,
+    `import { from_fn, run_task, run_task_exit, Task } from ${
+      JSON.stringify(task_url)
+    };`,
+    `import { ask, asks, Reader, reader, run_reader } from ${
+      JSON.stringify(reader_url)
+    };`,
+    `import { get, put, run_state, State, state } from ${
+      JSON.stringify(state_url)
+    };`,
+    `import { handle_cells, provide_reader, provide_state } from ${
+      JSON.stringify(handlers_url)
+    };`,
+    `import { ArrayT } from ${JSON.stringify(array_url)};`,
+    `import { from_array, preview, to_array } from ${
+      JSON.stringify(iterable_url)
+    };`,
+    `import { traverse_sequential } from ${JSON.stringify(traversal_url)};`,
+    `import type { ValidationSemigroup } from ${
+      JSON.stringify(validation_url)
+    };`,
+    // Q1: Do(Maybe) & Do(Either) conditional & from_nullable yield elision
+    "export function do_maybe_cond_loop(x: number, n: number) {",
+    "  return Do(Maybe, function* () {",
+    "    let total = 0;",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      const a = yield* (x > i ? Just(x + i) : Nothing<number>());",
+    "      const b = yield* (a < 0 ? Nothing<number>() : Just(a * 2));",
+    "      total += b;",
+    "    }",
+    "    return total;",
+    "  });",
+    "}",
+    "export function do_maybe_nullable(a: number | null, b: number | undefined) {",
+    "  return Do(Maybe, function* () {",
+    "    const x = yield* from_nullable(a);",
+    "    const y = yield* from_nullable(b);",
+    "    return x + y;",
+    "  });",
+    "}",
+    "export function do_either_cond_loop(x: number, n: number) {",
+    "  return Do(Either, function* () {",
+    "    let total = 0;",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      const a = yield* (x > i ? Right(x + i) : Left<string, number>(`fail:${i}`));",
+    "      total += a;",
+    "    }",
+    "    return total;",
+    "  });",
+    "}",
+    "export function do_either_mixed(e: Either<number, number>, ok: boolean) {",
+    "  return Do(Either, function* () {",
+    "    const a = yield* e;",
+    "    const b = yield* (ok ? Right(a * 2) : Left<string, number>('bad'));",
+    "    return a + b;",
+    "  });",
+    "}",
+    // Q2a: Validation traverse fusion
+    "export function trav_val_messages(xs: number[]) {",
+    "  return Traversable.traverse(ArrayT(xs), Validation.with_error<readonly string[]>(), (x) => x > 0 ? Valid(x * 2) : InvalidMessages(`bad:${x}`));",
+    "}",
+    "export function trav_val_with_error(xs: number[]) {",
+    "  return ArrayT(xs).traverse(Validation.with_error<readonly string[]>(), (x) => x >= 0 ? Valid(x + 1) : InvalidMessages(`neg:${x}`));",
+    "}",
+    "const sum_sg: ValidationSemigroup<number> = { concat: (a, b) => a + b };",
+    "export function trav_val_custom_sg(xs: number[]) {",
+    "  return Traversable.traverse(ArrayT(xs), Validation.with_error<number>(), (x) => x > 0 ? Valid(x) : Invalid(-x, sum_sg));",
+    "}",
+    // Q2b: Task traverse fusion (run_task & run_task_exit)
+    "export function run_trav_task_sync(xs: number[]) {",
+    "  return run_task(Traversable.traverse(ArrayT(xs), Task, (x) => from_fn(() => x * 3)));",
+    "}",
+    "export function run_trav_task_async(xs: number[]) {",
+    "  return run_task(traverse_sequential(xs, Task, (x) => from_fn(async () => await Promise.resolve(x + 10))));",
+    "}",
+    "export function run_trav_task_exit(xs: number[]) {",
+    "  return run_task_exit(Traversable.traverse(ArrayT(xs), Task, (x) => from_fn(() => {",
+    "    if (x < 0) throw new Error(`neg:${x}`);",
+    "    return x * 2;",
+    "  })));",
+    "}",
+    // Q3: run_task_exit direct & stacked
+    "const cfg_cell = reader<{ mul: number }>()('r6_cfg');",
+    "const cnt_cell = state<number>()('r6_cnt');",
+    "export function exit_do_task(x: number) {",
+    "  return run_task_exit(Do(Task, function* () {",
+    "    const a = yield* from_fn(() => x + 1);",
+    "    if (a < 0) throw new Error('boom');",
+    "    const b = yield* from_fn(() => Promise.resolve(a * 2));",
+    "    return b;",
+    "  }));",
+    "}",
+    "export function exit_stacked_reader_state(mul: number, init: number) {",
+    "  const env = { mul };",
+    "  return run_task_exit(run_reader(run_state(Program(function* () {",
+    "    const cfg = yield* ask<{ mul: number }>();",
+    "    const cur = yield* get<number>();",
+    "    const add = yield* Effect.lift(from_fn(() => cfg.mul * 2));",
+    "    if (add < 0) throw new Error('neg-mul');",
+    "    yield* put<number>(cur + add);",
+    "    return yield* get<number>();",
+    "  }), init), env));",
+    "}",
+    "export function exit_handle_cells(mul: number, init: number) {",
+    "  const env = { mul };",
+    "  return run_task_exit(handle_cells(Program(function* () {",
+    "    const cfg = yield* cfg_cell.ask();",
+    "    const step = yield* Effect.lift(from_fn(() => cfg.mul + 1));",
+    "    yield* cnt_cell.modify((n) => n + step);",
+    "    return yield* cnt_cell.get();",
+    "  }), { cfg: provide_reader(cfg_cell, env), cnt: provide_state(cnt_cell, init) }));",
+    "}",
+    "export function exit_sync_arg_throw() {",
+    "  const fail_env = (): { mul: number } => { throw new Error('arg-sync'); };",
+    "  return run_task_exit(run_reader(Program(function* () {",
+    "    const cfg = yield* ask<{ mul: number }>();",
+    "    return cfg.mul;",
+    "  }), fail_env()));",
+    "}",
+    // Q4: Standalone Do(State) & Do(Reader) with pure local prefix + eager barrier preservation
+    "export function standalone_do_state(n: number) {",
+    "  return Do(State, function* () {",
+    "    let total = 0;",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      const s = yield* get<number>();",
+    "      yield* put<number>(s + i);",
+    "      total += s;",
+    "    }",
+    "    return total;",
+    "  });",
+    "}",
+    "export function standalone_do_reader(n: number) {",
+    "  return Do(Reader, function* () {",
+    "    let acc = 0;",
+    "    for (let i = 0; i < n; i += 1) {",
+    "      acc += yield* asks((e: { base: number }) => e.base + i);",
+    "    }",
+    "    return acc;",
+    "  });",
+    "}",
+    "export const eager_log: string[] = [];",
+    "export function standalone_do_state_eager() {",
+    "  return Do(function* () {",
+    "    eager_log.push('eager');",
+    "    const s = yield* get<number>();",
+    "    return s + 1;",
+    "  });",
+    "}",
+    // Q5a: Validation Applicative.lift & collect
+    "export function lift_validation_form(name: string, age: number, email: string, role: string) {",
+    "  return Applicative.lift(",
+    "    (a, b, c, d) => ({ name: a, age: b, email: c, role: d }),",
+    "    name.length > 0 ? Valid(name) : InvalidMessages('name required'),",
+    "    age >= 18 ? Valid(age) : InvalidMessages('must be 18+'),",
+    "    email.includes('@') ? Valid(email) : InvalidMessages('invalid email'),",
+    "    role.length > 0 ? Valid(role) : InvalidMessages('role required'),",
+    "  );",
+    "}",
+    "export function collect_validation_general(a: Validation<readonly string[], number>, b: Validation<readonly string[], number>) {",
+    "  return collect(Validation.with_error<readonly string[]>(), { a, b });",
+    "}",
+    // Q5b: IterableT.bind loop fusion
+    "export function iter_bind_filter_map(xs: number[]) {",
+    "  return to_array(from_array(xs).bind((x) => from_array([x, x * 2])).filter((y) => y > 4).map((y) => y + 1));",
+    "}",
+    "export function iter_bind_preview(xs: number[], limit: number) {",
+    "  return preview(from_array(xs).bind((x) => from_array([x, x * 10])), limit);",
+    "}",
+    "export function iter_bind_fold_while(xs: number[], cap: number) {",
+    "  return Foldable.fold_while(from_array(xs).bind((x) => from_array([x, x + 1])), 0, (acc, v) => acc + v >= cap ? ['Done', acc + v] : ['Continue', acc + v]);",
+    "}",
+    "export function untouched_tail_anchor(v: number) {",
+    "  return v * 7;",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round6_fusion.ts", {
+    source_map: true,
+  });
+  assert_equals(result.diagnostics.length, 1);
+  assert_true(
+    result.diagnostics[0].message.includes("observable generator statements"),
+    "only standalone_do_state_eager should emit a diagnostic",
+  );
+  assert_true(result.map !== null, "expected V3 source map");
+
+  // Verify Q1 elided Just/Nothing/Right/Left/from_nullable inside Do loops
+  assert_true(
+    !/Do\(Maybe/.test(result.code) &&
+      !/Do\(Either/.test(result.code) &&
+      !/from_nullable\(/.test(result.code) &&
+      !/maybe_raw/.test(result.code),
+    "expected Q1 Do(Maybe)/Do(Either) cond+nullable yields to elide wrappers\n\n" +
+      result.code,
+  );
+  // Verify Q2 fused Validation & Task traverse
+  assert_true(
+    !/Traversable\.traverse\(/.test(result.code) &&
+      !/\.traverse\(/.test(result.code) &&
+      !/traverse_sequential\(/.test(result.code),
+    "expected Q2 Validation and Task traverse calls to fuse\n\n" + result.code,
+  );
+  // Verify Q3 fused run_task_exit (except exit_sync_arg_throw which preserves sync arg throw!)
+  assert_true(
+    !/run_task_exit\(Do\(/.test(result.code) &&
+      !/run_task_exit\(handle_cells\(/.test(result.code) &&
+      result.code.includes("is_task_cancellation"),
+    "expected Q3 run_task_exit calls to fuse with is_task_cancellation\n\n" +
+      result.code,
+  );
+  // Verify Q4 fused standalone_do_state & standalone_do_reader directly into State/Reader
+  assert_true(
+    result.code.includes("State((state_arg_") &&
+      result.code.includes("Reader((reader_arg_"),
+    "expected Q4 standalone Do(State)/Do(Reader) with pure prefix to fuse\n\n" +
+      result.code,
+  );
+  // Verify Q5a fused Applicative.lift & collect(Validation, ...)
+  assert_true(
+    !/Applicative\.lift\(/.test(result.code) &&
+      !/\bcollect\(/.test(result.code),
+    "expected Q5a Validation Applicative.lift and collect to fuse\n\n" +
+      result.code,
+  );
+  // Verify Q5b fused IterableT.bind pipelines
+  assert_true(
+    !/\.bind\(/.test(result.code) &&
+      !/\bto_array\(/.test(result.code) &&
+      !/\bpreview\(/.test(result.code) &&
+      !/Foldable\.fold_while\(/.test(result.code),
+    "expected Q5b IterableT.bind pipelines to fuse into nested loops\n\n" +
+      result.code,
+  );
+
+  // Verify fast-printer inline V3 source map resolves both edited and untouched lines accurately!
+  const smap = new SourceMap({
+    ...result.map!,
+    sources: [...result.map!.sources],
+    names: [...result.map!.names],
+    sourcesContent: [source],
+  });
+  const orig_lines = source.split("\n");
+  const gen_lines = result.code.split("\n");
+  const orig_tail_line = orig_lines.findIndex((l) =>
+    l.includes("return v * 7;")
+  );
+  const gen_tail_line = gen_lines.findIndex((l) => l.includes("return v * 7;"));
+  assert_true(orig_tail_line > 0 && gen_tail_line > 0, "found tail anchor");
+  const mapped_tail = smap.findEntry(
+    gen_tail_line,
+    gen_lines[gen_tail_line].indexOf("return"),
+  );
+  if (!("originalLine" in mapped_tail)) {
+    throw new Error("Missing tail mapping");
+  }
+  assert_equals(mapped_tail.originalLine, orig_tail_line);
+  const orig_loop_line = orig_lines.findIndex((l) => l.includes("total += b;"));
+  const gen_loop_line = gen_lines.findIndex((l) => l.includes("total += b;"));
+  assert_true(
+    orig_loop_line > 0 && gen_loop_line > 0,
+    "found edited loop body",
+  );
+  const mapped_loop = smap.findEntry(
+    gen_loop_line,
+    gen_lines[gen_loop_line].indexOf("total"),
+  );
+  if (!("originalLine" in mapped_loop)) {
+    throw new Error("Missing edited loop mapping");
+  }
+  assert_equals(mapped_loop.originalLine, orig_loop_line);
+
+  // Strict TypeScript check on generated Round 6 code!
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round6-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Round 6 TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Execute generated code and verify every semantic invariant!
+  const compiled = executable_typescript(result.code, "round6_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  const { Left, Right } = await import("../src/either.ts");
+  const { Valid, InvalidMessages } = await import("../src/validation.ts");
+
+  // Q1 runtime checks
+  assert_equals(mod.do_maybe_cond_loop(10, 4).value(), ["Just", 92]);
+  assert_equals(mod.do_maybe_cond_loop(2, 4).value(), ["Nothing"]);
+  assert_equals(mod.do_maybe_nullable(10, 32).value(), ["Just", 42]);
+  assert_equals(mod.do_maybe_nullable(null, 32).value(), ["Nothing"]);
+  assert_equals(mod.do_maybe_nullable(10, undefined).value(), ["Nothing"]);
+  assert_equals(mod.do_either_cond_loop(10, 4).value(), ["Right", 46]);
+  assert_equals(mod.do_either_cond_loop(2, 4).value(), ["Left", "fail:2"]);
+  assert_equals(mod.do_either_mixed(Right(5), true).value(), ["Right", 15]);
+  assert_equals(mod.do_either_mixed(Right(5), false).value(), ["Left", "bad"]);
+  assert_equals(mod.do_either_mixed(Left(99), true).value(), ["Left", 99]);
+
+  // Q2a runtime checks
+  const tvm_ok = mod.trav_val_messages([1, 2, 3]).value();
+  assert_equals(tvm_ok[0], "valid");
+  if (tvm_ok[0] === "valid") assert_equals(tvm_ok[1].value(), [2, 4, 6]);
+  const tvm_bad = mod.trav_val_messages([1, -2, 3, -4]).value();
+  assert_equals(tvm_bad[0], "invalid");
+  if (tvm_bad[0] === "invalid") {
+    assert_equals(tvm_bad[1], ["bad:-2", "bad:-4"]);
+  }
+  const tvw_ok = mod.trav_val_with_error([0, 2]).value();
+  assert_equals(tvw_ok[0], "valid");
+  if (tvw_ok[0] === "valid") assert_equals(tvw_ok[1].value(), [1, 3]);
+  const tvw_bad = mod.trav_val_with_error([0, -1, -3]).value();
+  assert_equals(tvw_bad[0], "invalid");
+  if (tvw_bad[0] === "invalid") assert_equals(tvw_bad[1], ["neg:-1", "neg:-3"]);
+  const tvc_bad = mod.trav_val_custom_sg([1, -3, -7]).value();
+  assert_equals(tvc_bad[0], "invalid");
+  if (tvc_bad[0] === "invalid") assert_equals(tvc_bad[1], 10);
+
+  // Q2b runtime checks
+  assert_equals((await mod.run_trav_task_sync([1, 2, 3])).value(), [3, 6, 9]);
+  assert_equals((await mod.run_trav_task_sync([])).value(), []);
+  assert_equals(await mod.run_trav_task_async([1, 2, 3]), [11, 12, 13]);
+  const rte_ok = await mod.run_trav_task_exit([2, 3]);
+  assert_equals(rte_ok.status, "succeeded");
+  if (rte_ok.status === "succeeded") {
+    assert_equals(rte_ok.value.value(), [4, 6]);
+  }
+  const rte_fail = await mod.run_trav_task_exit([2, -5, 3]);
+  assert_equals(rte_fail.status, "failed");
+
+  // Q3 runtime checks
+  assert_equals(await mod.exit_do_task(10), { status: "succeeded", value: 22 });
+  const ed_fail = await mod.exit_do_task(-5);
+  assert_equals(ed_fail.status, "failed");
+  assert_equals(await mod.exit_stacked_reader_state(3, 10), {
+    status: "succeeded",
+    value: [16, 16],
+  });
+  const es_fail = await mod.exit_stacked_reader_state(-1, 10);
+  assert_equals(es_fail.status, "failed");
+  const hc_ok = await mod.exit_handle_cells(4, 10);
+  assert_equals(hc_ok.status, "succeeded");
+  if (hc_ok.status === "succeeded") {
+    assert_equals(hc_ok.value.result, 15);
+    assert_equals(hc_ok.value.states, { cnt: 15 });
+  }
+  let sync_arg_threw = false;
+  try {
+    mod.exit_sync_arg_throw();
+  } catch (err) {
+    sync_arg_threw = err instanceof Error && err.message === "arg-sync";
+  }
+  assert_true(
+    sync_arg_threw,
+    "synchronous throw in non-pure run_task_exit argument must not be swallowed",
+  );
+
+  // Q4 runtime checks (reusable across multiple .run calls + eager prefix preserved)
+  const st_prog = mod.standalone_do_state(4);
+  assert_equals(st_prog.run(10), [44, 16]);
+  assert_equals(st_prog.run(1), [8, 7]);
+  const rd_prog = mod.standalone_do_reader(4);
+  assert_equals(rd_prog.run({ base: 10 }), 46);
+  assert_equals(rd_prog.run({ base: 1 }), 10);
+  mod.eager_log.length = 0;
+  const eager_st = mod.standalone_do_state_eager();
+  assert_equals(mod.eager_log, ["eager"]);
+  assert_equals(eager_st.run(41), [42, 41]);
+
+  // Q5a runtime checks
+  const form_ok = mod.lift_validation_form("Ada", 30, "a@b.c", "eng").value();
+  assert_equals(form_ok, [
+    "valid",
+    { name: "Ada", age: 30, email: "a@b.c", role: "eng" },
+  ]);
+  const form_bad = mod.lift_validation_form("", 12, "nope", "").value();
+  assert_equals(form_bad[0], "invalid");
+  if (form_bad[0] === "invalid") {
+    assert_equals(form_bad[1], [
+      "name required",
+      "must be 18+",
+      "invalid email",
+      "role required",
+    ]);
+  }
+  assert_equals(
+    mod.collect_validation_general(Valid(3), Valid(4)).value(),
+    ["valid", { a: 3, b: 4 }],
+  );
+  const cv_bad = mod.collect_validation_general(
+    InvalidMessages("e1"),
+    InvalidMessages("e2"),
+  ).value();
+  assert_equals(cv_bad[0], "invalid");
+  if (cv_bad[0] === "invalid") assert_equals(cv_bad[1], ["e1", "e2"]);
+
+  // Q5b runtime checks
+  assert_equals(mod.iter_bind_filter_map([1, 2, 3, 4]), [7, 9]);
+  assert_equals(mod.iter_bind_preview([1, 2, 3, 4], 3), [1, 10, 2]);
+  assert_equals(mod.iter_bind_preview([1, 2], 0), []);
+  assert_equals(mod.iter_bind_fold_while([2, 3, 4], 8), 8);
+});

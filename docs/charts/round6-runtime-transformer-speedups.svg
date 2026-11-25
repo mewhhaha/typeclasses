@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1030 486" width="1030"
+  height="486" role="img"
+  aria-label="Round 6: Core Runtime &amp; Transformer Speedups (vs main @ 7e888e3)">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#ef4444" />
+    </linearGradient>
+  </defs>
+  <style>
+  .bg {
+    fill: #0d1117;
+    stroke: #30363d;
+    stroke-width: 1;
+  }
+  .title {
+    font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #f0f6fc;
+  }
+  .subtitle {
+    font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #8b949e;
+  }
+  .label {
+    font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+      Arial, sans-serif;
+    fill: #e6edf3;
+  }
+  .mult {
+    font: 700 12.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #fbbf24;
+  }
+  .detail {
+    font: 400 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .tick {
+    font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    fill: #8b949e;
+  }
+  .grid {
+    stroke: #21262d;
+    stroke-width: 1;
+  }
+  .baseline {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+  .ci {
+    stroke: #f0f6fc;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0.8;
+  }
+  .row-alt {
+    fill: #161b22;
+  }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="1029" height="485" rx="12" />
+  <text class="title" x="24"
+    y="34">Round 6: Core Runtime &amp; Transformer Speedups (vs main @ 7e888e3)</text>
+  <text class="subtitle" x="24"
+    y="54">Paired ABBA benchmarks (8 blocks, 95% bootstrap CI) · TypedArrayT/SetT Foldable, O(N) Validation, 1-shot run_cells, List traverse, direct TS printer</text>
+  <line x1="24" y1="68" x2="1006" y2="68" stroke="#21262d" stroke-width="1" />
+  <rect class="row-alt" x="12" y="118" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="190" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="262" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="334" width="1006" height="36" rx="4" />
+  <rect class="row-alt" x="12" y="406" width="1006" height="36" rx="4" />
+  <line class="baseline" x1="390.0" y1="76" x2="390.0" y2="448" />
+  <text class="tick" x="390.0" y="464" text-anchor="middle">1x</text>
+  <line class="grid" x1="452.9" y1="76" x2="452.9" y2="448" />
+  <text class="tick" x="452.9" y="464" text-anchor="middle">2x</text>
+  <line class="grid" x1="536.0" y1="76" x2="536.0" y2="448" />
+  <text class="tick" x="536.0" y="464" text-anchor="middle">5x</text>
+  <line class="grid" x1="599.0" y1="76" x2="599.0" y2="448" />
+  <text class="tick" x="599.0" y="464" text-anchor="middle">10x</text>
+  <line class="grid" x1="661.9" y1="76" x2="661.9" y2="448" />
+  <text class="tick" x="661.9" y="464" text-anchor="middle">20x</text>
+  <line class="grid" x1="745.0" y1="76" x2="745.0" y2="448" />
+  <text class="tick" x="745.0" y="464" text-anchor="middle">50x</text>
+  <text class="label" x="24"
+    y="104.0">TypedArrayT(2000) Foldable.find (hit @ 10) (rt)</text>
+  <rect x="390" y="91.0" width="317.9" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="706.3" y1="100.0" x2="708.2" y2="100.0" />
+  <line class="ci" x1="706.3" y1="96.0" x2="706.3" y2="104.0" />
+  <line class="ci" x1="708.2" y1="96.0" x2="708.2" y2="104.0" />
+  <text class="mult" x="762" y="104.0">33.2x</text>
+  <text class="detail" x="828" y="104.0">(427ns -&gt; 12.9ns)</text>
+  <text class="label" x="24"
+    y="140.0">SetT(1000) Foldable.some (hit @ 10) (rt)</text>
+  <rect x="390" y="127.0" width="215.3" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="604.5" y1="136.0" x2="605.7" y2="136.0" />
+  <line class="ci" x1="604.5" y1="132.0" x2="604.5" y2="140.0" />
+  <line class="ci" x1="605.7" y1="132.0" x2="605.7" y2="140.0" />
+  <text class="mult" x="762" y="140.0">10.7x</text>
+  <text class="detail" x="828" y="140.0">(308ns -&gt; 28.7ns)</text>
+  <text class="label" x="24"
+    y="176.0">SetT(1000) Foldable.find (hit @ 10) (rt)</text>
+  <rect x="390" y="163.0" width="209.8" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="598.9" y1="172.0" x2="601.7" y2="172.0" />
+  <line class="ci" x1="598.9" y1="168.0" x2="598.9" y2="176.0" />
+  <line class="ci" x1="601.7" y1="168.0" x2="601.7" y2="176.0" />
+  <text class="mult" x="762" y="176.0">10.1x</text>
+  <text class="detail" x="828" y="176.0">(290ns -&gt; 28.6ns)</text>
+  <text class="label" x="24"
+    y="212.0">Validation traverse 200 InvalidMessages (rt)</text>
+  <rect x="390" y="199.0" width="183.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="562.6" y1="208.0" x2="582.3" y2="208.0" />
+  <line class="ci" x1="562.6" y1="204.0" x2="562.6" y2="212.0" />
+  <line class="ci" x1="582.3" y1="204.0" x2="582.3" y2="212.0" />
+  <text class="mult" x="762" y="212.0">7.52x</text>
+  <text class="detail" x="828" y="212.0">(28.0µs -&gt; 3.68µs)</text>
+  <text class="label" x="24"
+    y="248.0">TypedArrayT(2000) Foldable.fold (rt)</text>
+  <rect x="390" y="235.0" width="164.6" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="553.8" y1="244.0" x2="555.1" y2="244.0" />
+  <line class="ci" x1="553.8" y1="240.0" x2="553.8" y2="248.0" />
+  <line class="ci" x1="555.1" y1="240.0" x2="555.1" y2="248.0" />
+  <text class="mult" x="762" y="248.0">6.13x</text>
+  <text class="detail" x="828" y="248.0">(5.66µs -&gt; 919ns)</text>
+  <text class="label" x="24" y="284.0">Transform: medium m50 (sourceMap)</text>
+  <rect x="390" y="271.0" width="61.7" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="443.6" y1="280.0" x2="458.4" y2="280.0" />
+  <line class="ci" x1="443.6" y1="276.0" x2="443.6" y2="284.0" />
+  <line class="ci" x1="458.4" y1="276.0" x2="458.4" y2="284.0" />
+  <text class="mult" x="762" y="284.0">1.97x</text>
+  <text class="detail" x="828" y="284.0">(2.37ms -&gt; 1.17ms)</text>
+  <text class="label" x="24" y="320.0">Transform: tiny m1 (sourceMap)</text>
+  <rect x="390" y="307.0" width="44.0" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="422.9" y1="316.0" x2="446.6" y2="316.0" />
+  <line class="ci" x1="422.9" y1="312.0" x2="422.9" y2="320.0" />
+  <line class="ci" x1="446.6" y1="312.0" x2="446.6" y2="320.0" />
+  <text class="mult" x="762" y="320.0">1.62x</text>
+  <text class="detail" x="828" y="320.0">(58.5µs -&gt; 34.1µs)</text>
+  <text class="label" x="24" y="356.0">Transform: medium m50 (noMap)</text>
+  <rect x="390" y="343.0" width="32.0" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="412.5" y1="352.0" x2="429.3" y2="352.0" />
+  <line class="ci" x1="412.5" y1="348.0" x2="412.5" y2="356.0" />
+  <line class="ci" x1="429.3" y1="348.0" x2="429.3" y2="356.0" />
+  <text class="mult" x="762" y="356.0">1.42x</text>
+  <text class="detail" x="828" y="356.0">(1.54ms -&gt; 1.10ms)</text>
+  <text class="label" x="24" y="392.0">1-shot run_cells (3 cells) (rt)</text>
+  <rect x="390" y="379.0" width="31.5" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="419.9" y1="388.0" x2="427.6" y2="388.0" />
+  <line class="ci" x1="419.9" y1="384.0" x2="419.9" y2="392.0" />
+  <line class="ci" x1="427.6" y1="384.0" x2="427.6" y2="392.0" />
+  <text class="mult" x="762" y="392.0">1.41x</text>
+  <text class="detail" x="828" y="392.0">(1.92µs -&gt; 1.36µs)</text>
+  <text class="label" x="24"
+    y="428.0">List(500) Traversable.traverse(Maybe) (rt)</text>
+  <rect x="390" y="415.0" width="28.1" height="18" rx="4"
+    fill="url(#barGrad)" />
+  <line class="ci" x1="414.8" y1="424.0" x2="421.0" y2="424.0" />
+  <line class="ci" x1="414.8" y1="420.0" x2="414.8" y2="428.0" />
+  <line class="ci" x1="421.0" y1="420.0" x2="421.0" y2="428.0" />
+  <text class="mult" x="762" y="428.0">1.36x</text>
+  <text class="detail" x="828" y="428.0">(11.8µs -&gt; 8.64µs)</text>
+</svg>

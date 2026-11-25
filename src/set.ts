@@ -1,3 +1,4 @@
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import {
   type As,
   as_data,
@@ -124,6 +125,14 @@ function create_set(): AsSet {
   });
 
   Foldable.instance(SetT)({
+    [some_method](predicate) {
+      for (const item of this.value()) if (predicate(item)) return true;
+      return false;
+    },
+    [find_method](predicate) {
+      for (const item of this.value()) if (predicate(item)) return item;
+      return undefined;
+    },
     fold(initial, fn) {
       let state = initial;
 

@@ -89,11 +89,10 @@ export function to_array<item>(list: List<item>): item[] {
 }
 
 function list_from_array<item>(items: readonly item[]): RawList<item> {
-  let list = list_nil<item>();
+  let list: RawList<item> = empty;
 
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    list = list_cons(item, list);
+    list = ["Cons", items[index], list];
   }
 
   return list;
@@ -104,13 +103,6 @@ function empty_list<item>(this: AsList): Data<AsList, item> {
 }
 
 const empty: Nil = Object.freeze(["Nil"]);
-function list_nil<item>(): RawList<item> {
-  return empty;
-}
-
-function list_cons<item>(head: item, tail: RawList<item>): RawList<item> {
-  return ["Cons", head, tail];
-}
 
 // Cells are private until finish; published list tails never change.
 class ListBuilder<item> {
@@ -129,20 +121,16 @@ class ListBuilder<item> {
   }
 }
 
-function list_builder<item>(): ListBuilder<item> {
-  return new ListBuilder<item>();
-}
-
 function list_append<item>(
   left: RawList<item>,
   right: RawList<item>,
 ): RawList<item> {
-  const out = list_builder<item>();
-  let source = left;
+  if (left[0] === "Nil") return right;
+  const out = new ListBuilder<item>();
+  let source: RawList<item> = left;
   while (source[0] === "Cons") {
-    const [, head, tail] = source;
-    out.push(head);
-    source = tail;
+    out.push(source[1]);
+    source = source[2];
   }
   return out.finish(right);
 }
@@ -153,21 +141,16 @@ function lift_list_two<output>(
   second: RawList<unknown>,
 ): List<output> {
   let left = first;
-  const out = list_builder<output>();
-
+  const out = new ListBuilder<output>();
   while (left[0] === "Cons") {
-    const [, left_head, left_tail] = left;
+    const left_head = left[1];
     let right = second;
-
     while (right[0] === "Cons") {
-      const [, right_head, right_tail] = right;
-      out.push(fn(left_head, right_head));
-      right = right_tail;
+      out.push(fn(left_head, right[1]));
+      right = right[2];
     }
-
-    left = left_tail;
+    left = left[2];
   }
-
   return List(out.finish());
 }
 
@@ -178,28 +161,21 @@ function lift_list_three<output>(
   third: RawList<unknown>,
 ): List<output> {
   let left = first;
-  const out = list_builder<output>();
-
+  const out = new ListBuilder<output>();
   while (left[0] === "Cons") {
-    const [, left_head, left_tail] = left;
+    const left_head = left[1];
     let middle = second;
-
     while (middle[0] === "Cons") {
-      const [, middle_head, middle_tail] = middle;
+      const middle_head = middle[1];
       let right = third;
-
       while (right[0] === "Cons") {
-        const [, right_head, right_tail] = right;
-        out.push(fn(left_head, middle_head, right_head));
-        right = right_tail;
+        out.push(fn(left_head, middle_head, right[1]));
+        right = right[2];
       }
-
-      middle = middle_tail;
+      middle = middle[2];
     }
-
-    left = left_tail;
+    left = left[2];
   }
-
   return List(out.finish());
 }
 
@@ -210,7 +186,7 @@ function lift_list_many<output>(
 ): List<output> {
   const sources = [first, ...rest.map((value) => value.value())];
   const values: unknown[] = [];
-  const out = list_builder<output>();
+  const out = new ListBuilder<output>();
   const positions = [...sources];
   let depth = 0;
   while (depth >= 0) {
@@ -235,34 +211,23 @@ function lift_list_many<output>(
 function list_to_array<item>(list: RawList<item>): item[] {
   const items: item[] = [];
   let rest = list;
-
   while (rest[0] === "Cons") {
-    const [, head, tail] = rest;
-    items.push(head);
-    rest = tail;
+    items.push(rest[1]);
+    rest = rest[2];
   }
-
   return items;
 }
 
-function* list_items<item>(list: RawList<item>): Generator<item> {
-  let source = list;
-  while (source[0] === "Cons") {
-    const [, head, tail] = source;
-    yield head;
-    source = tail;
-  }
-}
-
 function list_from_items<item>(items: Iterable<item>): List<item> {
-  const out = list_builder<item>();
+  if (Array.isArray(items)) return List(list_from_array(items));
+  const out = new ListBuilder<item>();
   for (const item of items) out.push(item);
   return List(out.finish());
 }
 
 /** Concatenate finite lists in one pass, copying each element once. */
 export function concat_many<item>(lists: Iterable<List<item>>): List<item> {
-  const out = list_builder<item>();
+  const out = new ListBuilder<item>();
   for (const list of lists) {
     let current = list.value();
     while (current[0] === "Cons") {
@@ -296,15 +261,9 @@ function create_list(): ListConstructor {
       let right_rest = right.value();
 
       while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-        const [, left_head, left_tail] = left_rest;
-        const [, right_head, right_tail] = right_rest;
-
-        if (!Object.is(left_head, right_head)) {
-          return false;
-        }
-
-        left_rest = left_tail;
-        right_rest = right_tail;
+        if (!Object.is(left_rest[1], right_rest[1])) return false;
+        left_rest = left_rest[2];
+        right_rest = right_rest[2];
       }
 
       return left_rest[0] === "Nil" && right_rest[0] === "Nil";
@@ -317,35 +276,14 @@ function create_list(): ListConstructor {
       let right_rest = right.value();
 
       while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-        const [, left_head, left_tail] = left_rest;
-        const [, right_head, right_tail] = right_rest;
-        const order = compare_unknown(left_head, right_head);
-
-        switch (order) {
-          case "eq":
-            break;
-          case "lt":
-          case "gt":
-            return order;
-        }
-
-        left_rest = left_tail;
-        right_rest = right_tail;
+        const order = compare_unknown(left_rest[1], right_rest[1]);
+        if (order !== "eq") return order;
+        left_rest = left_rest[2];
+        right_rest = right_rest[2];
       }
 
-      const [left_tag] = left_rest;
-      const [right_tag] = right_rest;
-
-      if (left_tag === right_tag) {
-        return "eq";
-      }
-
-      switch (left_tag) {
-        case "Nil":
-          return "lt";
-        case "Cons":
-          return "gt";
-      }
+      if (left_rest[0] === right_rest[0]) return "eq";
+      return left_rest[0] === "Nil" ? "lt" : "gt";
     },
   });
 
@@ -355,21 +293,18 @@ function create_list(): ListConstructor {
       fn: (value: from) => to,
     ): Data<AsList, to> {
       let source = this.value();
-      const out = list_builder<to>();
-
+      const out = new ListBuilder<to>();
       while (source[0] === "Cons") {
-        const [, head, tail] = source;
-        out.push(fn(head));
-        source = tail;
+        out.push(fn(source[1]));
+        source = source[2];
       }
-
       return List(out.finish());
     },
   });
 
   Applicative.instance(List)({
     pure(value) {
-      return List(list_cons(value, list_nil()));
+      return List(["Cons", value, empty]);
     },
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
@@ -394,21 +329,16 @@ function create_list(): ListConstructor {
     ): Data<AsList, to> {
       const items = values.value();
       let fns = this.value();
-      const out = list_builder<to>();
-
+      const out = new ListBuilder<to>();
       while (fns[0] === "Cons") {
-        const [, fn, fn_tail] = fns;
+        const fn = fns[1];
         let rest = items;
-
         while (rest[0] === "Cons") {
-          const [, item, item_tail] = rest;
-          out.push(fn(item));
-          rest = item_tail;
+          out.push(fn(rest[1]));
+          rest = rest[2];
         }
-
-        fns = fn_tail;
+        fns = fns[2];
       }
-
       return List(out.finish());
     },
   });
@@ -439,21 +369,15 @@ function create_list(): ListConstructor {
       fn: (value: from) => Data<AsList, to>,
     ): Data<AsList, to> {
       let source = this.value();
-      const out = list_builder<to>();
-
+      const out = new ListBuilder<to>();
       while (source[0] === "Cons") {
-        const [, head, tail] = source;
-        let bound = fn(head).value();
-
+        let bound = fn(source[1]).value();
         while (bound[0] === "Cons") {
-          const [, bound_head, bound_tail] = bound;
-          out.push(bound_head);
-          bound = bound_tail;
+          out.push(bound[1]);
+          bound = bound[2];
         }
-
-        source = tail;
+        source = source[2];
       }
-
       return List(out.finish());
     },
   });
@@ -464,11 +388,12 @@ function create_list(): ListConstructor {
       step: (state: state) => Data<AsList, LoopStep<state, output>>,
     ): Data<AsList, output> {
       const pending: RawList<LoopStep<state, output>>[] = [];
-      const out = list_builder<output>();
-      let current: RawList<LoopStep<state, output>> = list_cons(
+      const out = new ListBuilder<output>();
+      let current: RawList<LoopStep<state, output>> = [
+        "Cons",
         rec(initial),
-        list_nil(),
-      );
+        empty,
+      ];
       while (true) {
         if (current[0] === "Nil") {
           const next = pending.pop();
@@ -516,9 +441,8 @@ function create_list(): ListConstructor {
       let rest = this.value();
 
       while (rest[0] === "Cons") {
-        const [, head, tail] = rest;
-        state = fn(state, head);
-        rest = tail;
+        state = fn(state, rest[1]);
+        rest = rest[2];
       }
 
       return state;
@@ -528,7 +452,7 @@ function create_list(): ListConstructor {
   Traversable.instance(List)({
     traverse(applicative, fn) {
       return traverse_items_into(
-        list_items(this.value()),
+        list_to_array(this.value()),
         applicative,
         fn,
         list_from_items,

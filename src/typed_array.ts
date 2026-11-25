@@ -1,3 +1,4 @@
+import { find_method, some_method } from "./typeclasses/foldable.ts";
 import {
   type As,
   type Data,
@@ -138,15 +139,31 @@ Eq.instance(TypedArrayT)({
 });
 
 Foldable.instance(TypedArrayT)({
+  [some_method](predicate) {
+    const arr = this.value();
+    for (let i = 0; i < arr.length; i += 1) {
+      if (predicate(arr[i])) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    const arr = this.value();
+    for (let i = 0; i < arr.length; i += 1) {
+      const item = arr[i];
+      if (predicate(item)) return item;
+    }
+    return undefined;
+  },
   fold<item, output>(
     this: Data<AsTypedArray, item>,
     initial: output,
     fn: (state: output, item: number | bigint) => output,
   ) {
+    const arr = this.value();
     let state = initial;
 
-    for (const item of this.value()) {
-      state = fn(state, item);
+    for (let i = 0; i < arr.length; i += 1) {
+      state = fn(state, arr[i]);
     }
 
     return state;

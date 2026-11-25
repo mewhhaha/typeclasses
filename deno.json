@@ -87,6 +87,7 @@
       "tools/transform_context.ts",
       "tools/transform_imports.ts",
       "tools/transform_generator.ts",
+      "tools/transform_printer.ts",
       "tools/transform_splice.ts",
       "tools/transform_fusions.ts",
       "tools/transform_terminals.ts"

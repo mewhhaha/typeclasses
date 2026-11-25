@@ -217,6 +217,7 @@ function transform_do_program_checked(
     push_keys(target_tokens, headers.state_eval_functions);
     push_keys(target_tokens, headers.state_eval_namespaces);
     push_set(target_tokens, headers.task_run_functions);
+    push_set(target_tokens, headers.task_run_exit_functions);
     push_set(target_tokens, headers.task_namespaces);
     push_set(target_tokens, headers.collect_functions);
     push_set(target_tokens, headers.collect_namespaces);
@@ -343,6 +344,7 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.direct_maybe_dictionaries);
       push_set(relevant_tokens, headers.just_constructors);
       push_set(relevant_tokens, headers.nothing_constructors);
+      push_set(relevant_tokens, headers.from_nullable_functions);
       push_set(relevant_tokens, headers.direct_either_dictionaries);
       push_set(relevant_tokens, headers.left_constructors);
       push_set(relevant_tokens, headers.right_constructors);
@@ -356,7 +358,12 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.direct_state_dictionaries);
       push_set(relevant_tokens, headers.task_from_fn_functions);
       push_set(relevant_tokens, headers.task_succeed_functions);
+      push_set(relevant_tokens, headers.task_is_cancellation_functions);
       push_set(relevant_tokens, headers.validation_constructors);
+      push_set(relevant_tokens, headers.direct_validation_dictionaries);
+      push_set(relevant_tokens, headers.valid_constructors);
+      push_set(relevant_tokens, headers.invalid_constructors);
+      push_set(relevant_tokens, headers.invalid_messages_constructors);
       push_set(relevant_tokens, headers.iterable_locals);
       push_keys(relevant_tokens, scope_declarations);
       const has_relevant = create_span_scanner(
@@ -410,6 +417,7 @@ function transform_do_program_checked(
             headers.operation_runners.has(callee.name) ||
             headers.state_eval_functions.has(callee.name) ||
             headers.task_run_functions.has(callee.name) ||
+            headers.task_run_exit_functions.has(callee.name) ||
             headers.traverse_sequential_functions.has(callee.name) ||
             headers.match_functions.has(callee.name) ||
             headers.collect_functions.has(callee.name) ||
@@ -433,7 +441,8 @@ function transform_do_program_checked(
             property === "handle_operations" ||
             property === "prepare_operations" ||
             property === "eval_state" || property === "exec_state" ||
-            property === "run_task" || property === "traverse" ||
+            property === "run_task" || property === "run_task_exit" ||
+            property === "traverse" ||
             property === "traverse_sequential" || property === "match" ||
             property === "collect" || property === "lift"
           ) {
@@ -1366,7 +1375,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "12:oxc-parser@0.154.0:esrap@2.4.0";
+  "13:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

@@ -5,6 +5,11 @@ import tsx_language from "esrap/languages/tsx";
 import { basename } from "node:path";
 import { node, value_visitor_keys } from "./transform_ast.ts";
 import type { TransformSourceMap } from "./transform_context.ts";
+import {
+  type FastPrintSink,
+  type FastSourceLocator,
+  try_print_fast,
+} from "./transform_printer.ts";
 
 export type SourcePosition = { readonly line: number; readonly column: number };
 export type PositionLookup = (offset: number) => SourcePosition;
@@ -99,15 +104,8 @@ const cached_tsx_nomap = /* @__PURE__ */ make_nomap_language(
   tsx_language({ quotes: "double", comments: [] }),
 );
 
-/** Fast monotonic line/column lookup supporting all ECMAScript line terminators. */
-export function create_source_positions(
-  source: string,
-  has_non_lf?: boolean,
-): PositionLookup {
+function build_line_starts(source: string, non_lf: boolean): number[] {
   const starts = [0];
-  const non_lf = has_non_lf ??
-    (source.includes("\r") || source.includes("\u2028") ||
-      source.includes("\u2029"));
   if (!non_lf) {
     let pos = source.indexOf("\n");
     while (pos >= 0) {
@@ -125,29 +123,61 @@ export function create_source_positions(
       ) starts.push(index + 1);
     }
   }
+  return starts;
+}
+
+function create_locator_from_starts(
+  starts: readonly number[],
+): FastSourceLocator {
   let cached = 0;
+  const locator: FastSourceLocator = {
+    line: 1,
+    column: 0,
+    lookup(offset: number): void {
+      const line_start = starts[cached];
+      const next_start = starts[cached + 1];
+      if (offset >= line_start) {
+        if (next_start === undefined || offset < next_start) {
+          locator.line = cached + 1;
+          locator.column = offset - line_start;
+          return;
+        }
+        const after_next = starts[cached + 2];
+        if (after_next === undefined || offset < after_next) {
+          cached += 1;
+          locator.line = cached + 1;
+          locator.column = offset - next_start;
+          return;
+        }
+      }
+      let left = 0;
+      let right = starts.length;
+      while (left + 1 < right) {
+        const middle = (left + right) >>> 1;
+        if (starts[middle] <= offset) left = middle;
+        else right = middle;
+      }
+      cached = left;
+      locator.line = left + 1;
+      locator.column = offset - starts[left];
+    },
+  };
+  return locator;
+}
+
+/** Fast monotonic line/column lookup supporting all ECMAScript line terminators. */
+export function create_source_positions(
+  source: string,
+  has_non_lf?: boolean,
+): PositionLookup {
+  const non_lf = has_non_lf ??
+    (source.includes("\r") || source.includes("\u2028") ||
+      source.includes("\u2029"));
+  const starts = build_line_starts(source, non_lf);
+  const locator = create_locator_from_starts(starts);
   return (offset: number) => {
-    const line_start = starts[cached];
-    const next_start = starts[cached + 1];
-    if (offset >= line_start) {
-      if (next_start === undefined || offset < next_start) {
-        return { line: cached + 1, column: offset - line_start };
-      }
-      const after_next = starts[cached + 2];
-      if (after_next === undefined || offset < after_next) {
-        cached += 1;
-        return { line: cached + 1, column: offset - next_start };
-      }
-    }
-    let left = 0;
-    let right = starts.length;
-    while (left + 1 < right) {
-      const middle = (left + right) >>> 1;
-      if (starts[middle] <= offset) left = middle;
-      else right = middle;
-    }
-    cached = left;
-    return { line: left + 1, column: offset - starts[left] };
+    locator.lookup(offset);
+    return { line: locator.line, column: locator.column };
   };
 }
 
@@ -287,12 +317,27 @@ export function splice_edits(
   const base = basename(file_name);
   const has_non_lf = source.includes("\r") || source.includes("\u2028") ||
     source.includes("\u2029");
-  let position = source_map
-    ? (position_lookup ?? create_source_positions(source, has_non_lf))
-    : position_lookup;
-  function get_position(): PositionLookup {
-    return position ??= create_source_positions(source, has_non_lf);
+  let cached_starts: number[] | undefined;
+  let fast_locator: FastSourceLocator | undefined;
+  let position = position_lookup;
+  function get_locator(): FastSourceLocator {
+    if (fast_locator === undefined) {
+      cached_starts ??= build_line_starts(source, has_non_lf);
+      fast_locator = create_locator_from_starts(cached_starts);
+    }
+    return fast_locator;
   }
+  function get_position(): PositionLookup {
+    if (position === undefined) {
+      const loc = get_locator();
+      position = (offset: number) => {
+        loc.lookup(offset);
+        return { line: loc.line, column: loc.column };
+      };
+    }
+    return position;
+  }
+  if (source_map) get_locator();
 
   const code_chunks: string[] = [];
   const mapping_parts: string[] = [];
@@ -372,9 +417,9 @@ export function splice_edits(
     code_chunks.push(text);
     if (!source_map) return;
 
-    const origin = position!(start);
-    let orig_line = origin.line - 1;
-    const orig_col = origin.column;
+    fast_locator!.lookup(start);
+    let orig_line = fast_locator!.line - 1;
+    const orig_col = fast_locator!.column;
     let cursor = 0;
     let nl = text.indexOf("\n");
     if (nl < 0) {
@@ -573,6 +618,49 @@ export function splice_edits(
     });
   }
 
+  const fast_sink: FastPrintSink = {
+    source_map,
+    locator: fast_locator,
+    emit_segment(abs_gen_col, abs_orig_line, abs_orig_col) {
+      emit_segment(abs_gen_col, abs_orig_line, abs_orig_col);
+    },
+    emit_newline,
+    get_gen_col: () => current_gen_col,
+    set_gen_col: (c) => {
+      current_gen_col = c;
+    },
+    get_line_has_seg: () => line_has_seg,
+    get_out_orig_line: () => out_orig_line,
+    get_out_orig_col: () => out_orig_col,
+    get_out_gen_col: () => out_gen_col,
+    push_code: (text) => {
+      code_chunks.push(text);
+    },
+  };
+
+  function try_fast_print(target: Node): boolean {
+    const saved_code_len = code_chunks.length;
+    const saved_map_len = mapping_parts.length;
+    const saved_gen_col = current_gen_col;
+    const saved_out_gen_col = out_gen_col;
+    const saved_out_src = out_src;
+    const saved_out_orig_line = out_orig_line;
+    const saved_out_orig_col = out_orig_col;
+    const saved_out_name = out_name;
+    const saved_line_has_seg = line_has_seg;
+    if (try_print_fast(target, fast_sink, lang)) return true;
+    code_chunks.length = saved_code_len;
+    mapping_parts.length = saved_map_len;
+    current_gen_col = saved_gen_col;
+    out_gen_col = saved_out_gen_col;
+    out_src = saved_out_src;
+    out_orig_line = saved_out_orig_line;
+    out_orig_col = saved_out_orig_col;
+    out_name = saved_out_name;
+    line_has_seg = saved_line_has_seg;
+    return false;
+  }
+
   let cursor = 0;
   for (const edit of ordered) {
     const start = edit.kind === "insert" ? edit.at : edit.start;
@@ -585,16 +673,18 @@ export function splice_edits(
     }
     if (edit.kind === "insert") {
       const prog = synthetic_program(edit.statements);
-      if (position !== undefined) attach_locations(prog, position, false);
-      const printed = print_node(prog, []);
       if (edit.prefix) emit_plain_text(edit.prefix);
-      code_chunks.push(printed.code);
-      if (source_map) {
-        stitch_edit_map(
-          printed.code,
-          printed.map.mappings,
-          printed.map.names,
-        );
+      if (!try_fast_print(prog)) {
+        if (source_map) attach_locations(prog, get_position(), false);
+        const printed = print_node(prog, []);
+        code_chunks.push(printed.code);
+        if (source_map) {
+          stitch_edit_map(
+            printed.code,
+            printed.map.mappings,
+            printed.map.names,
+          );
+        }
       }
       if (edit.suffix) emit_plain_text(edit.suffix);
       cursor = edit.at;
@@ -609,6 +699,21 @@ export function splice_edits(
     const target = edit.kind === "replace_statements"
       ? synthetic_program(edit.statements)
       : edit.node;
+    if (edit_comments.length === 0) {
+      const fast_wrap = edit.kind === "replace" &&
+        edit.is_expression === true &&
+        !safe_unwrapped_expressions.has(edit.node.type);
+      if (fast_wrap) emit_plain_text("(");
+      if (try_fast_print(target)) {
+        if (fast_wrap) emit_plain_text(")");
+        cursor = edit.end;
+        continue;
+      }
+      if (fast_wrap) {
+        code_chunks.pop();
+        if (source_map) current_gen_col -= 1;
+      }
+    }
     if (source_map || edit_comments.length > 0) {
       attach_locations(target, get_position(), edit_comments.length > 0);
     }

@@ -1275,3 +1275,165 @@ Deno.test("round-5 runtime hills cover AsyncIterableT push pipelines, Stm primit
     "a:1,b:2,c:3,",
   );
 });
+
+Deno.test("round-6 runtime speedups preserve Validation O(N) accumulation, List traverse, SetT/TypedArrayT folds, and 1-shot run_cells", async () => {
+  const { Traversable } = await import("./typeclasses/traversable.ts");
+  const { Foldable } = await import("./typeclasses/foldable.ts");
+  const { Invalid } = await import("./validation.ts");
+  const { from_array: list_from_array, to_array: list_to_array } = await import(
+    "./list.ts"
+  );
+  const { SetT } = await import("./set.ts");
+  const { TypedArrayT } = await import("./typed_array.ts");
+
+  // 1. Validation traverse O(N) array error accumulation + valid + semigroup mismatch
+  const inputs = Array.from({ length: 250 }, (_, i) => i);
+  const all_bad = Traversable.traverse(
+    ArrayT(inputs),
+    Validation.with_error<readonly string[]>(),
+    (n) => InvalidMessages<number>(`e${n}`),
+  );
+  const bad_raw = all_bad.value();
+  assert_equals(bad_raw[0], "invalid");
+  if (bad_raw[0] === "invalid") {
+    assert_equals(bad_raw[1].length, 250);
+    assert_equals(bad_raw[1][0], "e0");
+    assert_equals(bad_raw[1][249], "e249");
+  }
+  const all_ok = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    Validation.with_error<readonly string[]>(),
+    (n) => Valid(n * 2),
+  );
+  const ok_raw = all_ok.value();
+  assert_equals(ok_raw[0], "valid");
+  if (ok_raw[0] === "valid") assert_equals(ok_raw[1].value(), [2, 4, 6]);
+  let sg_threw = false;
+  try {
+    Traversable.traverse(
+      ArrayT([1, 2]),
+      Validation.with_error<readonly string[]>(),
+      (n) =>
+        n === 1
+          ? InvalidMessages<number>("a")
+          : Invalid<readonly string[], number>(["b"], {
+            concat: (l: readonly string[], r: readonly string[]) => [
+              ...l,
+              ...r,
+            ],
+          }),
+    );
+  } catch (err) {
+    sg_threw = err instanceof TypeError;
+  }
+  assert_true(sg_threw, "mismatched semigroups must throw TypeError");
+
+  // 2. List Traversable without generator boxing
+  const list_ok = Traversable.traverse(
+    list_from_array([1, 2, 3, 4]),
+    Maybe,
+    (n) => Just(n + 10),
+  ).value();
+  assert_equals(list_ok[0], "Just");
+  if (list_ok[0] === "Just") {
+    assert_equals(list_to_array(list_ok[1]), [11, 12, 13, 14]);
+  }
+  const list_none = Traversable.traverse(
+    list_from_array([1, 2, 3, 4]),
+    Maybe,
+    (n) => (n === 2 ? Nothing<number>() : Just(n)),
+  ).value();
+  assert_equals(list_none, ["Nothing"]);
+
+  // 3. SetT short-circuiting some & find
+  const big_set = SetT(new Set(Array.from({ length: 500 }, (_, i) => i)));
+  let set_checks = 0;
+  assert_equals(
+    Foldable.some(big_set, (n) => {
+      set_checks += 1;
+      return n === 3;
+    }),
+    true,
+  );
+  assert_equals(set_checks, 4);
+  set_checks = 0;
+  assert_equals(
+    Foldable.find(big_set, (n) => {
+      set_checks += 1;
+      return n === 5;
+    }),
+    5,
+  );
+  assert_equals(set_checks, 6);
+  assert_equals(Foldable.find(big_set, (n) => n === 9999), undefined);
+
+  // 4. TypedArrayT indexed fold, some, find
+  const ta = TypedArrayT(
+    new Int32Array(Array.from({ length: 200 }, (_, i) => i + 1)),
+  );
+  assert_equals(Foldable.fold(ta, 0, (acc, n) => acc + n), 20100);
+  let ta_checks = 0;
+  assert_equals(
+    Foldable.some(ta, (n) => {
+      ta_checks += 1;
+      return n === 4;
+    }),
+    true,
+  );
+  assert_equals(ta_checks, 4);
+  ta_checks = 0;
+  assert_equals(
+    Foldable.find(ta, (n) => {
+      ta_checks += 1;
+      return n === 7;
+    }),
+    7,
+  );
+  assert_equals(ta_checks, 7);
+  assert_equals(Foldable.find(ta, (n) => n === 9999), undefined);
+
+  // 5. 1-shot run_cells & handle_cells (<= 3 cells fast path + 4 cells Map path)
+  const r1 = reader<number>()("r1");
+  const s1 = state<number>()("s1");
+  const w1 = writer_cell("w1", ArrayT<number>([]));
+  const s2 = state<number>()("s2");
+  const p3 = Program(function* () {
+    const base = yield* r1.ask();
+    yield* s1.modify((n) => n + base);
+    yield* w1.tell(ArrayT([base]));
+    return yield* s1.get();
+  });
+  const res3 = run_cells(p3, {
+    r: provide_reader(r1, 5),
+    s: provide_state(s1, 10),
+    w: provide_writer(w1),
+  });
+  assert_equals(res3.result, 15);
+  assert_equals(res3.states, { s: 15 });
+  assert_equals(res3.logs.w.value(), [5]);
+
+  const p4 = Program(function* () {
+    const base = yield* r1.ask();
+    yield* s1.modify((n) => n + base);
+    yield* s2.modify((n) => n + base * 2);
+    yield* w1.tell(ArrayT([base]));
+    return (yield* s1.get()) + (yield* s2.get());
+  });
+  const res4 = run_cells(p4, {
+    r: provide_reader(r1, 3),
+    s1: provide_state(s1, 1),
+    s2: provide_state(s2, 2),
+    w: provide_writer(w1),
+  });
+  assert_equals(res4.result, 12);
+  assert_equals(res4.states, { s1: 4, s2: 8 });
+  assert_equals(res4.logs.w.value(), [3]);
+
+  const handled_p3 = handle_cells(p3, {
+    r: provide_reader(r1, 7),
+    s: provide_state(s1, 1),
+    w: provide_writer(w1),
+  });
+  assert_equals(run(handled_p3).result, 8);
+  assert_equals(run(handled_p3).result, 8);
+});

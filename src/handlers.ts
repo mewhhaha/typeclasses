@@ -322,7 +322,7 @@ type OrderedBinding = {
 
 type FusedCellPlan = {
   readonly ordered: readonly OrderedBinding[];
-  readonly dispatch: ReadonlyMap<unknown, number>;
+  readonly dispatch: ReadonlyMap<unknown, number> | undefined;
   readonly specs: readonly CellSpec[];
   readonly fast_count: number;
   readonly k0: unknown;
@@ -335,64 +335,89 @@ type FusedCellPlan = {
 };
 
 function collect_ordered_bindings(bindings: Bindings): OrderedBinding[] {
-  return Reflect.ownKeys(bindings)
-    .filter((key) => Object.prototype.propertyIsEnumerable.call(bindings, key))
-    .map((key) => {
-      const binding = bindings[key];
-      return {
-        name: key,
-        family: binding.family,
-        handle: binding.handle,
-        spec: cell_binding_specs.get(binding),
-      };
+  const string_keys = Object.keys(bindings);
+  const symbol_keys = Object.getOwnPropertySymbols(bindings);
+  const out: OrderedBinding[] = [];
+  for (let i = 0; i < string_keys.length; i += 1) {
+    const key = string_keys[i];
+    const binding = bindings[key];
+    out.push({
+      name: key,
+      family: binding.family,
+      handle: binding.handle,
+      spec: cell_binding_specs.get(binding),
     });
+  }
+  for (let i = 0; i < symbol_keys.length; i += 1) {
+    const key = symbol_keys[i];
+    if (!Object.prototype.propertyIsEnumerable.call(bindings, key)) continue;
+    const binding = bindings[key];
+    out.push({
+      name: key,
+      family: binding.family,
+      handle: binding.handle,
+      spec: cell_binding_specs.get(binding),
+    });
+  }
+  return out;
 }
 
 function build_fused_cell_plan(
   ordered: readonly OrderedBinding[],
+  build_template = true,
 ): FusedCellPlan | undefined {
-  const specs: CellSpec[] = [];
-  const dispatch = new Map<unknown, number>();
-  let static_initial = true;
-  for (let index = 0; index < ordered.length; index += 1) {
-    const spec = ordered[index].spec;
-    if (spec === undefined) return undefined;
-    specs.push(spec);
-    if (spec.family === "writer" && spec.initial === undefined) {
-      static_initial = false;
-    }
-    // Earlier bindings run innermost and own any duplicate cell key.
-    if (!dispatch.has(spec.runtime_kind)) {
-      dispatch.set(spec.runtime_kind, index);
-    }
-  }
+  const len = ordered.length;
+  const specs = new Array<CellSpec>(len);
+  let static_initial = build_template;
   let k0: unknown;
   let s0 = -1;
   let k1: unknown;
   let s1 = -1;
   let k2: unknown;
   let s2 = -1;
-  const fast_count = dispatch.size;
-  if (fast_count <= 3) {
-    let seen = 0;
-    for (const [runtime_kind, slot] of dispatch) {
-      if (seen === 0) {
-        k0 = runtime_kind;
-        s0 = slot;
-      } else if (seen === 1) {
-        k1 = runtime_kind;
-        s1 = slot;
-      } else {
-        k2 = runtime_kind;
-        s2 = slot;
-      }
-      seen += 1;
+  let fast_count = 0;
+  let dispatch: Map<unknown, number> | undefined;
+
+  for (let index = 0; index < len; index += 1) {
+    const spec = ordered[index].spec;
+    if (spec === undefined) return undefined;
+    specs[index] = spec;
+    if (spec.family === "writer" && spec.initial === undefined) {
+      static_initial = false;
+    }
+    const rk = spec.runtime_kind;
+    if (dispatch !== undefined) {
+      if (!dispatch.has(rk)) dispatch.set(rk, index);
+    } else if (
+      (fast_count >= 1 && rk === k0) ||
+      (fast_count >= 2 && rk === k1) ||
+      (fast_count === 3 && rk === k2)
+    ) {
+      // Earlier bindings run innermost and own any duplicate cell key.
+    } else if (fast_count === 0) {
+      k0 = rk;
+      s0 = index;
+      fast_count = 1;
+    } else if (fast_count === 1) {
+      k1 = rk;
+      s1 = index;
+      fast_count = 2;
+    } else if (fast_count === 2) {
+      k2 = rk;
+      s2 = index;
+      fast_count = 3;
+    } else {
+      dispatch = new Map<unknown, number>([[k0, s0], [k1, s1], [k2, s2], [
+        rk,
+        index,
+      ]]);
+      fast_count = 4;
     }
   }
   let initial_template: unknown[] | undefined;
   if (static_initial) {
-    initial_template = new Array<unknown>(specs.length);
-    for (let index = 0; index < specs.length; index += 1) {
+    initial_template = new Array<unknown>(len);
+    for (let index = 0; index < len; index += 1) {
       const spec = specs[index];
       initial_template[index] = spec.family === "reader"
         ? spec.value
@@ -533,7 +558,7 @@ function run_fused_cells_step(
           else if (fast_count >= 2 && lifted_kind === k1) slot = s1;
           else if (fast_count === 3 && lifted_kind === k2) slot = s2;
         } else {
-          slot = plan.dispatch.get(lifted_kind);
+          slot = plan.dispatch!.get(lifted_kind);
         }
         if (slot !== undefined) {
           const spec = plan.specs[slot];
@@ -672,7 +697,28 @@ export function handle_cells<
   Exclude<requirements, BoundRequirements<bindings>>,
   CellResult<item, bindings>
 > {
-  return prepare_handle_cells(bindings)(effect);
+  const ordered = collect_ordered_bindings(bindings);
+  const fused = build_fused_cell_plan(ordered, false);
+  if (fused !== undefined) {
+    return run_fused_cells_step(
+      effect as Effect<unknown, unknown>,
+      fused,
+      initial_cell_values(fused),
+      false,
+    ) as Effect<
+      Exclude<requirements, BoundRequirements<bindings>>,
+      CellResult<item, bindings>
+    >;
+  }
+  let current = effect as Effect<unknown, unknown>;
+  for (const binding of ordered) current = binding.handle(current);
+  return map(
+    current,
+    (packed) => unpack_cell_result<item, bindings>(packed, ordered),
+  ) as Effect<
+    Exclude<requirements, BoundRequirements<bindings>>,
+    CellResult<item, bindings>
+  >;
 }
 
 /** Snapshot cell bindings once for composable reuse across effects with other capabilities. */
@@ -733,7 +779,22 @@ export function run_cells<requirements, item, const bindings extends Bindings>(
       }),
   bindings: bindings,
 ): CellResult<item, bindings> {
-  return prepare_cells(bindings)(effect);
+  const ordered = collect_ordered_bindings(bindings);
+  const fused = build_fused_cell_plan(ordered, false);
+  if (fused !== undefined) {
+    return run_fused_cells_step(
+      effect as Effect<unknown, unknown>,
+      fused,
+      initial_cell_values(fused),
+      true,
+    ) as CellResult<item, bindings>;
+  }
+  let current = effect as Effect<unknown, unknown>;
+  for (const binding of ordered) current = binding.handle(current);
+  return unpack_cell_result<item, bindings>(
+    run(current as Effect<never, unknown>),
+    ordered,
+  );
 }
 
 /** Snapshot cell names, order, families and handlers once; each run gets fresh state. */

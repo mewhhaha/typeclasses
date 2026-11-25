@@ -47,6 +47,7 @@ type IterStage =
   | { readonly tag: "map"; readonly fn: Expression }
   | { readonly tag: "filter"; readonly fn: Expression }
   | { readonly tag: "filter_map"; readonly fn: Expression }
+  | { readonly tag: "bind"; readonly fn: Expression }
   | { readonly tag: "take"; readonly count: Expression };
 type IterRoot = { readonly kind: IterRootKind; readonly arg: Expression };
 type IterTerminal =
@@ -417,7 +418,7 @@ export function create_iterable_map_fusion(
         cursor.arguments[0].type !== "SpreadElement"
       ) {
         const method = callee.property.name;
-        if (method === "map" || method === "filter") {
+        if (method === "map" || method === "filter" || method === "bind") {
           stages.push({ tag: method, fn: cursor.arguments[0] as Expression });
           cursor = unwrap(callee.object);
           continue;
@@ -650,8 +651,9 @@ export function create_iterable_map_fusion(
   }
 
   function fuse_terminal(current: CallExpression): Expression | undefined {
-    const term = match_terminal(current);
-    if (term === undefined) return undefined;
+    const matched_term = match_terminal(current);
+    if (matched_term === undefined) return undefined;
+    const term: IterTerminal = matched_term;
     const extra_take = term.kind === "to_array" ? term.extra_take : undefined;
     const parsed = extract_inline_pipeline(
       term.pipeline,
@@ -743,6 +745,11 @@ export function create_iterable_map_fusion(
         readonly fn_id?: IdentifierReference;
       }
       | {
+        readonly tag: "bind";
+        readonly inline_cb?: Expression;
+        readonly fn_id?: IdentifierReference;
+      }
+      | {
         readonly tag: "take";
         readonly count_id: IdentifierReference;
         readonly rem_id: IdentifierReference;
@@ -796,9 +803,15 @@ export function create_iterable_map_fusion(
     const take_count_ids: IdentifierReference[] = [];
     let first_take_index = -1;
     let saw_map_stage = false;
+    let has_bind = false;
 
     for (let i = 0; i < stages.length; i += 1) {
       const stage = stages[i];
+      if (stage.tag === "bind") {
+        // Keep take-before-bind conservative so outer take limits do not drop inner items.
+        if (first_take_index >= 0) return undefined;
+        has_bind = true;
+      }
       if (stage.tag === "take") {
         if (first_take_index < 0) first_take_index = i;
         const count_id = make_fresh("iter_take");
@@ -872,12 +885,17 @@ export function create_iterable_map_fusion(
               ? "iter_map"
               : stage.tag === "filter_map"
               ? "iter_fmap"
+              : stage.tag === "bind"
+              ? "iter_bind"
               : "iter_pred",
           );
           setup_stmts.push(variable("const", fn_id, annotated));
           lowered_stages.push({ tag: stage.tag, fn_id });
         }
-        if (stage.tag === "map" || stage.tag === "filter_map") {
+        if (
+          stage.tag === "map" || stage.tag === "filter_map" ||
+          stage.tag === "bind"
+        ) {
           saw_map_stage = true;
         }
       }
@@ -976,17 +994,23 @@ export function create_iterable_map_fusion(
       loop_prefix.push(variable("let", stop_id, literal(false)));
     }
 
-    // Build loop body.
+    const outer_label = has_bind &&
+        (first_take_index >= 0 || term.kind === "fold_while")
+      ? make_fresh("iter_loop")
+      : undefined;
+    const make_break = (): Statement =>
+      node({ type: "BreakStatement", label: outer_label ?? null });
+
+    // Build loop body recursively to support nested bind (flat_map) loops cleanly.
     const loop_body: Statement[] = [];
-    let current_val = make_fresh("iter_v");
-    const first_val = current_val;
+    const first_val = make_fresh("iter_v");
     let index_id: IdentifierReference | undefined;
     if (root.kind !== "factory") {
       index_id = make_fresh("iter_i");
       loop_body.push(
         variable(
           "const",
-          current_val,
+          first_val,
           node({
             type: "MemberExpression",
             object: src_id,
@@ -998,120 +1022,377 @@ export function create_iterable_map_fusion(
       );
     }
 
-    let after_take = false;
-    let trailing_take_rem: IdentifierReference | undefined;
+    function emit_stages(
+      start_idx: number,
+      initial_val: IdentifierReference,
+      initial_after_take: boolean,
+    ): Statement[] {
+      const body: Statement[] = [];
+      let current_val = initial_val;
+      let after_take = initial_after_take;
+      let trailing_take_rem: IdentifierReference | undefined;
 
-    for (let i = 0; i < lowered_stages.length; i += 1) {
-      const stage = lowered_stages[i];
-      if (stage.tag === "map") {
-        const next_val = make_fresh("iter_v");
-        const mapped = stage.inline_cb !== undefined
-          ? inline_unary_expr(stage.inline_cb, current_val)!
-          : call(stage.fn_id!, [current_val]);
-        loop_body.push(variable("const", next_val, mapped));
-        current_val = next_val;
-      } else if (stage.tag === "filter") {
-        const cond = stage.inline_cb !== undefined
-          ? inline_unary_expr(stage.inline_cb, current_val)!
-          : call(stage.fn_id!, [current_val]);
-        const fail_branch: Statement = after_take && stop_id !== undefined
-          ? block([
-            node({
-              type: "IfStatement",
-              test: stop_id,
-              consequent: node({ type: "BreakStatement", label: null }),
-              alternate: null,
-            }),
-            node({ type: "ContinueStatement", label: null }),
-          ])
-          : node({ type: "ContinueStatement", label: null });
-        loop_body.push(
-          node({
-            type: "IfStatement",
-            test: node({
-              type: "UnaryExpression",
-              operator: "!",
-              prefix: true,
-              argument: cond,
-            }),
-            consequent: fail_branch,
-            alternate: null,
-          }),
-        );
-      } else if (stage.tag === "filter_map") {
-        const next_val = make_fresh("iter_v");
-        const fail_branch: Statement = after_take && stop_id !== undefined
-          ? block([
-            node({
-              type: "IfStatement",
-              test: stop_id,
-              consequent: node({ type: "BreakStatement", label: null }),
-              alternate: null,
-            }),
-            node({ type: "ContinueStatement", label: null }),
-          ])
-          : node({ type: "ContinueStatement", label: null });
-        const inlined = stage.inline_cb !== undefined
-          ? inline_unary_expr(stage.inline_cb, current_val)!
-          : undefined;
-        let elided_fm = false;
-        if (inlined !== undefined) {
-          const direct = match_maybe_ctor(inlined);
-          if (direct !== undefined) {
-            if (direct.ok) {
-              loop_body.push(variable("const", next_val, direct.arg));
-              current_val = next_val;
-              elided_fm = true;
-            } else {
-              loop_body.push(fail_branch);
-              elided_fm = true;
-            }
-          } else {
-            const cond_node = unwrap(inlined);
-            if (cond_node.type === "ConditionalExpression") {
-              const c_yes = match_maybe_ctor(cond_node.consequent);
-              const c_no = match_maybe_ctor(cond_node.alternate);
-              if (
-                c_yes !== undefined && c_no !== undefined &&
-                c_yes.ok !== c_no.ok
-              ) {
-                const keep_test = c_yes.ok ? cond_node.test : node({
-                  type: "UnaryExpression",
-                  operator: "!",
-                  prefix: true,
-                  argument: cond_node.test,
-                });
-                const ok_expr = c_yes.ok
-                  ? c_yes.arg
-                  : (c_no as { readonly ok: true; readonly arg: Expression })
-                    .arg;
-                loop_body.push(
-                  node({
-                    type: "IfStatement",
-                    test: node({
-                      type: "UnaryExpression",
-                      operator: "!",
-                      prefix: true,
-                      argument: keep_test,
+      for (let i = start_idx; i < lowered_stages.length; i += 1) {
+        const stage = lowered_stages[i];
+        if (stage.tag === "bind") {
+          const inner_expr = stage.inline_cb !== undefined
+            ? inline_unary_expr(stage.inline_cb, current_val)!
+            : call(stage.fn_id!, [current_val]);
+          const inner_root = match_inline_root(inner_expr);
+          const next_val = make_fresh("iter_v");
+          const inner_tail = emit_stages(i + 1, next_val, after_take);
+          if (
+            inner_root !== undefined &&
+            (inner_root.kind === "array" || inner_root.kind === "snapshot")
+          ) {
+            const sub_id = make_fresh("iter_sub");
+            const sub_idx = make_fresh("iter_j");
+            body.push(
+              variable(
+                "const",
+                sub_id,
+                inner_root.kind === "snapshot"
+                  ? node({
+                    type: "ArrayExpression",
+                    elements: Array.from([
+                      node({ type: "SpreadElement", argument: inner_root.arg }),
+                    ]),
+                  })
+                  : inner_root.arg,
+              ),
+              node({
+                type: "ForStatement",
+                init: variable("let", sub_idx, literal(0)),
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "<",
+                  left: sub_idx,
+                  right: member(sub_id, "length"),
+                }),
+                update: node({
+                  type: "AssignmentExpression",
+                  operator: "+=",
+                  left: sub_idx,
+                  right: literal(1),
+                }),
+                body: block([
+                  variable(
+                    "const",
+                    next_val,
+                    node({
+                      type: "MemberExpression",
+                      object: sub_id,
+                      property: sub_idx,
+                      computed: true,
+                      optional: false,
                     }),
-                    consequent: fail_branch,
-                    alternate: null,
-                  }),
-                  variable("const", next_val, ok_expr),
-                );
+                  ),
+                  ...inner_tail,
+                ]),
+              }),
+            );
+          } else {
+            const iterable_expr = inner_root !== undefined
+              ? call(inner_root.arg, [])
+              : call(call(member(inner_expr, "value"), []), []);
+            body.push(
+              node({
+                type: "ForOfStatement",
+                await: false,
+                left: node({
+                  type: "VariableDeclaration",
+                  kind: "const",
+                  declarations: [
+                    node({
+                      type: "VariableDeclarator",
+                      id: next_val,
+                      init: null,
+                    }),
+                  ],
+                }),
+                right: iterable_expr,
+                body: block(inner_tail),
+              }),
+            );
+          }
+          return body;
+        }
+        if (stage.tag === "map") {
+          const next_val = make_fresh("iter_v");
+          const mapped = stage.inline_cb !== undefined
+            ? inline_unary_expr(stage.inline_cb, current_val)!
+            : call(stage.fn_id!, [current_val]);
+          body.push(variable("const", next_val, mapped));
+          current_val = next_val;
+        } else if (stage.tag === "filter") {
+          const cond = stage.inline_cb !== undefined
+            ? inline_unary_expr(stage.inline_cb, current_val)!
+            : call(stage.fn_id!, [current_val]);
+          const fail_branch: Statement = after_take && stop_id !== undefined
+            ? block([
+              node({
+                type: "IfStatement",
+                test: stop_id,
+                consequent: make_break(),
+                alternate: null,
+              }),
+              node({ type: "ContinueStatement", label: null }),
+            ])
+            : node({ type: "ContinueStatement", label: null });
+          body.push(
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: cond,
+              }),
+              consequent: fail_branch,
+              alternate: null,
+            }),
+          );
+        } else if (stage.tag === "filter_map") {
+          const next_val = make_fresh("iter_v");
+          const fail_branch: Statement = after_take && stop_id !== undefined
+            ? block([
+              node({
+                type: "IfStatement",
+                test: stop_id,
+                consequent: make_break(),
+                alternate: null,
+              }),
+              node({ type: "ContinueStatement", label: null }),
+            ])
+            : node({ type: "ContinueStatement", label: null });
+          const inlined = stage.inline_cb !== undefined
+            ? inline_unary_expr(stage.inline_cb, current_val)!
+            : undefined;
+          let elided_fm = false;
+          if (inlined !== undefined) {
+            const direct = match_maybe_ctor(inlined);
+            if (direct !== undefined) {
+              if (direct.ok) {
+                body.push(variable("const", next_val, direct.arg));
                 current_val = next_val;
                 elided_fm = true;
+              } else {
+                body.push(fail_branch);
+                elided_fm = true;
+              }
+            } else {
+              const cond_node = unwrap(inlined);
+              if (cond_node.type === "ConditionalExpression") {
+                const c_yes = match_maybe_ctor(cond_node.consequent);
+                const c_no = match_maybe_ctor(cond_node.alternate);
+                if (
+                  c_yes !== undefined && c_no !== undefined &&
+                  c_yes.ok !== c_no.ok
+                ) {
+                  const keep_test = c_yes.ok ? cond_node.test : node({
+                    type: "UnaryExpression",
+                    operator: "!",
+                    prefix: true,
+                    argument: cond_node.test,
+                  });
+                  const ok_expr = c_yes.ok
+                    ? c_yes.arg
+                    : (c_no as { readonly ok: true; readonly arg: Expression })
+                      .arg;
+                  body.push(
+                    node({
+                      type: "IfStatement",
+                      test: node({
+                        type: "UnaryExpression",
+                        operator: "!",
+                        prefix: true,
+                        argument: keep_test,
+                      }),
+                      consequent: fail_branch,
+                      alternate: null,
+                    }),
+                    variable("const", next_val, ok_expr),
+                  );
+                  current_val = next_val;
+                  elided_fm = true;
+                }
               }
             }
           }
+          if (!elided_fm) {
+            const fm_raw = make_fresh("iter_fm");
+            const step_call = inlined !== undefined
+              ? inlined
+              : call(stage.fn_id!, [current_val]);
+            body.push(
+              variable("const", fm_raw, call(member(step_call, "value"), [])),
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "===",
+                  left: node({
+                    type: "MemberExpression",
+                    object: fm_raw,
+                    property: literal(0),
+                    computed: true,
+                    optional: false,
+                  }),
+                  right: literal("Nothing"),
+                }),
+                consequent: fail_branch,
+                alternate: null,
+              }),
+              variable(
+                "const",
+                next_val,
+                node({
+                  type: "MemberExpression",
+                  object: fm_raw,
+                  property: literal(1),
+                  computed: true,
+                  optional: false,
+                }),
+              ),
+            );
+            current_val = next_val;
+          }
+        } else {
+          after_take = true;
+          if (!needs_stop_flag && i === lowered_stages.length - 1) {
+            trailing_take_rem = stage.rem_id;
+          } else {
+            body.push(
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "===",
+                  left: node({
+                    type: "UpdateExpression",
+                    operator: "--",
+                    prefix: true,
+                    argument: stage.rem_id,
+                  }),
+                  right: literal(0),
+                }),
+                consequent: node({
+                  type: "ExpressionStatement",
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: stop_id!,
+                    right: literal(true),
+                  }),
+                }),
+                alternate: null,
+              }),
+            );
+          }
         }
-        if (!elided_fm) {
-          const fm_raw = make_fresh("iter_fm");
-          const step_call = inlined !== undefined
+      }
+
+      // Terminal action inside innermost loop body.
+      if (term.kind === "to_array") {
+        body.push(
+          node({
+            type: "ExpressionStatement",
+            expression: call(member(out_id!, "push"), [current_val]),
+          }),
+        );
+      } else if (term.kind === "fold") {
+        const next_acc = step_fn_id !== undefined
+          ? call(step_fn_id, [acc_id!, current_val])
+          : inline_binary_fold_expr(term.step, acc_id!, current_val)!;
+        body.push(
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: acc_id!,
+              right: next_acc,
+            }),
+          }),
+        );
+      } else if (term.kind === "fold_while") {
+        const inlined = step_fn_id === undefined
+          ? inline_binary_fold_expr(term.step, acc_id!, current_val)!
+          : undefined;
+        let elided_fw = false;
+        if (inlined !== undefined) {
+          const cond_node = unwrap(inlined);
+          if (cond_node.type === "ConditionalExpression") {
+            const c_yes = match_fold_step_tuple(cond_node.consequent);
+            const c_no = match_fold_step_tuple(cond_node.alternate);
+            if (
+              c_yes !== undefined && c_no !== undefined &&
+              c_yes.tag !== c_no.tag
+            ) {
+              const done_test = c_yes.tag === "Done" ? cond_node.test : node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: cond_node.test,
+              });
+              const done_val = c_yes.tag === "Done" ? c_yes.next : c_no.next;
+              const cont_val = c_yes.tag === "Continue"
+                ? c_yes.next
+                : c_no.next;
+              body.push(
+                node({
+                  type: "IfStatement",
+                  test: done_test,
+                  consequent: block([
+                    node({
+                      type: "ExpressionStatement",
+                      expression: node({
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: acc_id!,
+                        right: done_val,
+                      }),
+                    }),
+                    make_break(),
+                  ]),
+                  alternate: null,
+                }),
+                node({
+                  type: "ExpressionStatement",
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: acc_id!,
+                    right: cont_val,
+                  }),
+                }),
+              );
+              elided_fw = true;
+            }
+          }
+        }
+        if (!elided_fw) {
+          const fw_step = make_fresh("iter_step");
+          const step_expr = inlined !== undefined
             ? inlined
-            : call(stage.fn_id!, [current_val]);
-          loop_body.push(
-            variable("const", fm_raw, call(member(step_call, "value"), [])),
+            : call(step_fn_id!, [acc_id!, current_val]);
+          body.push(
+            variable("const", fw_step, step_expr),
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: acc_id!,
+                right: node({
+                  type: "MemberExpression",
+                  object: fw_step,
+                  property: literal(1),
+                  computed: true,
+                  optional: false,
+                }),
+              }),
+            }),
             node({
               type: "IfStatement",
               test: node({
@@ -1119,228 +1400,68 @@ export function create_iterable_map_fusion(
                 operator: "===",
                 left: node({
                   type: "MemberExpression",
-                  object: fm_raw,
+                  object: fw_step,
                   property: literal(0),
                   computed: true,
                   optional: false,
                 }),
-                right: literal("Nothing"),
+                right: literal("Done"),
               }),
-              consequent: fail_branch,
+              consequent: make_break(),
               alternate: null,
             }),
-            variable(
-              "const",
-              next_val,
-              node({
-                type: "MemberExpression",
-                object: fm_raw,
-                property: literal(1),
-                computed: true,
-                optional: false,
-              }),
-            ),
           );
-          current_val = next_val;
         }
       } else {
-        after_take = true;
-        if (!needs_stop_flag && i === lowered_stages.length - 1) {
-          trailing_take_rem = stage.rem_id;
-        } else {
-          loop_body.push(
-            node({
-              type: "IfStatement",
-              test: node({
-                type: "BinaryExpression",
-                operator: "===",
-                left: node({
-                  type: "UpdateExpression",
-                  operator: "--",
-                  prefix: true,
-                  argument: stage.rem_id,
-                }),
-                right: literal(0),
-              }),
-              consequent: node({
-                type: "ExpressionStatement",
-                expression: node({
-                  type: "AssignmentExpression",
-                  operator: "=",
-                  left: stop_id!,
-                  right: literal(true),
-                }),
-              }),
-              alternate: null,
-            }),
-          );
-        }
-      }
-    }
-
-    // Terminal action inside loop body.
-    if (term.kind === "to_array") {
-      loop_body.push(
-        node({
-          type: "ExpressionStatement",
-          expression: call(member(out_id!, "push"), [current_val]),
-        }),
-      );
-    } else if (term.kind === "fold") {
-      const next_acc = step_fn_id !== undefined
-        ? call(step_fn_id, [acc_id!, current_val])
-        : inline_binary_fold_expr(term.step, acc_id!, current_val)!;
-      loop_body.push(
-        node({
-          type: "ExpressionStatement",
-          expression: node({
-            type: "AssignmentExpression",
-            operator: "=",
-            left: acc_id!,
-            right: next_acc,
-          }),
-        }),
-      );
-    } else if (term.kind === "fold_while") {
-      const inlined = step_fn_id === undefined
-        ? inline_binary_fold_expr(term.step, acc_id!, current_val)!
-        : undefined;
-      let elided_fw = false;
-      if (inlined !== undefined) {
-        const cond_node = unwrap(inlined);
-        if (cond_node.type === "ConditionalExpression") {
-          const c_yes = match_fold_step_tuple(cond_node.consequent);
-          const c_no = match_fold_step_tuple(cond_node.alternate);
-          if (
-            c_yes !== undefined && c_no !== undefined &&
-            c_yes.tag !== c_no.tag
-          ) {
-            const done_test = c_yes.tag === "Done" ? cond_node.test : node({
-              type: "UnaryExpression",
-              operator: "!",
-              prefix: true,
-              argument: cond_node.test,
-            });
-            const done_val = c_yes.tag === "Done" ? c_yes.next : c_no.next;
-            const cont_val = c_yes.tag === "Continue" ? c_yes.next : c_no.next;
-            loop_body.push(
-              node({
-                type: "IfStatement",
-                test: done_test,
-                consequent: block([
-                  node({
-                    type: "ExpressionStatement",
-                    expression: node({
-                      type: "AssignmentExpression",
-                      operator: "=",
-                      left: acc_id!,
-                      right: done_val,
-                    }),
-                  }),
-                  node({ type: "BreakStatement", label: null }),
-                ]),
-                alternate: null,
-              }),
-              node({
-                type: "ExpressionStatement",
-                expression: node({
-                  type: "AssignmentExpression",
-                  operator: "=",
-                  left: acc_id!,
-                  right: cont_val,
-                }),
-              }),
-            );
-            elided_fw = true;
-          }
-        }
-      }
-      if (!elided_fw) {
-        const fw_step = make_fresh("iter_step");
-        const step_expr = inlined !== undefined
-          ? inlined
-          : call(step_fn_id!, [acc_id!, current_val]);
-        loop_body.push(
-          variable("const", fw_step, step_expr),
+        const pred_test = pred_fn_id !== undefined
+          ? call(pred_fn_id, [current_val])
+          : inline_unary_expr(term.pred, current_val)!;
+        body.push(
           node({
-            type: "ExpressionStatement",
-            expression: node({
-              type: "AssignmentExpression",
-              operator: "=",
-              left: acc_id!,
-              right: node({
-                type: "MemberExpression",
-                object: fw_step,
-                property: literal(1),
-                computed: true,
-                optional: false,
-              }),
-            }),
+            type: "IfStatement",
+            test: pred_test,
+            consequent: ret(term.kind === "some" ? literal(true) : current_val),
+            alternate: null,
           }),
+        );
+      }
+
+      if (trailing_take_rem !== undefined) {
+        body.push(
           node({
             type: "IfStatement",
             test: node({
               type: "BinaryExpression",
               operator: "===",
               left: node({
-                type: "MemberExpression",
-                object: fw_step,
-                property: literal(0),
-                computed: true,
-                optional: false,
+                type: "UpdateExpression",
+                operator: "--",
+                prefix: true,
+                argument: trailing_take_rem,
               }),
-              right: literal("Done"),
+              right: literal(0),
             }),
-            consequent: node({ type: "BreakStatement", label: null }),
+            consequent: make_break(),
+            alternate: null,
+          }),
+        );
+      } else if (stop_id !== undefined) {
+        body.push(
+          node({
+            type: "IfStatement",
+            test: stop_id,
+            consequent: make_break(),
             alternate: null,
           }),
         );
       }
-    } else {
-      const pred_test = pred_fn_id !== undefined
-        ? call(pred_fn_id, [current_val])
-        : inline_unary_expr(term.pred, current_val)!;
-      loop_body.push(
-        node({
-          type: "IfStatement",
-          test: pred_test,
-          consequent: ret(term.kind === "some" ? literal(true) : current_val),
-          alternate: null,
-        }),
-      );
+
+      return body;
     }
 
-    if (trailing_take_rem !== undefined) {
-      loop_body.push(
-        node({
-          type: "IfStatement",
-          test: node({
-            type: "BinaryExpression",
-            operator: "===",
-            left: node({
-              type: "UpdateExpression",
-              operator: "--",
-              prefix: true,
-              argument: trailing_take_rem,
-            }),
-            right: literal(0),
-          }),
-          consequent: node({ type: "BreakStatement", label: null }),
-          alternate: null,
-        }),
-      );
-    } else if (stop_id !== undefined) {
-      loop_body.push(
-        node({
-          type: "IfStatement",
-          test: stop_id,
-          consequent: node({ type: "BreakStatement", label: null }),
-          alternate: null,
-        }),
-      );
-    }
+    loop_body.push(...emit_stages(0, first_val, false));
 
-    const loop_stmt: Statement = root.kind === "factory"
+    const raw_loop_stmt: Statement = root.kind === "factory"
       ? node({
         type: "ForOfStatement",
         await: false,
@@ -1371,6 +1492,13 @@ export function create_iterable_map_fusion(
         }),
         body: block(loop_body),
       });
+    const loop_stmt: Statement = outer_label !== undefined
+      ? node({
+        type: "LabeledStatement",
+        label: outer_label,
+        body: raw_loop_stmt,
+      })
+      : raw_loop_stmt;
 
     if (take_count_ids.length > 0) {
       let guard: Expression = node({
