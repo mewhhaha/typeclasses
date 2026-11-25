@@ -1210,4 +1210,68 @@ Deno.test("round-5 runtime hills cover AsyncIterableT push pipelines, Stm primit
     ),
   );
   assert_equals(handled_fail.value(), ["Left", "bad-tag"]);
+
+  // Round 5b: Task/ParallelTask sync lift/ap/run_concurrently & RecordT allocation-free loops
+  const { parallel, sequential } = await import("./task.ts");
+  const { fold_with_key, RecordT } = await import("./record.ts");
+  const { Foldable } = await import("./typeclasses/foldable.ts");
+
+  assert_equals(
+    await run_task(
+      Applicative.lift((a, b) => a + b, from_fn(() => 10), from_fn(() => 32)),
+    ),
+    42,
+  );
+  assert_equals(
+    await run_task(
+      Applicative.lift(
+        (a, b, c) => a + b + c,
+        from_fn(() => 1),
+        from_fn(() => Promise.resolve(2)),
+        Task.pure(3),
+      ),
+    ),
+    6,
+  );
+  assert_equals(
+    await run_task(
+      Task.pure((n: number) => n * 3).ap(from_fn(() => 14)),
+    ),
+    42,
+  );
+  assert_equals(
+    await run_task(
+      sequential(
+        Applicative.lift(
+          (a, b) => a * b,
+          parallel(from_fn(() => 6)),
+          parallel(from_fn(() => 7)),
+        ),
+      ),
+    ),
+    42,
+  );
+  assert_equals(
+    await run_task(
+      sequential(
+        Applicative.lift(
+          (a, b, c) => a + b + c,
+          parallel(from_fn(() => 10)),
+          parallel(from_fn(() => Promise.resolve(20))),
+          parallel(from_fn(() => 30)),
+        ),
+      ),
+    ),
+    60,
+  );
+
+  const record_val = RecordT({ a: 1, b: 2, c: 3 });
+  assert_equals(record_val.map((n) => n * 10).value(), { a: 10, b: 20, c: 30 });
+  assert_equals(Foldable.fold(record_val, 0, (acc, n) => acc + n), 6);
+  assert_equals(Foldable.some(record_val, (n) => n === 2), true);
+  assert_equals(Foldable.find(record_val, (n) => n > 1), 2);
+  assert_equals(
+    fold_with_key(record_val, "", (acc, n, k) => `${acc}${k}:${n},`),
+    "a:1,b:2,c:3,",
+  );
 });

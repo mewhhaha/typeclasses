@@ -154,8 +154,8 @@ Functor.instance(RecordT)({
     const record = this.value();
     const out: Record<string, ReturnType<typeof fn>> = {};
 
-    for (const key of Object.keys(record)) {
-      set_own(out, key, fn(record[key]));
+    for (const key in record) {
+      if (Object.hasOwn(record, key)) set_own(out, key, fn(record[key]));
     }
 
     return as_data(RecordT, out);
@@ -178,14 +178,15 @@ Monoid.instance(RecordT)({
 Foldable.instance(RecordT)({
   [some_method](predicate) {
     const record = this.value();
-    for (const key of Object.keys(record)) {
-      if (predicate(record[key])) return true;
+    for (const key in record) {
+      if (Object.hasOwn(record, key) && predicate(record[key])) return true;
     }
     return false;
   },
   [find_method](predicate) {
     const record = this.value();
-    for (const key of Object.keys(record)) {
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
       const item = record[key];
       if (predicate(item)) return item;
     }
@@ -196,8 +197,8 @@ Foldable.instance(RecordT)({
     const record = this.value();
     let state = initial;
 
-    for (const key of Object.keys(record)) {
-      state = fn(state, record[key]);
+    for (const key in record) {
+      if (Object.hasOwn(record, key)) state = fn(state, record[key]);
     }
 
     return state;
@@ -240,7 +241,9 @@ export function fold_with_key<item, state>(
 ): state {
   let result = initial;
   const source = record.value();
-  for (const key of Object.keys(source)) result = fn(result, source[key], key);
+  for (const key in source) {
+    if (Object.hasOwn(source, key)) result = fn(result, source[key], key);
+  }
   return result;
 }
 
