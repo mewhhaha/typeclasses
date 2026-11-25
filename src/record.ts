@@ -85,24 +85,24 @@ Eq.instance(RecordT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
-    const left_keys = Object.keys(left);
-    const right_keys = Object.keys(right_value);
+    if (left === right_value) return true;
 
-    if (left_keys.length !== right_keys.length) {
-      return false;
+    let left_count = 0;
+    for (const key in left) {
+      if (!Object.hasOwn(left, key)) continue;
+      left_count += 1;
+      if (!Object.hasOwn(right_value, key)) return false;
+      if (!Object.is(left[key], right_value[key])) return false;
     }
 
-    for (const key of left_keys) {
-      if (!Object.hasOwn(right_value, key)) {
-        return false;
-      }
-
-      if (!Object.is(left[key], right_value[key])) {
-        return false;
-      }
+    let right_count = 0;
+    for (const key in right_value) {
+      if (!Object.hasOwn(right_value, key)) continue;
+      right_count += 1;
+      if (right_count > left_count) return false;
     }
 
-    return true;
+    return left_count === right_count;
   },
 });
 
@@ -113,52 +113,51 @@ Ord.instance(RecordT)({
     if (left_record === right_record) return "eq";
     const left_keys = Object.keys(left_record);
     const right_keys = Object.keys(right_record);
-    if (
-      left_keys.length === right_keys.length &&
-      left_keys.every((key) =>
-        Object.hasOwn(right_record, key) &&
-        compare_unknown(left_record[key], right_record[key]) === "eq"
-      )
-    ) return "eq";
-    const left = left_keys.sort();
-    const right_entries = right_keys.sort();
-    const length = Math.min(left.length, right_entries.length);
-
-    for (let index = 0; index < length; index += 1) {
-      const key_order = compare_unknown(
-        left[index],
-        right_entries[index],
-      );
-
-      switch (key_order) {
-        case "lt":
-        case "gt":
-          return key_order;
-        case "eq": {
-          const value_order = compare_unknown(
-            left_record[left[index]],
-            right_record[right_entries[index]],
-          );
-
-          if (value_order !== "eq") {
-            return value_order;
-          }
-
+    const left_len = left_keys.length;
+    const right_len = right_keys.length;
+    if (left_len === right_len) {
+      let equal = true;
+      for (let i = 0; i < left_len; i += 1) {
+        const key = left_keys[i];
+        if (
+          !Object.hasOwn(right_record, key) ||
+          !Object.is(left_record[key], right_record[key])
+        ) {
+          equal = false;
           break;
         }
       }
+      if (equal) return "eq";
+    }
+    if (!is_sorted_strings(left_keys)) left_keys.sort();
+    if (!is_sorted_strings(right_keys)) right_keys.sort();
+    const length = left_len < right_len ? left_len : right_len;
+
+    for (let index = 0; index < length; index += 1) {
+      const lk = left_keys[index];
+      const rk = right_keys[index];
+      if (lk < rk) return "lt";
+      if (lk > rk) return "gt";
+      const lv = left_record[lk];
+      const rv = right_record[rk];
+      if (!Object.is(lv, rv)) {
+        const value_order = compare_unknown(lv, rv);
+        if (value_order !== "eq") return value_order;
+      }
     }
 
-    return compare_unknown(left.length, right_entries.length);
+    return left_len < right_len ? "lt" : left_len > right_len ? "gt" : "eq";
   },
 });
 
 Functor.instance(RecordT)({
   map(fn) {
     const record = this.value();
+    const keys = Object.keys(record);
     const out: Record<string, ReturnType<typeof fn>> = {};
 
-    for (const key of Object.keys(record)) {
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
       set_own(out, key, fn(record[key]));
     }
 
@@ -258,8 +257,19 @@ export function fold_with_key<item, state>(
 ): state {
   let result = initial;
   const source = record.value();
-  for (const key of Object.keys(source)) result = fn(result, source[key], key);
+  const keys = Object.keys(source);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    result = fn(result, source[key], key);
+  }
   return result;
+}
+
+function is_sorted_strings(keys: readonly string[]): boolean {
+  for (let i = 1; i < keys.length; i += 1) {
+    if (keys[i - 1] > keys[i]) return false;
+  }
+  return true;
 }
 
 function record_from_values<item>(

@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import {
   type As,
   type Data,
@@ -8,7 +12,7 @@ import {
 } from "./typeclass.ts";
 import { traverse_items_into } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
-import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
+import { loop_done, type LoopStep, rec } from "./loop.ts";
 import {
   Alternative,
   Applicative,
@@ -120,15 +124,15 @@ function lift_array_two<result>(
   first: readonly unknown[],
   second: readonly unknown[],
 ): ArrayT<result> {
-  const out = new Array<result>(first.length * second.length);
+  const total = first.length * second.length;
+  if (total === 0) return ArrayT([]);
+  const out = new Array<result>(total);
   let out_index = 0;
 
-  for (let left_index = 0; left_index < first.length; left_index += 1) {
-    const left = first[left_index];
-
-    for (let right_index = 0; right_index < second.length; right_index += 1) {
-      out[out_index] = fn(left, second[right_index]);
-      out_index += 1;
+  for (let i = 0; i < first.length; i += 1) {
+    const left = first[i];
+    for (let j = 0; j < second.length; j += 1) {
+      out[out_index++] = fn(left, second[j]);
     }
   }
 
@@ -141,22 +145,17 @@ function lift_array_three<result>(
   second: readonly unknown[],
   third: readonly unknown[],
 ): ArrayT<result> {
-  const out = new Array<result>(first.length * second.length * third.length);
+  const total = first.length * second.length * third.length;
+  if (total === 0) return ArrayT([]);
+  const out = new Array<result>(total);
   let out_index = 0;
 
-  for (let left_index = 0; left_index < first.length; left_index += 1) {
-    const left = first[left_index];
-
-    for (
-      let middle_index = 0;
-      middle_index < second.length;
-      middle_index += 1
-    ) {
-      const middle = second[middle_index];
-
-      for (let right_index = 0; right_index < third.length; right_index += 1) {
-        out[out_index] = fn(left, middle, third[right_index]);
-        out_index += 1;
+  for (let i = 0; i < first.length; i += 1) {
+    const left = first[i];
+    for (let j = 0; j < second.length; j += 1) {
+      const middle = second[j];
+      for (let k = 0; k < third.length; k += 1) {
+        out[out_index++] = fn(left, middle, third[k]);
       }
     }
   }
@@ -249,15 +248,12 @@ function create_array(): AsArray {
     eq(right) {
       const left = this.value();
       const right_value = right.value();
+      if (left === right_value) return true;
+      const len = left.length;
+      if (len !== right_value.length) return false;
 
-      if (left.length !== right_value.length) {
-        return false;
-      }
-
-      for (let index = 0; index < left.length; index += 1) {
-        if (!Object.is(left[index], right_value[index])) {
-          return false;
-        }
+      for (let index = 0; index < len; index += 1) {
+        if (!Object.is(left[index], right_value[index])) return false;
       }
 
       return true;
@@ -268,21 +264,17 @@ function create_array(): AsArray {
     compare(right) {
       const left = this.value();
       const right_value = right.value();
-      const length = Math.min(left.length, right_value.length);
+      if (left === right_value) return "eq";
+      const left_len = left.length;
+      const right_len = right_value.length;
+      const length = left_len < right_len ? left_len : right_len;
 
       for (let index = 0; index < length; index += 1) {
         const order = compare_unknown(left[index], right_value[index]);
-
-        switch (order) {
-          case "eq":
-            break;
-          case "lt":
-          case "gt":
-            return order;
-        }
+        if (order !== "eq") return order;
       }
 
-      return compare_unknown(left.length, right_value.length);
+      return left_len < right_len ? "lt" : left_len > right_len ? "gt" : "eq";
     },
   });
 
@@ -324,13 +316,15 @@ function create_array(): AsArray {
     ): Data<AsArray, to> {
       const fns = this.value();
       const items = values.value();
-      const out = new Array<to>(fns.length * items.length);
+      const total = fns.length * items.length;
+      if (total === 0) return ArrayT([]);
+      const out = new Array<to>(total);
       let index = 0;
 
-      for (const fn of fns) {
-        for (const item of items) {
-          out[index] = fn(item);
-          index += 1;
+      for (let i = 0; i < fns.length; i += 1) {
+        const fn = fns[i];
+        for (let j = 0; j < items.length; j += 1) {
+          out[index++] = fn(items[j]);
         }
       }
 
@@ -342,7 +336,13 @@ function create_array(): AsArray {
     this: Data<AsArray, item>,
     right: Data<AsArray, item>,
   ): Data<AsArray, item> {
-    return ArrayT([...this.value(), ...right.value()]);
+    const left = this.value();
+    const right_value = right.value();
+    const n = left.length;
+    const out = new Array<item>(n + right_value.length);
+    for (let i = 0; i < n; i += 1) out[i] = left[i];
+    for (let i = 0; i < right_value.length; i += 1) out[n + i] = right_value[i];
+    return ArrayT(out);
   }
 
   Semigroup.instance(ArrayT)({
@@ -373,14 +373,13 @@ function create_array(): AsArray {
         length += chunk.length;
       }
 
+      if (length === 0) return ArrayT([]);
       const out = new Array<to>(length);
       let out_index = 0;
 
-      for (const chunk of chunks) {
-        for (const item of chunk) {
-          out[out_index] = item;
-          out_index += 1;
-        }
+      for (let i = 0; i < chunks.length; i += 1) {
+        const chunk = chunks[i];
+        for (let j = 0; j < chunk.length; j += 1) out[out_index++] = chunk[j];
       }
 
       return ArrayT(out);
@@ -397,19 +396,10 @@ function create_array(): AsArray {
 
       while (pending.length > 0) {
         const [tag, value] = pending.pop()!;
-
-        switch (tag) {
-          case loop_done:
-            output.push(value);
-            break;
-          case loop_rec: {
-            const next = step(value).value();
-
-            for (let index = next.length - 1; index >= 0; index -= 1) {
-              pending.push(next[index]);
-            }
-            break;
-          }
+        if (tag === loop_done) output.push(value);
+        else {
+          const next = step(value).value();
+          for (let i = next.length - 1; i >= 0; i -= 1) pending.push(next[i]);
         }
       }
 
@@ -425,6 +415,16 @@ function create_array(): AsArray {
     [find_method](predicate) {
       for (const item of this.value()) if (predicate(item)) return item;
       return undefined;
+    },
+    [fold_while_method](initial, fn) {
+      let state = initial;
+      const items = this.value();
+      for (let i = 0; i < items.length; i += 1) {
+        const step = fn(state, items[i]);
+        state = step[1];
+        if (step[0] === "Done") return state;
+      }
+      return state;
     },
 
     fold(initial, fn) {

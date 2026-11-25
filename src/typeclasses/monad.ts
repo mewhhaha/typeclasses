@@ -1,6 +1,9 @@
 import {
   type Data,
   type Dictionary,
+  tagged_payload,
+  tagged_tag,
+  tagged_value,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -201,9 +204,8 @@ export function Do<dictionary extends Monad<dictionary>, result>(
   const dictionary = explicit_run === undefined
     ? undefined
     : dictionary_or_run as dictionary;
-  const run = explicit_run === undefined
-    ? dictionary_or_run as () => DoGenerator<dictionary, result>
-    : explicit_run;
+  const run = explicit_run ??
+    dictionary_or_run as () => DoGenerator<dictionary, result>;
   const first_iterator = run();
   const first_next = first_iterator.next();
 
@@ -238,12 +240,31 @@ export function Do<dictionary extends Monad<dictionary>, result>(
                 monad_error_typeclass
               ] !== c_err))
       ) return step(path, current, first_iterator);
-      const raw = current.value() as readonly [string, unknown];
-      if (mode === 0 && raw[0] === "Nothing") {
+      let tag: PropertyKey | undefined;
+      let payload: unknown;
+      if (mode === 2) {
+        payload = current.value();
+      } else {
+        const tagged = current as unknown as {
+          readonly [tagged_tag]?: PropertyKey;
+          readonly [tagged_payload]?: unknown;
+          readonly [tagged_value]?: () => readonly [string, unknown];
+          value(): readonly [string, unknown];
+        };
+        const value_fn = tagged.value;
+        if (value_fn !== undefined && value_fn === tagged[tagged_value]) {
+          tag = tagged[tagged_tag];
+          payload = tagged[tagged_payload];
+        } else {
+          const raw = value_fn.call(tagged);
+          tag = raw[0];
+          payload = raw[1];
+        }
+      }
+      if (mode === 0 && tag === "Nothing") {
         return current as unknown as Data<dictionary, result>;
       }
-      const thrown = mode === 1 && raw[0] === "Left";
-      const payload = mode === 2 ? raw : raw[1];
+      const thrown = mode === 1 && tag === "Left";
       let next: IteratorResult<Data<dictionary, unknown>, result>;
       if (mode === 1) {
         try {
@@ -274,20 +295,19 @@ export function Do<dictionary extends Monad<dictionary>, result>(
   } {
     const iterator = run();
     let next = iterator.next();
-
-    const nodes = nodes_from_path(path);
-
-    for (let index = 0; index < nodes.length; index += 1) {
-      if (next.done) {
-        return { iterator, next };
-      }
-
+    const nodes: DoPath[] = [];
+    for (
+      let node: DoPath | undefined = path;
+      node !== undefined;
+      node = node.previous
+    ) nodes.push(node);
+    for (let index = nodes.length - 1; index >= 0; index -= 1) {
+      if (next.done) return { iterator, next };
       const node = nodes[index];
       next = node.thrown
         ? iterator.throw(node.value)
         : iterator.next(node.value);
     }
-
     return { iterator, next };
   }
 
@@ -350,16 +370,4 @@ export function Do<dictionary extends Monad<dictionary>, result>(
       return advance(boxed.tag === "throw", boxed.value);
     });
   }
-}
-
-function nodes_from_path(path: DoPath): DoPath[] {
-  const nodes: DoPath[] = [];
-  for (
-    let node: DoPath | undefined = path;
-    node !== undefined;
-    node = node.previous
-  ) {
-    nodes.push(node);
-  }
-  return nodes.reverse();
 }

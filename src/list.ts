@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import type { Matchable } from "./data_value.ts";
 import {
   $slot,
@@ -12,7 +16,7 @@ import {
 } from "./typeclass.ts";
 import { traverse_items_into } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
-import { loop_done, loop_rec, type LoopStep, rec } from "./loop.ts";
+import { loop_done, type LoopStep, rec } from "./loop.ts";
 import {
   Alternative,
   Applicative,
@@ -121,31 +125,17 @@ class ListBuilder<item> {
   }
 }
 
-function list_append<item>(
-  left: RawList<item>,
-  right: RawList<item>,
-): RawList<item> {
-  if (left[0] === "Nil") return right;
-  if (right[0] === "Nil") return left;
-  const out = new ListBuilder<item>();
-  let source: RawList<item> = left;
-  while (source[0] === "Cons") {
-    out.push(source[1]);
-    source = source[2];
-  }
-  return out.finish(right);
-}
-
 function lift_list_two<output>(
   fn: (...values: unknown[]) => output,
   first: RawList<unknown>,
   second: RawList<unknown>,
 ): List<output> {
-  let left = first;
+  if (first[0] === "Nil" || second[0] === "Nil") return Nil();
+  let left: RawList<unknown> = first;
   const out = new ListBuilder<output>();
   while (left[0] === "Cons") {
     const left_head = left[1];
-    let right = second;
+    let right: RawList<unknown> = second;
     while (right[0] === "Cons") {
       out.push(fn(left_head, right[1]));
       right = right[2];
@@ -161,14 +151,17 @@ function lift_list_three<output>(
   second: RawList<unknown>,
   third: RawList<unknown>,
 ): List<output> {
-  let left = first;
+  if (first[0] === "Nil" || second[0] === "Nil" || third[0] === "Nil") {
+    return Nil();
+  }
+  let left: RawList<unknown> = first;
   const out = new ListBuilder<output>();
   while (left[0] === "Cons") {
     const left_head = left[1];
-    let middle = second;
+    let middle: RawList<unknown> = second;
     while (middle[0] === "Cons") {
       const middle_head = middle[1];
-      let right = third;
+      let right: RawList<unknown> = third;
       while (right[0] === "Cons") {
         out.push(fn(left_head, middle_head, right[1]));
         right = right[2];
@@ -185,10 +178,16 @@ function lift_list_many<output>(
   first: RawList<unknown>,
   rest: readonly List<unknown>[],
 ): List<output> {
-  const sources = [first, ...rest.map((value) => value.value())];
+  if (first[0] === "Nil") return Nil();
+  const sources: RawList<unknown>[] = [first];
+  for (let i = 0; i < rest.length; i += 1) {
+    const raw = rest[i].value();
+    if (raw[0] === "Nil") return Nil();
+    sources.push(raw);
+  }
   const values: unknown[] = [];
   const out = new ListBuilder<output>();
-  const positions = [...sources];
+  const positions = sources.slice();
   let depth = 0;
   while (depth >= 0) {
     if (depth === sources.length) {
@@ -246,45 +245,39 @@ function create_list(): ListConstructor {
   );
   Show.instance(List)({
     show() {
-      const items: string[] = [];
-      let rest = this.value();
-      while (rest[0] === "Cons") {
-        items.push(inspect(rest[1]));
-        rest = rest[2];
-      }
-      return "[" + items.join(", ") + "]";
+      return "[" +
+        list_to_array(this.value()).map((x) => inspect(x)).join(", ") + "]";
     },
   });
 
   Eq.instance(List)({
     eq(right) {
-      let left_rest = this.value();
-      let right_rest = right.value();
+      let l = this.value();
+      let r = right.value();
 
-      while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-        if (!Object.is(left_rest[1], right_rest[1])) return false;
-        left_rest = left_rest[2];
-        right_rest = right_rest[2];
+      while (l !== r && l[0] === "Cons" && r[0] === "Cons") {
+        if (!Object.is(l[1], r[1])) return false;
+        l = l[2];
+        r = r[2];
       }
 
-      return left_rest[0] === "Nil" && right_rest[0] === "Nil";
+      return l === r || l[0] === r[0];
     },
   });
 
   Ord.instance(List)({
     compare(right) {
-      let left_rest = this.value();
-      let right_rest = right.value();
+      let l = this.value();
+      let r = right.value();
 
-      while (left_rest[0] === "Cons" && right_rest[0] === "Cons") {
-        const order = compare_unknown(left_rest[1], right_rest[1]);
+      while (l !== r && l[0] === "Cons" && r[0] === "Cons") {
+        const order = compare_unknown(l[1], r[1]);
         if (order !== "eq") return order;
-        left_rest = left_rest[2];
-        right_rest = right_rest[2];
+        l = l[2];
+        r = r[2];
       }
 
-      if (left_rest[0] === right_rest[0]) return "eq";
-      return left_rest[0] === "Nil" ? "lt" : "gt";
+      return l === r || l[0] === r[0] ? "eq" : l[0] === "Nil" ? "lt" : "gt";
     },
   });
 
@@ -305,7 +298,7 @@ function create_list(): ListConstructor {
 
   Applicative.instance(List)({
     pure(value) {
-      return List(["Cons", value, empty]);
+      return Cons(value, empty);
     },
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
@@ -329,11 +322,12 @@ function create_list(): ListConstructor {
       values: Data<AsList, from>,
     ): Data<AsList, to> {
       const items = values.value();
-      let fns = this.value();
+      let fns: RawList<(value: NoInfer<from>) => to> = this.value();
+      if (fns[0] === "Nil" || items[0] === "Nil") return Nil();
       const out = new ListBuilder<to>();
       while (fns[0] === "Cons") {
         const fn = fns[1];
-        let rest = items;
+        let rest: RawList<from> = items;
         while (rest[0] === "Cons") {
           out.push(fn(rest[1]));
           rest = rest[2];
@@ -348,7 +342,17 @@ function create_list(): ListConstructor {
     this: Data<AsList, item>,
     right: Data<AsList, item>,
   ): Data<AsList, item> {
-    return List(list_append(this.value(), right.value()));
+    const left = this.value();
+    const right_value = right.value();
+    if (left[0] === "Nil") return right;
+    if (right_value[0] === "Nil") return this;
+    const out = new ListBuilder<item>();
+    let source: RawList<item> = left;
+    while (source[0] === "Cons") {
+      out.push(source[1]);
+      source = source[2];
+    }
+    return List(out.finish(right_value));
   }
 
   Semigroup.instance(List)({
@@ -403,15 +407,12 @@ function create_list(): ListConstructor {
           continue;
         }
         const [, [tag, value], tail] = current;
-        switch (tag) {
-          case loop_done:
-            out.push(value);
-            current = tail;
-            break;
-          case loop_rec:
-            if (tail[0] === "Cons") pending.push(tail);
-            current = step(value).value();
-            break;
+        if (tag === loop_done) {
+          out.push(value);
+          current = tail;
+        } else {
+          if (tail[0] === "Cons") pending.push(tail);
+          current = step(value).value();
         }
       }
       return List(out.finish());
@@ -435,6 +436,17 @@ function create_list(): ListConstructor {
         rest = rest[2];
       }
       return undefined;
+    },
+    [fold_while_method](initial, fn) {
+      let state = initial;
+      let rest = this.value();
+      while (rest[0] === "Cons") {
+        const step = fn(state, rest[1]);
+        state = step[1];
+        if (step[0] === "Done") return state;
+        rest = rest[2];
+      }
+      return state;
     },
 
     fold(initial, fn) {

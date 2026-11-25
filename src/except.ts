@@ -2,7 +2,6 @@ import {
   bind_from,
   type Effect,
   type Ensuring,
-  map,
   type Operation,
   pure,
   suspend,
@@ -137,32 +136,58 @@ export function from_validation<error, item>(
  * });
  * ```
  */
+class AttemptFailure<error> {
+  readonly error: error;
+  constructor(error: error) {
+    this.error = error;
+  }
+}
+
+class ProtectedFailure<error> {
+  readonly error: error;
+  constructor(error: error) {
+    this.error = error;
+  }
+}
+
+function resume_attempt<error, item>(
+  outcome: unknown,
+): Effect<Fails<error>, item> {
+  if (outcome instanceof AttemptFailure) {
+    return fail(outcome.error as error);
+  }
+  return pure(outcome as item);
+}
+
 export function attempt<error, item>(
   run: (signal: AbortSignal | undefined) => Promise<item>,
   on_error: (cause: unknown) => error,
 ): Effect<Uses<AsTask> | Fails<error>, item> {
-  const settled = from_fn<Settled<error, item>>(async (signal) => {
+  const settled = from_fn<unknown>((signal) => {
+    let pending: Promise<item>;
     try {
-      return ["ok", await run(signal)] as const;
+      pending = run(signal);
     } catch (cause) {
       if (is_task_cancellation(cause)) {
         throw cause;
       }
-
-      return ["error", on_error(cause)] as const;
+      return new AttemptFailure(on_error(cause));
     }
+    const promise = pending instanceof Promise
+      ? pending
+      : Promise.resolve(pending);
+    return promise.catch((cause) => {
+      if (is_task_cancellation(cause)) {
+        throw cause;
+      }
+      return new AttemptFailure(on_error(cause));
+    });
   });
 
-  return bind_from(settled, (outcome) => {
-    const [branch, payload] = outcome;
-
-    switch (branch) {
-      case "error":
-        return fail(payload);
-      case "ok":
-        return pure(payload);
-    }
-  });
+  return bind_from(
+    settled,
+    resume_attempt as (outcome: unknown) => Effect<Fails<error>, item>,
+  );
 }
 
 /** Handles failures, collapsing the program's item into an Either.
@@ -215,15 +240,86 @@ export function map_error<requirements, item, next_error>(
   return recover(effect, (error) => fail(fn(error)));
 }
 
-/** The settled outcome of an `attempt`, before it re-enters the program. */
-type Settled<error, item> =
-  | readonly ["ok", item]
-  | readonly ["error", error];
-
 function operation_tag(operation: unknown): unknown {
   return typeof operation === "object" && operation !== null
     ? (operation as readonly [unknown])[0]
     : undefined;
+}
+
+function handle_fails_raw<error, item>(
+  effect: Effect<unknown, item>,
+  record: (error: error) => void,
+): Effect<unknown, unknown> {
+  if (effect[0] === "pure") {
+    return effect;
+  }
+
+  const operation = effect[1];
+  const resume = effect[2];
+  const tag = operation_tag(operation);
+
+  if (tag === "except.fail") {
+    const error = (operation as Fails<error>)[1];
+    record(error);
+    return pure(new ProtectedFailure<error>(error));
+  }
+
+  if (tag === "effect.ensuring") {
+    return handle_protected_raw<error, item>(
+      (operation as Ensuring)[1],
+      resume,
+      record,
+    );
+  }
+
+  return suspend(
+    operation,
+    (value) => handle_fails_raw<error, item>(resume(value), record),
+  );
+}
+
+function make_protected_ensuring<error>(scope: Ensuring[1]): Ensuring {
+  // Prepare allocates outcome state when the runner enters the scope. Reusing
+  // the handled effect, including concurrent runs, never shares that state.
+  return ["effect.ensuring", {
+    effect: scope.effect,
+    finalize: scope.finalize,
+    prepare() {
+      let original = scope;
+      while (original.prepare !== undefined) original = original.prepare();
+      const entered = original;
+      let failed = false;
+      let failure: error | undefined;
+      const record = (error: error) => {
+        failed = true;
+        failure = error;
+      };
+
+      return {
+        effect: handle_fails_raw<error, unknown>(entered.effect, record),
+        finalize: (exit) =>
+          entered.finalize(
+            exit.status === "succeeded" && failed
+              ? { status: "failed", error: failure }
+              : exit,
+          ),
+      };
+    },
+  }];
+}
+
+function handle_protected_raw<error, item>(
+  scope: Ensuring[1],
+  resume: (value: unknown) => Effect<unknown, item>,
+  outer_record: (error: error) => void,
+): Effect<unknown, unknown> {
+  return suspend(make_protected_ensuring<error>(scope), (value) => {
+    if (value instanceof ProtectedFailure) {
+      outer_record(value.error as error);
+      return pure(value);
+    }
+    return handle_fails_raw<error, item>(resume(value), outer_record);
+  });
 }
 
 function handle_recover<error, item, replacement>(
@@ -262,43 +358,11 @@ function handle_protected_recover<error, item, replacement>(
   resume: (value: unknown) => Effect<unknown, item>,
   on_error: (error: error) => Effect<replacement, item>,
 ): Effect<unknown, item> {
-  const protect: Ensuring = ["effect.ensuring", {
-    effect: scope.effect,
-    finalize: scope.finalize,
-    prepare() {
-      let original = scope;
-      while (original.prepare !== undefined) original = original.prepare();
-      const entered = original;
-      let failure: readonly [error] | undefined;
-
-      return {
-        effect: map(handle_fails<error, unknown>(entered.effect), (outcome) => {
-          const [branch, payload] = outcome.value();
-          if (branch === "Left") failure = [payload];
-          return outcome;
-        }),
-        finalize: (exit) =>
-          entered.finalize(
-            exit.status === "succeeded" && failure !== undefined
-              ? { status: "failed", error: failure[0] }
-              : exit,
-          ),
-      };
-    },
-  }];
-
-  return suspend(protect, (value) => {
-    const [branch, payload] = (value as Either<error, unknown>).value();
-
-    switch (branch) {
-      case "Left":
-        return on_error(payload) as Effect<unknown, item>;
-      case "Right":
-        return handle_recover<error, item, replacement>(
-          resume(payload),
-          on_error,
-        );
+  return suspend(make_protected_ensuring<error>(scope), (value) => {
+    if (value instanceof ProtectedFailure) {
+      return on_error(value.error as error) as Effect<unknown, item>;
     }
+    return handle_recover<error, item, replacement>(resume(value), on_error);
   });
 }
 
@@ -337,44 +401,11 @@ function handle_protected_fails<error, item>(
   scope: Ensuring[1],
   resume: (value: unknown) => Effect<unknown, item>,
 ): Effect<unknown, Either<error, item>> {
-  // Prepare allocates outcome state when the runner enters the scope. Reusing
-  // the handled effect, including concurrent runs, never shares that state.
-  const protect: Ensuring = ["effect.ensuring", {
-    effect: scope.effect,
-    finalize: scope.finalize,
-    prepare() {
-      let original = scope;
-      while (original.prepare !== undefined) original = original.prepare();
-      const entered = original;
-      let failure: readonly [error] | undefined;
-
-      return {
-        effect: map(handle_fails<error, unknown>(entered.effect), (outcome) => {
-          const [branch, payload] = outcome.value();
-          if (branch === "Left") failure = [payload];
-          return outcome;
-        }),
-        finalize: (exit) =>
-          entered.finalize(
-            exit.status === "succeeded" && failure !== undefined
-              ? { status: "failed", error: failure[0] }
-              : exit,
-          ),
-      };
-    },
-  }];
-
-  return suspend(protect, (value) => {
-    // The runner resumes with the nested effect's item, which the handler above
-    // made an Either.
-    const [branch, payload] = (value as Either<error, unknown>).value();
-
-    switch (branch) {
-      case "Left":
-        return pure(Left<error, item>(payload));
-      case "Right":
-        return handle_fails<error, item>(resume(payload));
+  return suspend(make_protected_ensuring<error>(scope), (value) => {
+    if (value instanceof ProtectedFailure) {
+      return pure(Left<error, item>(value.error as error));
     }
+    return handle_fails<error, item>(resume(value));
   });
 }
 

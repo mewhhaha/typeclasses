@@ -2947,3 +2947,157 @@ Deno.test("round-7 codex differential parity: named Program param capture, Paral
   // 8. $-prefixed Do alias
   assert_equals(mod_tx.dollar_alias_do(41).value(), ["Just", 42]);
 });
+
+Deno.test("Wave 2 transformer fusions preserve differential parity and strict TypeScript checking", async () => {
+  const mod_url = new URL("../src/mod.ts", import.meta.url).href;
+  const array_url = new URL("../src/array.ts", import.meta.url).href;
+  const prelude_url = new URL("../src/prelude.ts", import.meta.url).href;
+  const list_url = new URL("../src/list.ts", import.meta.url).href;
+  const task_url = new URL("../src/task.ts", import.meta.url).href;
+  const stm_url = new URL("../src/stm.ts", import.meta.url).href;
+  const source = [
+    `import { Do, Just, Left, List, Maybe, Nothing, Right, field, define_union, match } from ${
+      JSON.stringify(mod_url)
+    };`,
+    `import { ArrayT } from ${JSON.stringify(array_url)};`,
+    `import { fmap, foldl, fold_while, length, sum, product, to_array as p_to_array, some as p_some, find as p_find } from ${
+      JSON.stringify(prelude_url)
+    };`,
+    `import { from_array as list_from_array, to_array as list_to_array } from ${
+      JSON.stringify(list_url)
+    };`,
+    `import { Task, from_fn, from_promise, run_task, traverse_task } from ${
+      JSON.stringify(task_url)
+    };`,
+    `import { Stm, atomically, modify_tvar, new_tvar, or_else, read_tvar, retry, write_tvar } from ${
+      JSON.stringify(stm_url)
+    };`,
+    "const shape_id: unique symbol = Symbol('Shape');",
+    "const Shape = define_union(shape_id, ['Circle', field<number>()], ['Rect', field<number>(), field<number>()]);",
+    "export function list_to_array_do(xs: number[], ys: number[]) {",
+    "  return list_to_array(Do(List, function* () {",
+    "    const x = yield* list_from_array(xs);",
+    "    const y = yield* list_from_array(ys);",
+    "    return x * 10 + y;",
+    "  }));",
+    "}",
+    "export function prelude_fusions(xs: number[]) {",
+    "  const a = ArrayT(xs);",
+    "  return {",
+    "    sum: sum(ArrayT(xs).map((n: number) => n * 2)),",
+    "    fmap_val: fmap((n: number) => n * 2, a).value(),",
+    "    prod: product(a),",
+    "    len: length(a),",
+    "    arr: p_to_array(ArrayT(xs).map((n: number) => n + 1)),",
+    "    folded: foldl((acc: number, n: number) => acc + n, 0, a),",
+    "    while_sum: fold_while(a, 0, (acc: number, n: number) => acc + n >= 6 ? ['Done', acc + n] : ['Continue', acc + n]),",
+    "    has_even: p_some(a, (n: number) => n % 2 === 0),",
+    "    first_big: p_find(a, (n: number) => n > 2),",
+    "  };",
+    "}",
+    "export function custom_match_fusion(r: number, w: number, h: number) {",
+    "  const raw: readonly ['Circle', number] | readonly ['Rect', number, number] = r > 0 ? ['Circle', r] : ['Rect', w, h];",
+    "  const rc = Shape.Rect(w, h);",
+    "  const a = match(raw, { Circle: (rad: number) => rad * rad, Rect: (x: number, y: number) => x * y });",
+    "  const b = rc.match({ Circle: (rad: number) => rad, Rect: (x: number, y: number) => x + y });",
+    "  return a + b;",
+    "}",
+    "export function standalone_task_do(x: number) {",
+    "  const t = Do(Task, function* () {",
+    "    const a = yield* from_fn(() => x + 1);",
+    "    const b = yield* from_promise(Promise.resolve(a * 2));",
+    "    return b + 3;",
+    "  });",
+    "  return run_task(t);",
+    "}",
+    "export function task_traverse_fusion(xs: number[]) {",
+    "  return run_task(traverse_task(xs, 2, (n) => from_fn(() => n * 5)));",
+    "}",
+    "export function stm_retry_and_direct(init: number) {",
+    "  const tv = new_tvar(init);",
+    "  const v = atomically(or_else(",
+    "    Do(Stm, function* () {",
+    "      yield* write_tvar(tv, -1);",
+    "      return yield* retry<number>();",
+    "    }),",
+    "    Do(Stm, function* () {",
+    "      yield* modify_tvar(tv, (n) => n + 10);",
+    "      return yield* read_tvar(tv);",
+    "    }),",
+    "  ));",
+    "  return [v, atomically(read_tvar(tv))];",
+    "}",
+    "export function maybe_either_keep(x: number) {",
+    "  return [Just(x).map((n) => n + 1).value(), Left('e').value(), Right(x).value(), Nothing().value(), Maybe.pure(x).value()];",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round7_wave2_parity.ts", {
+    source_map: true,
+  });
+  assert_equals(result.diagnostics.length, 0);
+  assert_true(result.transformed > 0, "expected Wave 2 fusions to transform");
+
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-r7-wave2-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Wave 2 parity TS failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  const mod_orig = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(source, "wave2_orig.ts"))
+  );
+  const mod_tx = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(result.code, "wave2_tx.ts"))
+  );
+
+  assert_equals(
+    mod_tx.list_to_array_do([1, 2], [3, 4]),
+    mod_orig.list_to_array_do([1, 2], [3, 4]),
+  );
+  assert_equals(
+    mod_tx.list_to_array_do([], [3, 4]),
+    mod_orig.list_to_array_do([], [3, 4]),
+  );
+  assert_equals(
+    mod_tx.prelude_fusions([1, 2, 3, 4]),
+    mod_orig.prelude_fusions([1, 2, 3, 4]),
+  );
+  assert_equals(
+    mod_tx.custom_match_fusion(3, 4, 5),
+    mod_orig.custom_match_fusion(3, 4, 5),
+  );
+  assert_equals(
+    await mod_tx.standalone_task_do(10),
+    await mod_orig.standalone_task_do(10),
+  );
+  assert_equals(
+    await mod_tx.task_traverse_fusion([1, 2, 3]),
+    await mod_orig.task_traverse_fusion([1, 2, 3]),
+  );
+  assert_equals(
+    mod_tx.stm_retry_and_direct(5),
+    mod_orig.stm_retry_and_direct(5),
+  );
+  assert_equals(
+    mod_tx.maybe_either_keep(7),
+    mod_orig.maybe_either_keep(7),
+  );
+});

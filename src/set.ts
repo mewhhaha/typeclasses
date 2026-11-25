@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import {
   type As,
   as_data,
@@ -49,47 +53,37 @@ export type SetT<item> = Data<AsSet, item>;
 export const SetT: AsSet = /* @__PURE__ */ create_set();
 
 /** Wrap a defensive copy of a read-only set. */
-export function from_set<item>(set: ReadonlySet<item>): SetT<item> {
-  return SetT(set);
-}
+export const from_set: <item>(set: ReadonlySet<item>) => SetT<item> = SetT;
 
 /** Collect an iterable into a wrapped set. */
-export function from_iterable<item>(
+export const from_iterable = <item>(
   items: Iterable<item>,
-): SetT<item> {
-  return as_data(SetT, new Set(items));
-}
+): SetT<item> => as_data(SetT, new Set(items));
 
 /** Copy a wrapped set into a mutable JavaScript `Set`. */
-export function to_set<item>(set: SetT<item>): Set<item> {
-  return new Set(set.value());
-}
+export const to_set = <item>(set: SetT<item>): Set<item> =>
+  new Set(set.value());
 
 function create_set(): AsSet {
   const SetT: AsSet = data<AsSet>(set_identity, function (set) {
     return this.data(new Set(set));
   });
+  const raw = <item>(set: Data<AsSet, item>) => set.value();
   Show.instance(SetT)({
     show() {
-      return inspect(this.value());
+      return inspect(raw(this));
     },
   });
 
   Eq.instance(SetT)({
     eq(right) {
-      const left = this.value();
-      const right_value = right.value();
-
-      if (left.size !== right_value.size) {
-        return false;
-      }
-
+      const left = raw(this);
+      const right_value = raw(right);
+      if (left === right_value) return true;
+      if (left.size !== right_value.size) return false;
       for (const value of left) {
-        if (!right_value.has(value)) {
-          return false;
-        }
+        if (!right_value.has(value)) return false;
       }
-
       return true;
     },
   });
@@ -97,23 +91,15 @@ function create_set(): AsSet {
   Functor.instance(SetT)({
     map(fn) {
       const out = new Set<ReturnType<typeof fn>>();
-
-      for (const item of this.value()) {
-        out.add(fn(item));
-      }
-
+      for (const item of raw(this)) out.add(fn(item));
       return as_data(SetT, out);
     },
   });
 
   Semigroup.instance(SetT)({
     concat(right) {
-      const out = new Set(this.value());
-
-      for (const item of right.value()) {
-        out.add(item);
-      }
-
+      const out = new Set(raw(this));
+      for (const item of raw(right)) out.add(item);
       return as_data(SetT, out);
     },
   });
@@ -126,20 +112,23 @@ function create_set(): AsSet {
 
   Foldable.instance(SetT)({
     [some_method](predicate) {
-      for (const item of this.value()) if (predicate(item)) return true;
+      for (const item of raw(this)) if (predicate(item)) return true;
       return false;
     },
     [find_method](predicate) {
-      for (const item of this.value()) if (predicate(item)) return item;
+      for (const item of raw(this)) if (predicate(item)) return item;
       return undefined;
     },
-    fold(initial, fn) {
-      let state = initial;
-
-      for (const item of this.value()) {
-        state = fn(state, item);
+    [fold_while_method](state, fn) {
+      for (const item of raw(this)) {
+        const step = fn(state, item);
+        state = step[1];
+        if (step[0] === "Done") return state;
       }
-
+      return state;
+    },
+    fold(state, fn) {
+      for (const item of raw(this)) state = fn(state, item);
       return state;
     },
   });

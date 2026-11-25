@@ -1,11 +1,14 @@
 import { parseSync } from "oxc-parser";
 import type {
+  Argument,
+  BlockStatement,
   Expression,
   IdentifierReference,
   ImportDeclaration,
   Node,
   Program,
   Statement,
+  SwitchCase,
   VariableDeclaration,
   VariableDeclarator,
 } from "oxc-parser";
@@ -94,9 +97,6 @@ function parse_source(
   });
 }
 
-const r5_syntax_re =
-  /\.\s*(?:map|bind|fold)\s*\(|\bmatch\b|traverse|\bFoldable\b/g;
-
 function push_set(target: string[], set: ReadonlySet<string>): void {
   if (set.size === 0) return;
   for (const item of set) target.push(item);
@@ -173,22 +173,34 @@ function transform_do_program_checked(
     const scan_from = headers.leading_imports_end;
     const has_effect_interp = headers.effect_names.size > 0 ||
       headers.namespaces.size > 0;
-    const has_collect = headers.collect_functions.size > 0 ||
-      headers.collect_namespaces.size > 0;
-    const has_lift = headers.applicative_objects.size > 0 ||
-      headers.applicative_namespaces.size > 0;
+    const has_prelude_ns = headers.prelude_namespaces.size > 0;
     const has_traverse = headers.traversable_objects.size > 0 ||
       headers.traversable_namespaces.size > 0 ||
       headers.traverse_sequential_functions.size > 0 ||
       headers.traverse_sequential_namespaces.size > 0 ||
-      headers.array_constructors.size > 0;
+      headers.prelude_traverse_functions.size > 0 ||
+      headers.prelude_sequence_functions.size > 0 ||
+      headers.task_traverse_functions.size > 0 ||
+      has_prelude_ns ||
+      headers.array_constructors.size > 0 ||
+      headers.list_constructors.size > 0 ||
+      headers.list_from_array_functions.size > 0 ||
+      headers.list_namespaces.size > 0 ||
+      headers.map_constructors.size > 0 ||
+      headers.record_constructors.size > 0;
     const has_match = headers.match_functions.size > 0 ||
       headers.match_namespaces.size > 0 ||
       headers.tagged_type_names.size > 0 ||
       headers.just_constructors.size > 0 ||
       headers.nothing_constructors.size > 0 ||
+      headers.from_nullable_functions.size > 0 ||
       headers.left_constructors.size > 0 ||
       headers.right_constructors.size > 0 ||
+      headers.either_from_number_functions.size > 0 ||
+      headers.either_try_catch_functions.size > 0 ||
+      headers.direct_maybe_dictionaries.size > 0 ||
+      headers.direct_either_dictionaries.size > 0 ||
+      headers.direct_validation_dictionaries.size > 0 ||
       headers.validation_constructors.size > 0 ||
       headers.list_constructors.size > 0 ||
       headers.nil_constructors.size > 0 ||
@@ -196,11 +208,34 @@ function transform_do_program_checked(
     const has_array_chain = headers.array_constructors.size > 0 ||
       headers.array_from_array_functions.size > 0 ||
       headers.array_view_functions.size > 0 ||
+      headers.array_to_array_functions.size > 0 ||
+      headers.array_indexed_functions.size > 0 ||
+      headers.array_flat_map_streaming_functions.size > 0 ||
       headers.array_namespaces.size > 0 ||
       headers.typed_array_constructors.size > 0 ||
       headers.set_constructors.size > 0 ||
       headers.map_constructors.size > 0 ||
-      headers.record_constructors.size > 0;
+      headers.record_constructors.size > 0 ||
+      headers.list_constructors.size > 0 ||
+      headers.list_from_array_functions.size > 0 ||
+      headers.list_to_array_functions.size > 0 ||
+      headers.list_namespaces.size > 0 ||
+      headers.nil_constructors.size > 0 ||
+      headers.cons_constructors.size > 0 ||
+      headers.prelude_fmap_functions.size > 0 ||
+      headers.prelude_bind_functions.size > 0 ||
+      headers.prelude_ap_functions.size > 0 ||
+      headers.prelude_foldl_functions.size > 0 ||
+      headers.prelude_fold_while_functions.size > 0 ||
+      headers.prelude_some_functions.size > 0 ||
+      headers.prelude_find_functions.size > 0 ||
+      headers.prelude_to_array_functions.size > 0 ||
+      headers.prelude_length_functions.size > 0 ||
+      headers.prelude_sum_functions.size > 0 ||
+      headers.prelude_product_functions.size > 0 ||
+      headers.prelude_alt_functions.size > 0 ||
+      headers.prelude_concat_functions.size > 0 ||
+      has_prelude_ns;
     const has_maybe_either_chain = headers.just_constructors.size > 0 ||
       headers.nothing_constructors.size > 0 ||
       headers.from_nullable_functions.size > 0 ||
@@ -209,19 +244,56 @@ function transform_do_program_checked(
       headers.maybe_get_or_else_functions.size > 0 ||
       headers.maybe_fold_functions.size > 0 ||
       headers.maybe_filter_functions.size > 0 ||
+      headers.maybe_to_either_functions.size > 0 ||
       headers.left_constructors.size > 0 ||
       headers.right_constructors.size > 0 ||
       headers.either_fold_functions.size > 0 ||
       headers.either_from_right_functions.size > 0 ||
       headers.either_from_left_functions.size > 0 ||
       headers.either_recover_functions.size > 0 ||
+      headers.either_hush_functions.size > 0 ||
+      headers.either_note_functions.size > 0 ||
+      headers.either_from_number_functions.size > 0 ||
+      headers.either_try_catch_functions.size > 0 ||
+      headers.either_is_left_functions.size > 0 ||
+      headers.either_is_right_functions.size > 0 ||
+      headers.either_map_left_functions.size > 0 ||
+      headers.either_bind_widen_functions.size > 0 ||
       headers.direct_maybe_dictionaries.size > 0 ||
       headers.direct_either_dictionaries.size > 0 ||
+      headers.validation_constructors.size > 0 ||
+      headers.direct_validation_dictionaries.size > 0 ||
+      headers.valid_constructors.size > 0 ||
+      headers.invalid_constructors.size > 0 ||
+      headers.invalid_messages_constructors.size > 0 ||
+      headers.validation_to_either_functions.size > 0 ||
+      headers.validation_map_error_functions.size > 0 ||
+      headers.alternative_objects.size > 0 ||
+      headers.alternative_namespaces.size > 0 ||
+      headers.bifunctor_objects.size > 0 ||
+      headers.bifunctor_namespaces.size > 0 ||
+      headers.monad_error_objects.size > 0 ||
+      headers.monad_error_namespaces.size > 0 ||
+      headers.prelude_fmap_functions.size > 0 ||
+      headers.prelude_bind_functions.size > 0 ||
+      headers.prelude_ap_functions.size > 0 ||
+      headers.prelude_alt_functions.size > 0 ||
+      has_prelude_ns ||
       headers.tagged_type_names.size > 0;
+    const has_task_chain = headers.task_from_fn_functions.size > 0 ||
+      headers.task_from_promise_functions.size > 0 ||
+      headers.task_succeed_functions.size > 0 ||
+      headers.task_parallel_functions.size > 0 ||
+      headers.task_sequential_functions.size > 0 ||
+      headers.task_traverse_functions.size > 0 ||
+      headers.task_namespaces.size > 0 ||
+      headers.parallel_task_dictionaries.size > 0 ||
+      headers.loop_tasks.size > 0;
     const target_tokens: string[] = ["Do", "Program"];
     push_set(target_tokens, headers.do_names);
     push_set(target_tokens, headers.program_names);
     push_set(target_tokens, headers.namespaces);
+    push_keys(target_tokens, scope_declarations);
     push_keys(target_tokens, headers.terminal_functions);
     push_keys(target_tokens, headers.terminal_namespaces);
     push_keys(target_tokens, headers.cell_runners);
@@ -232,6 +304,8 @@ function transform_do_program_checked(
     push_keys(target_tokens, headers.state_eval_namespaces);
     push_set(target_tokens, headers.task_run_functions);
     push_set(target_tokens, headers.task_run_exit_functions);
+    push_set(target_tokens, headers.task_traverse_functions);
+    push_set(target_tokens, headers.task_sequential_functions);
     push_set(target_tokens, headers.task_namespaces);
     push_set(target_tokens, headers.stm_atomically_functions);
     push_set(target_tokens, headers.stm_namespaces);
@@ -243,6 +317,12 @@ function transform_do_program_checked(
     push_set(target_tokens, headers.traversable_namespaces);
     push_set(target_tokens, headers.traverse_sequential_functions);
     push_set(target_tokens, headers.traverse_sequential_namespaces);
+    push_set(target_tokens, headers.alternative_objects);
+    push_set(target_tokens, headers.alternative_namespaces);
+    push_set(target_tokens, headers.bifunctor_objects);
+    push_set(target_tokens, headers.bifunctor_namespaces);
+    push_set(target_tokens, headers.monad_error_objects);
+    push_set(target_tokens, headers.monad_error_namespaces);
     push_set(target_tokens, headers.match_functions);
     push_set(target_tokens, headers.match_namespaces);
     push_set(target_tokens, headers.from_maybe_functions);
@@ -250,67 +330,158 @@ function transform_do_program_checked(
     push_set(target_tokens, headers.maybe_get_or_else_functions);
     push_set(target_tokens, headers.maybe_fold_functions);
     push_set(target_tokens, headers.maybe_filter_functions);
+    push_set(target_tokens, headers.maybe_to_either_functions);
     push_set(target_tokens, headers.either_fold_functions);
     push_set(target_tokens, headers.either_from_right_functions);
     push_set(target_tokens, headers.either_from_left_functions);
     push_set(target_tokens, headers.either_recover_functions);
+    push_set(target_tokens, headers.either_hush_functions);
+    push_set(target_tokens, headers.either_note_functions);
+    push_set(target_tokens, headers.either_is_left_functions);
+    push_set(target_tokens, headers.either_is_right_functions);
+    push_set(target_tokens, headers.either_map_left_functions);
+    push_set(target_tokens, headers.either_bind_widen_functions);
+    push_set(target_tokens, headers.validation_to_either_functions);
+    push_set(target_tokens, headers.validation_map_error_functions);
     push_set(target_tokens, headers.array_to_array_functions);
+    push_set(target_tokens, headers.array_indexed_functions);
+    push_set(target_tokens, headers.array_flat_map_streaming_functions);
+    push_set(target_tokens, headers.list_to_array_functions);
+    push_set(target_tokens, headers.list_namespaces);
+    push_set(target_tokens, headers.prelude_fmap_functions);
+    push_set(target_tokens, headers.prelude_bind_functions);
+    push_set(target_tokens, headers.prelude_ap_functions);
+    push_set(target_tokens, headers.prelude_lift_functions);
+    push_set(target_tokens, headers.prelude_traverse_functions);
+    push_set(target_tokens, headers.prelude_sequence_functions);
+    push_set(target_tokens, headers.prelude_foldl_functions);
+    push_set(target_tokens, headers.prelude_fold_while_functions);
+    push_set(target_tokens, headers.prelude_some_functions);
+    push_set(target_tokens, headers.prelude_find_functions);
+    push_set(target_tokens, headers.prelude_to_array_functions);
+    push_set(target_tokens, headers.prelude_length_functions);
+    push_set(target_tokens, headers.prelude_sum_functions);
+    push_set(target_tokens, headers.prelude_product_functions);
+    push_set(target_tokens, headers.prelude_alt_functions);
+    push_set(target_tokens, headers.prelude_concat_functions);
+    push_set(target_tokens, headers.prelude_namespaces);
     if (has_effect_interp) {
-      target_tokens.push("run", "handle_with", "value");
+      target_tokens.push(".run", ".handle_with", ".value");
     } else if (
       headers.direct_reader_dictionaries.size > 0 ||
       headers.direct_state_dictionaries.size > 0 ||
       headers.direct_writer_dictionaries.size > 0 ||
-      headers.loop_tasks.size > 0 ||
+      has_task_chain ||
       headers.cell_factories.size > 0 ||
       headers.cell_namespaces.size > 0
     ) {
-      target_tokens.push("run", "value");
+      target_tokens.push(".run", ".value");
     }
-    if (has_collect) target_tokens.push("collect");
-    if (has_lift) target_tokens.push("lift");
-    let has_r5_syntax = false;
     if (
-      has_traverse || has_match || has_maybe_either_chain || has_array_chain
+      headers.applicative_objects.size > 0 ||
+      headers.applicative_namespaces.size > 0
     ) {
-      r5_syntax_re.lastIndex = scan_from;
-      has_r5_syntax = r5_syntax_re.test(source);
+      target_tokens.push(".lift");
     }
     const hint_traverse = has_traverse && (
-      (has_r5_syntax && source.indexOf("traverse", scan_from) >= 0) ||
+      source.indexOf("traverse", scan_from) >= 0 ||
+      source.indexOf("sequence", scan_from) >= 0 ||
       has_any_token(source, scan_from, headers.traverse_sequential_functions) ||
-      has_any_token(source, scan_from, headers.traversable_objects)
+      has_any_token(source, scan_from, headers.traversable_objects) ||
+      has_any_token(source, scan_from, headers.prelude_traverse_functions) ||
+      has_any_token(source, scan_from, headers.prelude_sequence_functions) ||
+      has_any_token(source, scan_from, headers.task_traverse_functions)
     );
     const hint_match = has_match && (
-      (has_r5_syntax && source.indexOf("match", scan_from) >= 0) ||
+      source.indexOf("match", scan_from) >= 0 ||
       has_any_token(source, scan_from, headers.match_functions)
     );
-    const has_dot_map = has_r5_syntax &&
-      (has_maybe_either_chain || has_array_chain) &&
+    const has_dot_map =
+      (has_maybe_either_chain || has_array_chain || has_task_chain) &&
       source.indexOf(".map", scan_from) >= 0;
-    const has_dot_bind = has_r5_syntax && has_maybe_either_chain &&
+    const has_dot_bind =
+      (has_maybe_either_chain || has_array_chain || has_task_chain) &&
       source.indexOf(".bind", scan_from) >= 0;
-    const has_dot_fold = has_r5_syntax && has_array_chain &&
+    const has_dot_ap = (has_maybe_either_chain || has_array_chain) &&
+      source.indexOf(".ap", scan_from) >= 0;
+    const has_dot_fold = has_array_chain &&
       source.indexOf(".fold", scan_from) >= 0;
+    const has_dot_concat = has_array_chain &&
+      source.indexOf(".concat", scan_from) >= 0;
+    const has_dot_alt = (has_maybe_either_chain || has_array_chain) &&
+      source.indexOf(".alt", scan_from) >= 0;
+    const has_dot_bimap = has_maybe_either_chain &&
+      source.indexOf(".bimap", scan_from) >= 0;
+    const has_dot_catch_error = (has_maybe_either_chain || has_task_chain) &&
+      source.indexOf(".catch_error", scan_from) >= 0;
     const has_foldable_tok = has_array_chain && (
-      (has_r5_syntax && source.indexOf("Foldable", scan_from) >= 0) ||
+      source.indexOf("Foldable", scan_from) >= 0 ||
       has_any_token(source, scan_from, headers.foldable_objects)
     );
     const hint_chain = has_maybe_either_chain && (
-      has_dot_map || has_dot_bind ||
-      headers.from_maybe_functions.size > 0 ||
-      headers.to_nullable_functions.size > 0 ||
-      headers.maybe_get_or_else_functions.size > 0 ||
-      headers.maybe_fold_functions.size > 0 ||
-      headers.maybe_filter_functions.size > 0 ||
-      headers.either_fold_functions.size > 0 ||
-      headers.either_from_right_functions.size > 0 ||
-      headers.either_from_left_functions.size > 0 ||
-      headers.either_recover_functions.size > 0
+      has_dot_map || has_dot_bind || has_dot_ap || has_dot_alt ||
+      has_dot_bimap || has_dot_catch_error ||
+      has_any_token(source, scan_from, headers.from_maybe_functions) ||
+      has_any_token(source, scan_from, headers.to_nullable_functions) ||
+      has_any_token(source, scan_from, headers.maybe_get_or_else_functions) ||
+      has_any_token(source, scan_from, headers.maybe_fold_functions) ||
+      has_any_token(source, scan_from, headers.maybe_filter_functions) ||
+      has_any_token(source, scan_from, headers.maybe_to_either_functions) ||
+      has_any_token(source, scan_from, headers.either_fold_functions) ||
+      has_any_token(source, scan_from, headers.either_from_right_functions) ||
+      has_any_token(source, scan_from, headers.either_from_left_functions) ||
+      has_any_token(source, scan_from, headers.either_recover_functions) ||
+      has_any_token(source, scan_from, headers.either_hush_functions) ||
+      has_any_token(source, scan_from, headers.either_note_functions) ||
+      has_any_token(source, scan_from, headers.either_is_left_functions) ||
+      has_any_token(source, scan_from, headers.either_is_right_functions) ||
+      has_any_token(source, scan_from, headers.either_map_left_functions) ||
+      has_any_token(source, scan_from, headers.either_bind_widen_functions) ||
+      has_any_token(
+        source,
+        scan_from,
+        headers.validation_to_either_functions,
+      ) ||
+      has_any_token(
+        source,
+        scan_from,
+        headers.validation_map_error_functions,
+      ) ||
+      has_any_token(source, scan_from, headers.alternative_objects) ||
+      has_any_token(source, scan_from, headers.bifunctor_objects) ||
+      has_any_token(source, scan_from, headers.monad_error_objects) ||
+      has_any_token(source, scan_from, headers.prelude_fmap_functions) ||
+      has_any_token(source, scan_from, headers.prelude_bind_functions) ||
+      has_any_token(source, scan_from, headers.prelude_ap_functions) ||
+      has_any_token(source, scan_from, headers.prelude_alt_functions) ||
+      has_any_token(source, scan_from, headers.prelude_namespaces)
     );
     const hint_array = has_array_chain && (
-      has_dot_map || has_dot_fold || has_foldable_tok ||
-      headers.array_to_array_functions.size > 0
+      has_dot_map || has_dot_bind || has_dot_ap || has_dot_fold ||
+      has_dot_concat || has_dot_alt || has_foldable_tok ||
+      has_any_token(source, scan_from, headers.array_to_array_functions) ||
+      has_any_token(source, scan_from, headers.array_indexed_functions) ||
+      has_any_token(
+        source,
+        scan_from,
+        headers.array_flat_map_streaming_functions,
+      ) ||
+      has_any_token(source, scan_from, headers.list_to_array_functions) ||
+      has_any_token(source, scan_from, headers.list_namespaces) ||
+      has_any_token(source, scan_from, headers.prelude_fmap_functions) ||
+      has_any_token(source, scan_from, headers.prelude_bind_functions) ||
+      has_any_token(source, scan_from, headers.prelude_ap_functions) ||
+      has_any_token(source, scan_from, headers.prelude_foldl_functions) ||
+      has_any_token(source, scan_from, headers.prelude_fold_while_functions) ||
+      has_any_token(source, scan_from, headers.prelude_some_functions) ||
+      has_any_token(source, scan_from, headers.prelude_find_functions) ||
+      has_any_token(source, scan_from, headers.prelude_to_array_functions) ||
+      has_any_token(source, scan_from, headers.prelude_length_functions) ||
+      has_any_token(source, scan_from, headers.prelude_sum_functions) ||
+      has_any_token(source, scan_from, headers.prelude_product_functions) ||
+      has_any_token(source, scan_from, headers.prelude_alt_functions) ||
+      has_any_token(source, scan_from, headers.prelude_concat_functions) ||
+      has_any_token(source, scan_from, headers.prelude_namespaces)
     );
     r5_hints = {
       traverse: hint_traverse,
@@ -318,41 +489,23 @@ function transform_do_program_checked(
       chain: hint_chain,
       array: hint_array,
     };
-    if (hint_traverse) target_tokens.push("traverse");
+    if (hint_traverse) target_tokens.push(".traverse", ".sequence");
     if (hint_match) target_tokens.push(".match", "match(");
     if (has_dot_map) target_tokens.push(".map");
     if (has_dot_bind) target_tokens.push(".bind");
+    if (has_dot_ap) target_tokens.push(".ap");
     if (has_dot_fold) target_tokens.push(".fold");
+    if (has_dot_concat) target_tokens.push(".concat");
+    if (has_dot_alt) target_tokens.push(".alt");
+    if (has_dot_bimap) target_tokens.push(".bimap");
+    if (has_dot_catch_error) target_tokens.push(".catch_error");
     if (has_foldable_tok) target_tokens.push("Foldable");
     if (has_iterable) {
-      target_tokens.push(
-        "IterableT",
-        "AsyncIterableT",
-        "from_array",
-        "from_array_view",
-        "from_factory",
-        "from_sync_factory",
-        "from_chunks",
-        "from_iterable",
-        "from_snapshot",
-        "map_sync",
-        "filter",
-        "filter_map",
-        "take",
-        "to_array",
-        "preview",
-        "compile_fold",
-        "Foldable",
-        "iterable",
-        "async_iterable",
-        ".map",
-        ".fold",
-        "fold_while",
-        "find",
-        "some",
-      );
       push_set(target_tokens, headers.iterable_locals);
       push_set(target_tokens, headers.async_iterable_locals);
+      push_set(target_tokens, headers.foldable_objects);
+      push_set(target_tokens, headers.foldable_namespaces);
+      target_tokens.push(".map", ".fold", ".bind");
     }
     let has_target_token = false;
     for (let index = 0; index < target_tokens.length; index += 1) {
@@ -388,10 +541,13 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.direct_either_dictionaries);
       push_set(relevant_tokens, headers.left_constructors);
       push_set(relevant_tokens, headers.right_constructors);
+      push_set(relevant_tokens, headers.either_from_number_functions);
+      push_set(relevant_tokens, headers.either_try_catch_functions);
       push_set(relevant_tokens, headers.direct_identity_dictionaries);
       push_set(relevant_tokens, headers.identity_constructors);
       push_set(relevant_tokens, headers.array_constructors);
       push_set(relevant_tokens, headers.array_from_array_functions);
+      push_set(relevant_tokens, headers.array_view_functions);
       push_set(relevant_tokens, headers.array_namespaces);
       push_set(relevant_tokens, headers.typed_array_constructors);
       push_set(relevant_tokens, headers.set_constructors);
@@ -409,6 +565,7 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.task_parallel_functions);
       push_set(relevant_tokens, headers.task_sequential_functions);
       push_set(relevant_tokens, headers.task_from_fn_functions);
+      push_set(relevant_tokens, headers.task_from_promise_functions);
       push_set(relevant_tokens, headers.task_succeed_functions);
       push_set(relevant_tokens, headers.task_is_cancellation_functions);
       push_set(relevant_tokens, headers.stm_dictionaries);
@@ -420,20 +577,17 @@ function transform_do_program_checked(
       push_set(relevant_tokens, headers.invalid_messages_constructors);
       push_set(relevant_tokens, headers.iterable_locals);
       push_set(relevant_tokens, headers.async_iterable_locals);
-      push_keys(relevant_tokens, scope_declarations);
       const found_active = collect_active_statement_indices(
         source,
         program.body,
         relevant_tokens,
         scan_from,
+        true,
       );
-      let non_import_count = 0;
-      for (let index = 0; index < program.body.length; index += 1) {
-        if (program.body[index].type !== "ImportDeclaration") {
-          non_import_count += 1;
-        }
-      }
-      if (found_active.length < non_import_count) {
+      if (
+        found_active !== undefined &&
+        found_active.length < headers.non_import_count
+      ) {
         skipped_statements = true;
         active_indices = found_active;
         const active_set = new Set<Statement>();
@@ -477,6 +631,8 @@ function transform_do_program_checked(
             headers.state_eval_functions.has(callee.name) ||
             headers.task_run_functions.has(callee.name) ||
             headers.task_run_exit_functions.has(callee.name) ||
+            headers.task_traverse_functions.has(callee.name) ||
+            headers.task_sequential_functions.has(callee.name) ||
             headers.stm_atomically_functions.has(callee.name) ||
             headers.traverse_sequential_functions.has(callee.name) ||
             headers.match_functions.has(callee.name) ||
@@ -486,11 +642,39 @@ function transform_do_program_checked(
             headers.maybe_get_or_else_functions.has(callee.name) ||
             headers.maybe_fold_functions.has(callee.name) ||
             headers.maybe_filter_functions.has(callee.name) ||
+            headers.maybe_to_either_functions.has(callee.name) ||
             headers.either_fold_functions.has(callee.name) ||
             headers.either_from_right_functions.has(callee.name) ||
             headers.either_from_left_functions.has(callee.name) ||
             headers.either_recover_functions.has(callee.name) ||
+            headers.either_hush_functions.has(callee.name) ||
+            headers.either_note_functions.has(callee.name) ||
+            headers.either_is_left_functions.has(callee.name) ||
+            headers.either_is_right_functions.has(callee.name) ||
+            headers.either_map_left_functions.has(callee.name) ||
+            headers.either_bind_widen_functions.has(callee.name) ||
+            headers.validation_to_either_functions.has(callee.name) ||
+            headers.validation_map_error_functions.has(callee.name) ||
             headers.array_to_array_functions.has(callee.name) ||
+            headers.array_indexed_functions.has(callee.name) ||
+            headers.array_flat_map_streaming_functions.has(callee.name) ||
+            headers.list_to_array_functions.has(callee.name) ||
+            headers.prelude_fmap_functions.has(callee.name) ||
+            headers.prelude_bind_functions.has(callee.name) ||
+            headers.prelude_ap_functions.has(callee.name) ||
+            headers.prelude_lift_functions.has(callee.name) ||
+            headers.prelude_traverse_functions.has(callee.name) ||
+            headers.prelude_sequence_functions.has(callee.name) ||
+            headers.prelude_foldl_functions.has(callee.name) ||
+            headers.prelude_fold_while_functions.has(callee.name) ||
+            headers.prelude_some_functions.has(callee.name) ||
+            headers.prelude_find_functions.has(callee.name) ||
+            headers.prelude_to_array_functions.has(callee.name) ||
+            headers.prelude_length_functions.has(callee.name) ||
+            headers.prelude_sum_functions.has(callee.name) ||
+            headers.prelude_product_functions.has(callee.name) ||
+            headers.prelude_alt_functions.has(callee.name) ||
+            headers.prelude_concat_functions.has(callee.name) ||
             callee.name === "Do" ||
             callee.name === "Program")
         ) {
@@ -512,13 +696,20 @@ function transform_do_program_checked(
             property === "prepare_operations" ||
             property === "eval_state" || property === "exec_state" ||
             property === "run_task" || property === "run_task_exit" ||
+            property === "traverse_task" || property === "sequential" ||
             property === "atomically" ||
-            property === "traverse" ||
+            property === "traverse" || property === "sequence" ||
             property === "traverse_sequential" || property === "match" ||
             property === "collect" || property === "lift" ||
-            property === "map" || property === "bind" ||
-            property === "fold" || property === "fold_while" ||
-            property === "some" || property === "find"
+            property === "map" || property === "fmap" || property === "bind" ||
+            property === "ap" || property === "alt" || property === "concat" ||
+            property === "bimap" || property === "catch_error" ||
+            property === "fold" || property === "foldl" ||
+            property === "fold_while" || property === "some" ||
+            property === "find" || property === "to_array" ||
+            property === "length" || property === "sum" ||
+            property === "product" || property === "indexed" ||
+            property === "flat_map_streaming"
           ) {
             candidate = true;
             return false;
@@ -573,9 +764,10 @@ function transform_do_program_checked(
     skip_statement,
     active_indices,
     record_top_level_scopes: has_iterable,
-    on_node(current) {
-      if (current.type !== "ImportDeclaration") shadow_tracker.observe(current);
-    },
+    on_declare: shadow_tracker.observe_declare,
+    on_call: scope_declarations.size > 0
+      ? shadow_tracker.observe_call
+      : undefined,
   });
   const { imports, scopes, loop_support } = shadow_tracker.finish();
   const fresh_counts = new Map<string, number>();
@@ -650,6 +842,7 @@ function transform_do_program_checked(
     config,
     bindings,
     imports,
+    program_scopes: scopes,
     recursive_dictionaries: loop_support.dictionaries,
     task_dictionaries: loop_support.tasks,
     fresh,
@@ -736,18 +929,36 @@ function transform_do_program_checked(
       const declaration = source_import(anchor_local);
       if (declaration === undefined) return undefined;
       const spec = declaration.source.value;
-      if (
-        /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?\/?$/.test(spec) ||
-        /(?:^|\/)mod\.ts$/.test(spec)
-      ) {
-        return request(spec, imported);
+      const root_pkg = /^((?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?)\/?$/.exec(
+        spec,
+      );
+      const is_mod_sub_only = sub_module === "array" || sub_module === "list" ||
+        sub_module === "stm" || sub_module === "task" ||
+        sub_module === "reader" || sub_module === "state" ||
+        sub_module === "writer" || sub_module === "except" ||
+        sub_module === "handlers" || sub_module === "iterable" ||
+        sub_module === "async_iterable" || sub_module === "typed_array" ||
+        sub_module === "set" || sub_module === "map" ||
+        sub_module === "record" || sub_module === "prelude";
+      if (root_pkg !== null) {
+        return request(
+          is_mod_sub_only ? root_pkg[1] + "/" + sub_module : spec,
+          imported,
+        );
+      }
+      const mod_file = /^(.*\/)mod(\.ts)$/.exec(spec);
+      if (mod_file !== null) {
+        return request(
+          is_mod_sub_only ? mod_file[1] + sub_module + mod_file[2] : spec,
+          imported,
+        );
       }
       const pkg_sub = /^((?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?)\/\w+\/?$/
         .exec(spec);
       if (pkg_sub !== null) {
         return request(pkg_sub[1] + "/" + sub_module, imported);
       }
-      const file_sub = /^(.*\/)\w+(\.ts)$/.exec(spec);
+      const file_sub = /^(.*\/)(?:typeclasses\/)?\w+(\.ts)$/.exec(spec);
       if (file_sub !== null) {
         return request(file_sub[1] + sub_module + file_sub[2], imported);
       }
@@ -761,6 +972,7 @@ function transform_do_program_checked(
     services,
     skip_statement,
     r5_hints,
+    active_indices,
   );
   let iterable: ReturnType<typeof create_iterable_map_fusion> | undefined;
   if (has_iterable) {
@@ -772,6 +984,8 @@ function transform_do_program_checked(
       skip_statement,
       source,
       services.import_from_module,
+      headers.import_nodes,
+      active_indices,
     );
   }
   let transformed = 0;
@@ -798,8 +1012,23 @@ function transform_do_program_checked(
       );
     }
   }
+  const modified_top = new Map<number, Statement>();
   function visit(current: Node): Node {
-    if (current.type === "ImportDeclaration" || terminals.skip(current)) {
+    switch (current.type) {
+      case "Identifier":
+      case "Literal":
+      case "ThisExpression":
+      case "TemplateElement":
+      case "PrivateIdentifier":
+      case "EmptyStatement":
+      case "BreakStatement":
+      case "ContinueStatement":
+      case "Super":
+      case "DebuggerStatement":
+      case "ImportDeclaration":
+        return current;
+    }
+    if (terminals.skip(current)) {
       return current;
     }
     if (current.type === "CallExpression") {
@@ -912,19 +1141,15 @@ function transform_do_program_checked(
   function children(current: Node): Node {
     if (current === program && active_indices !== undefined) {
       const body = program.body;
-      let items: Statement[] | undefined;
       for (let i = 0; i < active_indices.length; i += 1) {
         const idx = active_indices[i];
         const statement = body[idx] as Statement;
         const updated = visit(statement) as Statement;
         if (updated !== statement) {
-          if (items === undefined) {
-            items = body.slice() as Statement[];
-          }
-          items[idx] = updated;
+          modified_top.set(idx, updated);
         }
       }
-      return items !== undefined ? { ...program, body: items } : program;
+      return program;
     }
     if (current === program && skip_statement !== undefined) {
       const body = program.body;
@@ -991,7 +1216,7 @@ function transform_do_program_checked(
   }
 
   const edits: SourceEdit[] = [];
-  collect_import_edits(program, requests, edits);
+  collect_import_edits(program, headers.import_nodes, requests, edits);
 
   function collect_ast_edits(orig: Node, next: Node): void {
     if (orig === next) return;
@@ -1008,20 +1233,32 @@ function transform_do_program_checked(
       });
       return;
     }
-    if (
-      (orig.type === "Program" && next.type === "Program") ||
-      (orig.type === "BlockStatement" && next.type === "BlockStatement")
-    ) {
-      const o_body = orig.body;
-      const n_body = next.body;
-      if (
-        orig === program && active_indices !== undefined &&
-        !terminals.has_removals()
-      ) {
-        for (let i = 0; i < active_indices.length; i += 1) {
-          const index = active_indices[i];
+    switch (orig.type) {
+      case "Program":
+      case "BlockStatement": {
+        const o_body = orig.body;
+        const n_body = (next as typeof orig).body;
+        for (let index = 0; index < o_body.length; index += 1) {
           const o_stmt = o_body[index] as Statement;
           const n_stmt = n_body[index] as Statement;
+          if (terminals.remove(o_stmt)) {
+            edits.push({
+              kind: "delete",
+              start: o_stmt.start,
+              end: o_stmt.end,
+            });
+            continue;
+          }
+          const hoisted = terminals.hoist(o_stmt);
+          if (hoisted !== undefined) {
+            edits.push({
+              kind: "replace_statements",
+              start: o_stmt.start,
+              end: o_stmt.end,
+              statements: hoisted.map((stmt) => inline_iifes(stmt)),
+            });
+            continue;
+          }
           if (o_stmt === n_stmt) continue;
           const expanded = inline_statement(n_stmt);
           if (expanded !== undefined) {
@@ -1037,37 +1274,122 @@ function transform_do_program_checked(
         }
         return;
       }
-      for (let index = 0; index < o_body.length; index += 1) {
-        const o_stmt = o_body[index] as Statement;
-        const n_stmt = n_body[index] as Statement;
-        if (terminals.remove(o_stmt)) {
-          edits.push({ kind: "delete", start: o_stmt.start, end: o_stmt.end });
-          continue;
+      case "ReturnStatement": {
+        const n = next as typeof orig;
+        if (orig.argument !== null && n.argument !== null) {
+          collect_ast_edits(orig.argument, n.argument);
         }
-        const hoisted = terminals.hoist(o_stmt);
-        if (hoisted !== undefined) {
-          edits.push({
-            kind: "replace_statements",
-            start: o_stmt.start,
-            end: o_stmt.end,
-            statements: hoisted.map((stmt) => inline_iifes(stmt)),
-          });
-          continue;
-        }
-        if (o_stmt === n_stmt) continue;
-        const expanded = inline_statement(n_stmt);
-        if (expanded !== undefined) {
-          edits.push({
-            kind: "replace_statements",
-            start: o_stmt.start,
-            end: o_stmt.end,
-            statements: expanded.map((stmt) => inline_iifes(stmt)),
-          });
-          continue;
-        }
-        collect_ast_edits(o_stmt, n_stmt);
+        return;
       }
-      return;
+      case "ExpressionStatement": {
+        collect_ast_edits(
+          orig.expression,
+          (next as typeof orig).expression,
+        );
+        return;
+      }
+      case "VariableDeclarator": {
+        const n = next as typeof orig;
+        if (orig.init !== null && n.init !== null) {
+          collect_ast_edits(orig.init, n.init);
+        }
+        return;
+      }
+      case "VariableDeclaration": {
+        const o_decls = orig.declarations;
+        const n_decls = (next as typeof orig).declarations;
+        for (let i = 0; i < o_decls.length; i += 1) {
+          if (o_decls[i] !== n_decls[i]) {
+            collect_ast_edits(o_decls[i], n_decls[i]);
+          }
+        }
+        return;
+      }
+      case "ExportNamedDeclaration": {
+        const n = next as typeof orig;
+        if (orig.declaration !== null && n.declaration !== null) {
+          collect_ast_edits(orig.declaration, n.declaration);
+        }
+        return;
+      }
+      case "ExportDefaultDeclaration": {
+        collect_ast_edits(
+          orig.declaration,
+          (next as typeof orig).declaration,
+        );
+        return;
+      }
+      case "ArrowFunctionExpression": {
+        const n = next as typeof orig;
+        if (orig.body !== n.body) collect_ast_edits(orig.body, n.body);
+        for (let i = 0; i < orig.params.length; i += 1) {
+          if (orig.params[i] !== n.params[i]) {
+            collect_ast_edits(orig.params[i], n.params[i]);
+          }
+        }
+        return;
+      }
+      case "FunctionDeclaration":
+      case "FunctionExpression": {
+        const n = next as typeof orig;
+        if (orig.body !== null && n.body !== null && orig.body !== n.body) {
+          collect_ast_edits(orig.body, n.body);
+        }
+        for (let i = 0; i < orig.params.length; i += 1) {
+          if (orig.params[i] !== n.params[i]) {
+            collect_ast_edits(orig.params[i], n.params[i]);
+          }
+        }
+        return;
+      }
+      case "CallExpression": {
+        const n = next as typeof orig;
+        if (orig.callee !== n.callee) collect_ast_edits(orig.callee, n.callee);
+        for (let i = 0; i < orig.arguments.length; i += 1) {
+          if (orig.arguments[i] !== n.arguments[i]) {
+            collect_ast_edits(orig.arguments[i], n.arguments[i]);
+          }
+        }
+        return;
+      }
+      case "MemberExpression": {
+        const n = next as typeof orig;
+        if (orig.object !== n.object) collect_ast_edits(orig.object, n.object);
+        if (orig.computed && orig.property !== n.property) {
+          collect_ast_edits(orig.property, n.property);
+        }
+        return;
+      }
+      case "IfStatement": {
+        const n = next as typeof orig;
+        if (orig.test !== n.test) collect_ast_edits(orig.test, n.test);
+        if (orig.consequent !== n.consequent) {
+          collect_ast_edits(orig.consequent, n.consequent);
+        }
+        if (
+          orig.alternate !== null && n.alternate !== null &&
+          orig.alternate !== n.alternate
+        ) {
+          collect_ast_edits(orig.alternate, n.alternate);
+        }
+        return;
+      }
+      case "BinaryExpression":
+      case "LogicalExpression":
+      case "AssignmentExpression": {
+        const n = next as typeof orig;
+        if (orig.left !== n.left) collect_ast_edits(orig.left, n.left);
+        if (orig.right !== n.right) collect_ast_edits(orig.right, n.right);
+        return;
+      }
+      case "AwaitExpression":
+      case "UnaryExpression": {
+        const n = next as typeof orig;
+        if (orig.argument !== n.argument) {
+          collect_ast_edits(orig.argument, n.argument);
+        }
+        return;
+      }
     }
     const keys = value_visitor_keys[orig.type];
     if (keys === undefined || keys.length === 0) return;
@@ -1102,7 +1424,41 @@ function transform_do_program_checked(
       }
     }
   }
-  collect_ast_edits(program, output);
+  if (active_indices !== undefined) {
+    for (let i = 0; i < active_indices.length; i += 1) {
+      const index = active_indices[i];
+      const o_stmt = program.body[index] as Statement;
+      if (terminals.remove(o_stmt)) {
+        edits.push({ kind: "delete", start: o_stmt.start, end: o_stmt.end });
+        continue;
+      }
+      const hoisted = terminals.hoist(o_stmt);
+      if (hoisted !== undefined) {
+        edits.push({
+          kind: "replace_statements",
+          start: o_stmt.start,
+          end: o_stmt.end,
+          statements: hoisted.map((stmt) => inline_iifes(stmt)),
+        });
+        continue;
+      }
+      const n_stmt = modified_top.get(index);
+      if (n_stmt === undefined || o_stmt === n_stmt) continue;
+      const expanded = inline_statement(n_stmt);
+      if (expanded !== undefined) {
+        edits.push({
+          kind: "replace_statements",
+          start: o_stmt.start,
+          end: o_stmt.end,
+          statements: expanded.map((stmt) => inline_iifes(stmt)),
+        });
+        continue;
+      }
+      collect_ast_edits(o_stmt, n_stmt);
+    }
+  } else {
+    collect_ast_edits(program, output);
+  }
 
   const helper = iterable?.helper_declaration();
   if (helper !== undefined) {
@@ -1139,15 +1495,17 @@ function is_effect_interpreter_call(value: Expression): boolean {
 
 function collect_import_edits(
   program: Program,
+  import_nodes: readonly ImportDeclaration[],
   requests: readonly ImportRequest[],
   edits: SourceEdit[],
 ): void {
   if (requests.length === 0) return;
   const remaining = new Set(requests);
-  for (const statement of program.body) {
+  for (let i = 0; i < import_nodes.length; i += 1) {
+    const statement = import_nodes[i];
     if (
-      statement.type !== "ImportDeclaration" ||
-      statement.importKind === "type" || statement.specifiers.some((binding) =>
+      statement.importKind === "type" ||
+      statement.specifiers.some((binding) =>
         binding.type === "ImportNamespaceSpecifier"
       )
     ) {
@@ -1245,30 +1603,319 @@ function is_generated_declaration(
   statement: Statement,
 ): statement is VariableDeclaration {
   return statement.type === "VariableDeclaration" &&
+    statement.kind !== "var" &&
     statement.declarations.every((declaration) =>
       declaration.id.type === "Identifier" && declaration.id.start < 0
     );
 }
-type InlineResult = { prefix: Statement[]; expression: Expression };
-function inline_expression(value: Expression): InlineResult | undefined {
-  if (value.type !== "CallExpression" || value.optional) return undefined;
+function contains_non_nested_return(current: Node): boolean {
+  switch (current.type) {
+    case "ReturnStatement":
+      return true;
+    case "FunctionDeclaration":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+    case "Identifier":
+    case "Literal":
+    case "EmptyStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+    case "DebuggerStatement":
+      return false;
+    case "BlockStatement":
+      for (let i = 0; i < current.body.length; i += 1) {
+        if (contains_non_nested_return(current.body[i])) return true;
+      }
+      return false;
+    case "IfStatement":
+      return contains_non_nested_return(current.consequent) ||
+        (current.alternate !== null &&
+          contains_non_nested_return(current.alternate));
+    case "ForStatement":
+    case "ForOfStatement":
+    case "ForInStatement":
+    case "WhileStatement":
+    case "DoWhileStatement":
+    case "LabeledStatement":
+      return contains_non_nested_return(current.body);
+    case "TryStatement":
+      return contains_non_nested_return(current.block) ||
+        (current.handler !== null &&
+          contains_non_nested_return(current.handler.body)) ||
+        (current.finalizer !== null &&
+          contains_non_nested_return(current.finalizer));
+    case "SwitchStatement":
+      for (let i = 0; i < current.cases.length; i += 1) {
+        const cons = current.cases[i].consequent;
+        for (let j = 0; j < cons.length; j += 1) {
+          if (contains_non_nested_return(cons[j])) return true;
+        }
+      }
+      return false;
+    case "VariableDeclaration":
+    case "ExpressionStatement":
+    case "ThrowStatement":
+      return false;
+    default:
+      return true;
+  }
+}
+function is_hoistable_prefix_statement(statement: Statement): boolean {
+  if (statement.type === "VariableDeclaration") {
+    return is_generated_declaration(statement);
+  }
+  if (
+    statement.type === "FunctionDeclaration" ||
+    statement.type === "ClassDeclaration"
+  ) {
+    return false;
+  }
+  return !contains_non_nested_return(statement);
+}
+function guard_return_if(
+  statement: Statement,
+): { test: Expression; argument: Expression } | undefined {
+  if (statement.type !== "IfStatement" || statement.alternate !== null) {
+    return undefined;
+  }
+  let cons = statement.consequent;
+  if (cons.type === "BlockStatement" && cons.body.length === 1) {
+    cons = cons.body[0] as Statement;
+  }
+  if (cons.type === "ReturnStatement" && cons.argument !== null) {
+    return { test: statement.test, argument: cons.argument };
+  }
+  return undefined;
+}
+function switch_has_break(current: Node): boolean {
+  switch (current.type) {
+    case "BreakStatement":
+      return current.label === null;
+    case "FunctionDeclaration":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+    case "ForStatement":
+    case "ForOfStatement":
+    case "ForInStatement":
+    case "WhileStatement":
+    case "DoWhileStatement":
+    case "SwitchStatement":
+      return false;
+    case "BlockStatement":
+      for (let i = 0; i < current.body.length; i += 1) {
+        if (switch_has_break(current.body[i])) return true;
+      }
+      return false;
+    case "IfStatement":
+      return switch_has_break(current.consequent) ||
+        (current.alternate !== null && switch_has_break(current.alternate));
+    case "TryStatement":
+      return switch_has_break(current.block) ||
+        (current.handler !== null && switch_has_break(current.handler.body)) ||
+        (current.finalizer !== null && switch_has_break(current.finalizer));
+    case "LabeledStatement":
+      return switch_has_break(current.body);
+    default:
+      return false;
+  }
+}
+function statement_always_terminates(statement: Statement): boolean {
+  switch (statement.type) {
+    case "ReturnStatement":
+    case "ThrowStatement":
+      return true;
+    case "BlockStatement":
+      for (let i = statement.body.length - 1; i >= 0; i -= 1) {
+        if (statement_always_terminates(statement.body[i] as Statement)) {
+          return true;
+        }
+      }
+      return false;
+    case "IfStatement":
+      return statement.alternate !== null &&
+        statement_always_terminates(statement.consequent) &&
+        statement_always_terminates(statement.alternate);
+    case "SwitchStatement": {
+      let has_default = false;
+      const cases = statement.cases;
+      for (let i = 0; i < cases.length; i += 1) {
+        const c = cases[i];
+        if (c.test === null) has_default = true;
+        const cons = c.consequent;
+        for (let j = 0; j < cons.length; j += 1) {
+          if (switch_has_break(cons[j])) return false;
+        }
+        if (cons.length === 0) {
+          if (i === cases.length - 1) return false;
+          continue;
+        }
+        if (!statement_always_terminates(cons[cons.length - 1] as Statement)) {
+          return false;
+        }
+      }
+      return has_default;
+    }
+    default:
+      return false;
+  }
+}
+function rewrite_non_nested_returns(
+  body: BlockStatement,
+  wrap: (arg: Expression) => Expression,
+): BlockStatement | undefined {
+  let ok = true;
+  function map_stmt(stmt: Statement): Statement {
+    if (!ok) return stmt;
+    switch (stmt.type) {
+      case "ReturnStatement":
+        if (stmt.argument === null) {
+          ok = false;
+          return stmt;
+        }
+        return { ...stmt, argument: wrap(stmt.argument) };
+      case "FunctionDeclaration":
+      case "VariableDeclaration":
+      case "ExpressionStatement":
+      case "ThrowStatement":
+      case "EmptyStatement":
+      case "BreakStatement":
+      case "ContinueStatement":
+      case "DebuggerStatement":
+        return stmt;
+      case "BlockStatement": {
+        const next_body = stmt.body.map((s) => map_stmt(s as Statement));
+        return { ...stmt, body: next_body };
+      }
+      case "IfStatement":
+        return {
+          ...stmt,
+          consequent: map_stmt(stmt.consequent),
+          alternate: stmt.alternate !== null ? map_stmt(stmt.alternate) : null,
+        };
+      case "ForStatement":
+      case "ForOfStatement":
+      case "ForInStatement":
+      case "WhileStatement":
+      case "DoWhileStatement":
+      case "LabeledStatement":
+        return { ...stmt, body: map_stmt(stmt.body) };
+      case "TryStatement":
+        return {
+          ...stmt,
+          block: {
+            ...stmt.block,
+            body: stmt.block.body.map((s) => map_stmt(s as Statement)),
+          },
+          handler: stmt.handler !== null
+            ? {
+              ...stmt.handler,
+              body: {
+                ...stmt.handler.body,
+                body: stmt.handler.body.body.map((s) =>
+                  map_stmt(s as Statement)
+                ),
+              },
+            }
+            : null,
+          finalizer: stmt.finalizer !== null
+            ? {
+              ...stmt.finalizer,
+              body: stmt.finalizer.body.map((s) => map_stmt(s as Statement)),
+            }
+            : null,
+        };
+      case "SwitchStatement":
+        return {
+          ...stmt,
+          cases: stmt.cases.map((c) => ({
+            ...c,
+            consequent: c.consequent.map((s) => map_stmt(s as Statement)),
+          })),
+        };
+      default:
+        ok = false;
+        return stmt;
+    }
+  }
+  const next = map_stmt(body) as BlockStatement;
+  return ok ? next : undefined;
+}
+function generated_iife_body(value: Expression): BlockStatement | undefined {
+  if (
+    value.type !== "CallExpression" || value.optional || value.start >= 0 ||
+    value.arguments.length !== 0
+  ) return undefined;
   const callee = unwrap(value.callee);
   if (
-    value.start < 0 && value.arguments.length === 0 &&
     callee.type === "ArrowFunctionExpression" && !callee.async &&
     callee.params.length === 0 && callee.body.type === "BlockStatement"
   ) {
-    const body = callee.body.body;
-    const last = body[body.length - 1];
-    if (
-      last?.type === "ReturnStatement" && last.argument !== null &&
-      body.slice(0, -1).every((statement) =>
-        is_generated_declaration(statement as Statement)
-      )
-    ) {
+    return callee.body;
+  }
+  return undefined;
+}
+type InlineResult = {
+  prefix: Statement[];
+  expression: Expression;
+  decls_only: boolean;
+};
+function inline_expression(value: Expression): InlineResult | undefined {
+  if (value.type !== "CallExpression" || value.optional) return undefined;
+  const iife_block = generated_iife_body(value);
+  if (iife_block !== undefined) {
+    const body = iife_block.body;
+    const len = body.length;
+    const last = len > 0 ? body[len - 1] : undefined;
+    if (last?.type === "ReturnStatement" && last.argument !== null) {
+      // Peel any trailing guard `if (cond) return early;` statements into ternaries.
+      let prefix_end = len - 1;
+      let expr: Expression = last.argument;
+      while (prefix_end > 0) {
+        const guard = guard_return_if(body[prefix_end - 1] as Statement);
+        if (guard === undefined) break;
+        expr = node({
+          type: "ConditionalExpression",
+          test: guard.test,
+          consequent: guard.argument,
+          alternate: expr,
+        });
+        prefix_end -= 1;
+      }
+      let decls_only = true;
+      let hoistable = true;
+      for (let i = 0; i < prefix_end; i += 1) {
+        const stmt = body[i] as Statement;
+        if (!is_generated_declaration(stmt)) {
+          decls_only = false;
+          if (!is_hoistable_prefix_statement(stmt)) {
+            hoistable = false;
+            break;
+          }
+        }
+      }
+      if (hoistable) {
+        const prefix = prefix_end === 0
+          ? []
+          : body.slice(0, prefix_end) as Statement[];
+        return { prefix, expression: expr, decls_only };
+      }
+    }
+  }
+  // Peel zero-arg non-optional method call on a single-exit IIFE (e.g. IIFE().value()).
+  if (
+    value.arguments.length === 0 &&
+    value.callee.type === "MemberExpression" && !value.callee.computed &&
+    !value.callee.optional
+  ) {
+    const inner = inline_expression(value.callee.object);
+    if (inner !== undefined) {
       return {
-        prefix: body.slice(0, -1) as Statement[],
-        expression: last.argument,
+        prefix: inner.prefix,
+        expression: {
+          ...value,
+          callee: { ...value.callee, object: inner.expression },
+        },
+        decls_only: inner.decls_only,
       };
     }
   }
@@ -1284,72 +1931,106 @@ function inline_expression(value: Expression): InlineResult | undefined {
       ...value,
       arguments: [inner.expression, ...value.arguments.slice(1)],
     },
+    decls_only: inner.decls_only,
   };
 }
 function inline_sequence(
   value: Expression,
+  skip_self = false,
 ):
   | { declarations: VariableDeclarator[]; expression: Expression }
   | undefined {
-  const inlined = inline_expression(value);
-  if (inlined !== undefined && inlined.prefix.length > 0) {
-    const declarations: VariableDeclarator[] = [];
-    const expressions: Expression[] = [];
-    for (const statement of inlined.prefix) {
-      if (!is_generated_declaration(statement)) return undefined;
-      for (const declaration of statement.declarations) {
-        if (
-          declaration.id.type !== "Identifier" || declaration.init === null
-        ) return undefined;
-        declarations.push({ ...declaration, init: null });
-        expressions.push(
-          node({
-            type: "AssignmentExpression",
-            operator: "=",
-            left: id(declaration.id.name),
-            right: declaration.init,
-          }),
-        );
+  if (!skip_self) {
+    const inlined = inline_expression(value);
+    if (
+      inlined !== undefined && inlined.prefix.length > 0 && inlined.decls_only
+    ) {
+      const declarations: VariableDeclarator[] = [];
+      const expressions: Expression[] = [];
+      for (let i = 0; i < inlined.prefix.length; i += 1) {
+        const statement = inlined.prefix[i];
+        if (!is_generated_declaration(statement)) return undefined;
+        for (let j = 0; j < statement.declarations.length; j += 1) {
+          const declaration = statement.declarations[j];
+          if (
+            declaration.id.type !== "Identifier" || declaration.init === null
+          ) return undefined;
+          declarations.push({ ...declaration, init: null });
+          expressions.push(
+            node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: id(declaration.id.name),
+              right: declaration.init,
+            }),
+          );
+        }
       }
+      expressions.push(inlined.expression);
+      return {
+        declarations,
+        expression: node({ type: "SequenceExpression", expressions }),
+      };
     }
-    expressions.push(inlined.expression);
-    return {
-      declarations,
-      expression: node({ type: "SequenceExpression", expressions }),
-    };
   }
-  if (
-    value.type !== "CallExpression" || value.optional ||
-    value.arguments.some((argument) => argument.type === "SpreadElement")
-  ) return undefined;
-  const declarations: VariableDeclarator[] = [];
-  let changed = false;
-  const args = value.arguments.map((argument) => {
-    const result = inline_sequence(argument as Expression);
-    if (result === undefined) return argument;
-    changed = true;
-    declarations.push(...result.declarations);
-    return result.expression;
-  });
-  if (!changed) return undefined;
-  return { declarations, expression: { ...value, arguments: args } };
+  if (value.type !== "CallExpression" || value.optional) return undefined;
+  const args = value.arguments;
+  const len = args.length;
+  if (len === 0) return undefined;
+  for (let i = 0; i < len; i += 1) {
+    if (args[i].type === "SpreadElement") return undefined;
+  }
+  let declarations: VariableDeclarator[] | undefined;
+  let next_args: Argument[] | undefined;
+  for (let i = 0; i < len; i += 1) {
+    const argument = args[i];
+    const result = inline_sequence(argument as Expression, false);
+    if (result !== undefined) {
+      if (declarations === undefined) declarations = [];
+      if (next_args === undefined) next_args = args.slice(0, i);
+      declarations.push(...result.declarations);
+      next_args.push(result.expression);
+    } else if (next_args !== undefined) {
+      next_args.push(argument);
+    }
+  }
+  if (next_args === undefined || declarations === undefined) return undefined;
+  return { declarations, expression: { ...value, arguments: next_args } };
 }
 function inline_statement(current: Statement): Statement[] | undefined {
   let value: Expression | null | undefined;
-  if (current.type === "ReturnStatement") value = current.argument;
-  if (
+  let kind: "ret" | "var" | "export_var" | "expr" | undefined;
+  if (current.type === "ReturnStatement") {
+    value = current.argument;
+    kind = "ret";
+  } else if (
     current.type === "VariableDeclaration" &&
     current.declarations.length === 1
-  ) value = current.declarations[0].init;
-  if (value == null) return undefined;
+  ) {
+    value = current.declarations[0].init;
+    kind = "var";
+  } else if (
+    current.type === "ExportNamedDeclaration" &&
+    current.declaration?.type === "VariableDeclaration" &&
+    current.declaration.declarations.length === 1
+  ) {
+    value = current.declaration.declarations[0].init;
+    kind = "export_var";
+  } else if (current.type === "ExpressionStatement") {
+    value = current.expression;
+    kind = "expr";
+  }
+  if (value == null || kind === undefined) return undefined;
   const inlined = inline_expression(value);
-  const sequenced = inlined === undefined && inline_sequence(value);
+  const sequenced = inlined === undefined
+    ? inline_sequence(value, true)
+    : undefined;
   let prefix: Statement[];
   let result: Expression;
   if (inlined !== undefined) {
     prefix = inlined.prefix;
     result = inlined.expression;
-  } else if (sequenced) {
+  } else if (sequenced !== undefined) {
     prefix = [
       node({
         type: "VariableDeclaration",
@@ -1358,31 +2039,105 @@ function inline_statement(current: Statement): Statement[] | undefined {
       }),
     ];
     result = sequenced.expression;
-  } else if (
-    current.type === "ReturnStatement" &&
-    value.type === "CallExpression" && !value.optional && value.start < 0 &&
-    value.arguments.length === 0
-  ) {
-    const callee = unwrap(value.callee);
-    if (
-      callee.type === "ArrowFunctionExpression" && !callee.async &&
-      callee.params.length === 0 && callee.body.type === "BlockStatement"
-    ) {
-      const body = callee.body.body;
-      const last = body[body.length - 1];
-      if (last?.type === "ReturnStatement") {
-        return [callee.body];
+  } else if (kind === "ret") {
+    const direct_block = generated_iife_body(value);
+    if (direct_block !== undefined) {
+      const body = direct_block.body;
+      const last = body[body.length - 1] as Statement | undefined;
+      if (last !== undefined && statement_always_terminates(last)) {
+        return [direct_block];
+      }
+      return undefined;
+    }
+    if (value.type === "CallExpression" && !value.optional) {
+      // return (() => { ... })().prop()
+      if (
+        value.arguments.length === 0 &&
+        value.callee.type === "MemberExpression" && !value.callee.computed &&
+        !value.callee.optional
+      ) {
+        const inner_block = generated_iife_body(value.callee.object);
+        const last = inner_block?.body[inner_block.body.length - 1] as
+          | Statement
+          | undefined;
+        if (
+          inner_block !== undefined && last !== undefined &&
+          statement_always_terminates(last)
+        ) {
+          const prop_callee = value.callee;
+          const rewritten = rewrite_non_nested_returns(
+            inner_block,
+            (arg) => ({
+              ...value,
+              callee: { ...prop_callee, object: arg },
+            }),
+          );
+          if (rewritten !== undefined) return [rewritten];
+        }
+      }
+      // return Wrapper((() => { ... })())
+      if (
+        value.arguments.length === 1 &&
+        value.arguments[0].type !== "SpreadElement" &&
+        static_target(value.callee)
+      ) {
+        const inner_block = generated_iife_body(
+          value.arguments[0] as Expression,
+        );
+        const last = inner_block?.body[inner_block.body.length - 1] as
+          | Statement
+          | undefined;
+        if (
+          inner_block !== undefined && last !== undefined &&
+          statement_always_terminates(last)
+        ) {
+          const rewritten = rewrite_non_nested_returns(
+            inner_block,
+            (arg) => ({ ...value, arguments: [arg] }),
+          );
+          if (rewritten !== undefined) return [rewritten];
+        }
       }
     }
     return undefined;
   } else return undefined;
-  if (current.type === "ReturnStatement") {
-    return [...prefix, { ...current, argument: result }];
-  }
-  if (current.type === "VariableDeclaration") {
+  if (kind === "ret") {
     return [...prefix, {
-      ...current,
-      declarations: [{ ...current.declarations[0], init: result }],
+      ...(current as Extract<Statement, { type: "ReturnStatement" }>),
+      argument: result,
+    }];
+  }
+  if (kind === "var") {
+    const decl = current as VariableDeclaration;
+    return [...prefix, {
+      ...decl,
+      declarations: [{ ...decl.declarations[0], init: result }],
+    }];
+  }
+  if (kind === "export_var") {
+    const exp = current as Extract<
+      Statement,
+      { type: "ExportNamedDeclaration" }
+    >;
+    const decl = exp.declaration as VariableDeclaration;
+    return [...prefix, {
+      ...exp,
+      declaration: {
+        ...decl,
+        declarations: [{ ...decl.declarations[0], init: result }],
+      },
+    }];
+  }
+  if (kind === "expr") {
+    if (
+      prefix.length > 0 && result.type === "Identifier" &&
+      result.name === "undefined" && result.start < 0
+    ) {
+      return prefix;
+    }
+    return [...prefix, {
+      ...(current as Extract<Statement, { type: "ExpressionStatement" }>),
+      expression: result,
     }];
   }
   return undefined;
@@ -1399,6 +2154,8 @@ function inline_iifes<T extends Node>(root: T): T {
       case "EmptyStatement":
       case "BreakStatement":
       case "ContinueStatement":
+      case "Super":
+      case "DebuggerStatement":
         return current;
       case "MemberExpression": {
         const obj = descend(current.object) as Expression;
@@ -1422,11 +2179,35 @@ function inline_iifes<T extends Node>(root: T): T {
         if (left === current.left && right === current.right) return current;
         return { ...current, left, right };
       }
+      case "AssignmentExpression": {
+        const left = descend(current.left) as typeof current.left;
+        const right = descend(current.right) as Expression;
+        if (left === current.left && right === current.right) return current;
+        return { ...current, left, right };
+      }
+      case "ConditionalExpression": {
+        const test = descend(current.test) as Expression;
+        const cons = descend(current.consequent) as Expression;
+        const alt = descend(current.alternate) as Expression;
+        if (
+          test === current.test && cons === current.consequent &&
+          alt === current.alternate
+        ) return current;
+        return { ...current, test, consequent: cons, alternate: alt };
+      }
       case "UnaryExpression":
-      case "UpdateExpression": {
+      case "UpdateExpression":
+      case "AwaitExpression":
+      case "SpreadElement": {
         const arg = descend(current.argument) as Expression;
         if (arg === current.argument) return current;
         return { ...current, argument: arg } as Node;
+      }
+      case "ThrowStatement": {
+        const arg = descend(current.argument) as Expression;
+        return arg === current.argument
+          ? current
+          : { ...current, argument: arg };
       }
       case "ReturnStatement": {
         if (current.argument === null) return current;
@@ -1440,6 +2221,15 @@ function inline_iifes<T extends Node>(root: T): T {
         return expr === current.expression
           ? current
           : { ...current, expression: expr };
+      }
+      case "TSAsExpression":
+      case "TSSatisfiesExpression":
+      case "TSNonNullExpression":
+      case "TSTypeAssertion": {
+        const expr = descend(current.expression) as Expression;
+        return expr === current.expression
+          ? current
+          : { ...current, expression: expr } as Node;
       }
       case "VariableDeclarator": {
         if (current.init === null) return current;
@@ -1461,7 +2251,8 @@ function inline_iifes<T extends Node>(root: T): T {
           ? current
           : { ...current, declarations: next_decls };
       }
-      case "CallExpression": {
+      case "CallExpression":
+      case "NewExpression": {
         const callee = descend(current.callee) as Expression;
         const args = current.arguments;
         let next_args: typeof args | undefined;
@@ -1480,7 +2271,61 @@ function inline_iifes<T extends Node>(root: T): T {
           ...current,
           callee,
           arguments: next_args ?? args,
-        };
+        } as Node;
+      }
+      case "ArrayExpression": {
+        const elements = current.elements;
+        let next_els: typeof elements | undefined;
+        for (let i = 0; i < elements.length; i += 1) {
+          const el = elements[i];
+          const updated = el === null ? null : descend(el) as typeof el;
+          if (updated !== el) {
+            if (next_els === undefined) next_els = elements.slice(0, i);
+            next_els.push(updated);
+          } else if (next_els !== undefined) next_els.push(el);
+        }
+        return next_els === undefined
+          ? current
+          : { ...current, elements: next_els };
+      }
+      case "ObjectExpression": {
+        const props = current.properties;
+        let next_props: typeof props | undefined;
+        for (let i = 0; i < props.length; i += 1) {
+          const p = props[i];
+          const updated = descend(p) as typeof p;
+          if (updated !== p) {
+            if (next_props === undefined) next_props = props.slice(0, i);
+            next_props.push(updated);
+          } else if (next_props !== undefined) next_props.push(p);
+        }
+        return next_props === undefined
+          ? current
+          : { ...current, properties: next_props };
+      }
+      case "Property": {
+        const key = current.computed
+          ? descend(current.key) as typeof current.key
+          : current.key;
+        const val = descend(current.value) as typeof current.value;
+        if (key === current.key && val === current.value) return current;
+        return { ...current, key, value: val } as Node;
+      }
+      case "SequenceExpression":
+      case "TemplateLiteral": {
+        const exprs = current.expressions;
+        let next_exprs: Expression[] | undefined;
+        for (let i = 0; i < exprs.length; i += 1) {
+          const e = exprs[i];
+          const updated = descend(e) as Expression;
+          if (updated !== e) {
+            if (next_exprs === undefined) next_exprs = exprs.slice(0, i);
+            next_exprs.push(updated);
+          } else if (next_exprs !== undefined) next_exprs.push(e);
+        }
+        return next_exprs === undefined
+          ? current
+          : { ...current, expressions: next_exprs } as Node;
       }
       case "IfStatement": {
         const test = descend(current.test) as Expression;
@@ -1494,8 +2339,120 @@ function inline_iifes<T extends Node>(root: T): T {
         ) return current;
         return { ...current, test, consequent: cons, alternate: alt };
       }
+      case "ForStatement": {
+        const init = current.init !== null
+          ? descend(current.init) as typeof current.init
+          : null;
+        const test = current.test !== null
+          ? descend(current.test) as Expression
+          : null;
+        const update = current.update !== null
+          ? descend(current.update) as Expression
+          : null;
+        const body = descend(current.body) as Statement;
+        if (
+          init === current.init && test === current.test &&
+          update === current.update && body === current.body
+        ) return current;
+        return { ...current, init, test, update, body };
+      }
+      case "ForOfStatement":
+      case "ForInStatement": {
+        const left = descend(current.left) as typeof current.left;
+        const right = descend(current.right) as Expression;
+        const body = descend(current.body) as Statement;
+        if (
+          left === current.left && right === current.right &&
+          body === current.body
+        ) return current;
+        return { ...current, left, right, body } as Node;
+      }
+      case "WhileStatement":
+      case "DoWhileStatement": {
+        const test = descend(current.test) as Expression;
+        const body = descend(current.body) as Statement;
+        if (test === current.test && body === current.body) return current;
+        return { ...current, test, body } as Node;
+      }
+      case "LabeledStatement": {
+        const body = descend(current.body) as Statement;
+        return body === current.body ? current : { ...current, body };
+      }
+      case "TryStatement": {
+        const blk = descend(current.block) as BlockStatement;
+        const handler = current.handler !== null
+          ? descend(current.handler) as typeof current.handler
+          : null;
+        const fin = current.finalizer !== null
+          ? descend(current.finalizer) as BlockStatement
+          : null;
+        if (
+          blk === current.block && handler === current.handler &&
+          fin === current.finalizer
+        ) return current;
+        return { ...current, block: blk, handler, finalizer: fin };
+      }
+      case "CatchClause": {
+        const body = descend(current.body) as BlockStatement;
+        return body === current.body ? current : { ...current, body };
+      }
+      case "SwitchStatement": {
+        const disc = descend(current.discriminant) as Expression;
+        const cases = current.cases;
+        let next_cases: SwitchCase[] | undefined;
+        for (let i = 0; i < cases.length; i += 1) {
+          const c = cases[i];
+          const updated = descend(c) as SwitchCase;
+          if (updated !== c) {
+            if (next_cases === undefined) next_cases = cases.slice(0, i);
+            next_cases.push(updated);
+          } else if (next_cases !== undefined) next_cases.push(c);
+        }
+        if (disc === current.discriminant && next_cases === undefined) {
+          return current;
+        }
+        return { ...current, discriminant: disc, cases: next_cases ?? cases };
+      }
+      case "SwitchCase": {
+        const test = current.test !== null
+          ? descend(current.test) as Expression
+          : null;
+        const cons = current.consequent;
+        let next_cons: Statement[] | undefined;
+        for (let i = 0; i < cons.length; i += 1) {
+          const s = cons[i] as Statement;
+          const updated = descend(s) as Statement;
+          if (updated !== s) {
+            if (next_cons === undefined) {
+              next_cons = cons.slice(0, i) as Statement[];
+            }
+            next_cons.push(updated);
+          } else if (next_cons !== undefined) next_cons.push(s);
+        }
+        if (test === current.test && next_cons === undefined) return current;
+        return { ...current, test, consequent: next_cons ?? cons };
+      }
+      case "ExportNamedDeclaration": {
+        if (current.declaration === null) return current;
+        const decl = descend(current.declaration) as typeof current.declaration;
+        return decl === current.declaration
+          ? current
+          : { ...current, declaration: decl };
+      }
+      case "ExportDefaultDeclaration": {
+        const decl = descend(current.declaration) as typeof current.declaration;
+        return decl === current.declaration
+          ? current
+          : { ...current, declaration: decl };
+      }
       case "ArrowFunctionExpression": {
         const body = descend(current.body) as typeof current.body;
+        return body === current.body ? current : { ...current, body };
+      }
+      case "FunctionDeclaration":
+      case "FunctionExpression": {
+        if (current.body === null) return current;
+        const body = descend(current.body) as BlockStatement;
         return body === current.body ? current : { ...current, body };
       }
       case "BlockStatement":

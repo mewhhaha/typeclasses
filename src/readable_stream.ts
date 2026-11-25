@@ -1,4 +1,7 @@
-import { type AsAsyncIterable, AsyncIterableT } from "./async_iterable.ts";
+import {
+  type AsAsyncIterable,
+  from_readable_stream_source,
+} from "./async_iterable.ts";
 import {
   type As,
   type Data,
@@ -53,31 +56,10 @@ export function to_async_iterable<item>(
   stream: ReadableStreamT<item>,
   options: { readonly preventCancel?: boolean } = {},
 ): Data<AsAsyncIterable, item> {
-  const source = stream.value();
-  const prevent_cancel = options.preventCancel === true;
-
-  return AsyncIterableT(async function* () {
-    const reader = source.getReader();
-    let done = false;
-    try {
-      while (true) {
-        const next = await reader.read();
-
-        if (next.done === true) {
-          done = true;
-          return;
-        }
-
-        yield next.value;
-      }
-    } finally {
-      try {
-        if (!done && !prevent_cancel) await reader.cancel();
-      } finally {
-        reader.releaseLock();
-      }
-    }
-  });
+  return from_readable_stream_source(
+    stream.value(),
+    options.preventCancel === true,
+  );
 }
 
 Show.instance(ReadableStreamT)({

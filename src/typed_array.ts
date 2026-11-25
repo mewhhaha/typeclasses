@@ -123,16 +123,86 @@ Eq.instance(TypedArrayT)({
   eq(right) {
     const left = this.value();
     const right_value = right.value();
+    if (left === right_value) return true;
 
-    if (left.constructor !== right_value.constructor) {
+    const ctor = left.constructor;
+    if (ctor !== right_value.constructor) {
       return false;
     }
 
-    if (left.length !== right_value.length) {
+    const len = left.length;
+    if (len !== right_value.length) {
       return false;
     }
+    if (len === 0) return true;
 
-    for (let index = 0; index < left.length; index += 1) {
+    const left_off = left.byteOffset;
+    const right_off = right_value.byteOffset;
+    if (left.buffer === right_value.buffer && left_off === right_off) {
+      return true;
+    }
+
+    if (ctor === Int32Array || ctor === Uint32Array) {
+      for (let i = 0; i < len; i += 1) {
+        if (left[i] !== right_value[i]) return false;
+      }
+      return true;
+    }
+
+    if (
+      ctor === Uint8Array ||
+      ctor === Int8Array ||
+      ctor === Uint8ClampedArray ||
+      ctor === Uint16Array ||
+      ctor === Int16Array ||
+      ctor === BigInt64Array ||
+      ctor === BigUint64Array
+    ) {
+      const byte_len = left.byteLength;
+      if (byte_len >= 4 && (left_off & 3) === 0 && (right_off & 3) === 0) {
+        const words = byte_len >>> 2;
+        const lu32 = new Uint32Array(left.buffer, left_off, words);
+        const ru32 = new Uint32Array(right_value.buffer, right_off, words);
+        for (let i = 0; i < words; i += 1) {
+          if (lu32[i] !== ru32[i]) return false;
+        }
+        const tail = words << 2;
+        if (tail < byte_len) {
+          const rem = byte_len - tail;
+          const lu = new Uint8Array(left.buffer, left_off + tail, rem);
+          const ru = new Uint8Array(
+            right_value.buffer,
+            right_off + tail,
+            rem,
+          );
+          for (let i = 0; i < rem; i += 1) {
+            if (lu[i] !== ru[i]) return false;
+          }
+        }
+        return true;
+      }
+      for (let i = 0; i < len; i += 1) {
+        if (left[i] !== right_value[i]) return false;
+      }
+      return true;
+    }
+
+    if (ctor === Float32Array || ctor === Float64Array) {
+      const lf = left as Float32Array | Float64Array;
+      const rf = right_value as Float32Array | Float64Array;
+      for (let i = 0; i < len; i += 1) {
+        const a = lf[i];
+        const b = rf[i];
+        if (a === b) {
+          if (a === 0 && 1 / a !== 1 / b) return false;
+        } else if (a === a || b === b) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    for (let index = 0; index < len; index += 1) {
       if (!Object.is(left[index], right_value[index])) {
         return false;
       }

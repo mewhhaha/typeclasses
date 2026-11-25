@@ -9,6 +9,7 @@ import type {
   ParamPattern,
   Statement,
   TSType,
+  TSTypeName,
   YieldExpression,
 } from "oxc-parser";
 import {
@@ -233,6 +234,163 @@ function final_map(
   }
   return method(expression, "map", [callback]);
 }
+function is_effect_pure_call(
+  expression: Expression | null | undefined,
+  effect_expr: Expression,
+): boolean {
+  return pure_value(expression ?? null, effect_expr) !== undefined;
+}
+
+function count_non_pure_effect_returns(
+  body: BlockStatement,
+  effect_expr: Expression,
+): number {
+  let count = 0;
+  function scan(stmt: Statement): void {
+    switch (stmt.type) {
+      case "ReturnStatement":
+        if (!is_effect_pure_call(stmt.argument, effect_expr)) count += 1;
+        return;
+      case "BlockStatement":
+        for (const s of stmt.body) scan(s as Statement);
+        return;
+      case "IfStatement":
+        scan(stmt.consequent);
+        if (stmt.alternate !== null) scan(stmt.alternate);
+        return;
+      case "SwitchStatement":
+        for (const c of stmt.cases) {
+          for (const s of c.consequent) scan(s as Statement);
+        }
+        return;
+      default:
+        return;
+    }
+  }
+  for (const s of body.body) scan(s as Statement);
+  return count;
+}
+
+function effect_type_name(
+  effect_expr: Expression,
+): TSTypeName | undefined {
+  if (effect_expr.type === "Identifier") return effect_expr;
+  if (
+    effect_expr.type === "MemberExpression" && !effect_expr.computed &&
+    !effect_expr.optional && effect_expr.property.type === "Identifier"
+  ) {
+    const left = effect_type_name(effect_expr.object);
+    if (left !== undefined) {
+      return node({
+        type: "TSQualifiedName",
+        left,
+        right: effect_expr.property,
+      });
+    }
+  }
+  return undefined;
+}
+
+function unify_multi_branch_effect_body(
+  body: BlockStatement,
+  state: State,
+): BlockStatement {
+  const effect_expr = state.services.effect();
+  if (count_non_pure_effect_returns(body, effect_expr) < 2) return body;
+  const eff_name = effect_type_name(effect_expr);
+  if (eff_name === undefined) return body;
+  const res_id = state.services.fresh("effect_branch");
+  const req_param = id("R");
+  const item_param = id("T");
+  const typeof_res: TSType = node({
+    type: "TSTypeQuery",
+    exprName: res_id,
+    typeArguments: null,
+  });
+  const infer_req: TSType = node({
+    type: "TSConditionalType",
+    checkType: typeof_res,
+    extendsType: node({
+      type: "TSTypeReference",
+      typeName: eff_name,
+      typeArguments: node({
+        type: "TSTypeParameterInstantiation",
+        params: Array.from<TSType>([
+          node({
+            type: "TSInferType",
+            typeParameter: node({
+              type: "TSTypeParameter",
+              name: req_param,
+              constraint: null,
+              default: null,
+              in: false,
+              out: false,
+              const: false,
+            }),
+          }),
+          node({ type: "TSUnknownKeyword" }),
+        ]),
+      }),
+    }),
+    trueType: node({
+      type: "TSTypeReference",
+      typeName: req_param,
+      typeArguments: null,
+    }),
+    falseType: node({ type: "TSNeverKeyword" }),
+  });
+  const infer_item: TSType = node({
+    type: "TSConditionalType",
+    checkType: typeof_res,
+    extendsType: node({
+      type: "TSTypeReference",
+      typeName: eff_name,
+      typeArguments: node({
+        type: "TSTypeParameterInstantiation",
+        params: Array.from<TSType>([
+          node({ type: "TSUnknownKeyword" }),
+          node({
+            type: "TSInferType",
+            typeParameter: node({
+              type: "TSTypeParameter",
+              name: item_param,
+              constraint: null,
+              default: null,
+              in: false,
+              out: false,
+              const: false,
+            }),
+          }),
+        ]),
+      }),
+    }),
+    trueType: node({
+      type: "TSTypeReference",
+      typeName: item_param,
+      typeArguments: null,
+    }),
+    falseType: node({ type: "TSNeverKeyword" }),
+  });
+  const unified_type: TSType = node({
+    type: "TSTypeReference",
+    typeName: eff_name,
+    typeArguments: node({
+      type: "TSTypeParameterInstantiation",
+      params: Array.from<TSType>([infer_req, infer_item]),
+    }),
+  });
+  return block([
+    variable("const", res_id, call(arrow([], body), [])),
+    ret(
+      node({
+        type: "TSAsExpression",
+        expression: res_id,
+        typeAnnotation: unified_type,
+      }),
+    ),
+  ]);
+}
+
 function bind(
   expression: Expression,
   params: ParamPattern[],
@@ -243,7 +401,10 @@ function bind(
   if (state.kind === "program") target = state.services.effect();
   const mapped = final_map(expression, target, params, body, state);
   if (mapped) return mapped;
-  const callback = continuation(params, body, state);
+  const effective_body = state.kind === "program"
+    ? unify_multi_branch_effect_body(body, state)
+    : body;
+  const callback = continuation(params, effective_body, state);
   if (state.kind === "program") {
     return method(state.services.effect(), "bind_from", [expression, callback]);
   }
@@ -387,6 +548,7 @@ function statements(
         if (!contains(value, true)) break;
         const rest = values.slice(index + 1);
         let did_yield = false;
+        let all_cases_terminate = value.cases.length > 0;
         const cases = value.cases.map((clause, position) => {
           let parts = clause.consequent;
           if (parts.length === 1 && parts[0].type === "BlockStatement") {
@@ -397,6 +559,7 @@ function statements(
             if (last.label) {
               fail(state, last, "labeled switch breaks are not supported.");
             }
+            all_cases_terminate = false;
             parts = [...parts.slice(0, -1), ...rest];
           } else if (
             last?.type !== "ReturnStatement" &&
@@ -410,12 +573,19 @@ function statements(
                 "switch fallthrough is not supported.",
               );
             }
+            all_cases_terminate = false;
             parts = [...parts, ...rest];
           }
           const result = statements(parts, context, state, options);
           did_yield ||= result.yielded;
           return node({ ...clause, consequent: Array.from([result.block]) });
         });
+        if (rest.length === 0 && all_cases_terminate) {
+          return finish({
+            block: block([node({ ...value, cases })]),
+            yielded: did_yield,
+          });
+        }
         const next = statements(rest, context, state, options);
         return finish({
           block: block([node({ ...value, cases }), ...next.block.body]),
@@ -918,100 +1088,245 @@ type DirectSingleShotMode = "maybe" | "either" | "identity";
 type DirectSingleShotSpec = {
   readonly mode: DirectSingleShotMode;
   readonly inferred: boolean;
+  readonly explicit_left_type?: TSType;
   readonly get_dictionary: () => IdentifierReference | undefined;
 };
+
+function first_unshadowed(
+  names: ReadonlySet<string> | undefined,
+  services: TransformServices,
+): string | undefined {
+  if (names === undefined || names.size === 0) return undefined;
+  const shadowed = services.imports.shadowed_names;
+  for (const name of names) {
+    if (shadowed === undefined || !shadowed.has(name)) return name;
+  }
+  return undefined;
+}
 
 function direct_single_shot_spec(
   explicit: Expression | undefined,
   first_yield: YieldExpression | undefined,
   services: TransformServices,
 ): DirectSingleShotSpec | undefined {
+  const imp = services.imports;
   if (explicit !== undefined) {
-    if (explicit.type !== "Identifier") return undefined;
-    if (services.imports.direct_maybe_dictionaries?.has(explicit.name)) {
-      return { mode: "maybe", inferred: false, get_dictionary: () => explicit };
+    const ex = unwrap(explicit);
+    if (ex.type === "Identifier") {
+      if (!services.bindings.imported(ex)) return undefined;
+      if (imp.direct_maybe_dictionaries?.has(ex.name)) {
+        return { mode: "maybe", inferred: false, get_dictionary: () => ex };
+      }
+      if (imp.direct_either_dictionaries?.has(ex.name)) {
+        return { mode: "either", inferred: false, get_dictionary: () => ex };
+      }
+      if (imp.direct_identity_dictionaries?.has(ex.name)) {
+        return { mode: "identity", inferred: false, get_dictionary: () => ex };
+      }
+      return undefined;
     }
-    if (services.imports.direct_either_dictionaries?.has(explicit.name)) {
+    // Either.with_left<E>()
+    if (
+      ex.type === "CallExpression" && !ex.optional &&
+      ex.arguments.length === 0 &&
+      ex.callee.type === "MemberExpression" && !ex.callee.computed &&
+      !ex.callee.optional &&
+      ex.callee.object.type === "Identifier" &&
+      ex.callee.property.type === "Identifier" &&
+      ex.callee.property.name === "with_left" &&
+      imp.direct_either_dictionaries?.has(ex.callee.object.name) &&
+      services.bindings.imported(ex.callee.object)
+    ) {
+      const left_type = ex.typeArguments?.params.length === 1
+        ? ex.typeArguments.params[0]
+        : undefined;
+      const either_id = ex.callee.object;
       return {
         mode: "either",
         inferred: false,
-        get_dictionary: () => explicit,
-      };
-    }
-    if (services.imports.direct_identity_dictionaries?.has(explicit.name)) {
-      return {
-        mode: "identity",
-        inferred: false,
-        get_dictionary: () => explicit,
+        explicit_left_type: left_type,
+        get_dictionary: () => either_id,
       };
     }
     return undefined;
   }
   if (!first_yield?.delegate || first_yield.argument === null) return undefined;
+
+  const make_spec = (
+    mode: DirectSingleShotMode,
+    anchor: string,
+  ): DirectSingleShotSpec => {
+    if (mode === "maybe") {
+      return {
+        mode: "maybe",
+        inferred: true,
+        get_dictionary() {
+          const existing = first_unshadowed(
+            imp.direct_maybe_dictionaries,
+            services,
+          );
+          if (existing !== undefined) return id(existing);
+          return services.import_from_module?.(anchor, "maybe", "Maybe");
+        },
+      };
+    }
+    if (mode === "either") {
+      return {
+        mode: "either",
+        inferred: true,
+        get_dictionary() {
+          const existing = first_unshadowed(
+            imp.direct_either_dictionaries,
+            services,
+          );
+          if (existing !== undefined) return id(existing);
+          return services.import_from_module?.(anchor, "either", "Either");
+        },
+      };
+    }
+    return {
+      mode: "identity",
+      inferred: true,
+      get_dictionary() {
+        const existing = first_unshadowed(
+          imp.direct_identity_dictionaries,
+          services,
+        );
+        if (existing !== undefined) return id(existing);
+        return services.import_from_module?.(anchor, "identity", "Identity");
+      },
+    };
+  };
+
+  const is_imported_ident = (
+    ident: IdentifierReference,
+    param_names?: ReadonlySet<string>,
+  ): boolean => {
+    if (param_names?.has(ident.name)) return false;
+    if (services.bindings.imported(ident)) return true;
+    // Skipped top-level helper bodies don't have scopes recorded in minimal mode;
+    // check unshadowed module-level imports safely.
+    return services.bindings.resolve(ident) === null &&
+      !(imp.shadowed_names?.has(ident.name));
+  };
+
   const infer_from_expr = (
     expression: Expression,
+    seen_fns: Set<Node>,
+    param_names?: ReadonlySet<string>,
   ): DirectSingleShotSpec | undefined => {
     const arg = unwrap(expression);
     if (arg.type === "ConditionalExpression") {
-      const left = infer_from_expr(arg.consequent);
-      const right = infer_from_expr(arg.alternate);
+      const left = infer_from_expr(arg.consequent, seen_fns, param_names);
+      const right = infer_from_expr(arg.alternate, seen_fns, param_names);
       if (left !== undefined && right !== undefined) {
         return left.mode === right.mode ? left : undefined;
       }
       return left ?? right;
     }
+    if (arg.type !== "CallExpression" || arg.optional) return undefined;
+    const callee = unwrap(arg.callee);
+    // Namespaced calls: Maybe.Just, Maybe.Nothing, Maybe.pure, Either.Right, Either.Left, Identity.pure
     if (
-      arg.type !== "CallExpression" || arg.optional ||
-      arg.callee.type !== "Identifier" ||
-      !services.bindings.imported(arg.callee)
-    ) return undefined;
-    const name = arg.callee.name;
-    if (
-      services.imports.just_constructors?.has(name) ||
-      services.imports.nothing_constructors?.has(name) ||
-      services.imports.from_nullable_functions?.has(name)
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.object.type === "Identifier" &&
+      callee.property.type === "Identifier" &&
+      is_imported_ident(callee.object, param_names)
     ) {
-      return {
-        mode: "maybe",
-        inferred: true,
-        get_dictionary() {
-          const existing = services.imports.direct_maybe_dictionaries?.values()
-            .next().value;
-          if (existing !== undefined) return id(existing);
-          return services.import_from_module?.(name, "maybe", "Maybe");
-        },
-      };
+      const obj = callee.object.name;
+      const prop = callee.property.name;
+      if (
+        imp.direct_maybe_dictionaries?.has(obj) &&
+        (prop === "Just" || prop === "Nothing" || prop === "pure" ||
+          prop === "empty")
+      ) {
+        return make_spec("maybe", obj);
+      }
+      if (
+        imp.direct_either_dictionaries?.has(obj) &&
+        (prop === "Right" || prop === "Left" || prop === "pure")
+      ) {
+        return make_spec("either", obj);
+      }
+      if (
+        imp.direct_identity_dictionaries?.has(obj) && prop === "pure"
+      ) {
+        return make_spec("identity", obj);
+      }
+      return undefined;
     }
+    if (callee.type !== "Identifier") return undefined;
+    const name = callee.name;
+    if (is_imported_ident(callee, param_names)) {
+      if (
+        imp.just_constructors?.has(name) ||
+        imp.nothing_constructors?.has(name) ||
+        imp.from_nullable_functions?.has(name) ||
+        imp.either_hush_functions?.has(name) ||
+        imp.maybe_filter_functions?.has(name)
+      ) {
+        return make_spec("maybe", name);
+      }
+      if (
+        imp.right_constructors?.has(name) ||
+        imp.left_constructors?.has(name) ||
+        imp.either_from_number_functions?.has(name) ||
+        imp.either_try_catch_functions?.has(name) ||
+        imp.either_note_functions?.has(name) ||
+        imp.maybe_to_either_functions?.has(name) ||
+        imp.either_map_left_functions?.has(name) ||
+        imp.either_bind_widen_functions?.has(name) ||
+        imp.validation_to_either_functions?.has(name)
+      ) {
+        return make_spec("either", name);
+      }
+      if (imp.identity_constructors?.has(name)) {
+        return make_spec("identity", name);
+      }
+    }
+    // Local helper function return-type inference (e.g. `function parse_x() { return Right(...); }`)
+    const decl = services.bindings.resolve(callee);
     if (
-      services.imports.right_constructors?.has(name) ||
-      services.imports.left_constructors?.has(name)
+      decl !== null && decl.type === "FunctionDeclaration" &&
+      decl.body !== null && !decl.async && !decl.generator &&
+      !seen_fns.has(decl)
     ) {
-      return {
-        mode: "either",
-        inferred: true,
-        get_dictionary() {
-          const existing = services.imports.direct_either_dictionaries?.values()
-            .next().value;
-          if (existing !== undefined) return id(existing);
-          return services.import_from_module?.(name, "either", "Either");
-        },
-      };
-    }
-    if (services.imports.identity_constructors?.has(name)) {
-      return {
-        mode: "identity",
-        inferred: true,
-        get_dictionary() {
-          const existing = services.imports.direct_identity_dictionaries
-            ?.values().next().value;
-          if (existing !== undefined) return id(existing);
-          return services.import_from_module?.(name, "identity", "Identity");
-        },
-      };
+      seen_fns.add(decl);
+      const inner_params = new Set<string>();
+      for (const p of decl.params) {
+        if (p.type === "RestElement") {
+          binding_names(p.argument, (n) => inner_params.add(n));
+        } else if (p.type !== "TSParameterProperty") {
+          binding_names(p, (n) => inner_params.add(n));
+        }
+      }
+      let inferred: DirectSingleShotSpec | undefined;
+      let mismatch = false;
+      walk_values(decl.body, (part) => {
+        if (mismatch) return false;
+        if (function_like(part)) return false;
+        if (part.type === "ReturnStatement") {
+          if (part.argument === null) {
+            mismatch = true;
+            return false;
+          }
+          const sub = infer_from_expr(part.argument, seen_fns, inner_params);
+          if (sub === undefined) {
+            mismatch = true;
+            return false;
+          }
+          if (inferred === undefined) inferred = sub;
+          else if (inferred.mode !== sub.mode) {
+            mismatch = true;
+            return false;
+          }
+        }
+      });
+      if (!mismatch && inferred !== undefined) return inferred;
     }
     return undefined;
   };
-  return infer_from_expr(first_yield.argument);
+  return infer_from_expr(first_yield.argument, new Set());
 }
 
 function direct_typed_const(
@@ -1064,14 +1379,22 @@ function direct_single_shot(
     body.body.length >= 128
   ) return undefined;
   const mode = spec.mode;
-  const just_name = state.services.imports.just_constructors?.values().next()
-    .value;
-  const left_name = state.services.imports.left_constructors?.values().next()
-    .value;
-  const right_name = state.services.imports.right_constructors?.values().next()
-    .value;
-  const identity_name = state.services.imports.identity_constructors?.values()
-    .next().value;
+  const just_name = first_unshadowed(
+    state.services.imports.just_constructors,
+    state.services,
+  );
+  const left_name = first_unshadowed(
+    state.services.imports.left_constructors,
+    state.services,
+  );
+  const right_name = first_unshadowed(
+    state.services.imports.right_constructors,
+    state.services,
+  );
+  const identity_name = first_unshadowed(
+    state.services.imports.identity_constructors,
+    state.services,
+  );
   let cached_dict: IdentifierReference | undefined;
   const get_dict = (): IdentifierReference | undefined =>
     cached_dict ??= spec.get_dictionary();
@@ -1651,7 +1974,8 @@ function direct_single_shot(
   if (yield_count === 0) return undefined;
   if (
     !force_direct && !has_control_flow && !has_nested_yield &&
-    yield_count === 1 && (!has_elision || spec.inferred)
+    yield_count === 1 && (!has_elision || spec.inferred) &&
+    spec.explicit_left_type === undefined
   ) return undefined;
 
   // Phase 2: Emit lowered statements.
@@ -1699,6 +2023,20 @@ function direct_single_shot(
     });
 
   const make_typed_right_return = (value_expr: Expression): Statement[] => {
+    if (spec.explicit_left_type !== undefined) {
+      const out_var = state.services.fresh("either_out");
+      const right_type: TSType = node({
+        type: "TSTypeQuery",
+        exprName: out_var,
+        typeArguments: null,
+      });
+      const right_call = call(right_callee(), [out_var]);
+      right_call.typeArguments = node({
+        type: "TSTypeParameterInstantiation",
+        params: Array.from([spec.explicit_left_type, right_type]),
+      });
+      return [variable("const", out_var, value_expr), ret(right_call)];
+    }
     if (checked_vars.length === 0) {
       return [ret(call(right_callee(), [value_expr]))];
     }
@@ -2493,19 +2831,44 @@ function direct_single_shot(
 
   if (use_either_wrapper) {
     const out_raw = state.services.fresh("either_out");
+    const out_raw_query: TSType = node({
+      type: "TSTypeQuery",
+      exprName: out_raw,
+      typeArguments: null,
+    });
+    const raw_param: TSType = spec.explicit_left_type !== undefined
+      ? node({
+        type: "TSUnionType",
+        types: [
+          node({
+            type: "TSTypeOperator",
+            operator: "readonly",
+            typeAnnotation: node({
+              type: "TSTupleType",
+              elementTypes: [
+                node({
+                  type: "TSLiteralType",
+                  literal: node({
+                    type: "Literal",
+                    value: "Left",
+                    raw: '"Left"',
+                  }),
+                }),
+                spec.explicit_left_type,
+              ],
+            }),
+          }),
+          out_raw_query,
+        ],
+      })
+      : out_raw_query;
     const either_type: TSType = type_ref("ReturnType", [
       node({
         type: "TSTypeQuery",
         exprName: dictionary!,
         typeArguments: node({
           type: "TSTypeParameterInstantiation",
-          params: Array.from([
-            node({
-              type: "TSTypeQuery",
-              exprName: out_raw,
-              typeArguments: null,
-            }) as TSType,
-          ]),
+          params: Array.from([raw_param]),
         }),
       }) as TSType,
     ]);
@@ -2605,20 +2968,25 @@ function direct_array_dictionary(
   const ctors = services.imports.array_constructors;
   if (ctors === undefined || ctors.size === 0) return undefined;
   if (explicit !== undefined) {
-    return explicit.type === "Identifier" && ctors.has(explicit.name)
+    return explicit.type === "Identifier" && ctors.has(explicit.name) &&
+        services.bindings.imported(explicit)
       ? explicit
       : undefined;
   }
   if (!first_yield?.delegate || first_yield.argument === null) return undefined;
   const arg = unwrap(first_yield.argument);
   if (arg.type !== "CallExpression" || arg.optional) return undefined;
-  if (arg.callee.type === "Identifier" && ctors.has(arg.callee.name)) {
+  if (
+    arg.callee.type === "Identifier" && ctors.has(arg.callee.name) &&
+    services.bindings.imported(arg.callee)
+  ) {
     return arg.callee;
   }
   if (
     arg.callee.type === "MemberExpression" && !arg.callee.computed &&
     !arg.callee.optional && arg.callee.object.type === "Identifier" &&
     ctors.has(arg.callee.object.name) &&
+    services.bindings.imported(arg.callee.object) &&
     arg.callee.property.type === "Identifier" &&
     (arg.callee.property.name === "empty" ||
       arg.callee.property.name === "pure")
@@ -3011,14 +3379,16 @@ function direct_list_dictionary(
   if (!has_ctors && !has_from_array && !has_list_ns) return undefined;
   if (explicit !== undefined) {
     return has_ctors && explicit.type === "Identifier" &&
-        ctors.has(explicit.name)
+        ctors.has(explicit.name) && services.bindings.imported(explicit)
       ? explicit
       : undefined;
   }
   if (!first_yield?.delegate || first_yield.argument === null) return undefined;
   const arg = unwrap(first_yield.argument);
   if (arg.type !== "CallExpression" || arg.optional) return undefined;
-  if (arg.callee.type === "Identifier") {
+  if (
+    arg.callee.type === "Identifier" && services.bindings.imported(arg.callee)
+  ) {
     if (has_ctors && ctors.has(arg.callee.name)) return arg.callee;
     if (has_from_array && from_arrays.has(arg.callee.name)) return arg.callee;
     if (
@@ -3026,13 +3396,15 @@ function direct_list_dictionary(
       (services.imports.nil_constructors?.has(arg.callee.name) ||
         services.imports.cons_constructors?.has(arg.callee.name))
     ) {
-      return id(ctors.values().next().value!);
+      const existing = first_unshadowed(ctors, services);
+      return existing !== undefined ? id(existing) : arg.callee;
     }
   }
   if (
     arg.callee.type === "MemberExpression" && !arg.callee.computed &&
     !arg.callee.optional && arg.callee.object.type === "Identifier" &&
-    arg.callee.property.type === "Identifier"
+    arg.callee.property.type === "Identifier" &&
+    services.bindings.imported(arg.callee.object)
   ) {
     if (
       has_ctors && ctors.has(arg.callee.object.name) &&
@@ -3062,7 +3434,7 @@ function direct_list_comprehension(
   const ctors = services.imports.list_constructors;
   const from_arrays = services.imports.list_from_array_functions;
   const list_ns = services.imports.list_namespaces;
-  const existing_from_array = from_arrays?.values().next().value;
+  const existing_from_array = first_unshadowed(from_arrays, services);
   const from_array_id: IdentifierReference | undefined =
     existing_from_array !== undefined
       ? id(existing_from_array)
@@ -3691,16 +4063,281 @@ function binding_names(
       }
   }
 }
+const pure_number_methods = new Set([
+  "isSafeInteger",
+  "isFinite",
+  "isInteger",
+  "isNaN",
+]);
+const pure_object_methods = new Set(["is", "hasOwn"]);
+const pure_math_methods = new Set([
+  "abs",
+  "acos",
+  "acosh",
+  "asin",
+  "asinh",
+  "atan",
+  "atan2",
+  "atanh",
+  "cbrt",
+  "ceil",
+  "clz32",
+  "cos",
+  "cosh",
+  "exp",
+  "expm1",
+  "floor",
+  "fround",
+  "hypot",
+  "imul",
+  "log",
+  "log10",
+  "log1p",
+  "log2",
+  "max",
+  "min",
+  "pow",
+  "round",
+  "sign",
+  "sin",
+  "sinh",
+  "sqrt",
+  "tan",
+  "tanh",
+  "trunc",
+]);
+
+const immutable_collection_cache = new WeakMap<Node, Map<Node, boolean>>();
+
+function is_immutable_const_collection(
+  ident: IdentifierReference,
+  services: TransformServices,
+): boolean {
+  const decl = services.bindings.resolve(ident);
+  if (decl === null || decl.type !== "VariableDeclarator") return false;
+  let cache = immutable_collection_cache.get(services.program);
+  if (cache === undefined) {
+    cache = new Map();
+    immutable_collection_cache.set(services.program, cache);
+  }
+  const cached = cache.get(decl);
+  if (cached !== undefined) return cached;
+  let result = false;
+  if (
+    decl.id.type === "Identifier" && decl.init !== null
+  ) {
+    const init = unwrap(decl.init);
+    if (
+      init.type === "NewExpression" && init.callee.type === "Identifier" &&
+      (init.callee.name === "Set" || init.callee.name === "Map") &&
+      services.bindings.resolve(init.callee) === null
+    ) {
+      // Must be a non-exported top-level const declaration.
+      const target_name = decl.id.name;
+      let is_top_const = false;
+      for (let i = 0; i < services.program.body.length; i += 1) {
+        const stmt = services.program.body[i];
+        if (
+          stmt.type === "VariableDeclaration" && stmt.kind === "const" &&
+          stmt.declarations.includes(decl)
+        ) {
+          is_top_const = true;
+          break;
+        }
+      }
+      if (is_top_const) {
+        result = true;
+        const src = services.source;
+        // Verify it is neither re-exported nor mutated/escaped anywhere in the module.
+        for (let i = 0; i < services.program.body.length && result; i += 1) {
+          const stmt = services.program.body[i];
+          if (
+            stmt.type === "ExportNamedDeclaration" && stmt.declaration === null
+          ) {
+            for (const spec of stmt.specifiers) {
+              if (
+                spec.local.type === "Identifier" &&
+                spec.local.name === target_name
+              ) {
+                result = false;
+                break;
+              }
+            }
+            continue;
+          }
+          if (stmt.type === "ExportDefaultDeclaration") {
+            const pos = src.indexOf(target_name, stmt.start);
+            if (pos >= 0 && pos < stmt.end) {
+              result = false;
+              break;
+            }
+          }
+          const pos = src.indexOf(target_name, stmt.start);
+          if (pos < 0 || pos >= stmt.end) continue;
+          const check_node = (current: Node, parent?: Node): void => {
+            if (!result) return;
+            if (current === decl.id) return;
+            if (current.type === "Identifier" && current.name === target_name) {
+              if (
+                parent !== undefined &&
+                ((parent.type === "MemberExpression" && !parent.computed &&
+                  parent.property === current) ||
+                  (parent.type === "Property" && !parent.computed &&
+                    parent.key === current))
+              ) return;
+              // Allow only pure `.has(...)`, `.get(...)`, `.size` accesses on this identifier.
+              if (
+                parent !== undefined && parent.type === "MemberExpression" &&
+                parent.object === current && !parent.computed &&
+                parent.property.type === "Identifier" &&
+                (parent.property.name === "has" ||
+                  parent.property.name === "get" ||
+                  parent.property.name === "size")
+              ) return;
+              const res = services.bindings.resolve(current);
+              if (res !== null && res !== decl) return;
+              result = false;
+              return;
+            }
+            const keys = value_visitor_keys[current.type];
+            if (keys === undefined || keys.length === 0) return;
+            const rec = current as unknown as Record<string, unknown>;
+            for (let k = 0; k < keys.length; k += 1) {
+              const child = rec[keys[k]];
+              if (child === null || typeof child !== "object") continue;
+              if (Array.isArray(child)) {
+                for (let j = 0; j < child.length; j += 1) {
+                  const item = child[j];
+                  if (
+                    item !== null && typeof item === "object" &&
+                    typeof (item as { type?: unknown }).type === "string"
+                  ) check_node(item as Node, current);
+                }
+              } else if (
+                typeof (child as { type?: unknown }).type === "string"
+              ) {
+                check_node(child as Node, current);
+              }
+            }
+          };
+          check_node(stmt);
+        }
+      }
+    }
+  }
+  cache.set(decl, result);
+  return result;
+}
+
+function is_statically_pure_call(
+  value: CallExpression,
+  services: TransformServices,
+): boolean {
+  if (value.optional) return false;
+  const callee = value.callee;
+  if (
+    callee.type !== "MemberExpression" || callee.computed || callee.optional ||
+    callee.property.type !== "Identifier"
+  ) return false;
+  const prop = callee.property.name;
+  // Data.prototype.value()
+  if (prop === "value" && value.arguments.length === 0) return true;
+  const imp = services.imports;
+  // Constructor `.is(...)` guards (Left.is, Right.is, Just.is, Nothing.is, Valid.is, Invalid.is, Nil.is, Cons.is)
+  if (prop === "is" && value.arguments.length === 1) {
+    if (
+      callee.object.type === "Identifier" &&
+      services.bindings.imported(callee.object)
+    ) {
+      const obj = callee.object.name;
+      if (
+        imp.left_constructors?.has(obj) ||
+        imp.right_constructors?.has(obj) ||
+        imp.just_constructors?.has(obj) ||
+        imp.nothing_constructors?.has(obj) ||
+        imp.valid_constructors?.has(obj) ||
+        imp.invalid_constructors?.has(obj) ||
+        imp.nil_constructors?.has(obj) ||
+        imp.cons_constructors?.has(obj)
+      ) return true;
+    }
+    if (
+      callee.object.type === "MemberExpression" && !callee.object.computed &&
+      !callee.object.optional && callee.object.object.type === "Identifier" &&
+      callee.object.property.type === "Identifier" &&
+      services.bindings.imported(callee.object.object)
+    ) {
+      const ns = callee.object.object.name;
+      const ctor = callee.object.property.name;
+      if (
+        (imp.direct_either_dictionaries?.has(ns) &&
+          (ctor === "Left" || ctor === "Right")) ||
+        (imp.direct_maybe_dictionaries?.has(ns) &&
+          (ctor === "Just" || ctor === "Nothing")) ||
+        (imp.direct_validation_dictionaries?.has(ns) &&
+          (ctor === "Valid" || ctor === "Invalid")) ||
+        (imp.list_constructors?.has(ns) &&
+          (ctor === "Nil" || ctor === "Cons"))
+      ) return true;
+    }
+  }
+  if (callee.object.type === "Identifier") {
+    const obj_name = callee.object.name;
+    // Unshadowed global pure static predicates & math functions
+    if (services.bindings.resolve(callee.object) === null) {
+      if (obj_name === "Array" && prop === "isArray") return true;
+      if (obj_name === "Number" && pure_number_methods.has(prop)) return true;
+      if (obj_name === "Object" && pure_object_methods.has(prop)) return true;
+      if (obj_name === "Math" && pure_math_methods.has(prop)) return true;
+    }
+    // Non-mutated, non-escaping module-const Set/Map `.has(...)` / `.get(...)`
+    if (
+      (prop === "has" || prop === "get") && value.arguments.length === 1 &&
+      is_immutable_const_collection(callee.object, services)
+    ) return true;
+  }
+  return false;
+}
+
+function contains_non_nested_yield(value: Node): boolean {
+  let found = false;
+  walk_values(value, (part) => {
+    if (function_like(part)) return false;
+    if (part.type === "YieldExpression") {
+      found = true;
+      return false;
+    }
+  });
+  return found;
+}
+
+function max_non_nested_yield_pos(value: Node): number {
+  let max_pos = -1;
+  walk_values(value, (part) => {
+    if (function_like(part)) return false;
+    if (part.type === "YieldExpression" && part.start > max_pos) {
+      max_pos = part.start;
+    }
+  });
+  return max_pos;
+}
+
 type BodyAnalysis = {
   hazard?: Node;
   var_binding?: Node;
   first_yield?: YieldExpression;
   capture?: Node;
   prefix?: Node;
+  unconditional_first_yield_end: number;
+  pre_first_yield_capture?: Node;
+  pre_first_yield_prefix?: Node;
 };
 
 /** Single-pass analysis for lexical hazards, var locals, unsafe captures, and eager prefixes. */
-function analyze_body(body: FunctionBody): BodyAnalysis {
+function analyze_body(
+  body: FunctionBody,
+  services: TransformServices,
+): BodyAnalysis {
   let hazard: Node | undefined;
   let var_binding: Node | undefined;
   let first_yield: YieldExpression | undefined;
@@ -3709,8 +4346,188 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
   const ends: number[] = [];
   const captures: Capture[] = [];
   const yields: number[] = [];
-  let max_prefix_yield = -1;
-  const prefix_effects: { node: Node; loop: boolean }[] = [];
+  const prefix_effects: { node: Node; reaches: boolean }[] = [];
+
+  // Backward CFG reachability: for each node, compute whether a yield* is reachable after it.
+  const after_yield_map = new WeakMap<Node, boolean>();
+  function compute_reach_stmt(
+    stmt: Statement,
+    after: boolean,
+    break_r: boolean,
+    continue_r: boolean,
+    throw_r: boolean,
+  ): boolean {
+    switch (stmt.type) {
+      case "ReturnStatement":
+        after_yield_map.set(stmt, false);
+        return stmt.argument !== null &&
+          contains_non_nested_yield(stmt.argument);
+      case "ThrowStatement":
+        after_yield_map.set(stmt, throw_r);
+        return throw_r || contains_non_nested_yield(stmt.argument);
+      case "BreakStatement":
+        return break_r;
+      case "ContinueStatement":
+        return continue_r;
+      case "BlockStatement": {
+        let next = after;
+        for (let i = stmt.body.length - 1; i >= 0; i -= 1) {
+          next = compute_reach_stmt(
+            stmt.body[i] as Statement,
+            next,
+            break_r,
+            continue_r,
+            throw_r,
+          );
+        }
+        return next;
+      }
+      case "IfStatement": {
+        const cons_r = compute_reach_stmt(
+          stmt.consequent,
+          after,
+          break_r,
+          continue_r,
+          throw_r,
+        );
+        const alt_r = stmt.alternate !== null
+          ? compute_reach_stmt(
+            stmt.alternate,
+            after,
+            break_r,
+            continue_r,
+            throw_r,
+          )
+          : after;
+        const test_after = cons_r || alt_r;
+        after_yield_map.set(stmt.test, test_after);
+        return test_after || contains_non_nested_yield(stmt.test);
+      }
+      case "SwitchStatement": {
+        let has_default = false;
+        let fall = after;
+        let any_case = false;
+        for (let i = stmt.cases.length - 1; i >= 0; i -= 1) {
+          const clause = stmt.cases[i];
+          if (clause.test === null) has_default = true;
+          let cur = fall;
+          for (let j = clause.consequent.length - 1; j >= 0; j -= 1) {
+            cur = compute_reach_stmt(
+              clause.consequent[j] as Statement,
+              cur,
+              after,
+              continue_r,
+              throw_r,
+            );
+          }
+          if (clause.test !== null) {
+            after_yield_map.set(clause.test, cur || fall);
+          }
+          if (cur) any_case = true;
+          fall = cur;
+        }
+        const disc_after = any_case || (!has_default && after);
+        after_yield_map.set(stmt.discriminant, disc_after);
+        return disc_after || contains_non_nested_yield(stmt.discriminant);
+      }
+      case "ForStatement":
+      case "ForOfStatement":
+      case "ForInStatement":
+      case "WhileStatement":
+      case "DoWhileStatement": {
+        const self_yield = contains_non_nested_yield(stmt);
+        const iter_r = self_yield || after;
+        const body_r = compute_reach_stmt(
+          stmt.body,
+          iter_r,
+          after,
+          iter_r,
+          throw_r,
+        );
+        const loop_r = body_r || iter_r;
+        if (stmt.type === "ForStatement") {
+          if (stmt.init !== null) after_yield_map.set(stmt.init, loop_r);
+          if (stmt.test !== null) after_yield_map.set(stmt.test, loop_r);
+          if (stmt.update !== null) after_yield_map.set(stmt.update, loop_r);
+        } else if (
+          stmt.type === "WhileStatement" || stmt.type === "DoWhileStatement"
+        ) {
+          after_yield_map.set(stmt.test, loop_r);
+        } else {
+          after_yield_map.set(stmt.right, loop_r);
+        }
+        return loop_r;
+      }
+      case "TryStatement": {
+        const fin_r = stmt.finalizer !== null
+          ? compute_reach_stmt(
+            stmt.finalizer,
+            after,
+            break_r,
+            continue_r,
+            throw_r,
+          )
+          : after;
+        const catch_r = stmt.handler !== null
+          ? compute_reach_stmt(
+            stmt.handler.body,
+            fin_r,
+            break_r,
+            continue_r,
+            throw_r,
+          )
+          : throw_r;
+        const block_r = compute_reach_stmt(
+          stmt.block,
+          fin_r,
+          break_r,
+          continue_r,
+          catch_r || fin_r,
+        );
+        return block_r || catch_r || fin_r;
+      }
+      case "LabeledStatement":
+        return compute_reach_stmt(
+          stmt.body,
+          after,
+          after,
+          continue_r,
+          throw_r,
+        );
+      default: {
+        after_yield_map.set(stmt, after);
+        return after || contains_non_nested_yield(stmt);
+      }
+    }
+  }
+  {
+    let next = false;
+    for (let i = body.body.length - 1; i >= 0; i -= 1) {
+      next = compute_reach_stmt(
+        body.body[i] as Statement,
+        next,
+        false,
+        false,
+        false,
+      );
+    }
+  }
+
+  // Detect unconditional top-level first yield* (for post-first-yield linear monad rules).
+  let unconditional_first_yield_end = -1;
+  for (let i = 0; i < body.body.length; i += 1) {
+    const stmt = body.body[i] as Statement;
+    if (read_yield(stmt) !== undefined) {
+      unconditional_first_yield_end = stmt.end;
+      break;
+    }
+    if (
+      stmt.type !== "VariableDeclaration" &&
+      stmt.type !== "ExpressionStatement" &&
+      stmt.type !== "EmptyStatement"
+    ) break;
+    if (contains_non_nested_yield(stmt)) break;
+  }
 
   function lookup_capture(name: string): Capture | undefined {
     for (let index = capture_scopes.length - 1; index >= 0; index -= 1) {
@@ -3793,7 +4610,8 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
     value: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
   ): void {
     const keys = value_visitor_keys[value.type];
     if (keys === undefined || keys.length === 0) return;
@@ -3807,10 +4625,26 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           if (
             child !== null && typeof child === "object" &&
             typeof (child as { type?: unknown }).type === "string"
-          ) scan(child as Node, nested, in_yield_arg, in_loop, value);
+          ) {
+            scan(
+              child as Node,
+              nested,
+              in_yield_arg,
+              reaches_yield,
+              local_max_yield,
+              value,
+            );
+          }
         }
       } else if (typeof (item as { type?: unknown }).type === "string") {
-        scan(item as Node, nested, in_yield_arg, in_loop, value);
+        scan(
+          item as Node,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
       }
     }
   }
@@ -3818,7 +4652,8 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
     value: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
   ): void {
     const keys = value_visitor_keys[value.type];
     if (keys === undefined || keys.length === 0) return;
@@ -3832,10 +4667,26 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           if (
             child !== null && typeof child === "object" &&
             typeof (child as { type?: unknown }).type === "string"
-          ) scan_update(child as Node, nested, in_yield_arg, in_loop, value);
+          ) {
+            scan_update(
+              child as Node,
+              nested,
+              in_yield_arg,
+              reaches_yield,
+              local_max_yield,
+              value,
+            );
+          }
         }
       } else if (typeof (item as { type?: unknown }).type === "string") {
-        scan_update(item as Node, nested, in_yield_arg, in_loop, value);
+        scan_update(
+          item as Node,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
       }
     }
   }
@@ -3843,7 +4694,8 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
     value: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
   ): void {
     const keys = value_visitor_keys[value.type];
     if (keys === undefined || keys.length === 0) return;
@@ -3862,7 +4714,8 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
               child as Node,
               nested,
               in_yield_arg,
-              in_loop,
+              reaches_yield,
+              local_max_yield,
               value,
             );
           }
@@ -3872,17 +4725,28 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           item as Node,
           nested,
           in_yield_arg,
-          in_loop,
+          reaches_yield,
+          local_max_yield,
           value,
         );
       }
+    }
+  }
+  function record_prefix_effect(
+    effect_node: Node,
+    reaches_yield: boolean,
+    local_max_yield: number,
+  ): void {
+    if (reaches_yield || effect_node.end < local_max_yield) {
+      prefix_effects.push({ node: effect_node, reaches: true });
     }
   }
   function scan(
     value: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
     parent?: Node,
   ): void {
     const type = value.type;
@@ -3920,6 +4784,13 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       hazard = value;
       return;
     }
+    const mapped_reach = !nested && !in_yield_arg
+      ? after_yield_map.get(value)
+      : undefined;
+    if (mapped_reach !== undefined) {
+      reaches_yield = mapped_reach;
+      local_max_yield = mapped_reach ? -1 : max_non_nested_yield_pos(value);
+    }
     switch (type) {
       case "BlockStatement": {
         capture_scopes.push(new Map());
@@ -3944,7 +4815,14 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           ) declare_capture(part.id, part, true, nested);
         }
         for (let i = 0; i < body_list.length; i += 1) {
-          scan(body_list[i], nested, in_yield_arg, in_loop, value);
+          scan(
+            body_list[i],
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         capture_scopes.pop();
         ends.pop();
@@ -3957,34 +4835,66 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
         }
         const decls = value.declarations;
         for (let i = 0; i < decls.length; i += 1) {
-          scan(decls[i], nested, in_yield_arg, in_loop, value);
+          scan(
+            decls[i],
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       }
       case "VariableDeclarator":
-        scan_pattern_hazards(value.id, nested, in_yield_arg, in_loop, value);
+        scan_pattern_hazards(
+          value.id,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         if (value.init !== null) {
-          scan(value.init, nested, in_yield_arg, in_loop, value);
+          scan(
+            value.init,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       case "ReturnStatement":
         if (value.argument !== null) {
-          scan(value.argument, nested, in_yield_arg, in_loop, value);
+          scan(
+            value.argument,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       case "ExpressionStatement":
-        scan(value.expression, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.expression,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "YieldExpression":
         if (!nested) {
           if (!in_yield_arg && !first_yield) first_yield = value;
           yields.push(value.start);
-          if (!in_yield_arg && value.start > max_prefix_yield) {
-            max_prefix_yield = value.start;
-          }
         }
         if (value.argument !== null) {
-          scan(value.argument, nested, true, in_loop, value);
+          scan(value.argument, nested, true, false, -1, value);
         }
         return;
       case "CallExpression": {
@@ -3992,63 +4902,179 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           !value.optional && value.callee.type === "Identifier" &&
           value.callee.name === "eval"
         ) hazard = value;
-        if (!nested && !in_yield_arg) {
-          prefix_effects.push({ node: value, loop: in_loop });
+        if (
+          !nested && !in_yield_arg && !is_statically_pure_call(value, services)
+        ) {
+          record_prefix_effect(value, reaches_yield, local_max_yield);
         }
         if (
           value.callee.type === "MemberExpression" && !value.callee.computed &&
           value.callee.property.type === "Identifier" &&
           mutating_methods.has(value.callee.property.name)
         ) write(value.callee.object, nested);
-        scan(value.callee, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.callee,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         const args = value.arguments;
         for (let i = 0; i < args.length; i += 1) {
-          scan(args[i], nested, in_yield_arg, in_loop, value);
+          scan(
+            args[i],
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       }
       case "MemberExpression":
-        scan(value.object, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.object,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         if (value.computed) {
-          scan(value.property, nested, in_yield_arg, in_loop, value);
+          scan(
+            value.property,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       case "BinaryExpression":
         if (value.left.type !== "PrivateIdentifier") {
-          scan(value.left, nested, in_yield_arg, in_loop, value);
+          scan(
+            value.left,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
-        scan(value.right, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.right,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "LogicalExpression":
-        scan(value.left, nested, in_yield_arg, in_loop, value);
-        scan(value.right, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.left,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
+        scan(
+          value.right,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "UnaryExpression":
         if (value.operator === "delete") {
           if (!nested && !in_yield_arg) {
-            prefix_effects.push({ node: value, loop: in_loop });
+            record_prefix_effect(value, reaches_yield, local_max_yield);
           }
           write(value.argument, nested);
         }
-        scan(value.argument, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.argument,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "IfStatement":
-        scan(value.test, nested, in_yield_arg, in_loop, value);
-        scan(value.consequent, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.test,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
+        scan(
+          value.consequent,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         if (value.alternate !== null) {
-          scan(value.alternate, nested, in_yield_arg, in_loop, value);
+          scan(
+            value.alternate,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       case "ConditionalExpression":
-        scan(value.test, nested, in_yield_arg, in_loop, value);
-        scan(value.consequent, nested, in_yield_arg, in_loop, value);
-        scan(value.alternate, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.test,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
+        scan(
+          value.consequent,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
+        scan(
+          value.alternate,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "ArrayExpression": {
         const els = value.elements;
         for (let i = 0; i < els.length; i += 1) {
           const el = els[i];
-          if (el !== null) scan(el, nested, in_yield_arg, in_loop, value);
+          if (el !== null) {
+            scan(
+              el,
+              nested,
+              in_yield_arg,
+              reaches_yield,
+              local_max_yield,
+              value,
+            );
+          }
         }
         return;
       }
@@ -4057,39 +5083,95 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
         for (let i = 0; i < props.length; i += 1) {
           const prop = props[i];
           if (prop.type === "SpreadElement") {
-            scan(prop.argument, nested, in_yield_arg, in_loop, prop);
+            scan(
+              prop.argument,
+              nested,
+              in_yield_arg,
+              reaches_yield,
+              local_max_yield,
+              prop,
+            );
           } else {
             if (prop.computed) {
-              scan(prop.key, nested, in_yield_arg, in_loop, prop);
+              scan(
+                prop.key,
+                nested,
+                in_yield_arg,
+                reaches_yield,
+                local_max_yield,
+                prop,
+              );
             }
-            scan(prop.value, nested, in_yield_arg, in_loop, prop);
+            scan(
+              prop.value,
+              nested,
+              in_yield_arg,
+              reaches_yield,
+              local_max_yield,
+              prop,
+            );
           }
         }
         return;
       }
       case "AssignmentExpression":
         if (!nested && !in_yield_arg && !is_prefix_local(value.left)) {
-          prefix_effects.push({ node: value, loop: in_loop });
+          record_prefix_effect(value, reaches_yield, local_max_yield);
         }
         write(value.left, nested);
-        scan(value.left, nested, in_yield_arg, in_loop, value);
-        scan(value.right, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.left,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
+        scan(
+          value.right,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "UpdateExpression":
         if (!nested && !in_yield_arg && !is_prefix_local(value.argument)) {
-          prefix_effects.push({ node: value, loop: in_loop });
+          record_prefix_effect(value, reaches_yield, local_max_yield);
         }
         write(value.argument, nested);
-        scan(value.argument, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.argument,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         return;
       case "NewExpression": {
         if (!nested && !in_yield_arg) {
-          prefix_effects.push({ node: value, loop: in_loop });
+          record_prefix_effect(value, reaches_yield, local_max_yield);
         }
-        scan(value.callee, nested, in_yield_arg, in_loop, value);
+        scan(
+          value.callee,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
         const args = value.arguments;
         for (let i = 0; i < args.length; i += 1) {
-          scan(args[i], nested, in_yield_arg, in_loop, value);
+          scan(
+            args[i],
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         return;
       }
@@ -4111,7 +5193,7 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
           }
         }
       }
-      scan_children(value, true, true, in_loop);
+      scan_children(value, true, true, false, -1);
       capture_scopes.pop();
       ends.pop();
       return;
@@ -4120,8 +5202,6 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       type === "ForStatement" || type === "ForOfStatement" ||
       type === "ForInStatement"
     ) {
-      const next_loop = in_loop ||
-        (!nested && !in_yield_arg && contains(value));
       capture_scopes.push(new Map());
       ends.push(value.end);
       if (!nested && !in_yield_arg) prefix_scopes.push(new Set());
@@ -4141,24 +5221,69 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       }
       if (type === "ForStatement") {
         if (value.init) {
-          scan(value.init, nested, in_yield_arg, next_loop, value);
+          scan(
+            value.init,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         if (value.test) {
-          scan(value.test, nested, in_yield_arg, next_loop, value);
+          scan(
+            value.test,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
         if (value.update) {
+          const upd_r = !nested && !in_yield_arg
+            ? (after_yield_map.get(value.update) ?? reaches_yield)
+            : false;
           // Capture scan intentionally visits init/test/body; hazard/prefix visit update too.
-          scan_update(value.update, nested, in_yield_arg, next_loop, value);
+          scan_update(
+            value.update,
+            nested,
+            in_yield_arg,
+            upd_r,
+            upd_r ? -1 : max_non_nested_yield_pos(value.update),
+            value,
+          );
         }
-        scan(value.body, nested, in_yield_arg, next_loop, value);
+        scan(
+          value.body,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
       } else {
         if (type === "ForOfStatement") {
           // ForOfStatement right is skipped by unsafe_prefix, scanned by capture/hazard.
-          scan(value.right, nested, true, next_loop, value);
+          scan(value.right, nested, true, false, -1, value);
         } else {
-          scan(value.right, nested, in_yield_arg, next_loop, value);
+          scan(
+            value.right,
+            nested,
+            in_yield_arg,
+            reaches_yield,
+            local_max_yield,
+            value,
+          );
         }
-        scan(value.body, nested, in_yield_arg, next_loop, value);
+        scan(
+          value.body,
+          nested,
+          in_yield_arg,
+          reaches_yield,
+          local_max_yield,
+          value,
+        );
       }
       capture_scopes.pop();
       ends.pop();
@@ -4169,45 +5294,59 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
       (type === "WhileStatement" || type === "DoWhileStatement") &&
       !nested && !in_yield_arg
     ) {
-      const next_loop = in_loop || contains(value);
-      scan_children(value, nested, in_yield_arg, next_loop);
+      scan_children(
+        value,
+        nested,
+        in_yield_arg,
+        reaches_yield,
+        local_max_yield,
+      );
       return;
     }
-    scan_children(value, nested, in_yield_arg, in_loop);
+    scan_children(value, nested, in_yield_arg, reaches_yield, local_max_yield);
   }
   function scan_update(
     value: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
     parent?: Node,
   ): void {
     check_hazard(value, parent);
     if (function_like(value)) {
-      scan_update_children(value, true, true, in_loop);
+      scan_update_children(value, true, true, false, -1);
       return;
     }
     if (!nested && !in_yield_arg) {
       if (value.type === "YieldExpression") {
         if (!first_yield) first_yield = value;
-        if (value.start > max_prefix_yield) max_prefix_yield = value.start;
-        scan_update_children(value, nested, true, in_loop);
+        scan_update_children(value, nested, true, false, -1);
         return;
       }
       if (
-        value.type === "CallExpression" || value.type === "NewExpression" ||
+        (value.type === "CallExpression" &&
+          !is_statically_pure_call(value, services)) ||
+        value.type === "NewExpression" ||
         value.type === "AssignmentExpression" && !is_prefix_local(value.left) ||
         value.type === "UpdateExpression" && !is_prefix_local(value.argument) ||
         value.type === "UnaryExpression" && value.operator === "delete"
-      ) prefix_effects.push({ node: value, loop: in_loop });
+      ) record_prefix_effect(value, reaches_yield, local_max_yield);
     }
-    scan_update_children(value, nested, in_yield_arg, in_loop);
+    scan_update_children(
+      value,
+      nested,
+      in_yield_arg,
+      reaches_yield,
+      local_max_yield,
+    );
   }
   function scan_pattern_hazards(
     pattern: Node,
     nested: boolean,
     in_yield_arg: boolean,
-    in_loop: boolean,
+    reaches_yield: boolean,
+    local_max_yield: number,
     parent?: Node,
   ): void {
     if (pattern.type === "Identifier") {
@@ -4219,18 +5358,33 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
         pattern.left,
         nested,
         in_yield_arg,
-        in_loop,
+        reaches_yield,
+        local_max_yield,
         pattern,
       );
-      scan(pattern.right, nested, in_yield_arg, in_loop, pattern);
+      scan(
+        pattern.right,
+        nested,
+        in_yield_arg,
+        reaches_yield,
+        local_max_yield,
+        pattern,
+      );
       return;
     }
-    scan_pattern_children(pattern, nested, in_yield_arg, in_loop);
+    scan_pattern_children(
+      pattern,
+      nested,
+      in_yield_arg,
+      reaches_yield,
+      local_max_yield,
+    );
   }
 
-  scan(body, false, false, false);
+  scan(body, false, false, false, -1);
 
   let capture: Node | undefined;
+  let pre_first_yield_capture: Node | undefined;
   if (yields.length > 0) {
     for (let index = 0; index < captures.length; index += 1) {
       const item = captures[index];
@@ -4249,24 +5403,111 @@ function analyze_body(body: FunctionBody): BodyAnalysis {
         (item.allocated &&
           item.references.some((reference) => reference > yielded))
       ) {
-        capture = item.declaration;
-        break;
+        capture ??= item.declaration;
+        if (
+          unconditional_first_yield_end >= 0 &&
+          item.declaration.start < unconditional_first_yield_end
+        ) {
+          pre_first_yield_capture ??= item.declaration;
+        }
       }
     }
   }
 
   let prefix: Node | undefined;
-  if (max_prefix_yield >= 0) {
-    for (let index = 0; index < prefix_effects.length; index += 1) {
-      const effect = prefix_effects[index];
-      if (effect.loop || effect.node.end < max_prefix_yield) {
-        prefix = effect.node;
-        break;
+  let pre_first_yield_prefix: Node | undefined;
+  for (let index = 0; index < prefix_effects.length; index += 1) {
+    const effect = prefix_effects[index];
+    if (effect.reaches) {
+      prefix ??= effect.node;
+      if (
+        unconditional_first_yield_end >= 0 &&
+        effect.node.start < unconditional_first_yield_end
+      ) {
+        pre_first_yield_prefix ??= effect.node;
       }
     }
   }
 
-  return { hazard, var_binding, first_yield, capture, prefix };
+  return {
+    hazard,
+    var_binding,
+    first_yield,
+    capture,
+    prefix,
+    unconditional_first_yield_end,
+    pre_first_yield_capture,
+    pre_first_yield_prefix,
+  };
+}
+
+function is_linear_do_monad(
+  explicit: Expression | undefined,
+  first_yield: YieldExpression | undefined,
+  services: TransformServices,
+): boolean {
+  const imp = services.imports;
+  if (explicit !== undefined) {
+    const ex = unwrap(explicit);
+    if (ex.type !== "Identifier" || !services.bindings.imported(ex)) {
+      return false;
+    }
+    const name = ex.name;
+    return services.task_dictionaries.has(name) ||
+      (imp.direct_reader_dictionaries?.has(name) ?? false) ||
+      (imp.direct_state_dictionaries?.has(name) ?? false) ||
+      (imp.direct_writer_dictionaries?.has(name) ?? false) ||
+      (imp.stm_dictionaries?.has(name) ?? false);
+  }
+  if (!first_yield?.delegate || first_yield.argument === null) return false;
+  const arg = unwrap(first_yield.argument);
+  if (arg.type !== "CallExpression" || arg.optional) return false;
+  const callee = unwrap(arg.callee);
+  if (callee.type === "Identifier" && services.bindings.imported(callee)) {
+    const name = callee.name;
+    return services.task_dictionaries.has(name) ||
+      (imp.task_from_fn_functions?.has(name) ?? false) ||
+      (imp.task_from_promise_functions?.has(name) ?? false) ||
+      (imp.task_succeed_functions?.has(name) ?? false) ||
+      (imp.task_sequential_functions?.has(name) ?? false) ||
+      (imp.direct_reader_dictionaries?.has(name) ?? false) ||
+      (imp.direct_state_dictionaries?.has(name) ?? false) ||
+      (imp.direct_writer_dictionaries?.has(name) ?? false) ||
+      imp.primitive_functions.has(name) ||
+      (imp.stm_dictionaries?.has(name) ?? false) ||
+      (imp.stm_primitive_functions?.has(name) ?? false);
+  }
+  if (
+    callee.type === "MemberExpression" && !callee.computed &&
+    !callee.optional && callee.object.type === "Identifier" &&
+    callee.property.type === "Identifier" &&
+    services.bindings.imported(callee.object)
+  ) {
+    const obj = callee.object.name;
+    const prop = callee.property.name;
+    if (
+      services.task_dictionaries.has(obj) ||
+      (imp.task_namespaces?.has(obj) ?? false) ||
+      (imp.direct_reader_dictionaries?.has(obj) ?? false) ||
+      (imp.direct_state_dictionaries?.has(obj) ?? false) ||
+      (imp.direct_writer_dictionaries?.has(obj) ?? false) ||
+      imp.primitive_namespaces.has(obj) ||
+      (imp.stm_dictionaries?.has(obj) ?? false) ||
+      (imp.stm_namespaces?.has(obj) ?? false)
+    ) return true;
+    if (
+      (imp.monad_error_objects?.has(obj) ?? false) &&
+      prop === "catch_error" && arg.arguments.length >= 1 &&
+      arg.arguments[0].type !== "SpreadElement"
+    ) {
+      return is_linear_do_monad(
+        undefined,
+        { ...first_yield, argument: arg.arguments[0] as Expression },
+        services,
+      );
+    }
+  }
+  return false;
 }
 
 /** Lower generator syntax directly into native Oxc expressions. */
@@ -4300,7 +5541,7 @@ export function lower_generator(
     if (
       !run || run.type !== "FunctionExpression" || !run.generator || !run.body
     ) fail(state, value, "expected a function* argument.");
-    const analysis = analyze_body(run.body);
+    const analysis = analyze_body(run.body, services);
     if (analysis.hazard) {
       fail(
         state,
@@ -4322,17 +5563,26 @@ export function lower_generator(
       const direct = direct_single_shot(run.body, state, direct_spec, true);
       if (direct !== undefined) return expr(direct.block);
     }
-    if (analysis.capture) {
+    const linear_post_first = kind === "do" &&
+      analysis.unconditional_first_yield_end >= 0 &&
+      is_linear_do_monad(explicit, analysis.first_yield, services);
+    const effective_capture = linear_post_first
+      ? analysis.pre_first_yield_capture
+      : analysis.capture;
+    const effective_prefix = linear_post_first
+      ? analysis.pre_first_yield_prefix
+      : analysis.prefix;
+    if (effective_capture) {
       fail(
         state,
-        analysis.capture,
+        effective_capture,
         "generator-local state captured across yield* cannot preserve branching or repeated execution.",
       );
     }
-    if (analysis.prefix) {
+    if (effective_prefix) {
       fail(
         state,
-        analysis.prefix,
+        effective_prefix,
         "observable generator statements before yield* cannot preserve replay or repeated execution; lift the work into a yielded context.",
       );
     }
@@ -4374,10 +5624,11 @@ export function lower_generator(
     const list_dict = kind === "do" && array_dict === undefined
       ? direct_list_dictionary(explicit, first_yield, services)
       : undefined;
+    const direct_result = direct_spec !== undefined
+      ? direct_single_shot(run.body, state, direct_spec, false)
+      : undefined;
     let result = flat(run.body, state) ??
-      (direct_spec !== undefined
-        ? direct_single_shot(run.body, state, direct_spec, false)
-        : undefined) ??
+      direct_result ??
       (array_dict !== undefined
         ? direct_array_comprehension(run.body, array_dict, services)
         : undefined) ??
@@ -4407,7 +5658,10 @@ export function lower_generator(
       );
       return;
     }
-    if (explicit && state.dictionary !== explicit) {
+    if (
+      explicit && state.dictionary !== explicit &&
+      result !== direct_result
+    ) {
       return expr(
         block([
           variable("const", state.dictionary as IdentifierReference, explicit),

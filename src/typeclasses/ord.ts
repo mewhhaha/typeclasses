@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -96,238 +96,142 @@ export const Ord: OrdTypeclass = /* @__PURE__ */ typeclass(ord_typeclass, {
     };
   },
 
-  compare<
-    dictionary extends Ord<dictionary>,
-    item,
-  >(
-    left: Data<dictionary, item>,
-    right: Data<dictionary, item>,
-  ): Ordering {
-    return call_typeclass_method(
-      this.instance_for(left).compare<item>,
-      left,
-      right,
-    );
-  },
+  compare: ord_compare,
 
   lt<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): boolean {
-    return this.compare(left, right) === "lt";
+    return ord_compare(left, right) === "lt";
   },
 
   lte<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): boolean {
-    return this.compare(left, right) !== "gt";
+    return ord_compare(left, right) !== "gt";
   },
 
   gt<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): boolean {
-    return this.compare(left, right) === "gt";
+    return ord_compare(left, right) === "gt";
   },
 
   gte<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): boolean {
-    return this.compare(left, right) !== "lt";
+    return ord_compare(left, right) !== "lt";
   },
 
   min<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): Data<dictionary, item> {
-    if (this.lte(left, right)) {
-      return left;
-    }
-
-    return right;
+    return ord_compare(left, right) !== "gt" ? left : right;
   },
 
   max<dictionary extends Ord<dictionary>, item>(
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): Data<dictionary, item> {
-    if (this.gte(left, right)) {
-      return left;
-    }
-
-    return right;
+    return ord_compare(left, right) !== "lt" ? left : right;
   },
 });
 
+function ord_compare<dictionary extends Ord<dictionary>, item>(
+  left: Data<dictionary, item>,
+  right: Data<dictionary, item>,
+): Ordering {
+  return (instance_for_token(ord_typeclass, left).compare<item>).call(
+    left,
+    right,
+  );
+}
+
 /** Compare supported JavaScript values using the library's stable fallback. */
 export function compare_unknown(left: unknown, right: unknown): Ordering {
-  if (Object.is(left, right)) {
-    return "eq";
-  }
+  if (Object.is(left, right)) return "eq";
 
   const left_type = typeof left;
   const right_type = typeof right;
-
   if (left_type !== right_type) {
-    return compare_number(type_rank(left), type_rank(right));
+    return compare_ordered(type_rank(left), type_rank(right));
   }
 
-  if (left_type === "number" && right_type === "number") {
-    return compare_number(left as number, right as number);
-  }
-
-  if (left_type === "bigint" && right_type === "bigint") {
-    return compare_bigint(left as bigint, right as bigint);
-  }
-
-  if (left_type === "string" && right_type === "string") {
-    return compare_string(left as string, right as string);
-  }
-
-  if (left_type === "boolean" && right_type === "boolean") {
-    return compare_number(Number(left), Number(right));
-  }
-
-  if (left_type === "symbol" && right_type === "symbol") {
-    const description_order = compare_string(String(left), String(right));
-
-    if (description_order !== "eq") {
-      return description_order;
+  switch (left_type) {
+    case "number":
+      return compare_number(left as number, right as number);
+    case "bigint":
+    case "string":
+    case "boolean":
+      return compare_ordered(left as string, right as string);
+    case "symbol": {
+      const rendered = compare_ordered(String(left), String(right));
+      return rendered !== "eq" ? rendered : compare_ordered(
+        stable_id(symbol_ids, left as symbol),
+        stable_id(symbol_ids, right as symbol),
+      );
     }
-
-    return compare_number(
-      symbol_id(left as symbol),
-      symbol_id(right as symbol),
-    );
-  }
-
-  if (
-    (left_type === "object" && left !== null && right !== null) ||
-    left_type === "function"
-  ) {
-    const rendered_order = compare_string(inspect(left), inspect(right));
-
-    if (rendered_order !== "eq") {
-      return rendered_order;
+    case "object":
+      if (left === null || right === null) {
+        return compare_ordered(type_rank(left), type_rank(right));
+      }
+      // falls through
+    case "function": {
+      const rendered = compare_ordered(inspect(left), inspect(right));
+      return rendered !== "eq" ? rendered : compare_ordered(
+        stable_id(reference_ids, left as object),
+        stable_id(reference_ids, right as object),
+      );
     }
-
-    return compare_number(
-      reference_id(left as object),
-      reference_id(right as object),
-    );
+    default:
+      return compare_ordered(type_rank(left), type_rank(right));
   }
-
-  return compare_number(type_rank(left), type_rank(right));
 }
 
 /** Compare two numbers with a three-way result. */
 export function compare_number(left: number, right: number): Ordering {
-  if (Object.is(left, right)) {
-    return "eq";
-  }
-
-  if (Number.isNaN(left)) {
-    return "gt";
-  }
-
-  if (Number.isNaN(right)) {
-    return "lt";
-  }
-
-  if (left === right) {
-    return Object.is(left, -0) ? "lt" : "gt";
-  }
-
-  if (left < right) {
-    return "lt";
-  }
-
-  if (left > right) {
-    return "gt";
-  }
-
-  return "eq";
+  if (Object.is(left, right)) return "eq";
+  if (Number.isNaN(left)) return "gt";
+  if (Number.isNaN(right)) return "lt";
+  if (left === right) return Object.is(left, -0) ? "lt" : "gt";
+  return left < right ? "lt" : "gt";
 }
 
 const reference_ids = new WeakMap<object, number>();
 const symbol_ids = new Map<symbol, number>();
 let next_identity = 1;
 
-function compare_string(left: string, right: string): Ordering {
-  if (left < right) {
-    return "lt";
-  }
-
-  if (left > right) {
-    return "gt";
-  }
-
-  return "eq";
+function compare_ordered(
+  left: number | bigint | string | boolean,
+  right: number | bigint | string | boolean,
+): Ordering {
+  return left < right ? "lt" : left > right ? "gt" : "eq";
 }
 
-function reference_id(value: object): number {
-  const existing = reference_ids.get(value);
-
-  if (existing !== undefined) {
-    return existing;
-  }
-
-  const id = next_identity;
-  next_identity += 1;
-  reference_ids.set(value, id);
+function stable_id<key>(
+  ids: { get(k: key): number | undefined; set(k: key, v: number): unknown },
+  value: key,
+): number {
+  let id = ids.get(value);
+  if (id === undefined) ids.set(value, id = next_identity++);
   return id;
 }
 
-function symbol_id(value: symbol): number {
-  const existing = symbol_ids.get(value);
-
-  if (existing !== undefined) {
-    return existing;
-  }
-
-  const id = next_identity;
-  next_identity += 1;
-  symbol_ids.set(value, id);
-  return id;
-}
+const type_ranks: Record<string, number> = {
+  undefined: 0,
+  boolean: 2,
+  number: 3,
+  bigint: 4,
+  string: 5,
+  symbol: 6,
+  function: 7,
+  object: 8,
+};
 
 function type_rank(value: unknown): number {
-  if (value === null) {
-    return 1;
-  }
-
-  switch (typeof value) {
-    case "undefined":
-      return 0;
-    case "boolean":
-      return 2;
-    case "number":
-      return 3;
-    case "bigint":
-      return 4;
-    case "string":
-      return 5;
-    case "symbol":
-      return 6;
-    case "function":
-      return 7;
-    case "object":
-      return 8;
-    default:
-      return 9;
-  }
-}
-
-function compare_bigint(left: bigint, right: bigint): Ordering {
-  if (left < right) {
-    return "lt";
-  }
-
-  if (left > right) {
-    return "gt";
-  }
-
-  return "eq";
+  return value === null ? 1 : (type_ranks[typeof value] ?? 9);
 }

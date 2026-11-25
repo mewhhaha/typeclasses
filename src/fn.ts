@@ -3,11 +3,15 @@ import {
   type As,
   type Data,
   data,
+  kind,
   type type_data,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
+import { register_traversal } from "./traversal.ts";
 import {
+  Applicative,
+  applicative_lift_method,
   Arrow,
   type ArrowContext,
   Category,
@@ -18,6 +22,7 @@ import {
   type ProfunctorContext,
   Show,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 
 /** @ignore */
 export const fn_identity: unique symbol = /* @__PURE__ */ Symbol("fn_identity");
@@ -70,40 +75,18 @@ export function fn<input, item>(value: RawFn<input, item>): Fn<input, item> {
 }
 
 /** Lift a unary function into the function Arrow. */
-export function arr<input, item>(
-  value: RawFn<input, item>,
-): Fn<input, item> {
-  return fn(value);
-}
+export const arr: typeof fn = fn;
 
 function create_fn(): FnConstructor {
   const Fn = data<AsFn<unknown>>(fn_identity) as FnConstructor;
 
   Object.defineProperty(Fn, "with_input", {
-    value: fn_with_input,
+    value: <input>(): AsFn<input> => Fn as unknown as AsFn<input>,
   });
-
-  function fn_with_input<input>(): AsFn<input> {
-    return Fn as unknown as AsFn<input>;
-  }
 
   Show.instance(Fn)({
     show() {
       return "Fn(?)";
-    },
-  });
-
-  Monad.derive(Fn.with_input<unknown>())({
-    pure(value) {
-      return Fn((_input: unknown) => value);
-    },
-
-    bind(fn) {
-      const run = this.value();
-
-      return Fn((input: unknown) => {
-        return fn(run(input)).value()(input);
-      });
     },
   });
 
@@ -116,6 +99,96 @@ function create_fn(): FnConstructor {
       });
     },
   });
+
+  Applicative.instance(Fn)({
+    pure(value) {
+      return Fn((_input: unknown) => value);
+    },
+
+    [applicative_lift_method](fn, rest) {
+      const first = this.value();
+      const len = rest.length;
+      if (len === 0) return Fn((input: unknown) => fn(first(input)));
+      if (len === 1) {
+        const second = rest[0].value();
+        return Fn((input: unknown) => fn(first(input), second(input)));
+      }
+      const fns = rest.map((r) => r.value());
+      return Fn((input: unknown) =>
+        fn(first(input), ...fns.map((f) => f(input)))
+      );
+    },
+
+    ap(value) {
+      const run = this.value();
+      const arg = value.value();
+      return Fn((input: unknown) => run(input)(arg(input)));
+    },
+  });
+
+  Monad.instance(Fn)({
+    bind(fn) {
+      const run = this.value();
+
+      return Fn((input: unknown) => {
+        return fn(run(input)).value()(input);
+      });
+    },
+  });
+
+  const c_bind = Fn.bind;
+  const c_pure = Fn.pure;
+  const fn_do: CustomDoRunner = (first_value, first_iterator, run) => {
+    const first = first_value as Data<AsFn<unknown>, unknown>;
+    if (
+      first[kind] !== Fn[kind] || first.bind !== c_bind || first.pure !== c_pure
+    ) return undefined;
+    const first_raw = first.value();
+    let claimed = false;
+    return Fn((input: unknown) => {
+      let iter = first_iterator;
+      if (claimed) {
+        iter = run();
+        const head = iter.next();
+        if (head.done) return head.value;
+      } else claimed = true;
+      let next = iter.next(first_raw(input));
+      while (!next.done) {
+        next = iter.next(
+          (next.value as Data<AsFn<unknown>, unknown>).value()(input),
+        );
+      }
+      return next.value;
+    });
+  };
+  Object.defineProperty(Fn, do_runner_method, { value: fn_do });
+
+  register_traversal(
+    Fn as unknown as AsFn<unknown>,
+    <from, to, result>(
+      items: Iterable<from>,
+      fn: (item: from) => Data<AsFn<unknown>, to>,
+      build: (items: Iterable<to>) => result,
+    ): Data<AsFn<unknown>, result> => {
+      const fns: RawFn<unknown, to>[] = [];
+      for (const item of items) {
+        fns.push(fn(item).value() as RawFn<unknown, to>);
+      }
+      return Fn((input: unknown) => build(fns.map((f) => f(input)))) as Data<
+        AsFn<unknown>,
+        result
+      >;
+    },
+    <from, to>(
+      items: readonly from[],
+      fn: (item: from) => Data<AsFn<unknown>, to>,
+    ): Data<AsFn<unknown>, to[]> => {
+      const snapshot = items.slice();
+      return Fn((input: unknown) =>
+        snapshot.map((item) => fn(item).value()(input) as to)
+      ) as Data<AsFn<unknown>, to[]>;
+    },
+  );
 
   Profunctor.instance(Fn)({
     dimap<to, next_input, next_to>(
@@ -131,11 +204,11 @@ function create_fn(): FnConstructor {
     },
   });
 
+  const fn_id = Fn((value: unknown) => value);
+
   Category.instance(Fn)({
     id<item>(this: AsFn<unknown>) {
-      return Fn((value: item) => {
-        return value;
-      });
+      return fn_id as Fn<item, item>;
     },
 
     compose<to, next_input>(
@@ -152,12 +225,7 @@ function create_fn(): FnConstructor {
   });
 
   Arrow.instance(Fn)({
-    arr<from, to>(
-      this: AsFn<unknown>,
-      fn: (value: from) => to,
-    ) {
-      return Fn(fn);
-    },
+    arr: fn,
 
     first<to, extra>(this: Data<AsFn<unknown>, to>) {
       const run = this.value();

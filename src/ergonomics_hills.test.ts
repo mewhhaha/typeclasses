@@ -1993,3 +1993,905 @@ Deno.test("round-7 codex differential parity: Do replay, sequential snapshot, tr
     "concat(ab,c)",
   ]);
 });
+
+Deno.test("Wave 2 fast-path parity across core, Writer, Task, STM, AsyncIterableT, prelude, and handlers", async () => {
+  const [
+    { Do, Foldable, MonadError, MonadRec, Traversable, Eq, Ord, Monoid },
+    { List, from_array: list_from_array, to_array: list_to_array },
+    { SetT },
+    { MapT },
+    { RecordT, from_record_view },
+    { ChunkLog, chunk_log, flatten_chunk_log },
+    { Writer },
+    { Fn },
+    { Tuple },
+    { Identity },
+    { from_array: iter_from_array, preview: iter_preview },
+    {
+      AsyncIterableT,
+      filter_map: ai_filter_map,
+      find: ai_find,
+      fold_while: ai_fold_while,
+      from_async_iterable,
+      from_chunks,
+      from_readable_stream_source,
+      from_sync_factory,
+      map_concurrent,
+      map_concurrent_unordered,
+      preview: ai_preview,
+      some: ai_some,
+      to_array: ai_to_array,
+    },
+    { from_bytes: ab_from_bytes },
+    { DataViewT },
+    { from_typed_array },
+    { FormDataT },
+    {
+      ParallelTask,
+      Task,
+      from_promise,
+      parallel,
+      sequential,
+      succeed,
+      traverse_task,
+    },
+    {
+      Stm,
+      abort,
+      atomically,
+      modify_tvar,
+      new_immutable_tvar,
+      new_tvar,
+      or_else,
+      read_tvar,
+      retry,
+      update_immutable_path,
+      write_tvar,
+    },
+    { elem, fold_map, fold_while, traverse_ },
+    { Reader, ask },
+    { State },
+    { either, from_left, from_right, hush, is_left, is_right, recover_or_else },
+    { done, rec },
+    { map_error: map_validation_error },
+  ] = await Promise.all([
+    import("./typeclasses.ts"),
+    import("./list.ts"),
+    import("./set.ts"),
+    import("./map.ts"),
+    import("./record.ts"),
+    import("./chunk_log.ts"),
+    import("./writer.ts"),
+    import("./fn.ts"),
+    import("./tuple.ts"),
+    import("./identity.ts"),
+    import("./iterable.ts"),
+    import("./async_iterable.ts"),
+    import("./array_buffer.ts"),
+    import("./data_view.ts"),
+    import("./typed_array.ts"),
+    import("./form_data.ts"),
+    import("./task.ts"),
+    import("./stm.ts"),
+    import("./prelude.ts"),
+    import("./reader.ts"),
+    import("./state.ts"),
+    import("./either.ts"),
+    import("./loop.ts"),
+    import("./validation.ts"),
+  ]);
+
+  // 1. Overridden .value() honored exactly once across Maybe & Either fast paths
+  {
+    let calls = 0;
+    const l = Left<string, number>("orig");
+    Object.defineProperty(l, "value", {
+      value() {
+        calls += 1;
+        return ["Left", "override"] as const;
+      },
+    });
+    assert_equals(either((e) => "L:" + e, (v) => "R:" + v, l), "L:override");
+    assert_equals(calls, 1);
+    assert_equals(from_left("fb", l), "override");
+    assert_equals(calls, 2);
+    assert_equals(from_right(99, l), 99);
+    assert_equals(calls, 3);
+    assert_equals(recover_or_else(l, (e) => "rec:" + e), "rec:override");
+    assert_equals(calls, 4);
+    assert_true(is_left(l), "overridden is_left");
+    assert_equals(calls, 5);
+    assert_true(!is_right(l), "overridden is_right");
+    assert_equals(calls, 6);
+    assert_equals(hush(l).value(), ["Nothing"]);
+    assert_equals(calls, 7);
+    assert_equals(
+      l.bimap((e) => e + "!", (x) => x + 1).value(),
+      ["Left", "override!"],
+    );
+    assert_equals(calls, 8);
+    assert_equals(
+      MonadError.catch_error(l, (e) => Right(e.length)).value(),
+      ["Right", 8],
+    );
+    assert_equals(calls, 9);
+    assert_true(l.eq(Left("override")), "overridden eq");
+    assert_equals(calls, 10);
+    assert_equals(l.compare(Left("override")), "eq");
+    assert_equals(calls, 11);
+    assert_equals(Object.is(Nothing().value(), Nothing().value()), true);
+  }
+
+  // 2. CORE-01/02/06: Effect map/bind chains, Applicative.collect, singleton traversal
+  {
+    let eff = Effect.pure(1);
+    for (let i = 0; i < 64; i += 1) eff = Effect.map(eff, (n) => n + 1);
+    eff = Effect.bind(eff, (n) => Effect.pure(n * 2));
+    assert_equals(run(eff), 130);
+    assert_equals(run(eff), 130);
+
+    const collected = Applicative.collect(Maybe, {
+      a: Just(1),
+      b: Just(2),
+      c: Just(3),
+      d: Just(4),
+      e: Just(5),
+    });
+    assert_equals(collected.value(), [
+      "Just",
+      { a: 1, b: 2, c: 3, d: 4, e: 5 },
+    ]);
+    assert_equals(
+      Applicative.collect(Maybe, { a: Just(1), b: Nothing<number>() }).value(),
+      ["Nothing"],
+    );
+
+    const single_m = Traversable.traverse(
+      ArrayT([10]),
+      Maybe,
+      (x) => Just(x + 1),
+    );
+    assert_true(Just.is(single_m), "single maybe");
+    if (Just.is(single_m)) assert_equals(single_m.value()[1].value(), [11]);
+    assert_equals(
+      Traversable.traverse(ArrayT([10]), Maybe, () => Nothing<number>())
+        .value(),
+      ["Nothing"],
+    );
+    const single_e = Traversable.traverse(
+      ArrayT([10]),
+      Either,
+      (x) => Right(x + 2),
+    );
+    assert_true(Right.is(single_e), "single either");
+    if (Right.is(single_e)) assert_equals(single_e.value()[1].value(), [12]);
+  }
+
+  // 3. SA-01/04/05/07: Writer (ArrayT/List/SetT/MapT/ChunkLog), Validation, Fn, Tuple
+  {
+    const WArr = Writer.with(ArrayT<string>([]));
+    const w0 = WArr.pure(1).bind((n) => WArr([n + 1, ArrayT(["a"])]));
+    const w_branch1 = w0.bind((n) => WArr([n * 2, ArrayT(["b1"])]));
+    const w_branch2 = w0.bind((n) => WArr([n * 3, ArrayT(["b2"])]));
+    assert_equals(w_branch1.value()[0], 4);
+    assert_equals(w_branch1.value()[1].value(), ["a", "b1"]);
+    assert_equals(w_branch2.value()[0], 6);
+    assert_equals(w_branch2.value()[1].value(), ["a", "b2"]);
+
+    const ap_res = Applicative.ap(
+      WArr([(x: number) => x + 10, ArrayT(["f"])]),
+      WArr([5, ArrayT(["x"])]),
+    );
+    assert_equals(ap_res.value()[0], 15);
+    assert_equals(ap_res.value()[1].value(), ["f", "x"]);
+
+    const lifted2 = Applicative.lift(
+      (a: number, b: number) => a + b,
+      WArr([1, ArrayT(["l1"])]),
+      WArr([2, ArrayT(["l2"])]),
+    );
+    assert_equals(lifted2.value()[0], 3);
+    assert_equals(lifted2.value()[1].value(), ["l1", "l2"]);
+
+    const many_w = Array.from(
+      { length: 40 },
+      (_, i) => WArr([i, ArrayT([`k${i}`])]),
+    );
+    const lifted_many = Applicative.lift(
+      (...xs: number[]) => xs.reduce((a, b) => a + b, 0),
+      many_w[0],
+      ...many_w.slice(1),
+    );
+    assert_equals(lifted_many.value()[0], (39 * 40) / 2);
+    assert_equals(lifted_many.value()[1].value().length, 40);
+
+    // List, SetT, MapT, ChunkLog Writer lifts + traversals (array & iterable)
+    const WList = Writer.with(list_from_array<string>([]));
+    const wl = Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      WList([1, list_from_array(["a"])]),
+      WList([2, list_from_array(["b"])]),
+      WList([3, list_from_array(["c"])]),
+    );
+    assert_equals(wl.value()[0], 6);
+    assert_equals(list_to_array(wl.value()[1]), ["a", "b", "c"]);
+
+    const WSet = Writer.with(SetT(new Set<number>()));
+    const ws = Traversable.traverse(
+      ArrayT([1, 2, 3]),
+      WSet,
+      (x) => WSet([x * 2, SetT(new Set([x]))]),
+    );
+    assert_equals(ws.value()[0].value(), [2, 4, 6]);
+    assert_equals([...ws.value()[1].value()], [1, 2, 3]);
+
+    const WMap = Writer.with(MapT(new Map<string, number>()));
+    const wm = Traversable.traverse(
+      list_from_array([1, 2, 3]),
+      WMap,
+      (x) => WMap([x, MapT(new Map([[`k${x}`, x]]))]),
+    );
+    assert_equals(list_to_array(wm.value()[0]), [1, 2, 3]);
+    assert_equals([...wm.value()[1].value().entries()], [
+      ["k1", 1],
+      ["k2", 2],
+      ["k3", 3],
+    ]);
+
+    const WChunk = Writer.with(chunk_log<string>([]));
+    const wc = Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      WChunk([1, chunk_log(["x"])]),
+      WChunk([2, chunk_log(["y"])]),
+      WChunk([3, chunk_log(["z"])]),
+    );
+    assert_equals(wc.value()[0], 6);
+    assert_equals(flatten_chunk_log(wc.value()[1]), ["x", "y", "z"]);
+
+    const w_do = Do(WArr, function* () {
+      const a = yield* WArr([10, ArrayT(["d1"])]);
+      const b = yield* WArr([20, ArrayT(["d2"])]);
+      return a + b;
+    });
+    assert_equals(w_do.value()[0], 30);
+    assert_equals(w_do.value()[1].value(), ["d1", "d2"]);
+
+    // Validation.map_error + N-ary lift + ap + compare
+    const str_sg = {
+      concat: (a: readonly string[], b: readonly string[]) => [...a, ...b],
+    };
+    const v_ok = map_validation_error(
+      Valid(10) as ReturnType<typeof InvalidMessages<number>>,
+      (e) => e,
+      str_sg,
+    );
+    assert_equals(v_ok.value(), ["valid", 10]);
+    const v_err = map_validation_error(
+      InvalidMessages("e1", "e2"),
+      (msgs) => msgs.map((m) => m.toUpperCase()),
+      str_sg,
+    );
+    assert_equals(v_err.value()[0], "invalid");
+    assert_equals(v_err.value()[1], ["E1", "E2"]);
+    const v_lift = Applicative.lift(
+      (a: number, b: number, c: number, d: number) => a + b + c + d,
+      Valid(1) as ReturnType<typeof InvalidMessages<number>>,
+      InvalidMessages<number>("x"),
+      Valid(3) as ReturnType<typeof InvalidMessages<number>>,
+      InvalidMessages<number>("y"),
+    );
+    assert_equals(v_lift.value()[0], "invalid");
+    assert_equals(
+      Ord.compare(
+        InvalidMessages<number>("a"),
+        Valid(1) as ReturnType<typeof InvalidMessages<number>>,
+      ),
+      "lt",
+    );
+
+    // Fn ap, lift, Do, traverse
+    const fn_lifted = Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      Fn((x: number) => x + 1),
+      Fn((x: number) => x * 2),
+      Fn((x: number) => x * 3),
+    );
+    assert_equals(fn_lifted.run(5), 31);
+    const fn_ap = Applicative.ap(
+      Fn((x: number) => (y: number) => x + y),
+      Fn((x: number) => x * 10),
+    );
+    assert_equals(fn_ap.run(3), 33);
+    const fn_do = Do(Fn.with_input<number>(), function* () {
+      const a = yield* Fn((x: number) => x + 1);
+      const b = yield* Fn((x: number) => x * 2);
+      return a + b;
+    });
+    assert_equals(fn_do.run(4), 13);
+    const fn_trav = Traversable.traverse(
+      ArrayT([1, 2, 3]),
+      Fn.with_input<number>(),
+      (n) => Fn((x: number) => x + n),
+    );
+    assert_equals(fn_trav.run(10).value(), [11, 12, 13]);
+
+    // Tuple.with_monoid
+    const TM = Tuple.with_monoid(ArrayT<number>([]));
+    const tm_res = TM.pure((n: number) => n + 5).ap(TM.pure(1));
+    assert_equals(tm_res.value()[0].value(), []);
+    assert_equals(tm_res.value()[1], 6);
+    const tm_comb = Applicative.lift(
+      (a: number, b: number) => a + b,
+      TM([ArrayT([1]), 10]),
+      TM([ArrayT([2]), 20]),
+    );
+    assert_equals(tm_comb.value()[0].value(), [1, 2]);
+    assert_equals(tm_comb.value()[1], 30);
+    assert_equals(Monoid.empty(ArrayT).value(), []);
+  }
+
+  // 4. Task & ParallelTask sync + async fast paths
+  {
+    const p2_sync = Applicative.lift(
+      (a: number, b: number) => a + b,
+      ParallelTask.pure(10),
+      parallel(from_fn(() => 20)),
+    );
+    assert_equals(await run_task(sequential(p2_sync)), 30);
+
+    const p3_sync = Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      parallel(from_fn(() => 1)),
+      parallel(from_fn(() => 2)),
+      parallel(from_fn(() => 3)),
+    );
+    assert_equals(await run_task(sequential(p3_sync)), 6);
+
+    const p3_async = Applicative.lift(
+      (a: number, b: number, c: number) => a + b + c,
+      parallel(from_promise(Promise.resolve(10))),
+      parallel(from_fn(() => 20)),
+      parallel(from_promise(Promise.resolve(30))),
+    );
+    assert_equals(await run_task(sequential(p3_async)), 60);
+
+    const p4_async = Applicative.lift(
+      (a: number, b: number, c: number, d: number) => a + b + c + d,
+      parallel(from_promise(Promise.resolve(1))),
+      parallel(from_promise(Promise.resolve(2))),
+      parallel(from_promise(Promise.resolve(3))),
+      parallel(from_promise(Promise.resolve(4))),
+    );
+    assert_equals(await run_task(sequential(p4_async)), 10);
+
+    // Task.ap sync + async
+    assert_equals(
+      await run_task(
+        Applicative.ap(
+          from_fn((): (n: number) => number => (n: number) => n * 3),
+          from_promise(Promise.resolve(7)),
+        ),
+      ),
+      21,
+    );
+    assert_equals(
+      await run_task(
+        Applicative.ap(
+          from_promise(Promise.resolve((n: number) => n + 5)),
+          from_promise(Promise.resolve(7)),
+        ),
+      ),
+      12,
+    );
+
+    // Task tail_rec_m sync + async
+    const rec_sync = MonadRec.tail_rec_m(
+      Task,
+      0,
+      (n) => n >= 5 ? succeed(done(n)) : from_fn(() => rec(n + 1)),
+    );
+    assert_equals(await run_task(rec_sync), 5);
+    const rec_async = MonadRec.tail_rec_m(
+      Task,
+      0,
+      (n) =>
+        n >= 3
+          ? from_promise(Promise.resolve(done(n * 10)))
+          : from_promise(Promise.resolve(rec(n + 1))),
+    );
+    assert_equals(await run_task(rec_async), 30);
+
+    // Task Do sync + async & traverse_task sync + async
+    const t_do = Do(Task, function* () {
+      const a = yield* from_fn(() => 4);
+      const b = yield* from_promise(Promise.resolve(6));
+      return a + b;
+    });
+    assert_equals(await run_task(t_do), 10);
+    assert_equals(
+      await run_task(
+        traverse_task(
+          [1, 2, 3, 4],
+          2,
+          (n) =>
+            n % 2 === 0
+              ? from_promise(Promise.resolve(n * 10))
+              : from_fn(() => n * 10),
+        ),
+      ),
+      [10, 20, 30, 40],
+    );
+  }
+
+  // 5. STM: trusted shape, immutable frozen subtree validation, update_immutable_path, or_else retry
+  {
+    const tv_shape = new_tvar(
+      { id: 1, tags: ["a", "b"] },
+      { shape: { record: { id: "number", tags: { array: "string" } } } },
+    );
+    assert_equals(atomically(read_tvar(tv_shape)), { id: 1, tags: ["a", "b"] });
+    atomically(write_tvar(tv_shape, { id: 2, tags: ["c"] }));
+    assert_equals(atomically(read_tvar(tv_shape)), { id: 2, tags: ["c"] });
+
+    const frozen_inner = Object.freeze({
+      score: 10,
+      items: Object.freeze([1, 2, 3]),
+    });
+    const frozen_root = Object.freeze({
+      left: frozen_inner,
+      right: Object.freeze({ score: 20 }),
+    });
+    const tv_imm = new_immutable_tvar(frozen_root);
+    const updated = atomically(
+      update_immutable_path(tv_imm, ["right", "score"], () => 99),
+    );
+    assert_true(updated.left === frozen_inner, "structural sharing preserved");
+    assert_equals(updated.right.score, 99);
+    assert_equals(atomically(read_tvar(tv_imm)).right.score, 99);
+
+    const tv_n = new_tvar(0);
+    const res = atomically(
+      or_else(
+        Do(Stm, function* () {
+          yield* write_tvar(tv_n, 999);
+          return yield* retry<number>();
+        }),
+        Do(Stm, function* () {
+          const cur = yield* read_tvar(tv_n);
+          yield* modify_tvar(tv_n, (x) => x + 5);
+          return cur + 1;
+        }),
+      ),
+    );
+    assert_equals(res, 1);
+    assert_equals(atomically(read_tvar(tv_n)), 5);
+
+    let aborted = false;
+    try {
+      atomically(abort("stm-abort"));
+    } catch (e) {
+      aborted = e instanceof Error && e.message.includes("stm-abort");
+    }
+    assert_true(aborted, "stm abort throws");
+  }
+
+  // 6. AsyncIterableT: map_concurrent (ordered & unordered), pipelines, chunks, streams, for-await
+  {
+    const sync_src = from_sync_factory(() => [1, 2, 3, 4, 5, 6]);
+    const snap_src = await from_async_iterable((async function* () {
+      for (const x of [1, 2, 3, 4, 5, 6]) yield x;
+    })());
+    const chunk_src = from_chunks(async function* () {
+      yield [1, 2, 3];
+      yield [4, 5, 6];
+    });
+    const make_stream_src = () =>
+      from_readable_stream_source(
+        new ReadableStream<number>({
+          start(c) {
+            for (const x of [1, 2, 3, 4, 5, 6]) c.enqueue(x);
+            c.close();
+          },
+        }),
+        false,
+      );
+    const gen_src = AsyncIterableT(async function* () {
+      for (const x of [1, 2, 3, 4, 5, 6]) yield x;
+    });
+
+    // map_concurrent ordered & unordered (sync + async callbacks, multiple terminals)
+    assert_equals(
+      await ai_to_array(map_concurrent(sync_src, 3, (x) => x * 2)),
+      [2, 4, 6, 8, 10, 12],
+    );
+    assert_equals(
+      await ai_to_array(
+        map_concurrent(chunk_src, 2, (x) => Promise.resolve(x * 3)),
+      ),
+      [3, 6, 9, 12, 15, 18],
+    );
+    assert_equals(
+      await ai_preview(
+        map_concurrent(make_stream_src(), 2, (x) => Promise.resolve(x + 1)),
+        3,
+      ),
+      [2, 3, 4],
+    );
+    assert_equals(
+      (await ai_find(
+        map_concurrent(gen_src, 2, (x) => Promise.resolve(x * 10)),
+        (x) => x >= 30,
+      )).value(),
+      ["Just", 30],
+    );
+    assert_true(
+      await ai_some(
+        map_concurrent_unordered(sync_src, 3, (x) => x * 2),
+        (x) => x === 10,
+      ),
+      "unordered some",
+    );
+    const unord_all = await ai_to_array(
+      map_concurrent_unordered(chunk_src, 3, (x) => Promise.resolve(x + 10)),
+    );
+    assert_equals(
+      unord_all.slice().sort((a, b) => a - b),
+      [11, 12, 13, 14, 15, 16],
+    );
+    const unord_fold = await ai_fold_while(
+      map_concurrent_unordered(snap_src, 2, (x) => x),
+      0,
+      (acc, x) => acc + x >= 6 ? ["Done", acc + x] : ["Continue", acc + x],
+    );
+    assert_true(unord_fold >= 6, "unordered fold_while stops early");
+
+    // Pipeline stage specializations + async transition + for-await generator
+    assert_equals(
+      await ai_to_array(
+        sync_src.map((x) => x * 2).filter((x) => x > 4).take(2),
+      ),
+      [6, 8],
+    );
+    assert_equals(
+      await ai_to_array(
+        sync_src.filter((x) => x % 2 === 0).map((x) =>
+          Promise.resolve(x + 1) as unknown as number
+        ),
+      ),
+      [3, 5, 7],
+    );
+    assert_equals(
+      await ai_to_array(
+        chunk_src.map((x) => x + 1).filter((x) => x % 2 === 0).take(2),
+      ),
+      [2, 4],
+    );
+    assert_equals(
+      await ai_to_array(
+        ai_filter_map(
+          make_stream_src(),
+          (x) => x % 2 === 0 ? Just(x * 10) : Nothing(),
+        ).take(2),
+      ),
+      [20, 40],
+    );
+    assert_equals(
+      await ai_to_array(
+        gen_src.map((x) => x * 2).filter((x) => x >= 6).take(2),
+      ),
+      [6, 8],
+    );
+    // Direct for-await over pipeline (exercises async function* generator path)
+    const iterated: number[] = [];
+    for await (
+      const v of chunk_src.map((x) => x + 10).filter((x) => x % 2 === 0)
+        .take(2).value()()
+    ) {
+      iterated.push(v);
+    }
+    assert_equals(iterated, [12, 14]);
+  }
+
+  // 7. Collections, binary equality, prelude, and handlers (prepare_operations 1/2/3/4 tags)
+  {
+    assert_equals(
+      fold_while(
+        ArrayT([1, 2, 3, 4, 5]),
+        0,
+        (a, x) => a + x >= 6 ? ["Done", a + x] : ["Continue", a + x],
+      ),
+      6,
+    );
+    assert_equals(
+      fold_while(
+        list_from_array([1, 2, 3, 4]),
+        0,
+        (a, x) => a + x >= 3 ? ["Done", a + x] : ["Continue", a + x],
+      ),
+      3,
+    );
+    assert_equals(
+      fold_while(
+        SetT(new Set([10, 20, 30])),
+        0,
+        (a, x) => x === 20 ? ["Done", a + x] : ["Continue", a + x],
+      ),
+      30,
+    );
+    assert_equals(
+      fold_while(
+        MapT(new Map([["a", 1], ["b", 2], ["c", 3]])),
+        0,
+        (a, x) => x === 2 ? ["Done", a + x] : ["Continue", a + x],
+      ),
+      3,
+    );
+    // Empty-dim Cartesian lift short-circuit
+    assert_equals(
+      Applicative.lift(
+        (a: number, b: number, c: number) => a + b + c,
+        ArrayT([1, 2, 3]),
+        ArrayT<number>([]),
+        ArrayT([4, 5, 6]),
+      ).value(),
+      [],
+    );
+    assert_equals(
+      list_to_array(
+        Applicative.lift(
+          (a: number, b: number) => a + b,
+          list_from_array([1, 2]),
+          list_from_array<number>([]),
+        ),
+      ),
+      [],
+    );
+
+    // IterableT preview/eq/fold
+    assert_equals(iter_preview(iter_from_array([1, 2, 3, 4]), 2), [1, 2]);
+    assert_true(
+      Eq.eq(iter_from_array([1, 2, 3]), iter_from_array([1, 2, 3])),
+      "IterableT eq",
+    );
+    assert_equals(
+      Foldable.fold(iter_from_array([1, 2, 3]), 0, (a, b) => a + b),
+      6,
+    );
+
+    // Binary eq / from_bytes / RecordT / MapT / FormDataT
+    const b1 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const b2 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const b3 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 11]);
+    assert_true(Eq.eq(ab_from_bytes(b1), ab_from_bytes(b2)), "ArrayBufferT eq");
+    assert_true(
+      !Eq.eq(ab_from_bytes(b1), ab_from_bytes(b3)),
+      "ArrayBufferT neq",
+    );
+    assert_true(
+      Eq.eq(from_typed_array(b1), from_typed_array(b2)),
+      "TypedArrayT eq",
+    );
+    assert_true(
+      Eq.eq(
+        DataViewT(new DataView(b1.buffer)),
+        DataViewT(new DataView(b2.buffer)),
+      ),
+      "DataViewT eq",
+    );
+    assert_true(
+      Eq.eq(from_record_view({ a: 1, b: 2 }), RecordT({ a: 1, b: 2 })),
+      "RecordT eq",
+    );
+    assert_true(
+      Eq.eq(MapT(new Map([["a", 1]])), MapT(new Map([["a", 1]]))),
+      "MapT eq",
+    );
+    const fd1 = new FormData();
+    fd1.append("k", "1");
+    const fd2 = new FormData();
+    fd2.append("k", "2");
+    assert_equals(
+      [...FormDataT(fd1).concat(FormDataT(fd2)).value().entries()],
+      [["k", "1"], ["k", "2"]],
+    );
+
+    // prelude.elem, prelude.fold_map, prelude.traverse_
+    assert_true(elem(2, SetT(new Set([1, 2, 3]))), "elem SetT hit");
+    assert_true(!elem(9, SetT(new Set([1, 2, 3]))), "elem SetT miss");
+    assert_true(elem(3, ArrayT([1, 2, 3])), "elem ArrayT");
+    assert_true(elem(2, list_from_array([1, 2, 3])), "elem List");
+    assert_equals(
+      fold_map(ArrayT, (n: number) => ArrayT([n, n * 2]), ArrayT([1, 2]))
+        .value(),
+      [1, 2, 2, 4],
+    );
+    assert_equals(
+      list_to_array(
+        fold_map(
+          List,
+          (n: number) => list_from_array([n]),
+          list_from_array([3, 4]),
+        ),
+      ),
+      [3, 4],
+    );
+    assert_equals(
+      [
+        ...fold_map(
+          SetT,
+          (n: number) => SetT(new Set([n])),
+          SetT(new Set([5, 6])),
+        ).value(),
+      ],
+      [5, 6],
+    );
+    assert_equals(
+      flatten_chunk_log(
+        fold_map(ChunkLog, (n: number) => chunk_log([n]), ArrayT([7, 8])),
+      ),
+      [7, 8],
+    );
+    // traverse_ across State, Reader, Task, Writer, Stm, Validation, ArrayT, Maybe, Either
+    assert_equals(
+      traverse_(
+        (n: number) => State((s: number) => [undefined, s + n]),
+        State.with_state<number>(),
+        ArrayT([1, 2, 3]),
+      ).run(10)[1],
+      16,
+    );
+    let r_sum = 0;
+    traverse_(
+      (n: number) =>
+        ask<number>().map((env) => {
+          r_sum += env * n;
+        }),
+      Reader.with_environment<number>(),
+      ArrayT([1, 2, 3]),
+    ).run(10);
+    assert_equals(r_sum, 60);
+    let t_sum = 0;
+    await run_task(
+      traverse_(
+        (n: number) =>
+          from_fn(() => {
+            t_sum += n;
+          }),
+        Task,
+        ArrayT([2, 4, 6]),
+      ),
+    );
+    assert_equals(t_sum, 12);
+    const WArr2 = Writer.with(ArrayT<number>([]));
+    assert_equals(
+      traverse_(
+        (n: number) => WArr2([undefined, ArrayT([n])]),
+        WArr2,
+        ArrayT([1, 2]),
+      )
+        .value()[1].value(),
+      [1, 2],
+    );
+    const tv_tr = new_tvar(0);
+    atomically(
+      traverse_(
+        (n: number) => modify_tvar(tv_tr, (x) => x + n),
+        Stm,
+        ArrayT([3, 4]),
+      ),
+    );
+    assert_equals(atomically(read_tvar(tv_tr)), 7);
+    assert_equals(
+      traverse_(
+        (n: number) =>
+          n > 0
+            ? (Valid(undefined) as ReturnType<
+              typeof InvalidMessages<undefined>
+            >)
+            : InvalidMessages<undefined>(`bad:${n}`),
+        Validation.with_error<readonly string[]>(),
+        ArrayT([1, -1, -2]),
+      ).value()[0],
+      "invalid",
+    );
+    assert_equals(
+      traverse_(
+        (n: number) => n > 0 ? Just(undefined) : Nothing(),
+        Maybe,
+        ArrayT([1, 2]),
+      )
+        .value(),
+      ["Just", undefined],
+    );
+    assert_equals(
+      traverse_(
+        (n: number) => n > 0 ? Right(undefined) : Left("neg"),
+        Either.with_left<string>(),
+        ArrayT([1, -1]),
+      ).value(),
+      ["Left", "neg"],
+    );
+    assert_equals(
+      traverse_((n: number) => Identity(n), Identity, ArrayT([1, 2])).value(),
+      undefined,
+    );
+
+    // handlers: prepare_operations with 1, 2, 3, and 4 tags
+    const Op1 = Effect.operation<number, number>()("w2_op1");
+    const Op2 = Effect.operation<number, number>()("w2_op2");
+    const Op3 = Effect.operation<number, number>()("w2_op3");
+    const Op4 = Effect.operation<number, number>()("w2_op4");
+    const h2 = prepare_operations({
+      w2_op1: (op: readonly ["w2_op1", number]) => Effect.pure(op[1] + 1),
+      w2_op2: (op: readonly ["w2_op2", number]) => Effect.pure(op[1] * 2),
+    });
+    const h3 = prepare_operations({
+      w2_op1: (op: readonly ["w2_op1", number]) => Effect.pure(op[1] + 1),
+      w2_op2: (op: readonly ["w2_op2", number]) => Effect.pure(op[1] * 2),
+      w2_op3: (op: readonly ["w2_op3", number]) => Effect.pure(op[1] + 10),
+    });
+    const h4 = prepare_operations({
+      w2_op1: (op: readonly ["w2_op1", number]) => Effect.pure(op[1] + 1),
+      w2_op2: (op: readonly ["w2_op2", number]) => Effect.pure(op[1] * 2),
+      w2_op3: (op: readonly ["w2_op3", number]) => Effect.pure(op[1] + 10),
+      w2_op4: (op: readonly ["w2_op4", number]) => Effect.pure(op[1] - 3),
+    });
+    assert_equals(
+      run(
+        h2(
+          Program(function* () {
+            const a = yield* Op1.send(5);
+            return yield* Op2.send(a);
+          }),
+        ),
+      ),
+      12,
+    );
+    assert_equals(
+      run(
+        h3(
+          Program(function* () {
+            const a = yield* Op1.send(5);
+            const b = yield* Op2.send(a);
+            return yield* Op3.send(b);
+          }),
+        ),
+      ),
+      22,
+    );
+    assert_equals(
+      run(
+        h4(
+          Program(function* () {
+            const a = yield* Op1.send(5);
+            const b = yield* Op2.send(a);
+            const c = yield* Op3.send(b);
+            return yield* Op4.send(c);
+          }),
+        ),
+      ),
+      19,
+    );
+    // 1-shot run_cells with reader + state + writer
+    const r_cell = reader<number>()("w2_r");
+    const s_cell = state<number>()("w2_s");
+    const w_cell = writer_cell("w2_w", ArrayT<string>([]));
+    const cell_out = run_cells(
+      Program(function* () {
+        const rv = yield* r_cell.ask();
+        const sv = yield* s_cell.get();
+        yield* s_cell.put(rv + sv);
+        yield* w_cell.tell(ArrayT([`sum:${rv + sv}`]));
+        return rv + sv;
+      }),
+      {
+        r: provide_reader(r_cell, 10),
+        s: provide_state(s_cell, 5),
+        w: provide_writer(w_cell),
+      },
+    );
+    assert_equals(cell_out.result, 15);
+    assert_equals(cell_out.states.s, 15);
+    assert_equals(cell_out.logs.w.value(), ["sum:15"]);
+  }
+});

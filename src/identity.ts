@@ -6,7 +6,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
-import { loop_done, loop_rec } from "./loop.ts";
+import { loop_done } from "./loop.ts";
 import { register_fast_do } from "./typeclasses/monad.ts";
 import {
   Applicative,
@@ -92,12 +92,15 @@ function create_identity(): AsIdentity {
     },
 
     [applicative_lift_method](fn, rest) {
-      const values = [this.value()];
-
-      for (const current of rest) {
-        values.push(current.value());
+      const first = this.value();
+      const len = rest.length;
+      if (len === 0) return identity(fn(first));
+      if (len === 1) return identity(fn(first, rest[0].value()));
+      if (len === 2) {
+        return identity(fn(first, rest[0].value(), rest[1].value()));
       }
-
+      const values = [first];
+      for (let i = 0; i < len; i += 1) values.push(rest[i].value());
       return identity(fn(...values));
     },
 
@@ -117,17 +120,10 @@ function create_identity(): AsIdentity {
   MonadRec.instance(Identity)({
     tail_rec_m(initial, step) {
       let state = initial;
-
       while (true) {
         const [tag, value] = step(state).value();
-
-        switch (tag) {
-          case loop_done:
-            return identity(value);
-          case loop_rec:
-            state = value;
-            break;
-        }
+        if (tag === loop_done) return identity(value);
+        state = value;
       }
     },
   });

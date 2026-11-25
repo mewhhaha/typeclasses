@@ -87,6 +87,7 @@ Eq.instance(URLSearchParamsT)({
   eq(right) {
     const left_params = this.value();
     const right_params = right.value();
+    if (left_params === right_params) return true;
     if (left_params.size !== right_params.size) return false;
     const left_iter = left_params.entries();
     const right_iter = right_params.entries();
@@ -102,12 +103,17 @@ Eq.instance(URLSearchParamsT)({
 
 Semigroup.instance(URLSearchParamsT)({
   concat(right) {
-    const out = new URLSearchParams(this.value());
-
-    for (const [name, value] of right.value()) {
-      out.append(name, value);
+    const left_params = this.value();
+    const right_params = right.value();
+    if (left_params.size === 0) {
+      return as_data(URLSearchParamsT, new URLSearchParams(right_params));
     }
-
+    const out = new URLSearchParams(left_params);
+    if (right_params.size !== 0) {
+      right_params.forEach((value, name) => {
+        out.append(name, value);
+      });
+    }
     return as_data(URLSearchParamsT, out);
   },
 });

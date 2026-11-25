@@ -60,14 +60,32 @@ const operation_helper_set = new Set<OperationHelperName>([
   "send",
   "pure",
 ]);
-const stm_primitive_set = new Set<StmPrimitiveName>([
-  "read_tvar",
-  "write_tvar",
-  "modify_tvar",
-  "retry",
-  "abort",
-  "or_else",
+const effects_terminals = new Set<TerminalFunctionName>(["run"]);
+const reader_terminals = new Set<TerminalFunctionName>([
+  "run_reader",
+  "run_reader_terminal",
 ]);
+const state_terminals = new Set<TerminalFunctionName>([
+  "run_state",
+  "run_state_terminal",
+]);
+const writer_terminals = new Set<TerminalFunctionName>([
+  "run_writer",
+  "run_writer_terminal",
+]);
+const except_terminals = new Set<TerminalFunctionName>(["run_except"]);
+const reader_primitives = new Set<PrimitiveFunctionName>(["ask", "asks"]);
+const state_primitives = new Set<PrimitiveFunctionName>([
+  "get",
+  "gets",
+  "put",
+  "modify",
+]);
+const writer_primitives = new Set<PrimitiveFunctionName>(["writer", "tell"]);
+const reader_cell_kinds = new Set<CellFactoryKind>(["reader"]);
+const state_cell_kinds = new Set<CellFactoryKind>(["state"]);
+const writer_cell_kinds = new Set<CellFactoryKind>(["writer"]);
+
 const source_specifiers = new Map<string, string>();
 for (
   const name of [
@@ -83,6 +101,7 @@ for (
     "map",
     "maybe",
     "mod",
+    "prelude",
     "reader",
     "record",
     "set",
@@ -103,7 +122,16 @@ for (
     source_specifiers.set(url.pathname, name);
   } catch { /* Bundled data URLs use package or relative matches. */ }
 }
-for (const name of ["applicative", "foldable", "traversable"]) {
+for (
+  const name of [
+    "alternative",
+    "applicative",
+    "bifunctor",
+    "foldable",
+    "monad_error",
+    "traversable",
+  ]
+) {
   try {
     const url = new URL(`../src/typeclasses/${name}.ts`, import.meta.url);
     source_specifiers.set(url.href, name);
@@ -111,93 +139,71 @@ for (const name of ["applicative", "foldable", "traversable"]) {
   } catch { /* Bundled data URLs use package or relative matches. */ }
 }
 
+const source_module_re = /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(\w+)(?:\.ts)?$/;
+const package_module_re =
+  /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(\w+))?\/?$/;
+const package_any_re = /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/.*)?$/;
+const loop_source_re = /^(?:\.\.?\/)+src\/(?:mod|typeclasses)\.ts$/;
+const loop_pkg_re =
+  /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/;
+
 function source_module(specifier: string): string | undefined {
-  return source_specifiers.get(specifier) ??
-    specifier.match(/^(?:\.\.?\/)+src\/(?:typeclasses\/)?(\w+)(?:\.ts)?$/)?.[1];
+  const hit = source_specifiers.get(specifier);
+  if (hit !== undefined) return hit;
+  if (!specifier.includes("src/")) return undefined;
+  return source_module_re.exec(specifier)?.[1];
 }
 function package_module(specifier: string): string | undefined {
-  const match = /^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/(\w+))?\/?$/
-    .exec(specifier);
+  if (!specifier.includes("@mewhhaha/typeclasses")) return undefined;
+  const match = package_module_re.exec(specifier);
   if (match === null) return undefined;
   return match[1] ?? "mod";
 }
-function library(specifier: string, config: TransformConfig): boolean {
+function is_library_kind(
+  mod_kind: string | undefined,
+  specifier: string,
+  config: TransformConfig,
+): boolean {
   if (config.library_specifiers?.includes(specifier)) return true;
-  if (/^(?:jsr:)?@mewhhaha\/typeclasses(?:@[^/]+)?(?:\/.*)?$/.test(specifier)) {
-    return true;
-  }
-  return ["mod", "effects", "typeclasses"].includes(
-    source_module(specifier) ?? "",
-  );
+  if (
+    mod_kind === "mod" || mod_kind === "effects" || mod_kind === "typeclasses"
+  ) return true;
+  return specifier.includes("@mewhhaha/typeclasses") &&
+    package_any_re.test(specifier);
 }
-function terminal_exports(
+function terminal_exports_for(
+  mod_kind: string | undefined,
   specifier: string,
   config: TransformConfig,
 ): ReadonlySet<TerminalFunctionName> | undefined {
   if (config.terminal_library_specifiers?.includes(specifier)) return terminals;
-  switch (package_module(specifier) ?? source_module(specifier)) {
+  switch (mod_kind) {
     case "mod":
       return terminals;
     case "effects":
-      return new Set(["run"]);
+      return effects_terminals;
     case "reader":
-      return new Set(["run_reader", "run_reader_terminal"]);
+      return reader_terminals;
     case "state":
-      return new Set(["run_state", "run_state_terminal"]);
+      return state_terminals;
     case "writer":
-      return new Set(["run_writer", "run_writer_terminal"]);
+      return writer_terminals;
     case "except":
-      return new Set(["run_except"]);
+      return except_terminals;
   }
 }
-function except_primitive_exports(
-  specifier: string,
-): ReadonlySet<ExceptPrimitiveName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "except":
-      return except_primitive_set;
-  }
-}
-function state_eval_exports(
-  specifier: string,
-): ReadonlySet<StateEvalName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "state":
-      return state_eval_set;
-  }
-}
-function operation_runner_exports(
-  specifier: string,
-): ReadonlySet<OperationRunnerName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "handlers":
-      return operation_runner_set;
-  }
-}
-function operation_helper_exports(
-  specifier: string,
-): ReadonlySet<OperationHelperName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "effects":
-      return operation_helper_set;
-  }
-}
-function primitive_exports(
-  specifier: string,
+function primitive_exports_for(
+  mod_kind: string | undefined,
 ): ReadonlySet<PrimitiveFunctionName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
+  switch (mod_kind) {
     case "mod":
       return primitives;
     case "reader":
-      return new Set(["ask", "asks"]);
+      return reader_primitives;
     case "state":
-      return new Set(["get", "gets", "put", "modify"]);
+      return state_primitives;
     case "writer":
-      return new Set(["writer", "tell"]);
+      return writer_primitives;
   }
 }
 
@@ -207,18 +213,18 @@ const cell_factory_kinds = new Set<CellFactoryKind>([
   "writer",
 ]);
 
-function cell_factory_exports(
-  specifier: string,
+function cell_factory_exports_for(
+  mod_kind: string | undefined,
 ): ReadonlySet<CellFactoryKind> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
+  switch (mod_kind) {
     case "mod":
       return cell_factory_kinds;
     case "reader":
-      return new Set<CellFactoryKind>(["reader"]);
+      return reader_cell_kinds;
     case "state":
-      return new Set<CellFactoryKind>(["state"]);
+      return state_cell_kinds;
     case "writer":
-      return new Set<CellFactoryKind>(["writer"]);
+      return writer_cell_kinds;
   }
 }
 
@@ -241,26 +247,6 @@ const cell_runner_names = new Set<CellRunnerName>([
   "handle_cells",
   "prepare_handle_cells",
 ]);
-
-function cell_runner_exports(
-  specifier: string,
-): ReadonlySet<CellRunnerName> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "handlers":
-      return cell_runner_names;
-  }
-}
-
-function cell_provider_exports(
-  specifier: string,
-): ReadonlySet<CellFactoryKind> | undefined {
-  switch (package_module(specifier) ?? source_module(specifier)) {
-    case "mod":
-    case "handlers":
-      return cell_factory_kinds;
-  }
-}
 
 function cell_provider_kind_for(
   imported: string,
@@ -320,6 +306,7 @@ export type UnverifiedImports = {
   readonly maybe_get_or_else_functions: Set<string>;
   readonly maybe_fold_functions: Set<string>;
   readonly maybe_filter_functions: Set<string>;
+  readonly maybe_to_either_functions: Set<string>;
   readonly direct_either_dictionaries: Set<string>;
   readonly left_constructors: Set<string>;
   readonly right_constructors: Set<string>;
@@ -327,12 +314,22 @@ export type UnverifiedImports = {
   readonly either_from_right_functions: Set<string>;
   readonly either_from_left_functions: Set<string>;
   readonly either_recover_functions: Set<string>;
+  readonly either_hush_functions: Set<string>;
+  readonly either_note_functions: Set<string>;
+  readonly either_from_number_functions: Set<string>;
+  readonly either_try_catch_functions: Set<string>;
+  readonly either_is_left_functions: Set<string>;
+  readonly either_is_right_functions: Set<string>;
+  readonly either_map_left_functions: Set<string>;
+  readonly either_bind_widen_functions: Set<string>;
   readonly direct_identity_dictionaries: Set<string>;
   readonly identity_constructors: Set<string>;
   readonly array_constructors: Set<string>;
   readonly array_from_array_functions: Set<string>;
   readonly array_view_functions: Set<string>;
   readonly array_to_array_functions: Set<string>;
+  readonly array_indexed_functions: Set<string>;
+  readonly array_flat_map_streaming_functions: Set<string>;
   readonly array_namespaces: Set<string>;
   readonly typed_array_constructors: Set<string>;
   readonly set_constructors: Set<string>;
@@ -340,12 +337,21 @@ export type UnverifiedImports = {
   readonly record_constructors: Set<string>;
   readonly foldable_objects: Set<string>;
   readonly foldable_namespaces: Set<string>;
+  readonly alternative_objects: Set<string>;
+  readonly alternative_namespaces: Set<string>;
+  readonly bifunctor_objects: Set<string>;
+  readonly bifunctor_namespaces: Set<string>;
+  readonly monad_error_objects: Set<string>;
+  readonly monad_error_namespaces: Set<string>;
   readonly stm_dictionaries: Set<string>;
   readonly stm_namespaces: Set<string>;
   readonly stm_atomically_functions: Set<string>;
   readonly stm_primitive_functions: Map<string, StmPrimitiveName>;
+  readonly stm_retry_classes: Set<string>;
+  readonly stm_error_classes: Set<string>;
   readonly list_constructors: Set<string>;
   readonly list_from_array_functions: Set<string>;
+  readonly list_to_array_functions: Set<string>;
   readonly list_namespaces: Set<string>;
   readonly nil_constructors: Set<string>;
   readonly cons_constructors: Set<string>;
@@ -356,9 +362,11 @@ export type UnverifiedImports = {
   readonly task_parallel_functions: Set<string>;
   readonly task_sequential_functions: Set<string>;
   readonly task_from_fn_functions: Set<string>;
+  readonly task_from_promise_functions: Set<string>;
   readonly task_succeed_functions: Set<string>;
   readonly task_run_functions: Set<string>;
   readonly task_run_exit_functions: Set<string>;
+  readonly task_traverse_functions: Set<string>;
   readonly task_is_cancellation_functions: Set<string>;
   readonly task_namespaces: Set<string>;
   readonly traversable_objects: Set<string>;
@@ -376,14 +384,35 @@ export type UnverifiedImports = {
   readonly valid_constructors: Set<string>;
   readonly invalid_constructors: Set<string>;
   readonly invalid_messages_constructors: Set<string>;
+  readonly validation_to_either_functions: Set<string>;
+  readonly validation_map_error_functions: Set<string>;
   readonly collect_functions: Set<string>;
   readonly collect_namespaces: Set<string>;
   readonly applicative_objects: Set<string>;
   readonly applicative_namespaces: Set<string>;
+  readonly prelude_fmap_functions: Set<string>;
+  readonly prelude_bind_functions: Set<string>;
+  readonly prelude_ap_functions: Set<string>;
+  readonly prelude_lift_functions: Set<string>;
+  readonly prelude_traverse_functions: Set<string>;
+  readonly prelude_sequence_functions: Set<string>;
+  readonly prelude_foldl_functions: Set<string>;
+  readonly prelude_fold_while_functions: Set<string>;
+  readonly prelude_some_functions: Set<string>;
+  readonly prelude_find_functions: Set<string>;
+  readonly prelude_to_array_functions: Set<string>;
+  readonly prelude_length_functions: Set<string>;
+  readonly prelude_sum_functions: Set<string>;
+  readonly prelude_product_functions: Set<string>;
+  readonly prelude_alt_functions: Set<string>;
+  readonly prelude_concat_functions: Set<string>;
+  readonly prelude_namespaces: Set<string>;
   readonly iterable_locals: Set<string>;
   readonly async_iterable_locals: Set<string>;
   readonly program_module?: string;
   readonly import_declarations: Map<string, ImportDeclaration>;
+  readonly import_nodes: readonly ImportDeclaration[];
+  readonly non_import_count: number;
   readonly loop_dictionaries: Set<string>;
   readonly loop_tasks: Set<string>;
   readonly loop_specifier?: string;
@@ -446,6 +475,66 @@ function escape_regex_token(token: string): string {
 
 const ident_token_re = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
+function is_ident_char_code(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) || code === 95 || code === 36;
+}
+
+function is_space_code(code: number): boolean {
+  return code === 32 || code === 9 || code === 10 || code === 13;
+}
+
+function find_next_token_match(
+  source: string,
+  needle: string,
+  kind: 0 | 1 | 2, // 0 = ident, 1 = .prop, 2 = raw/match(
+  from: number,
+  len: number,
+): number {
+  let cursor = from;
+  const nlen = needle.length;
+  while (cursor < len) {
+    const pos = source.indexOf(needle, cursor);
+    if (pos < 0) return -1;
+    if (kind === 0) {
+      const left_ok = pos === 0 ||
+        !is_ident_char_code(source.charCodeAt(pos - 1));
+      const end = pos + nlen;
+      const right_ok = end >= len ||
+        !is_ident_char_code(source.charCodeAt(end));
+      if (left_ok && right_ok) return pos;
+      cursor = pos + 1;
+      continue;
+    }
+    if (kind === 1) {
+      const end = pos + nlen;
+      if (end < len && is_ident_char_code(source.charCodeAt(end))) {
+        cursor = pos + 1;
+        continue;
+      }
+      let k = pos - 1;
+      while (k >= 0 && is_space_code(source.charCodeAt(k))) k -= 1;
+      if (k >= 0 && source.charCodeAt(k) === 46 /* . */) return k;
+      cursor = pos + 1;
+      continue;
+    }
+    // kind === 2: e.g. "match(" or raw prefix
+    const end = pos + nlen;
+    const last = needle.charCodeAt(nlen - 1);
+    if (
+      is_ident_char_code(last) && end < len &&
+      is_ident_char_code(source.charCodeAt(end))
+    ) {
+      cursor = pos + 1;
+      continue;
+    }
+    return pos;
+  }
+  return -1;
+}
+
+const active_regex_cache = new Map<string, RegExp>();
+
 /**
  * Word-boundary inverted token scan over `program.body` statements.
  * Returns sorted indices of non-import top-level statements containing at least
@@ -456,53 +545,170 @@ export function collect_active_statement_indices(
   body: Program["body"],
   tokens: readonly string[],
   start_offset: number,
-): number[] {
+  abort_if_dense = false,
+): number[] | undefined {
   const seen = new Set<string>();
+  const simd_needles: string[] = [];
+  const simd_kinds: (0 | 1 | 2)[] = [];
   const ident_parts: string[] = [];
   const other_parts: string[] = [];
+  const src_len = source.length;
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i];
     if (tok.length === 0 || seen.has(tok)) continue;
     seen.add(tok);
     if (ident_token_re.test(tok)) {
-      ident_parts.push(escape_regex_token(tok));
+      if (source.indexOf(tok, start_offset) < 0) continue;
+      ident_parts.push(tok);
+      if (simd_needles.length <= 12) {
+        simd_needles.push(tok);
+        simd_kinds.push(0);
+      }
+    } else if (tok.charCodeAt(0) === 46 /* . */) {
+      const prop = tok.slice(1);
+      if (prop.length === 0 || source.indexOf(prop, start_offset) < 0) continue;
+      other_parts.push(tok);
+      if (simd_needles.length <= 12) {
+        simd_needles.push(prop);
+        simd_kinds.push(1);
+      }
     } else {
+      if (source.indexOf(tok, start_offset) < 0) continue;
+      other_parts.push(tok);
+      if (simd_needles.length <= 12) {
+        simd_needles.push(tok);
+        simd_kinds.push(2);
+      }
+    }
+  }
+  const unique_present = ident_parts.length + other_parts.length;
+  if (unique_present === 0) return [];
+
+  const total = body.length;
+  let stmt_idx = 0;
+  while (stmt_idx < total && body[stmt_idx].end <= start_offset) {
+    stmt_idx += 1;
+  }
+  const first_non_import = stmt_idx;
+  const dense_limit = abort_if_dense && total < 256 ? 24 : 0;
+  const active: number[] = [];
+
+  // Fast SIMD path for small present token sets: zero RegExp compile cost!
+  if (unique_present <= 10) {
+    let active_toks = simd_needles.length;
+    const next_pos: number[] = [];
+    for (let i = 0; i < active_toks; i += 1) {
+      const p = find_next_token_match(
+        source,
+        simd_needles[i],
+        simd_kinds[i],
+        start_offset,
+        src_len,
+      );
+      if (p < 0) {
+        active_toks -= 1;
+        simd_needles[i] = simd_needles[active_toks];
+        simd_kinds[i] = simd_kinds[active_toks];
+        i -= 1;
+      } else {
+        next_pos.push(p);
+      }
+    }
+    if (active_toks === 0) return [];
+    let cursor = start_offset;
+    while (stmt_idx < total && active_toks > 0) {
+      let min_pos = src_len;
+      for (let i = 0; i < active_toks; i += 1) {
+        let p = next_pos[i];
+        if (p < cursor) {
+          p = find_next_token_match(
+            source,
+            simd_needles[i],
+            simd_kinds[i],
+            cursor,
+            src_len,
+          );
+          if (p < 0) {
+            active_toks -= 1;
+            simd_needles[i] = simd_needles[active_toks];
+            simd_kinds[i] = simd_kinds[active_toks];
+            next_pos[i] = next_pos[active_toks];
+            i -= 1;
+            continue;
+          }
+          next_pos[i] = p;
+        }
+        if (p < min_pos) min_pos = p;
+      }
+      if (active_toks === 0 || min_pos >= src_len) break;
+      if (min_pos < body[stmt_idx].start) {
+        cursor = body[stmt_idx].start;
+        continue;
+      }
+      if (min_pos >= body[stmt_idx].end) {
+        let lo = stmt_idx + 1;
+        let hi = total;
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1;
+          if (body[mid].end <= min_pos) lo = mid + 1;
+          else hi = mid;
+        }
+        stmt_idx = lo;
+        if (stmt_idx >= total) break;
+        if (min_pos < body[stmt_idx].start) {
+          cursor = body[stmt_idx].start;
+          continue;
+        }
+      }
+      const stmt = body[stmt_idx];
+      if (stmt.type !== "ImportDeclaration") {
+        active.push(stmt_idx);
+        if (
+          dense_limit > 0 && active.length === dense_limit &&
+          stmt_idx - first_non_import + 1 === dense_limit
+        ) return undefined;
+      }
+      cursor = stmt.end;
+      stmt_idx += 1;
+    }
+    return active;
+  }
+
+  ident_parts.sort();
+  other_parts.sort();
+  const branches: string[] = [];
+  if (ident_parts.length > 0) {
+    branches.push(
+      "(?<![$\\w])(?:" + ident_parts.map(escape_regex_token).join("|") +
+        ")(?![$\\w])",
+    );
+  }
+  if (other_parts.length > 0) {
+    const escaped_others: string[] = [];
+    for (let i = 0; i < other_parts.length; i += 1) {
+      const tok = other_parts[i];
       let escaped = tok.charCodeAt(0) === 46 /* . */
         ? "\\.\\s*" + escape_regex_token(tok.slice(1))
         : escape_regex_token(tok);
       const last = tok.charCodeAt(tok.length - 1);
-      if (
-        (last >= 65 && last <= 90) || (last >= 97 && last <= 122) ||
-        (last >= 48 && last <= 57) || last === 95 || last === 36
-      ) {
-        escaped += "(?![$\\w])";
-      }
-      other_parts.push(escaped);
+      if (is_ident_char_code(last)) escaped += "(?![$\\w])";
+      escaped_others.push(escaped);
     }
+    branches.push("(?:" + escaped_others.join("|") + ")");
   }
-  const branches: string[] = [];
-  if (ident_parts.length > 0) {
-    branches.push("(?<![$\\w])(?:" + ident_parts.join("|") + ")(?![$\\w])");
+  const pattern = branches.join("|");
+  let re = active_regex_cache.get(pattern);
+  if (re === undefined) {
+    if (active_regex_cache.size >= 128) active_regex_cache.clear();
+    re = new RegExp(pattern, "g");
+    active_regex_cache.set(pattern, re);
   }
-  if (other_parts.length > 0) {
-    branches.push("(?:" + other_parts.join("|") + ")");
-  }
-  if (branches.length === 0) return [];
-  const re = new RegExp(branches.join("|"), "g");
   re.lastIndex = start_offset;
-  const active: number[] = [];
-  const total = body.length;
-  let stmt_idx = 0;
-  // Advance past leading imports.
-  while (stmt_idx < total && body[stmt_idx].end <= start_offset) {
-    stmt_idx += 1;
-  }
   let match: RegExpExecArray | null;
   while (stmt_idx < total && (match = re.exec(source)) !== null) {
     const pos = match.index;
     if (pos < body[stmt_idx].start) continue;
     if (pos >= body[stmt_idx].end) {
-      // Binary search for the statement containing `pos`.
       let lo = stmt_idx + 1;
       let hi = total;
       while (lo < hi) {
@@ -517,6 +723,10 @@ export function collect_active_statement_indices(
     const stmt = body[stmt_idx];
     if (stmt.type !== "ImportDeclaration") {
       active.push(stmt_idx);
+      if (
+        dense_limit > 0 && active.length === dense_limit &&
+        stmt_idx - first_non_import + 1 === dense_limit
+      ) return undefined;
     }
     re.lastIndex = stmt.end;
     stmt_idx += 1;
@@ -524,14 +734,18 @@ export function collect_active_statement_indices(
   return active;
 }
 
+const do_or_program_re = /\b(?:Do|Program)\b/;
+
 /** Cheap pre-parse filter shared by the CLI and bundler plugins. */
 export function might_contain_transform_target(
   source: string,
   config?: TransformConfig,
 ): boolean {
+  // Unimported Do/Program diagnostic escape hatch only triggers on `function*`.
+  const has_do_or_prog = source.includes("Do") || source.includes("Program");
   if (
-    (source.includes("Do") || source.includes("Program")) &&
-    /\b(?:Do|Program)\b/.test(source)
+    has_do_or_prog && source.includes("function") && source.includes("*") &&
+    do_or_program_re.test(source)
   ) return true;
   if (!source.includes("import")) return false;
   if (
@@ -541,16 +755,19 @@ export function might_contain_transform_target(
     !source.includes("src/") &&
     !source.includes("\\u")
   ) return false;
+  if (has_do_or_prog && do_or_program_re.test(source)) return true;
+  // Prefix-gated runner/handler checks (~5 SIMD scans on unmatched files).
   if (
     (source.includes("run_") &&
       (source.includes("run_reader") || source.includes("run_state") ||
         source.includes("run_writer") || source.includes("run_cells") ||
         source.includes("run_except") || source.includes("run_task"))) ||
-    source.includes("prepare_cells") ||
-    source.includes("handle_cells") ||
-    source.includes("prepare_handle_cells") ||
-    source.includes("handle_operations") ||
-    source.includes("prepare_operations")
+    (source.includes("prepare_") &&
+      (source.includes("prepare_cells") ||
+        source.includes("prepare_handle_cells") ||
+        source.includes("prepare_operations"))) ||
+    (source.includes("handle_") &&
+      (source.includes("handle_cells") || source.includes("handle_operations")))
   ) {
     if (
       source.includes("run_cells") || source.includes("prepare_cells") ||
@@ -558,52 +775,70 @@ export function might_contain_transform_target(
       /\brun\b/.test(source)
     ) return true;
   }
-  if (source.includes("eval_state") || source.includes("exec_state")) {
-    return true;
-  }
-  if (source.includes("collect") && /\bcollect\s*\(/.test(source)) {
-    return true;
-  }
   if (
-    source.includes("Applicative") && /\bApplicative\s*\.\s*lift\b/.test(source)
+    source.includes("_state") &&
+    (source.includes("eval_state") || source.includes("exec_state"))
   ) return true;
   if (
-    source.includes("traverse") &&
-    /\bTraversable\b|\btraverse_sequential\b|\.\s*traverse\b/.test(source)
-  ) return true;
-  if (
-    source.includes("match") &&
-    (/\.\s*match\s*\(\s*\{/.test(source) ||
-      /(?:^|[^.\w$])match\s*\(/.test(source))
-  ) return true;
-  if (
-    source.includes("Effect") &&
-    (source.includes("interpret") || source.includes("handle_with"))
-  ) return true;
-  if (
-    source.includes("from_maybe") || source.includes("to_nullable") ||
-    source.includes("get_or_else") || source.includes("from_right") ||
-    source.includes("from_left") || source.includes("recover_or_else") ||
+    (source.includes("lift") &&
+      (source.includes("Applicative") || source.includes("prelude") ||
+        /\blift\s*\(/.test(source))) ||
+    (source.includes("collect") && /\bcollect\s*\(/.test(source)) ||
+    (source.includes("traverse") &&
+      (source.includes("Traversable") || source.includes("traverse_") ||
+        source.includes("prelude") || /\.\s*traverse\b/.test(source))) ||
+    (source.includes("sequence") && source.includes("prelude")) ||
+    (source.includes("match") &&
+      (/\.\s*match\s*\(\s*\{/.test(source) ||
+        /(?:^|[^.\w$])match\s*\(/.test(source))) ||
+    (source.includes("Effect") &&
+      (source.includes("interpret") || source.includes("handle_with"))) ||
     source.includes("atomically") ||
-    (source.includes("maybe(") || source.includes("either(")) ||
-    (source.includes(".map(") &&
-      (source.includes("Just") || source.includes("Right") ||
-        source.includes("Maybe") || source.includes("Either") ||
-        source.includes("from_nullable") || source.includes("ArrayT") ||
-        source.includes("from_array"))) ||
-    (source.includes(".bind(") &&
-      (source.includes("Just") || source.includes("Right") ||
-        source.includes("Maybe") || source.includes("Either") ||
-        source.includes("from_nullable"))) ||
-    ((source.includes("ArrayT") || source.includes("from_array") ||
-      source.includes("TypedArrayT") || source.includes("from_typed_array") ||
-      source.includes("SetT") || source.includes("from_set") ||
-      source.includes("MapT") || source.includes("from_map_view") ||
-      source.includes("RecordT") || source.includes("from_record_view") ||
-      source.includes("from_snapshot")) &&
-      (source.includes("Foldable") || source.includes(".fold(")))
+    (source.includes("from_") &&
+      (source.includes("from_maybe") || source.includes("from_right") ||
+        source.includes("from_left") || source.includes("from_number") ||
+        source.includes("from_fn") || source.includes("from_promise"))) ||
+    (source.includes("_or_else") &&
+      (source.includes("get_or_else") || source.includes("recover_or_else"))) ||
+    (source.includes("to_") &&
+      (source.includes("to_nullable") || source.includes("to_either") ||
+        source.includes("to_array"))) ||
+    source.includes("maybe(") || source.includes("either(") ||
+    source.includes("hush") || source.includes("note(") ||
+    source.includes("map_left") || source.includes("bind_widen") ||
+    source.includes("try_catch") || source.includes("map_error") ||
+    source.includes("is_left") || source.includes("is_right") ||
+    source.includes("fmap") || source.includes("foldl") ||
+    source.includes("Alternative") || source.includes("Bifunctor") ||
+    source.includes("MonadError") || source.includes("parallel(") ||
+    source.includes("indexed(") || source.includes("flat_map_streaming")
   ) return true;
-  return might_contain_iterable_maps(source);
+  // Gate collection/monad chain scans on method/Foldable operators FIRST.
+  if (
+    source.includes(".map(") || source.includes(".bind(") ||
+    source.includes(".ap(") || source.includes(".concat(") ||
+    source.includes(".alt(") || source.includes(".bimap(") ||
+    source.includes(".catch_error(") || source.includes(".fold(") ||
+    source.includes("Foldable") || source.includes("fold_while") ||
+    source.includes("prelude")
+  ) {
+    if (
+      source.includes("Just") || source.includes("Nothing") ||
+      source.includes("Right") || source.includes("Left") ||
+      source.includes("Maybe") || source.includes("Either") ||
+      source.includes("Valid") || source.includes("Invalid") ||
+      source.includes("Validation") || source.includes("from_nullable") ||
+      source.includes("ArrayT") || source.includes("from_array") ||
+      source.includes("List") || source.includes("TypedArrayT") ||
+      source.includes("from_typed_array") || source.includes("SetT") ||
+      source.includes("from_set") || source.includes("MapT") ||
+      source.includes("from_map_view") || source.includes("RecordT") ||
+      source.includes("from_record_view") || source.includes("from_snapshot") ||
+      source.includes("Task") || source.includes("succeed") ||
+      source.includes("prelude")
+    ) return true;
+  }
+  return might_contain_iterable_maps(source, false);
 }
 
 const EMPTY_SET: Set<string> = new Set<string>();
@@ -695,6 +930,7 @@ export function scan_import_headers(
   let maybe_get_or_else_functions = EMPTY_SET;
   let maybe_fold_functions = EMPTY_SET;
   let maybe_filter_functions = EMPTY_SET;
+  let maybe_to_either_functions = EMPTY_SET;
   let direct_either_dictionaries = EMPTY_SET;
   let left_constructors = EMPTY_SET;
   let right_constructors = EMPTY_SET;
@@ -702,12 +938,22 @@ export function scan_import_headers(
   let either_from_right_functions = EMPTY_SET;
   let either_from_left_functions = EMPTY_SET;
   let either_recover_functions = EMPTY_SET;
+  let either_hush_functions = EMPTY_SET;
+  let either_note_functions = EMPTY_SET;
+  let either_from_number_functions = EMPTY_SET;
+  let either_try_catch_functions = EMPTY_SET;
+  let either_is_left_functions = EMPTY_SET;
+  let either_is_right_functions = EMPTY_SET;
+  let either_map_left_functions = EMPTY_SET;
+  let either_bind_widen_functions = EMPTY_SET;
   let direct_identity_dictionaries = EMPTY_SET;
   let identity_constructors = EMPTY_SET;
   let array_constructors = EMPTY_SET;
   let array_from_array_functions = EMPTY_SET;
   let array_view_functions = EMPTY_SET;
   let array_to_array_functions = EMPTY_SET;
+  let array_indexed_functions = EMPTY_SET;
+  let array_flat_map_streaming_functions = EMPTY_SET;
   let array_namespaces = EMPTY_SET;
   let typed_array_constructors = EMPTY_SET;
   let set_constructors = EMPTY_SET;
@@ -715,12 +961,21 @@ export function scan_import_headers(
   let record_constructors = EMPTY_SET;
   let foldable_objects = EMPTY_SET;
   let foldable_namespaces = EMPTY_SET;
+  let alternative_objects = EMPTY_SET;
+  let alternative_namespaces = EMPTY_SET;
+  let bifunctor_objects = EMPTY_SET;
+  let bifunctor_namespaces = EMPTY_SET;
+  let monad_error_objects = EMPTY_SET;
+  let monad_error_namespaces = EMPTY_SET;
   let stm_dictionaries = EMPTY_SET;
   let stm_namespaces = EMPTY_SET;
   let stm_atomically_functions = EMPTY_SET;
   let stm_primitive_functions = EMPTY_MAP as Map<string, StmPrimitiveName>;
+  let stm_retry_classes = EMPTY_SET;
+  let stm_error_classes = EMPTY_SET;
   let list_constructors = EMPTY_SET;
   let list_from_array_functions = EMPTY_SET;
+  let list_to_array_functions = EMPTY_SET;
   let list_namespaces = EMPTY_SET;
   let nil_constructors = EMPTY_SET;
   let cons_constructors = EMPTY_SET;
@@ -731,9 +986,11 @@ export function scan_import_headers(
   let task_parallel_functions = EMPTY_SET;
   let task_sequential_functions = EMPTY_SET;
   let task_from_fn_functions = EMPTY_SET;
+  let task_from_promise_functions = EMPTY_SET;
   let task_succeed_functions = EMPTY_SET;
   let task_run_functions = EMPTY_SET;
   let task_run_exit_functions = EMPTY_SET;
+  let task_traverse_functions = EMPTY_SET;
   let task_is_cancellation_functions = EMPTY_SET;
   let task_namespaces = EMPTY_SET;
   let traversable_objects = EMPTY_SET;
@@ -751,42 +1008,72 @@ export function scan_import_headers(
   let valid_constructors = EMPTY_SET;
   let invalid_constructors = EMPTY_SET;
   let invalid_messages_constructors = EMPTY_SET;
+  let validation_to_either_functions = EMPTY_SET;
+  let validation_map_error_functions = EMPTY_SET;
   let collect_functions = EMPTY_SET;
   let collect_namespaces = EMPTY_SET;
   let applicative_objects = EMPTY_SET;
   let applicative_namespaces = EMPTY_SET;
+  let prelude_fmap_functions = EMPTY_SET;
+  let prelude_bind_functions = EMPTY_SET;
+  let prelude_ap_functions = EMPTY_SET;
+  let prelude_lift_functions = EMPTY_SET;
+  let prelude_traverse_functions = EMPTY_SET;
+  let prelude_sequence_functions = EMPTY_SET;
+  let prelude_foldl_functions = EMPTY_SET;
+  let prelude_fold_while_functions = EMPTY_SET;
+  let prelude_some_functions = EMPTY_SET;
+  let prelude_find_functions = EMPTY_SET;
+  let prelude_to_array_functions = EMPTY_SET;
+  let prelude_length_functions = EMPTY_SET;
+  let prelude_sum_functions = EMPTY_SET;
+  let prelude_product_functions = EMPTY_SET;
+  let prelude_alt_functions = EMPTY_SET;
+  let prelude_concat_functions = EMPTY_SET;
+  let prelude_namespaces = EMPTY_SET;
   let iterable_locals = EMPTY_SET;
   let async_iterable_locals = EMPTY_SET;
   let import_declarations = EMPTY_MAP as Map<string, ImportDeclaration>;
+  const import_nodes: ImportDeclaration[] = [];
+  let non_import_count = 0;
   let loop_dictionaries = EMPTY_SET;
   let loop_tasks = EMPTY_SET;
   let program_module: string | undefined;
   let loop_specifier: string | undefined;
   let leading_imports_end = 0;
   let saw_non_import = false;
-  for (const statement of program.body) {
+  const body = program.body;
+  for (let i = 0; i < body.length; i += 1) {
+    const statement = body[i];
     if (statement.type !== "ImportDeclaration") {
-      if (
-        !(statement.type === "ExpressionStatement" &&
-          "directive" in statement &&
-          statement.directive != null)
-      ) saw_non_import = true;
+      non_import_count += 1;
+      if (!saw_non_import) {
+        if (
+          !(statement.type === "ExpressionStatement" &&
+            "directive" in statement &&
+            statement.directive != null)
+        ) saw_non_import = true;
+      }
       continue;
     }
+    import_nodes.push(statement);
     if (saw_non_import) leading_imports_end = -1;
     else if (leading_imports_end >= 0 && statement.end > leading_imports_end) {
       leading_imports_end = statement.end;
     }
+    const specifier = statement.source.value;
+    const mod_kind = package_module(specifier) ?? source_module(specifier);
     if (statement.importKind === "type") {
-      const type_kind = package_module(statement.source.value) ??
-        source_module(statement.source.value);
-      if (type_kind !== undefined) {
+      if (
+        mod_kind === "mod" || mod_kind === "maybe" || mod_kind === "either" ||
+        mod_kind === "validation" || mod_kind === "list"
+      ) {
         for (const binding of statement.specifiers) {
           if (binding.type !== "ImportSpecifier") continue;
           const imported = import_name(binding);
           if (
             imported === "Maybe" &&
-            (type_kind === "mod" || type_kind === "maybe")
+            (mod_kind === "mod" || mod_kind === "maybe")
           ) {
             tagged_type_names = set_map(
               tagged_type_names,
@@ -795,7 +1082,7 @@ export function scan_import_headers(
             );
           } else if (
             imported === "Either" &&
-            (type_kind === "mod" || type_kind === "either")
+            (mod_kind === "mod" || mod_kind === "either")
           ) {
             tagged_type_names = set_map(
               tagged_type_names,
@@ -804,7 +1091,7 @@ export function scan_import_headers(
             );
           } else if (
             imported === "Validation" &&
-            (type_kind === "mod" || type_kind === "validation")
+            (mod_kind === "mod" || mod_kind === "validation")
           ) {
             tagged_type_names = set_map(
               tagged_type_names,
@@ -813,7 +1100,7 @@ export function scan_import_headers(
             );
           } else if (
             imported === "List" &&
-            (type_kind === "mod" || type_kind === "list")
+            (mod_kind === "mod" || mod_kind === "list")
           ) {
             tagged_type_names = set_map(
               tagged_type_names,
@@ -825,27 +1112,51 @@ export function scan_import_headers(
       }
       continue;
     }
-    const specifier = statement.source.value;
-    const available_terminals = terminal_exports(specifier, config);
-    const available_primitives = primitive_exports(specifier);
-    const available_except_primitives = except_primitive_exports(specifier);
-    const available_state_evals = state_eval_exports(specifier);
-    const available_op_runners = operation_runner_exports(specifier);
-    const available_op_helpers = operation_helper_exports(specifier);
-    const available_cell_factories = cell_factory_exports(specifier);
-    const available_cell_runners = cell_runner_exports(specifier);
-    const available_cell_providers = cell_provider_exports(specifier);
-    const is_library = library(specifier, config);
-    if (/^(?:\.\.?\/)+src\/(?:mod|typeclasses)\.ts$/.test(specifier)) {
-      loop_specifier = specifier.replace(/(?:typeclasses|mod)\.ts$/, "loop.ts");
-    } else if (
-      /^(?:@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)$/.test(
-        specifier,
-      )
+    const is_library = is_library_kind(mod_kind, specifier, config);
+    const available_terminals = terminal_exports_for(
+      mod_kind,
+      specifier,
+      config,
+    );
+    if (
+      mod_kind === undefined && !is_library && available_terminals === undefined
     ) {
-      loop_specifier = specifier + "/loop";
+      continue;
     }
-    const loop_kind = package_module(specifier) ?? source_module(specifier);
+    const available_primitives = primitive_exports_for(mod_kind);
+    const available_except_primitives =
+      mod_kind === "mod" || mod_kind === "except"
+        ? except_primitive_set
+        : undefined;
+    const available_state_evals = mod_kind === "mod" || mod_kind === "state"
+      ? state_eval_set
+      : undefined;
+    const available_op_runners = mod_kind === "mod" || mod_kind === "handlers"
+      ? operation_runner_set
+      : undefined;
+    const available_op_helpers = mod_kind === "mod" || mod_kind === "effects"
+      ? operation_helper_set
+      : undefined;
+    const available_cell_factories = cell_factory_exports_for(mod_kind);
+    const available_cell_runners = mod_kind === "mod" || mod_kind === "handlers"
+      ? cell_runner_names
+      : undefined;
+    const available_cell_providers =
+      mod_kind === "mod" || mod_kind === "handlers"
+        ? cell_factory_kinds
+        : undefined;
+    if (mod_kind === "mod" || mod_kind === "typeclasses") {
+      if (loop_source_re.test(specifier)) {
+        loop_specifier = specifier.replace(
+          /(?:typeclasses|mod)\.ts$/,
+          "loop.ts",
+        );
+      } else if (loop_pkg_re.test(specifier)) {
+        loop_specifier = specifier + "/loop";
+      }
+    }
+    const is_mod = mod_kind === "mod";
+    const is_prelude = mod_kind === "prelude";
     for (const binding of statement.specifiers) {
       const local = binding.local.name;
       if (!import_declarations.has(local)) {
@@ -912,391 +1223,744 @@ export function scan_import_headers(
           namespaces = add_set(namespaces, local);
           program_module ??= specifier;
         }
-        if (
-          loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "applicative"
-        ) {
-          collect_namespaces = add_set(collect_namespaces, local);
-          applicative_namespaces = add_set(applicative_namespaces, local);
-        }
-        if (
-          loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "traversable"
-        ) {
-          traversable_namespaces = add_set(traversable_namespaces, local);
-        }
-        if (loop_kind === "mod" || loop_kind === "traversal") {
-          traverse_sequential_namespaces = add_set(
-            traverse_sequential_namespaces,
-            local,
-          );
-        }
-        if (loop_kind === "mod" || loop_kind === "tagged") {
-          match_namespaces = add_set(match_namespaces, local);
-        }
-        if (loop_kind === "mod" || loop_kind === "task") {
-          task_namespaces = add_set(task_namespaces, local);
-        }
-        if (
-          loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "foldable"
-        ) {
-          foldable_namespaces = add_set(foldable_namespaces, local);
-        }
-        if (loop_kind === "stm") {
-          stm_namespaces = add_set(stm_namespaces, local);
-        }
-        if (loop_kind === "array") {
-          array_namespaces = add_set(array_namespaces, local);
-        }
-        if (loop_kind === "list") {
-          list_namespaces = add_set(list_namespaces, local);
-        }
-        if (
-          loop_kind === "iterable" || loop_kind === "mod" ||
-          loop_kind === "typeclasses" || loop_kind === "foldable"
-        ) {
-          iterable_locals = add_set(iterable_locals, local);
-        }
-        if (loop_kind === "async_iterable" || loop_kind === "mod") {
-          async_iterable_locals = add_set(async_iterable_locals, local);
+        switch (mod_kind) {
+          case "mod":
+            collect_namespaces = add_set(collect_namespaces, local);
+            applicative_namespaces = add_set(applicative_namespaces, local);
+            traversable_namespaces = add_set(traversable_namespaces, local);
+            traverse_sequential_namespaces = add_set(
+              traverse_sequential_namespaces,
+              local,
+            );
+            match_namespaces = add_set(match_namespaces, local);
+            task_namespaces = add_set(task_namespaces, local);
+            foldable_namespaces = add_set(foldable_namespaces, local);
+            alternative_namespaces = add_set(alternative_namespaces, local);
+            bifunctor_namespaces = add_set(bifunctor_namespaces, local);
+            monad_error_namespaces = add_set(monad_error_namespaces, local);
+            iterable_locals = add_set(iterable_locals, local);
+            async_iterable_locals = add_set(async_iterable_locals, local);
+            break;
+          case "typeclasses":
+            collect_namespaces = add_set(collect_namespaces, local);
+            applicative_namespaces = add_set(applicative_namespaces, local);
+            traversable_namespaces = add_set(traversable_namespaces, local);
+            foldable_namespaces = add_set(foldable_namespaces, local);
+            alternative_namespaces = add_set(alternative_namespaces, local);
+            bifunctor_namespaces = add_set(bifunctor_namespaces, local);
+            monad_error_namespaces = add_set(monad_error_namespaces, local);
+            iterable_locals = add_set(iterable_locals, local);
+            break;
+          case "applicative":
+            collect_namespaces = add_set(collect_namespaces, local);
+            applicative_namespaces = add_set(applicative_namespaces, local);
+            break;
+          case "traversable":
+            traversable_namespaces = add_set(traversable_namespaces, local);
+            break;
+          case "traversal":
+            traverse_sequential_namespaces = add_set(
+              traverse_sequential_namespaces,
+              local,
+            );
+            break;
+          case "tagged":
+            match_namespaces = add_set(match_namespaces, local);
+            break;
+          case "task":
+            task_namespaces = add_set(task_namespaces, local);
+            break;
+          case "foldable":
+            foldable_namespaces = add_set(foldable_namespaces, local);
+            iterable_locals = add_set(iterable_locals, local);
+            break;
+          case "alternative":
+            alternative_namespaces = add_set(alternative_namespaces, local);
+            break;
+          case "bifunctor":
+            bifunctor_namespaces = add_set(bifunctor_namespaces, local);
+            break;
+          case "monad_error":
+            monad_error_namespaces = add_set(monad_error_namespaces, local);
+            break;
+          case "stm":
+            stm_namespaces = add_set(stm_namespaces, local);
+            break;
+          case "array":
+            array_namespaces = add_set(array_namespaces, local);
+            break;
+          case "list":
+            list_namespaces = add_set(list_namespaces, local);
+            break;
+          case "iterable":
+            iterable_locals = add_set(iterable_locals, local);
+            break;
+          case "async_iterable":
+            async_iterable_locals = add_set(async_iterable_locals, local);
+            break;
+          case "prelude":
+            prelude_namespaces = add_set(prelude_namespaces, local);
+            traverse_sequential_namespaces = add_set(
+              traverse_sequential_namespaces,
+              local,
+            );
+            iterable_locals = add_set(iterable_locals, local);
+            break;
         }
         continue;
       }
       if (binding.type !== "ImportSpecifier") continue;
       if (binding.importKind === "type") {
         const imported = import_name(binding);
-        if (
-          imported === "Maybe" &&
-          (loop_kind === "mod" || loop_kind === "maybe")
-        ) tagged_type_names = set_map(tagged_type_names, local, "maybe");
-        else if (
-          imported === "Either" &&
-          (loop_kind === "mod" || loop_kind === "either")
-        ) tagged_type_names = set_map(tagged_type_names, local, "either");
-        else if (
-          imported === "Validation" &&
-          (loop_kind === "mod" || loop_kind === "validation")
-        ) tagged_type_names = set_map(tagged_type_names, local, "validation");
-        else if (
-          imported === "List" && (loop_kind === "mod" || loop_kind === "list")
-        ) tagged_type_names = set_map(tagged_type_names, local, "list");
+        if (imported === "Maybe" && (is_mod || mod_kind === "maybe")) {
+          tagged_type_names = set_map(tagged_type_names, local, "maybe");
+        } else if (imported === "Either" && (is_mod || mod_kind === "either")) {
+          tagged_type_names = set_map(tagged_type_names, local, "either");
+        } else if (
+          imported === "Validation" && (is_mod || mod_kind === "validation")
+        ) {
+          tagged_type_names = set_map(tagged_type_names, local, "validation");
+        } else if (imported === "List" && (is_mod || mod_kind === "list")) {
+          tagged_type_names = set_map(tagged_type_names, local, "list");
+        }
         continue;
       }
       const imported = import_name(binding)!;
-      if (
-        (loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "traversable") && imported === "Traversable"
-      ) {
-        traversable_objects = add_set(traversable_objects, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "traversal") &&
-        imported === "traverse_sequential"
-      ) {
-        traverse_sequential_functions = add_set(
-          traverse_sequential_functions,
-          local,
-        );
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "tagged") && imported === "match"
-      ) {
-        match_functions = add_set(match_functions, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "ParallelTask"
-      ) parallel_task_dictionaries = add_set(parallel_task_dictionaries, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "parallel"
-      ) task_parallel_functions = add_set(task_parallel_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "sequential"
-      ) task_sequential_functions = add_set(task_sequential_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "from_fn"
-      ) task_from_fn_functions = add_set(task_from_fn_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "succeed"
-      ) task_succeed_functions = add_set(task_succeed_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "run_task"
-      ) task_run_functions = add_set(task_run_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "run_task_exit"
-      ) task_run_exit_functions = add_set(task_run_exit_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "task") &&
-        imported === "is_task_cancellation"
-      ) {
-        task_is_cancellation_functions = add_set(
-          task_is_cancellation_functions,
-          local,
-        );
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "list") && imported === "List"
-      ) {
-        list_constructors = add_set(list_constructors, local);
-        tagged_type_names = set_map(tagged_type_names, local, "list");
-      }
-      if ((loop_kind === "mod" || loop_kind === "list") && imported === "Nil") {
-        nil_constructors = add_set(nil_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "list") &&
-        (imported === "Cons" || imported === "cons")
-      ) {
-        cons_constructors = add_set(cons_constructors, local);
-      }
-      if (loop_kind === "list" && imported === "from_array") {
-        list_from_array_functions = add_set(list_from_array_functions, local);
-      }
-      if (loop_kind === "mod" && imported === "list") {
-        list_namespaces = add_set(list_namespaces, local);
-      }
-      if (loop_kind === "mod" && imported === "array") {
-        array_namespaces = add_set(array_namespaces, local);
-      }
-      if (
-        loop_kind === "async_iterable" ||
-        (loop_kind === "mod" && imported === "async_iterable")
-      ) {
+      if (mod_kind === "iterable") {
+        iterable_locals = add_set(iterable_locals, local);
+      } else if (mod_kind === "async_iterable") {
         async_iterable_locals = add_set(async_iterable_locals, local);
       }
-      if (
-        (loop_kind === "mod" || loop_kind === "validation") &&
-        (imported === "Validation" || imported === "Valid" ||
-          imported === "Invalid" || imported === "InvalidMessages" ||
-          imported === "valid" || imported === "invalid")
-      ) {
-        validation_constructors = add_set(validation_constructors, local);
-        if (imported === "Validation") {
-          tagged_type_names = set_map(tagged_type_names, local, "validation");
-          direct_validation_dictionaries = add_set(
-            direct_validation_dictionaries,
-            local,
-          );
-        } else if (imported === "Valid") {
-          valid_constructors = add_set(valid_constructors, local);
-        } else if (imported === "Invalid") {
-          invalid_constructors = add_set(invalid_constructors, local);
-        } else if (imported === "InvalidMessages") {
-          invalid_messages_constructors = add_set(
-            invalid_messages_constructors,
-            local,
-          );
-        }
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") && imported === "Maybe"
-      ) tagged_type_names = set_map(tagged_type_names, local, "maybe");
-      if (
-        (loop_kind === "mod" || loop_kind === "either") && imported === "Either"
-      ) tagged_type_names = set_map(tagged_type_names, local, "either");
-      if (
-        loop_kind === "iterable" ||
-        ((loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "foldable") &&
-          (imported === "iterable" || imported === "Foldable"))
-      ) {
-        iterable_locals = add_set(iterable_locals, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "applicative") && imported === "collect"
-      ) {
-        collect_functions = add_set(collect_functions, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "applicative") && imported === "Applicative"
-      ) {
-        applicative_objects = add_set(applicative_objects, local);
-      }
-      if (
-        loop_kind !== undefined &&
-        (imported === "Maybe" || imported === "Either" ||
-          imported === "Identity" || imported === "Task") &&
-        (loop_kind === "mod" || loop_kind === imported.toLowerCase())
-      ) {
-        loop_dictionaries = add_set(loop_dictionaries, local);
-        if (imported === "Task") loop_tasks = add_set(loop_tasks, local);
-        if (imported === "Maybe") {
-          direct_maybe_dictionaries = add_set(direct_maybe_dictionaries, local);
-        }
-        if (imported === "Either") {
-          direct_either_dictionaries = add_set(
-            direct_either_dictionaries,
-            local,
-          );
-        }
-        if (imported === "Identity") {
-          direct_identity_dictionaries = add_set(
-            direct_identity_dictionaries,
-            local,
-          );
-        }
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") && imported === "Just"
-      ) {
-        just_constructors = add_set(just_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") && imported === "Nothing"
-      ) {
-        nothing_constructors = add_set(nothing_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") &&
-        imported === "from_nullable"
-      ) from_nullable_functions = add_set(from_nullable_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") &&
-        imported === "from_maybe"
-      ) from_maybe_functions = add_set(from_maybe_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") &&
-        imported === "to_nullable"
-      ) to_nullable_functions = add_set(to_nullable_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") &&
-        imported === "get_or_else"
-      ) {
-        maybe_get_or_else_functions = add_set(
-          maybe_get_or_else_functions,
-          local,
-        );
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "maybe") &&
-        imported === "maybe"
-      ) maybe_fold_functions = add_set(maybe_fold_functions, local);
-      if (loop_kind === "maybe" && imported === "filter") {
-        maybe_filter_functions = add_set(maybe_filter_functions, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "either") &&
-        imported === "either"
-      ) either_fold_functions = add_set(either_fold_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "either") &&
-        imported === "from_right"
-      ) {
-        either_from_right_functions = add_set(
-          either_from_right_functions,
-          local,
-        );
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "either") &&
-        imported === "from_left"
-      ) either_from_left_functions = add_set(either_from_left_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "either") &&
-        imported === "recover_or_else"
-      ) either_recover_functions = add_set(either_recover_functions, local);
-      if (
-        (loop_kind === "mod" || loop_kind === "typeclasses" ||
-          loop_kind === "foldable") && imported === "Foldable"
-      ) foldable_objects = add_set(foldable_objects, local);
-      if (loop_kind === "array" && imported === "from_array") {
-        array_from_array_functions = add_set(array_from_array_functions, local);
-      }
-      if (loop_kind === "array" && imported === "from_array_view") {
-        array_view_functions = add_set(array_view_functions, local);
-      }
-      if (loop_kind === "array" && imported === "to_array") {
-        array_to_array_functions = add_set(array_to_array_functions, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "typed_array") &&
-        (imported === "TypedArrayT" || imported === "from_typed_array")
-      ) {
-        typed_array_constructors = add_set(typed_array_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "set") &&
-        (imported === "SetT" || imported === "from_set")
-      ) {
-        set_constructors = add_set(set_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "map") &&
-        (imported === "MapT" || imported === "from_map_view" ||
-          imported === "from_snapshot")
-      ) {
-        map_constructors = add_set(map_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "record") &&
-        (imported === "RecordT" || imported === "from_record_view" ||
-          imported === "from_snapshot")
-      ) {
-        record_constructors = add_set(record_constructors, local);
-      }
-      if ((loop_kind === "mod" || loop_kind === "stm") && imported === "Stm") {
-        stm_dictionaries = add_set(stm_dictionaries, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "stm") &&
-        imported === "atomically"
-      ) {
-        stm_atomically_functions = add_set(stm_atomically_functions, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "stm") &&
-        stm_primitive_set.has(imported as StmPrimitiveName)
-      ) {
-        stm_primitive_functions = set_map(
-          stm_primitive_functions,
-          local,
-          imported as StmPrimitiveName,
-        );
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "either") && imported === "Left"
-      ) {
-        left_constructors = add_set(left_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "either") && imported === "Right"
-      ) {
-        right_constructors = add_set(right_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "identity") &&
-        (imported === "identity" || imported === "Identity")
-      ) {
-        identity_constructors = add_set(identity_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "array") && imported === "ArrayT"
-      ) {
-        array_constructors = add_set(array_constructors, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "reader") && imported === "Reader"
-      ) {
-        direct_reader_dictionaries = add_set(direct_reader_dictionaries, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "state") && imported === "State"
-      ) {
-        direct_state_dictionaries = add_set(direct_state_dictionaries, local);
-      }
-      if (
-        (loop_kind === "mod" || loop_kind === "writer") && imported === "Writer"
-      ) {
-        direct_writer_dictionaries = add_set(direct_writer_dictionaries, local);
+      switch (imported) {
+        case "Do":
+          if (is_library) do_names = add_set(do_names, local);
+          break;
+        case "Program":
+          if (is_library) {
+            program_names = add_set(program_names, local);
+            program_module ??= specifier;
+          }
+          break;
+        case "Effect":
+          if (is_library) effect_names = add_set(effect_names, local);
+          break;
+        case "Traversable":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "traversable"
+          ) traversable_objects = add_set(traversable_objects, local);
+          break;
+        case "traverse_sequential":
+          if (is_mod || mod_kind === "traversal" || is_prelude) {
+            traverse_sequential_functions = add_set(
+              traverse_sequential_functions,
+              local,
+            );
+          }
+          break;
+        case "match":
+          if (is_mod || mod_kind === "tagged") {
+            match_functions = add_set(match_functions, local);
+          }
+          break;
+        case "ParallelTask":
+          if (is_mod || mod_kind === "task") {
+            parallel_task_dictionaries = add_set(
+              parallel_task_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "parallel":
+          if (is_mod || mod_kind === "task") {
+            task_parallel_functions = add_set(task_parallel_functions, local);
+          }
+          break;
+        case "sequential":
+          if (is_mod || mod_kind === "task") {
+            task_sequential_functions = add_set(
+              task_sequential_functions,
+              local,
+            );
+          }
+          break;
+        case "from_fn":
+          if (is_mod || mod_kind === "task") {
+            task_from_fn_functions = add_set(task_from_fn_functions, local);
+          }
+          break;
+        case "from_promise":
+          if (is_mod || mod_kind === "task") {
+            task_from_promise_functions = add_set(
+              task_from_promise_functions,
+              local,
+            );
+          }
+          break;
+        case "succeed":
+          if (is_mod || mod_kind === "task") {
+            task_succeed_functions = add_set(task_succeed_functions, local);
+          }
+          break;
+        case "run_task":
+          if (is_mod || mod_kind === "task") {
+            task_run_functions = add_set(task_run_functions, local);
+          }
+          break;
+        case "run_task_exit":
+          if (is_mod || mod_kind === "task") {
+            task_run_exit_functions = add_set(task_run_exit_functions, local);
+          }
+          break;
+        case "traverse_task":
+          if (is_mod || mod_kind === "task") {
+            task_traverse_functions = add_set(task_traverse_functions, local);
+          }
+          break;
+        case "is_task_cancellation":
+          if (is_mod || mod_kind === "task") {
+            task_is_cancellation_functions = add_set(
+              task_is_cancellation_functions,
+              local,
+            );
+          }
+          break;
+        case "List":
+          if (is_mod || mod_kind === "list") {
+            list_constructors = add_set(list_constructors, local);
+            tagged_type_names = set_map(tagged_type_names, local, "list");
+          }
+          break;
+        case "Nil":
+          if (is_mod || mod_kind === "list") {
+            nil_constructors = add_set(nil_constructors, local);
+          }
+          break;
+        case "Cons":
+        case "cons":
+          if (is_mod || mod_kind === "list") {
+            cons_constructors = add_set(cons_constructors, local);
+          }
+          break;
+        case "from_array":
+          if (mod_kind === "list") {
+            list_from_array_functions = add_set(
+              list_from_array_functions,
+              local,
+            );
+          } else if (mod_kind === "array") {
+            array_from_array_functions = add_set(
+              array_from_array_functions,
+              local,
+            );
+          }
+          break;
+        case "to_array":
+          if (mod_kind === "array") {
+            array_to_array_functions = add_set(array_to_array_functions, local);
+          } else if (mod_kind === "list") {
+            list_to_array_functions = add_set(list_to_array_functions, local);
+          } else if (is_prelude) {
+            prelude_to_array_functions = add_set(
+              prelude_to_array_functions,
+              local,
+            );
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "from_array_view":
+          if (mod_kind === "array") {
+            array_view_functions = add_set(array_view_functions, local);
+          }
+          break;
+        case "indexed":
+          if (mod_kind === "array") {
+            array_indexed_functions = add_set(array_indexed_functions, local);
+          }
+          break;
+        case "flat_map_streaming":
+          if (mod_kind === "array") {
+            array_flat_map_streaming_functions = add_set(
+              array_flat_map_streaming_functions,
+              local,
+            );
+          }
+          break;
+        case "list":
+          if (is_mod) list_namespaces = add_set(list_namespaces, local);
+          break;
+        case "array":
+          if (is_mod) array_namespaces = add_set(array_namespaces, local);
+          break;
+        case "async_iterable":
+          if (is_mod) {
+            async_iterable_locals = add_set(async_iterable_locals, local);
+          }
+          break;
+        case "iterable":
+          if (is_mod) iterable_locals = add_set(iterable_locals, local);
+          break;
+        case "Validation":
+          if (is_mod || mod_kind === "validation") {
+            validation_constructors = add_set(validation_constructors, local);
+            tagged_type_names = set_map(tagged_type_names, local, "validation");
+            direct_validation_dictionaries = add_set(
+              direct_validation_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "Valid":
+          if (is_mod || mod_kind === "validation") {
+            validation_constructors = add_set(validation_constructors, local);
+            valid_constructors = add_set(valid_constructors, local);
+          }
+          break;
+        case "Invalid":
+          if (is_mod || mod_kind === "validation") {
+            validation_constructors = add_set(validation_constructors, local);
+            invalid_constructors = add_set(invalid_constructors, local);
+          }
+          break;
+        case "InvalidMessages":
+          if (is_mod || mod_kind === "validation") {
+            validation_constructors = add_set(validation_constructors, local);
+            invalid_messages_constructors = add_set(
+              invalid_messages_constructors,
+              local,
+            );
+          }
+          break;
+        case "valid":
+        case "invalid":
+          if (is_mod || mod_kind === "validation") {
+            validation_constructors = add_set(validation_constructors, local);
+          }
+          break;
+        case "validation_to_either":
+          if (is_mod || mod_kind === "validation") {
+            validation_to_either_functions = add_set(
+              validation_to_either_functions,
+              local,
+            );
+          }
+          break;
+        case "map_error":
+          if (is_mod || mod_kind === "validation") {
+            validation_map_error_functions = add_set(
+              validation_map_error_functions,
+              local,
+            );
+          }
+          break;
+        case "Maybe":
+          if (is_mod || mod_kind === "maybe") {
+            tagged_type_names = set_map(tagged_type_names, local, "maybe");
+            loop_dictionaries = add_set(loop_dictionaries, local);
+            direct_maybe_dictionaries = add_set(
+              direct_maybe_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "Either":
+          if (is_mod || mod_kind === "either") {
+            tagged_type_names = set_map(tagged_type_names, local, "either");
+            loop_dictionaries = add_set(loop_dictionaries, local);
+            direct_either_dictionaries = add_set(
+              direct_either_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "Identity":
+          if (is_mod || mod_kind === "identity") {
+            loop_dictionaries = add_set(loop_dictionaries, local);
+            direct_identity_dictionaries = add_set(
+              direct_identity_dictionaries,
+              local,
+            );
+            identity_constructors = add_set(identity_constructors, local);
+          }
+          break;
+        case "identity":
+          if (is_mod || mod_kind === "identity") {
+            identity_constructors = add_set(identity_constructors, local);
+          }
+          break;
+        case "Task":
+          if (is_mod || mod_kind === "task") {
+            loop_dictionaries = add_set(loop_dictionaries, local);
+            loop_tasks = add_set(loop_tasks, local);
+          }
+          break;
+        case "Foldable":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "foldable"
+          ) {
+            foldable_objects = add_set(foldable_objects, local);
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "Alternative":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "alternative"
+          ) alternative_objects = add_set(alternative_objects, local);
+          break;
+        case "Bifunctor":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "bifunctor"
+          ) bifunctor_objects = add_set(bifunctor_objects, local);
+          break;
+        case "MonadError":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "monad_error"
+          ) monad_error_objects = add_set(monad_error_objects, local);
+          break;
+        case "collect":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "applicative"
+          ) collect_functions = add_set(collect_functions, local);
+          break;
+        case "Applicative":
+          if (
+            is_mod || mod_kind === "typeclasses" || mod_kind === "applicative"
+          ) applicative_objects = add_set(applicative_objects, local);
+          break;
+        case "Just":
+          if (is_mod || mod_kind === "maybe") {
+            just_constructors = add_set(just_constructors, local);
+          }
+          break;
+        case "Nothing":
+          if (is_mod || mod_kind === "maybe") {
+            nothing_constructors = add_set(nothing_constructors, local);
+          }
+          break;
+        case "from_nullable":
+          if (is_mod || mod_kind === "maybe") {
+            from_nullable_functions = add_set(from_nullable_functions, local);
+          }
+          break;
+        case "from_maybe":
+          if (is_mod || mod_kind === "maybe" || is_prelude) {
+            from_maybe_functions = add_set(from_maybe_functions, local);
+          }
+          break;
+        case "to_nullable":
+          if (is_mod || mod_kind === "maybe" || is_prelude) {
+            to_nullable_functions = add_set(to_nullable_functions, local);
+          }
+          break;
+        case "to_either":
+          if (is_mod || mod_kind === "maybe" || is_prelude) {
+            maybe_to_either_functions = add_set(
+              maybe_to_either_functions,
+              local,
+            );
+          }
+          break;
+        case "get_or_else":
+          if (is_mod || mod_kind === "maybe") {
+            maybe_get_or_else_functions = add_set(
+              maybe_get_or_else_functions,
+              local,
+            );
+          }
+          break;
+        case "maybe":
+          if (is_mod || mod_kind === "maybe" || is_prelude) {
+            maybe_fold_functions = add_set(maybe_fold_functions, local);
+          }
+          break;
+        case "filter":
+          if (mod_kind === "maybe") {
+            maybe_filter_functions = add_set(maybe_filter_functions, local);
+          }
+          break;
+        case "Left":
+          if (is_mod || mod_kind === "either") {
+            left_constructors = add_set(left_constructors, local);
+          }
+          break;
+        case "Right":
+          if (is_mod || mod_kind === "either") {
+            right_constructors = add_set(right_constructors, local);
+          }
+          break;
+        case "either":
+          if (is_mod || mod_kind === "either" || is_prelude) {
+            either_fold_functions = add_set(either_fold_functions, local);
+          }
+          break;
+        case "from_right":
+          if (is_mod || mod_kind === "either" || is_prelude) {
+            either_from_right_functions = add_set(
+              either_from_right_functions,
+              local,
+            );
+          }
+          break;
+        case "from_left":
+          if (is_mod || mod_kind === "either" || is_prelude) {
+            either_from_left_functions = add_set(
+              either_from_left_functions,
+              local,
+            );
+          }
+          break;
+        case "recover_or_else":
+          if (is_mod || mod_kind === "either") {
+            either_recover_functions = add_set(either_recover_functions, local);
+          }
+          break;
+        case "hush":
+          if (is_mod || mod_kind === "either" || is_prelude) {
+            either_hush_functions = add_set(either_hush_functions, local);
+          }
+          break;
+        case "note":
+          if (is_mod || mod_kind === "either" || is_prelude) {
+            either_note_functions = add_set(either_note_functions, local);
+          }
+          break;
+        case "from_number":
+          if (is_mod || mod_kind === "either") {
+            either_from_number_functions = add_set(
+              either_from_number_functions,
+              local,
+            );
+          }
+          break;
+        case "try_catch":
+          if (is_mod || mod_kind === "either") {
+            either_try_catch_functions = add_set(
+              either_try_catch_functions,
+              local,
+            );
+          }
+          break;
+        case "is_left":
+          if (is_mod || mod_kind === "either") {
+            either_is_left_functions = add_set(either_is_left_functions, local);
+          }
+          break;
+        case "is_right":
+          if (is_mod || mod_kind === "either") {
+            either_is_right_functions = add_set(
+              either_is_right_functions,
+              local,
+            );
+          }
+          break;
+        case "map_left":
+          if (is_mod || mod_kind === "either") {
+            either_map_left_functions = add_set(
+              either_map_left_functions,
+              local,
+            );
+          }
+          break;
+        case "bind_widen":
+          if (is_mod || mod_kind === "either") {
+            either_bind_widen_functions = add_set(
+              either_bind_widen_functions,
+              local,
+            );
+          }
+          break;
+        case "ArrayT":
+          if (is_mod || mod_kind === "array") {
+            array_constructors = add_set(array_constructors, local);
+          }
+          break;
+        case "TypedArrayT":
+        case "from_typed_array":
+          if (is_mod || mod_kind === "typed_array") {
+            typed_array_constructors = add_set(typed_array_constructors, local);
+          }
+          break;
+        case "SetT":
+        case "from_set":
+          if (is_mod || mod_kind === "set") {
+            set_constructors = add_set(set_constructors, local);
+          }
+          break;
+        case "MapT":
+        case "from_map_view":
+          if (is_mod || mod_kind === "map") {
+            map_constructors = add_set(map_constructors, local);
+          }
+          break;
+        case "RecordT":
+        case "from_record_view":
+          if (is_mod || mod_kind === "record") {
+            record_constructors = add_set(record_constructors, local);
+          }
+          break;
+        case "from_snapshot":
+          if (is_mod || mod_kind === "map") {
+            map_constructors = add_set(map_constructors, local);
+          }
+          if (is_mod || mod_kind === "record") {
+            record_constructors = add_set(record_constructors, local);
+          }
+          if (mod_kind === "array") {
+            array_from_array_functions = add_set(
+              array_from_array_functions,
+              local,
+            );
+          }
+          break;
+        case "Stm":
+          if (is_mod || mod_kind === "stm") {
+            stm_dictionaries = add_set(stm_dictionaries, local);
+          }
+          break;
+        case "atomically":
+          if (is_mod || mod_kind === "stm") {
+            stm_atomically_functions = add_set(stm_atomically_functions, local);
+          }
+          break;
+        case "StmRetry":
+          if (is_mod || mod_kind === "stm") {
+            stm_retry_classes = add_set(stm_retry_classes, local);
+          }
+          break;
+        case "StmError":
+          if (is_mod || mod_kind === "stm") {
+            stm_error_classes = add_set(stm_error_classes, local);
+          }
+          break;
+        case "read_tvar":
+        case "write_tvar":
+        case "modify_tvar":
+        case "retry":
+        case "abort":
+        case "or_else":
+          if (is_mod || mod_kind === "stm") {
+            stm_primitive_functions = set_map(
+              stm_primitive_functions,
+              local,
+              imported as StmPrimitiveName,
+            );
+          }
+          break;
+        case "Reader":
+          if (is_mod || mod_kind === "reader") {
+            direct_reader_dictionaries = add_set(
+              direct_reader_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "State":
+          if (is_mod || mod_kind === "state") {
+            direct_state_dictionaries = add_set(
+              direct_state_dictionaries,
+              local,
+            );
+          }
+          break;
+        case "Writer":
+          if (is_mod || mod_kind === "writer") {
+            direct_writer_dictionaries = add_set(
+              direct_writer_dictionaries,
+              local,
+            );
+          }
+          break;
+        // Prelude-specific exports
+        case "fmap":
+          if (is_prelude) {
+            prelude_fmap_functions = add_set(prelude_fmap_functions, local);
+          }
+          break;
+        case "bind":
+          if (is_prelude) {
+            prelude_bind_functions = add_set(prelude_bind_functions, local);
+          }
+          break;
+        case "ap":
+          if (is_prelude) {
+            prelude_ap_functions = add_set(prelude_ap_functions, local);
+          }
+          break;
+        case "lift":
+          if (is_prelude) {
+            prelude_lift_functions = add_set(prelude_lift_functions, local);
+          }
+          break;
+        case "traverse":
+          if (is_prelude) {
+            prelude_traverse_functions = add_set(
+              prelude_traverse_functions,
+              local,
+            );
+          }
+          break;
+        case "sequence":
+          if (is_prelude) {
+            prelude_sequence_functions = add_set(
+              prelude_sequence_functions,
+              local,
+            );
+          }
+          break;
+        case "foldl":
+          if (is_prelude) {
+            prelude_foldl_functions = add_set(prelude_foldl_functions, local);
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "fold_while":
+          if (is_prelude) {
+            prelude_fold_while_functions = add_set(
+              prelude_fold_while_functions,
+              local,
+            );
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "some":
+          if (is_prelude) {
+            prelude_some_functions = add_set(prelude_some_functions, local);
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "find":
+          if (is_prelude) {
+            prelude_find_functions = add_set(prelude_find_functions, local);
+            iterable_locals = add_set(iterable_locals, local);
+          }
+          break;
+        case "length":
+          if (is_prelude) {
+            prelude_length_functions = add_set(prelude_length_functions, local);
+          }
+          break;
+        case "sum":
+          if (is_prelude) {
+            prelude_sum_functions = add_set(prelude_sum_functions, local);
+          }
+          break;
+        case "product":
+          if (is_prelude) {
+            prelude_product_functions = add_set(
+              prelude_product_functions,
+              local,
+            );
+          }
+          break;
+        case "alt":
+          if (is_prelude) {
+            prelude_alt_functions = add_set(prelude_alt_functions, local);
+          }
+          break;
+        case "concat":
+          if (is_prelude) {
+            prelude_concat_functions = add_set(prelude_concat_functions, local);
+          }
+          break;
       }
       if (available_terminals?.has(imported as TerminalFunctionName)) {
         terminal_functions = set_map(terminal_functions, local, {
@@ -1355,19 +2019,6 @@ export function scan_import_headers(
       ) {
         cell_providers = set_map(cell_providers, local, provider_kind);
       }
-      if (!is_library) continue;
-      switch (imported) {
-        case "Do":
-          do_names = add_set(do_names, local);
-          break;
-        case "Program":
-          program_names = add_set(program_names, local);
-          program_module ??= specifier;
-          break;
-        case "Effect":
-          effect_names = add_set(effect_names, local);
-          break;
-      }
     }
   }
   return {
@@ -1401,6 +2052,7 @@ export function scan_import_headers(
     maybe_get_or_else_functions,
     maybe_fold_functions,
     maybe_filter_functions,
+    maybe_to_either_functions,
     direct_either_dictionaries,
     left_constructors,
     right_constructors,
@@ -1408,12 +2060,22 @@ export function scan_import_headers(
     either_from_right_functions,
     either_from_left_functions,
     either_recover_functions,
+    either_hush_functions,
+    either_note_functions,
+    either_from_number_functions,
+    either_try_catch_functions,
+    either_is_left_functions,
+    either_is_right_functions,
+    either_map_left_functions,
+    either_bind_widen_functions,
     direct_identity_dictionaries,
     identity_constructors,
     array_constructors,
     array_from_array_functions,
     array_view_functions,
     array_to_array_functions,
+    array_indexed_functions,
+    array_flat_map_streaming_functions,
     array_namespaces,
     typed_array_constructors,
     set_constructors,
@@ -1421,12 +2083,21 @@ export function scan_import_headers(
     record_constructors,
     foldable_objects,
     foldable_namespaces,
+    alternative_objects,
+    alternative_namespaces,
+    bifunctor_objects,
+    bifunctor_namespaces,
+    monad_error_objects,
+    monad_error_namespaces,
     stm_dictionaries,
     stm_namespaces,
     stm_atomically_functions,
     stm_primitive_functions,
+    stm_retry_classes,
+    stm_error_classes,
     list_constructors,
     list_from_array_functions,
+    list_to_array_functions,
     list_namespaces,
     nil_constructors,
     cons_constructors,
@@ -1437,9 +2108,11 @@ export function scan_import_headers(
     task_parallel_functions,
     task_sequential_functions,
     task_from_fn_functions,
+    task_from_promise_functions,
     task_succeed_functions,
     task_run_functions,
     task_run_exit_functions,
+    task_traverse_functions,
     task_is_cancellation_functions,
     task_namespaces,
     traversable_objects,
@@ -1454,14 +2127,35 @@ export function scan_import_headers(
     valid_constructors,
     invalid_constructors,
     invalid_messages_constructors,
+    validation_to_either_functions,
+    validation_map_error_functions,
     collect_functions,
     collect_namespaces,
     applicative_objects,
     applicative_namespaces,
+    prelude_fmap_functions,
+    prelude_bind_functions,
+    prelude_ap_functions,
+    prelude_lift_functions,
+    prelude_traverse_functions,
+    prelude_sequence_functions,
+    prelude_foldl_functions,
+    prelude_fold_while_functions,
+    prelude_some_functions,
+    prelude_find_functions,
+    prelude_to_array_functions,
+    prelude_length_functions,
+    prelude_sum_functions,
+    prelude_product_functions,
+    prelude_alt_functions,
+    prelude_concat_functions,
+    prelude_namespaces,
     iterable_locals,
     async_iterable_locals,
     program_module,
     import_declarations,
+    import_nodes,
+    non_import_count,
     loop_dictionaries,
     loop_tasks,
     loop_specifier,
@@ -1529,6 +2223,18 @@ export function create_import_shadow_tracker(
     if (candidates.has(name)) counts.set(name, (counts.get(name) ?? 0) + 1);
   };
   return {
+    observe_declare: add,
+    observe_call(current: CallExpression): void {
+      if (
+        scope_declarations.size > 0 &&
+        current.callee.type === "Identifier"
+      ) {
+        const end = scope_declarations.get(current.callee.name);
+        if (end !== undefined && current.start < end) {
+          tdz_violated.add(current.callee.name);
+        }
+      }
+    },
     observe(current: Node): void {
       switch (current.type) {
         case "VariableDeclarator":
@@ -1571,95 +2277,18 @@ export function create_import_shadow_tracker(
         readonly specifier: string | undefined;
       };
     } {
+      const shadowed_names = counts.size > 0
+        ? new Set<string>(counts.keys())
+        : EMPTY_SET;
       for (const name of counts.keys()) {
+        // Only globally remove names checked without per-site lexical resolution
+        // (Do/Program/Effect/namespaces/loop_dictionaries). Every other imported
+        // symbol is verified at each call site via services.bindings.imported(...)
+        // and emitted symbols check shadowed_names to request fresh aliased imports.
         headers.do_names.delete(name);
         headers.program_names.delete(name);
         headers.effect_names.delete(name);
         headers.namespaces.delete(name);
-        headers.terminal_functions.delete(name);
-        headers.terminal_namespaces.delete(name);
-        headers.primitive_functions.delete(name);
-        headers.primitive_namespaces.delete(name);
-        headers.except_primitives.delete(name);
-        headers.except_namespaces.delete(name);
-        headers.state_eval_functions.delete(name);
-        headers.state_eval_namespaces.delete(name);
-        headers.operation_runners.delete(name);
-        headers.operation_runner_namespaces.delete(name);
-        headers.operation_helpers.delete(name);
-        headers.cell_factories.delete(name);
-        headers.cell_namespaces.delete(name);
-        headers.cell_runners.delete(name);
-        headers.cell_runner_namespaces.delete(name);
-        headers.cell_providers.delete(name);
-        headers.cell_provider_namespaces.delete(name);
-        headers.direct_maybe_dictionaries.delete(name);
-        headers.just_constructors.delete(name);
-        headers.nothing_constructors.delete(name);
-        headers.from_nullable_functions.delete(name);
-        headers.from_maybe_functions.delete(name);
-        headers.to_nullable_functions.delete(name);
-        headers.maybe_get_or_else_functions.delete(name);
-        headers.maybe_fold_functions.delete(name);
-        headers.maybe_filter_functions.delete(name);
-        headers.direct_either_dictionaries.delete(name);
-        headers.left_constructors.delete(name);
-        headers.right_constructors.delete(name);
-        headers.either_fold_functions.delete(name);
-        headers.either_from_right_functions.delete(name);
-        headers.either_from_left_functions.delete(name);
-        headers.either_recover_functions.delete(name);
-        headers.direct_identity_dictionaries.delete(name);
-        headers.identity_constructors.delete(name);
-        headers.array_constructors.delete(name);
-        headers.array_from_array_functions.delete(name);
-        headers.array_view_functions.delete(name);
-        headers.array_to_array_functions.delete(name);
-        headers.array_namespaces.delete(name);
-        headers.typed_array_constructors.delete(name);
-        headers.set_constructors.delete(name);
-        headers.map_constructors.delete(name);
-        headers.record_constructors.delete(name);
-        headers.foldable_objects.delete(name);
-        headers.foldable_namespaces.delete(name);
-        headers.stm_dictionaries.delete(name);
-        headers.stm_namespaces.delete(name);
-        headers.stm_atomically_functions.delete(name);
-        headers.stm_primitive_functions.delete(name);
-        headers.list_constructors.delete(name);
-        headers.list_from_array_functions.delete(name);
-        headers.list_namespaces.delete(name);
-        headers.nil_constructors.delete(name);
-        headers.cons_constructors.delete(name);
-        headers.direct_reader_dictionaries.delete(name);
-        headers.direct_state_dictionaries.delete(name);
-        headers.direct_writer_dictionaries.delete(name);
-        headers.parallel_task_dictionaries.delete(name);
-        headers.task_parallel_functions.delete(name);
-        headers.task_sequential_functions.delete(name);
-        headers.task_from_fn_functions.delete(name);
-        headers.task_succeed_functions.delete(name);
-        headers.task_run_functions.delete(name);
-        headers.task_run_exit_functions.delete(name);
-        headers.task_is_cancellation_functions.delete(name);
-        headers.task_namespaces.delete(name);
-        headers.traversable_objects.delete(name);
-        headers.traversable_namespaces.delete(name);
-        headers.traverse_sequential_functions.delete(name);
-        headers.traverse_sequential_namespaces.delete(name);
-        headers.match_functions.delete(name);
-        headers.match_namespaces.delete(name);
-        headers.validation_constructors.delete(name);
-        headers.direct_validation_dictionaries.delete(name);
-        headers.valid_constructors.delete(name);
-        headers.invalid_constructors.delete(name);
-        headers.invalid_messages_constructors.delete(name);
-        headers.collect_functions.delete(name);
-        headers.collect_namespaces.delete(name);
-        headers.applicative_objects.delete(name);
-        headers.applicative_namespaces.delete(name);
-        headers.iterable_locals.delete(name);
-        headers.async_iterable_locals.delete(name);
         headers.loop_dictionaries.delete(name);
         headers.loop_tasks.delete(name);
       }
@@ -1712,6 +2341,7 @@ export function create_import_shadow_tracker(
           maybe_get_or_else_functions: headers.maybe_get_or_else_functions,
           maybe_fold_functions: headers.maybe_fold_functions,
           maybe_filter_functions: headers.maybe_filter_functions,
+          maybe_to_either_functions: headers.maybe_to_either_functions,
           direct_either_dictionaries: headers.direct_either_dictionaries,
           left_constructors: headers.left_constructors,
           right_constructors: headers.right_constructors,
@@ -1719,12 +2349,23 @@ export function create_import_shadow_tracker(
           either_from_right_functions: headers.either_from_right_functions,
           either_from_left_functions: headers.either_from_left_functions,
           either_recover_functions: headers.either_recover_functions,
+          either_hush_functions: headers.either_hush_functions,
+          either_note_functions: headers.either_note_functions,
+          either_from_number_functions: headers.either_from_number_functions,
+          either_try_catch_functions: headers.either_try_catch_functions,
+          either_is_left_functions: headers.either_is_left_functions,
+          either_is_right_functions: headers.either_is_right_functions,
+          either_map_left_functions: headers.either_map_left_functions,
+          either_bind_widen_functions: headers.either_bind_widen_functions,
           direct_identity_dictionaries: headers.direct_identity_dictionaries,
           identity_constructors: headers.identity_constructors,
           array_constructors: headers.array_constructors,
           array_from_array_functions: headers.array_from_array_functions,
           array_view_functions: headers.array_view_functions,
           array_to_array_functions: headers.array_to_array_functions,
+          array_indexed_functions: headers.array_indexed_functions,
+          array_flat_map_streaming_functions:
+            headers.array_flat_map_streaming_functions,
           array_namespaces: headers.array_namespaces,
           typed_array_constructors: headers.typed_array_constructors,
           set_constructors: headers.set_constructors,
@@ -1732,12 +2373,21 @@ export function create_import_shadow_tracker(
           record_constructors: headers.record_constructors,
           foldable_objects: headers.foldable_objects,
           foldable_namespaces: headers.foldable_namespaces,
+          alternative_objects: headers.alternative_objects,
+          alternative_namespaces: headers.alternative_namespaces,
+          bifunctor_objects: headers.bifunctor_objects,
+          bifunctor_namespaces: headers.bifunctor_namespaces,
+          monad_error_objects: headers.monad_error_objects,
+          monad_error_namespaces: headers.monad_error_namespaces,
           stm_dictionaries: headers.stm_dictionaries,
           stm_namespaces: headers.stm_namespaces,
           stm_atomically_functions: headers.stm_atomically_functions,
           stm_primitive_functions: headers.stm_primitive_functions,
+          stm_retry_classes: headers.stm_retry_classes,
+          stm_error_classes: headers.stm_error_classes,
           list_constructors: headers.list_constructors,
           list_from_array_functions: headers.list_from_array_functions,
+          list_to_array_functions: headers.list_to_array_functions,
           list_namespaces: headers.list_namespaces,
           nil_constructors: headers.nil_constructors,
           cons_constructors: headers.cons_constructors,
@@ -1748,9 +2398,11 @@ export function create_import_shadow_tracker(
           task_parallel_functions: headers.task_parallel_functions,
           task_sequential_functions: headers.task_sequential_functions,
           task_from_fn_functions: headers.task_from_fn_functions,
+          task_from_promise_functions: headers.task_from_promise_functions,
           task_succeed_functions: headers.task_succeed_functions,
           task_run_functions: headers.task_run_functions,
           task_run_exit_functions: headers.task_run_exit_functions,
+          task_traverse_functions: headers.task_traverse_functions,
           task_is_cancellation_functions:
             headers.task_is_cancellation_functions,
           task_namespaces: headers.task_namespaces,
@@ -1768,12 +2420,34 @@ export function create_import_shadow_tracker(
           valid_constructors: headers.valid_constructors,
           invalid_constructors: headers.invalid_constructors,
           invalid_messages_constructors: headers.invalid_messages_constructors,
+          validation_to_either_functions:
+            headers.validation_to_either_functions,
+          validation_map_error_functions:
+            headers.validation_map_error_functions,
           collect_functions: headers.collect_functions,
           collect_namespaces: headers.collect_namespaces,
           applicative_objects: headers.applicative_objects,
           applicative_namespaces: headers.applicative_namespaces,
+          prelude_fmap_functions: headers.prelude_fmap_functions,
+          prelude_bind_functions: headers.prelude_bind_functions,
+          prelude_ap_functions: headers.prelude_ap_functions,
+          prelude_lift_functions: headers.prelude_lift_functions,
+          prelude_traverse_functions: headers.prelude_traverse_functions,
+          prelude_sequence_functions: headers.prelude_sequence_functions,
+          prelude_foldl_functions: headers.prelude_foldl_functions,
+          prelude_fold_while_functions: headers.prelude_fold_while_functions,
+          prelude_some_functions: headers.prelude_some_functions,
+          prelude_find_functions: headers.prelude_find_functions,
+          prelude_to_array_functions: headers.prelude_to_array_functions,
+          prelude_length_functions: headers.prelude_length_functions,
+          prelude_sum_functions: headers.prelude_sum_functions,
+          prelude_product_functions: headers.prelude_product_functions,
+          prelude_alt_functions: headers.prelude_alt_functions,
+          prelude_concat_functions: headers.prelude_concat_functions,
+          prelude_namespaces: headers.prelude_namespaces,
           iterable_locals: headers.iterable_locals,
           async_iterable_locals: headers.async_iterable_locals,
+          shadowed_names,
           program_module: headers.program_module,
           effect_helper_shadowed:
             (headers.program_names.size > 0 || headers.namespaces.size > 0) &&

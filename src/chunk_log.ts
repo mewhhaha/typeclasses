@@ -30,28 +30,47 @@ export interface AsChunkLog
 export type ChunkLog<item> = Data<AsChunkLog, item>;
 /** Persistent log dictionary; use chunk_log to snapshot input items. */
 export const ChunkLog: AsChunkLog = data<AsChunkLog>(chunk_log_identity);
+const empty_chunk_log = /* @__PURE__ */ ChunkLog({ tag: "empty" });
 
 /** Snapshots one chunk of log items. */
 export function chunk_log<item>(items: readonly item[]): ChunkLog<item> {
-  if (items.length === 0) return ChunkLog.empty<item>();
-  return ChunkLog({ tag: "leaf", items: items.slice() });
+  const len = items.length;
+  if (len === 0) return empty_chunk_log as ChunkLog<item>;
+  return ChunkLog({
+    tag: "leaf",
+    items: len === 1 ? [items[0]] : items.slice(),
+  });
 }
 /** Materializes a log in append order without recursion. */
 export function flatten_chunk_log<item>(log: ChunkLog<item>): readonly item[] {
-  const pending = [log.value()];
+  const root = log.value();
+  if (root.tag === "empty") return [];
+  if (root.tag === "leaf") {
+    const items = root.items;
+    return items.length === 1 ? [items[0]] : items.slice();
+  }
   const output: item[] = [];
-  while (pending.length > 0) {
-    const current = pending.pop()!;
+  const pending: RawChunkLog<item>[] = [];
+  let current: RawChunkLog<item> | undefined = root;
+  while (current !== undefined) {
     switch (current.tag) {
       case "empty":
+        current = pending.pop();
         break;
       case "leaf": {
         const items = current.items;
-        for (let i = 0; i < items.length; i += 1) output.push(items[i]);
+        const len = items.length;
+        if (len === 1) {
+          output.push(items[0]);
+        } else {
+          for (let i = 0; i < len; i += 1) output.push(items[i]);
+        }
+        current = pending.pop();
         break;
       }
       case "concat":
-        pending.push(current.right, current.left);
+        pending.push(current.right);
+        current = current.left;
         break;
     }
   }
@@ -59,6 +78,8 @@ export function flatten_chunk_log<item>(log: ChunkLog<item>): readonly item[] {
 }
 Semigroup.instance(ChunkLog)({
   concat(right) {
+    if (this === empty_chunk_log) return right;
+    if (right === empty_chunk_log) return this;
     const left = this.value();
     if (left.tag === "empty") return right;
     const other = right.value();
@@ -66,7 +87,6 @@ Semigroup.instance(ChunkLog)({
     return ChunkLog({ tag: "concat", left, right: other });
   },
 });
-const empty_chunk_log = /* @__PURE__ */ ChunkLog({ tag: "empty" });
 Monoid.instance(ChunkLog)({
   empty() {
     return empty_chunk_log as ChunkLog<never>;

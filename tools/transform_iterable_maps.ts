@@ -4,6 +4,7 @@ import type {
   Expression,
   Function,
   IdentifierReference,
+  ImportDeclaration,
   Node,
   ObjectProperty,
   Program,
@@ -193,6 +194,8 @@ export function create_iterable_map_fusion(
     sub_module: string,
     imported: string,
   ) => IdentifierReference | undefined,
+  import_nodes?: readonly ImportDeclaration[],
+  active_indices?: readonly number[],
 ) {
   const functions = new Set<string>();
   const namespaces = new Set<string>();
@@ -205,6 +208,12 @@ export function create_iterable_map_fusion(
   const compile_fold_locals = new Set<string>();
   const foldable_locals = new Set<string>();
   const foldable_namespaces = new Set<string>();
+  const prelude_namespaces = new Set<string>();
+  const prelude_fold_while_locals = new Set<string>();
+  const prelude_some_locals = new Set<string>();
+  const prelude_find_locals = new Set<string>();
+  const prelude_to_array_locals = new Set<string>();
+  const prelude_foldl_locals = new Set<string>();
   const just_locals = new Set<string>();
   const nothing_locals = new Set<string>();
   const async_namespaces = new Set<string>();
@@ -219,7 +228,9 @@ export function create_iterable_map_fusion(
     "to_array" | "preview" | "fold_while" | "find" | "some"
   >();
 
-  for (const statement of program.body) {
+  const import_stmts = import_nodes ?? program.body;
+  for (let i = 0; i < import_stmts.length; i += 1) {
+    const statement = import_stmts[i];
     if (
       statement.type !== "ImportDeclaration" || statement.importKind === "type"
     ) continue;
@@ -234,6 +245,9 @@ export function create_iterable_map_fusion(
     const maybe_mod = module === "maybe" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/maybe$/
         .test(specifier);
+    const prelude_mod = module === "prelude" ||
+      /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/prelude$/
+        .test(specifier);
     const root = module === "mod" || specifier === "@mewhhaha/typeclasses" ||
       /^jsr:@mewhhaha\/typeclasses(?:@[^/]+)?$/.test(specifier) ||
       library_specifiers.includes(specifier);
@@ -241,13 +255,17 @@ export function create_iterable_map_fusion(
       module === "foldable" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/(?:typeclasses|foldable)$/
         .test(specifier);
-    if (!iterable && !async_iter && !root && !foldable_mod && !maybe_mod) {
+    if (
+      !iterable && !async_iter && !root && !foldable_mod && !maybe_mod &&
+      !prelude_mod
+    ) {
       continue;
     }
     for (const binding of statement.specifiers) {
       if (binding.type === "ImportNamespaceSpecifier") {
         if (iterable) namespaces.add(binding.local.name);
         else if (async_iter) async_namespaces.add(binding.local.name);
+        else if (prelude_mod) prelude_namespaces.add(binding.local.name);
         else if (root) {
           root_namespaces.add(binding.local.name);
           foldable_namespaces.add(binding.local.name);
@@ -288,6 +306,19 @@ export function create_iterable_map_fusion(
             name === "fold_while" || name === "find" || name === "some"
           ) {
             async_term_locals.set(binding.local.name, name);
+          }
+        }
+        if (prelude_mod) {
+          if (name === "fold_while") {
+            prelude_fold_while_locals.add(binding.local.name);
+          } else if (name === "some") {
+            prelude_some_locals.add(binding.local.name);
+          } else if (name === "find") {
+            prelude_find_locals.add(binding.local.name);
+          } else if (name === "to_array") {
+            prelude_to_array_locals.add(binding.local.name);
+          } else if (name === "foldl") {
+            prelude_foldl_locals.add(binding.local.name);
           }
         }
         if ((root || maybe_mod) && name === "Just") {
@@ -334,7 +365,50 @@ export function create_iterable_map_fusion(
   const collect_names = fresh === undefined;
   const used_names = new Set<string>();
   const skipped_stmts: Statement[] = [];
+  let skipped_flushed = active_indices === undefined;
   const fn_write_checked = new Map<Node, boolean>();
+
+  function record_top_level_skipped(stmt: Statement): void {
+    let target: Node = stmt;
+    if (
+      stmt.type === "ExportNamedDeclaration" && stmt.declaration !== null
+    ) target = stmt.declaration;
+    if (target.type === "FunctionDeclaration" && target.id !== null) {
+      callbacks.set(target, target);
+    } else if (
+      target.type === "VariableDeclaration" && target.kind === "const"
+    ) {
+      for (const declaration of target.declarations) {
+        if (
+          declaration.id.type !== "Identifier" || declaration.init === null
+        ) continue;
+        immutable.add(declaration);
+        const initial = unwrap(declaration.init);
+        if (
+          initial.type === "ArrowFunctionExpression" ||
+          initial.type === "FunctionExpression"
+        ) callbacks.set(declaration, initial);
+      }
+    }
+  }
+
+  function flush_skipped(): void {
+    if (skipped_flushed) return;
+    skipped_flushed = true;
+    if (active_indices === undefined) return;
+    let active_ptr = 0;
+    const active_len = active_indices.length;
+    for (let index = 0; index < program.body.length; index += 1) {
+      const stmt = program.body[index] as Statement;
+      if (stmt.type === "ImportDeclaration") continue;
+      if (active_ptr < active_len && active_indices[active_ptr] === index) {
+        active_ptr += 1;
+        continue;
+      }
+      skipped_stmts.push(stmt);
+      record_top_level_skipped(stmt);
+    }
+  }
 
   function mark_write(target: Node): void {
     if (target.type === "Identifier") {
@@ -383,7 +457,11 @@ export function create_iterable_map_fusion(
     ) mark_write(current.left);
   };
 
-  if (skip_statement === undefined) {
+  if (active_indices !== undefined) {
+    for (let i = 0; i < active_indices.length; i += 1) {
+      walk(program.body[active_indices[i]] as Statement, observe);
+    }
+  } else if (skip_statement === undefined) {
     walk(program, observe);
   } else {
     for (let index = 0; index < program.body.length; index += 1) {
@@ -391,27 +469,7 @@ export function create_iterable_map_fusion(
       if (stmt.type === "ImportDeclaration") continue;
       if (skip_statement(stmt)) {
         skipped_stmts.push(stmt);
-        let target: Node = stmt;
-        if (
-          stmt.type === "ExportNamedDeclaration" && stmt.declaration !== null
-        ) target = stmt.declaration;
-        if (target.type === "FunctionDeclaration" && target.id !== null) {
-          callbacks.set(target, target);
-        } else if (
-          target.type === "VariableDeclaration" && target.kind === "const"
-        ) {
-          for (const declaration of target.declarations) {
-            if (
-              declaration.id.type !== "Identifier" || declaration.init === null
-            ) continue;
-            immutable.add(declaration);
-            const initial = unwrap(declaration.init);
-            if (
-              initial.type === "ArrowFunctionExpression" ||
-              initial.type === "FunctionExpression"
-            ) callbacks.set(declaration, initial);
-          }
-        }
+        record_top_level_skipped(stmt);
         continue;
       }
       walk(stmt, observe);
@@ -419,6 +477,7 @@ export function create_iterable_map_fusion(
   }
 
   function is_written_in_skipped(declaration: Function): boolean {
+    if (!skipped_flushed) flush_skipped();
     if (skipped_stmts.length === 0 || declaration.id === null) return false;
     const cached = fn_write_checked.get(declaration);
     if (cached !== undefined) return cached;
@@ -591,20 +650,88 @@ export function create_iterable_map_fusion(
     }
   }
 
+  function is_prelude_named_call(
+    callee: Expression,
+    locals: ReadonlySet<string>,
+    member_name: string,
+  ): boolean {
+    if (
+      callee.type === "Identifier" && locals.has(callee.name) &&
+      bindings.imported(callee)
+    ) return true;
+    return static_member(callee) && callee.property.name === member_name &&
+      callee.object.type === "Identifier" &&
+      prelude_namespaces.has(callee.object.name) &&
+      bindings.imported(callee.object);
+  }
+
+  function is_pure_reorderable_arg(expression: Expression): boolean {
+    const val = unwrap(expression);
+    return val.type === "Literal" || val.type === "Identifier" ||
+      val.type === "ArrowFunctionExpression" ||
+      val.type === "FunctionExpression" ||
+      (val.type === "ArrayExpression" && val.elements.length === 0) ||
+      (val.type === "ObjectExpression" && val.properties.length === 0);
+  }
+
   function match_terminal(current: CallExpression): IterTerminal | undefined {
     if (
       current.optional || current.typeArguments != null ||
       current.arguments.some((arg) => arg.type === "SpreadElement")
     ) return undefined;
     const callee = unwrap(current.callee);
-    // to_array(pipeline)
+    // to_array(pipeline) | prelude.to_array(pipeline)
     if (
       current.arguments.length === 1 &&
-      is_iterable_named_call(callee, to_array_locals, "to_array")
+      (is_iterable_named_call(callee, to_array_locals, "to_array") ||
+        is_prelude_named_call(callee, prelude_to_array_locals, "to_array"))
     ) {
       return {
         kind: "to_array",
         pipeline: current.arguments[0] as Expression,
+      };
+    }
+    // prelude.fold_while(pipeline, init, step)
+    if (
+      current.arguments.length === 3 &&
+      is_prelude_named_call(callee, prelude_fold_while_locals, "fold_while")
+    ) {
+      return {
+        kind: "fold_while",
+        pipeline: current.arguments[0] as Expression,
+        init: current.arguments[1] as Expression,
+        step: current.arguments[2] as Expression,
+      };
+    }
+    // prelude.some(pipeline, pred) | prelude.find(pipeline, pred)
+    if (current.arguments.length === 2) {
+      if (is_prelude_named_call(callee, prelude_some_locals, "some")) {
+        return {
+          kind: "some",
+          pipeline: current.arguments[0] as Expression,
+          pred: current.arguments[1] as Expression,
+        };
+      }
+      if (is_prelude_named_call(callee, prelude_find_locals, "find")) {
+        return {
+          kind: "find",
+          pipeline: current.arguments[0] as Expression,
+          pred: current.arguments[1] as Expression,
+        };
+      }
+    }
+    // prelude.foldl(step, init, pipeline) when step & init are pure (preserves arg eval order)
+    if (
+      current.arguments.length === 3 &&
+      is_prelude_named_call(callee, prelude_foldl_locals, "foldl") &&
+      is_pure_reorderable_arg(current.arguments[0] as Expression) &&
+      is_pure_reorderable_arg(current.arguments[1] as Expression)
+    ) {
+      return {
+        kind: "fold",
+        pipeline: current.arguments[2] as Expression,
+        init: current.arguments[1] as Expression,
+        step: current.arguments[0] as Expression,
       };
     }
     // preview(pipeline, limit?)
@@ -3286,7 +3413,11 @@ export function create_iterable_map_fusion(
     }
     const declaration = bindings.resolve(current);
     if (declaration === null || writes.has(declaration)) return false;
-    const callback = callbacks.get(declaration);
+    let callback = callbacks.get(declaration);
+    if (callback === undefined && !skipped_flushed) {
+      flush_skipped();
+      callback = callbacks.get(declaration);
+    }
     if (callback === undefined) return false;
     if (
       declaration.type === "FunctionDeclaration" &&
@@ -3313,11 +3444,14 @@ export function create_iterable_map_fusion(
       const declaration = bindings.resolve(current);
       if (
         declaration === null || declaration.type !== "VariableDeclarator" ||
-        declaration.init === null || !immutable.has(declaration) ||
-        writes.has(declaration) || declaration.end >= current.start ||
-        seen.has(declaration) ||
-        bindings.scope(current) !== bindings.scope(declaration)
+        declaration.init === null || writes.has(declaration) ||
+        declaration.end >= current.start || seen.has(declaration)
       ) return false;
+      if (!immutable.has(declaration)) {
+        if (!skipped_flushed) flush_skipped();
+        if (!immutable.has(declaration)) return false;
+      }
+      if (bindings.scope(current) !== bindings.scope(declaration)) return false;
       seen.add(declaration);
       return known_iterable(declaration.init, seen);
     }
@@ -3555,11 +3689,11 @@ function substitute_two_idents(
 
 function source_module(specifier: string): string | undefined {
   if (
-    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|async_iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/
+    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|async_iterable|maybe|mod|prelude|typeclasses|foldable)(?:\.ts)?$/
       .test(specifier)
   ) {
     return specifier.match(
-      /(async_iterable|iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/,
+      /(async_iterable|iterable|maybe|mod|prelude|typeclasses|foldable)(?:\.ts)?$/,
     )?.[1];
   }
   for (
@@ -3568,6 +3702,7 @@ function source_module(specifier: string): string | undefined {
       "async_iterable",
       "maybe",
       "mod",
+      "prelude",
       "typeclasses",
     ]
   ) {

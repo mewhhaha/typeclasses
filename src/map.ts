@@ -1,4 +1,8 @@
-import { find_method, some_method } from "./typeclasses/foldable.ts";
+import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
 import {
   type As,
   as_data,
@@ -55,68 +59,51 @@ type MapConstructor = {
 export const MapT: MapConstructor = /* @__PURE__ */ create_map();
 
 /** Build a wrapped map, inferring both key and value types. */
-export function from_entries<item, key = string>(
+export const from_entries = <item, key = string>(
   entries: Iterable<readonly [key, item]>,
-): MapT<item, key> {
-  return as_data(MapT as AsMap<key>, new Map(entries));
-}
+): MapT<item, key> => as_data(MapT as AsMap<key>, new Map(entries));
 
 /** Build a wrapped map from an object's own enumerable entries. */
-export function from_record<item>(
+export const from_record = <item>(
   record: Readonly<Record<string, item>>,
-): MapT<item> {
+): MapT<item> => {
   const out = new Map<string, item>();
-  for (const key of Object.keys(record)) out.set(key, record[key]);
+  for (const key in record) {
+    if (Object.hasOwn(record, key)) out.set(key, record[key]);
+  }
   return as_data(MapT as AsMap<string>, out);
-}
+};
 
 /** Copy a wrapped map into a mutable JavaScript Map. */
-export function to_map<item, key>(map: MapT<item, key>): Map<key, item> {
-  return new Map(map.value());
-}
+export const to_map = <item, key>(map: MapT<item, key>): Map<key, item> =>
+  new Map(map.value());
 
 /** Copy a wrapped map into a plain string-keyed record. */
-export function to_record<item>(
-  map: MapT<item>,
-): Record<string, item> {
-  return Object.fromEntries(map.value());
-}
+export const to_record = <item>(map: MapT<item>): Record<string, item> =>
+  Object.fromEntries(map.value());
 
 /** Snapshot a map; later source mutations are invisible. */
-export function from_snapshot<item, key>(
+export const from_snapshot: <item, key>(
   source: ReadonlyMap<key, item>,
-): MapT<item, key> {
-  return MapT(source);
-}
+) => MapT<item, key> = MapT as <item, key>(
+  source: ReadonlyMap<key, item>,
+) => MapT<item, key>;
 /** Wrap a live map by reference; later source mutations remain visible. */
-export function from_map_view<item, key>(
+export const from_map_view = <item, key>(
   source: ReadonlyMap<key, item>,
-): MapT<item, key> {
-  return as_data(MapT as AsMap<key>, source);
-}
+): MapT<item, key> => as_data(MapT as AsMap<key>, source);
 
 /** Fold values with their original keys, without materializing entries. */
-export function fold_with_key<key, item, state>(
+export const fold_with_key = <key, item, state>(
   map: MapT<item, key>,
-  initial: state,
+  state: state,
   fn: (state: state, item: item, key: key) => state,
-): state {
-  let result = initial;
+): state => {
   map.value().forEach((item, key) => {
-    result = fn(result, item, key);
+    state = fn(state, item, key);
   });
-  return result;
-}
-
-function map_from_values<key, item>(
-  keys: readonly key[],
-  items: Iterable<item>,
-): Map<key, item> {
-  const out = new Map<key, item>();
-  let index = 0;
-  for (const item of items) out.set(keys[index++], item);
-  return out;
-}
+  return state;
+};
 
 function create_map(): MapConstructor {
   const MapT: MapConstructor = data<AsMap<unknown>>(
@@ -125,58 +112,50 @@ function create_map(): MapConstructor {
       return this.data(new Map(map));
     },
   ) as MapConstructor;
+  const raw = <item>(map: Data<AsMap<unknown>, item>) => map.value();
+  const values = <item>(map: Data<AsMap<unknown>, item>) =>
+    map.value().values();
   Show.instance(MapT)({
     show() {
-      const map = this.value();
-      return inspect(map);
+      return inspect(raw(this));
     },
   });
 
   Eq.instance(MapT)({
     eq(right) {
-      const left = this.value();
-      const right_value = right.value();
-
-      if (left.size !== right_value.size) {
-        return false;
-      }
-
+      const left = raw(this);
+      const right_value = raw(right);
+      if (left === right_value) return true;
+      if (left.size !== right_value.size) return false;
       for (const [key, value] of left) {
-        if (!right_value.has(key)) {
-          return false;
-        }
-
-        if (!Object.is(value, right_value.get(key))) {
+        const other = right_value.get(key);
+        if (
+          !Object.is(value, other) ||
+          (other === undefined && !right_value.has(key))
+        ) {
           return false;
         }
       }
-
       return true;
     },
   });
 
   Functor.instance(MapT)({
     map(fn) {
-      const map = this.value();
       const out = new Map<unknown, ReturnType<typeof fn>>();
-
-      for (const [key, value] of map) {
-        out.set(key, fn(value));
-      }
-
+      for (const [key, value] of raw(this)) out.set(key, fn(value));
       return as_data(MapT, out);
     },
   });
 
   Semigroup.instance(MapT)({
     concat(right) {
-      const left = this.value();
-      const out = new Map(left);
-
-      for (const [key, value] of right.value()) {
-        out.set(key, value);
+      const left = raw(this);
+      const right_value = raw(right);
+      const out = new Map(left.size ? left : right_value);
+      if (left.size) {
+        for (const [key, value] of right_value) out.set(key, value);
       }
-
       return as_data(MapT, out);
     },
   });
@@ -189,33 +168,30 @@ function create_map(): MapConstructor {
 
   Foldable.instance(MapT)({
     [some_method](predicate) {
-      for (const item of this.value().values()) {
-        if (predicate(item)) return true;
-      }
+      for (const item of values(this)) if (predicate(item)) return true;
       return false;
     },
     [find_method](predicate) {
-      for (const item of this.value().values()) {
-        if (predicate(item)) return item;
-      }
+      for (const item of values(this)) if (predicate(item)) return item;
       return undefined;
     },
-
-    fold(initial, fn) {
-      const map = this.value();
-      let state = initial;
-
-      for (const value of map.values()) {
-        state = fn(state, value);
+    [fold_while_method](state, fn) {
+      for (const item of values(this)) {
+        const step = fn(state, item);
+        state = step[1];
+        if (step[0] === "Done") return state;
       }
-
+      return state;
+    },
+    fold(state, fn) {
+      for (const value of values(this)) state = fn(state, value);
       return state;
     },
   });
 
   Traversable.instance(MapT)({
     traverse(applicative, fn) {
-      const source = this.value();
+      const source = raw(this);
       const keys: unknown[] = [];
       const key_iterator = source.keys();
       return traverse_items_into(
@@ -225,7 +201,15 @@ function create_map(): MapConstructor {
           keys.push(key_iterator.next().value);
           return fn(item);
         },
-        (items) => as_data(MapT, map_from_values(keys, items)),
+        (items) => {
+          const out = new Map<
+            unknown,
+            typeof items extends Iterable<infer to> ? to : never
+          >();
+          let index = 0;
+          for (const item of items) out.set(keys[index++], item);
+          return as_data(MapT, out);
+        },
       );
     },
   });

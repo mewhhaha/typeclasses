@@ -280,14 +280,7 @@ function make_state_cell<key extends PropertyKey, state>(
 
   Monad.instance(dictionary)({
     bind(fn) {
-      const stateful = this.value();
-
-      return wrap(
-        bind_state_computation(
-          stateful,
-          (value) => fn(value).value(),
-        ),
-      );
+      return wrap(bind_state_computation(this.value(), fn));
     },
   });
 
@@ -657,12 +650,7 @@ Applicative.instance(State)({
 
 Monad.instance(State)({
   bind(fn) {
-    return State(
-      bind_state_computation(
-        this.value(),
-        (value) => fn(value).value(),
-      ),
-    );
+    return State(bind_state_computation(this.value(), fn));
   },
 });
 

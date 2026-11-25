@@ -2,10 +2,16 @@ import type {
   ArrowFunctionExpression,
   BindingPattern,
   CallExpression,
+  Class,
   Expression,
   Function as FunctionNode,
   IdentifierReference,
   ImportDeclaration,
+  JSXAttributeName,
+  JSXChild,
+  JSXElement,
+  JSXElementName,
+  JSXFragment,
   MemberExpression,
   NewExpression,
   Node,
@@ -43,9 +49,41 @@ export type FastPrintSink = {
   out_orig_col: number;
   line_has_seg: boolean;
   readonly code_chunks: string[];
+  readonly mapping_parts?: string[];
+  readonly has_non_lf?: boolean;
 };
 
 const BAIL = {};
+
+const VLQ_CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const VLQ_SMALL: readonly string[] = /* @__PURE__ */ (() => {
+  const table = new Array<string>(512);
+  for (let value = -256; value <= 255; value += 1) {
+    let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
+    let out = "";
+    do {
+      let digit = vlq & 31;
+      vlq >>>= 5;
+      if (vlq > 0) digit |= 32;
+      out += VLQ_CHARS[digit];
+    } while (vlq > 0);
+    table[value + 256] = out;
+  }
+  return table;
+})();
+
+function encode_vlq_slow(value: number): string {
+  let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
+  let out = "";
+  do {
+    let digit = vlq & 31;
+    vlq >>>= 5;
+    if (vlq > 0) digit |= 32;
+    out += VLQ_CHARS[digit];
+  } while (vlq > 0);
+  return out;
+}
 
 const INDENTS = [
   "",
@@ -65,6 +103,103 @@ function indent_str(depth: number): string {
   if (depth < INDENTS.length) return INDENTS[depth];
   return "  ".repeat(depth);
 }
+
+const SPACED_OPS: Readonly<Record<string, string>> = /* @__PURE__ */ Object
+  .assign(
+    Object.create(null),
+    {
+      "+": " + ",
+      "-": " - ",
+      "*": " * ",
+      "/": " / ",
+      "%": " % ",
+      "**": " ** ",
+      "==": " == ",
+      "!=": " != ",
+      "===": " === ",
+      "!==": " !== ",
+      "<": " < ",
+      "<=": " <= ",
+      ">": " > ",
+      ">=": " >= ",
+      "<<": " << ",
+      ">>": " >> ",
+      ">>>": " >>> ",
+      "&": " & ",
+      "|": " | ",
+      "^": " ^ ",
+      "&&": " && ",
+      "||": " || ",
+      "??": " ?? ",
+      in: " in ",
+      instanceof: " instanceof ",
+      "=": " = ",
+      "+=": " += ",
+      "-=": " -= ",
+      "*=": " *= ",
+      "/=": " /= ",
+      "%=": " %= ",
+      "**=": " **= ",
+      "<<=": " <<= ",
+      ">>=": " >>= ",
+      ">>>=": " >>>= ",
+      "&=": " &= ",
+      "|=": " |= ",
+      "^=": " ^= ",
+      "&&=": " &&= ",
+      "||=": " ||= ",
+      "??=": " ??= ",
+    },
+  );
+
+const VAR_KINDS: Readonly<Record<string, string>> = /* @__PURE__ */ Object
+  .assign(
+    Object.create(null),
+    {
+      const: "const ",
+      let: "let ",
+      var: "var ",
+      using: "using ",
+      "await using": "await using ",
+    },
+  );
+
+const TYPE_OPS: Readonly<Record<string, string>> = /* @__PURE__ */ Object
+  .assign(
+    Object.create(null),
+    {
+      keyof: "keyof ",
+      readonly: "readonly ",
+      unique: "unique ",
+    },
+  );
+
+const STMT_TYPES = /* @__PURE__ */ new Set([
+  "ExpressionStatement",
+  "VariableDeclaration",
+  "ReturnStatement",
+  "ThrowStatement",
+  "IfStatement",
+  "BlockStatement",
+  "ForStatement",
+  "ForOfStatement",
+  "ForInStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "SwitchStatement",
+  "TryStatement",
+  "LabeledStatement",
+  "BreakStatement",
+  "ContinueStatement",
+  "EmptyStatement",
+  "DebuggerStatement",
+  "FunctionDeclaration",
+  "ClassDeclaration",
+  "ImportDeclaration",
+  "ExportNamedDeclaration",
+  "ExportDefaultDeclaration",
+  "TSTypeAliasDeclaration",
+]);
 
 function binary_prec(op: string): number {
   switch (op) {
@@ -127,6 +262,7 @@ function expr_prec(expr: Expression): number {
       return binary_prec(expr.operator);
     case "UnaryExpression":
     case "AwaitExpression":
+    case "TSTypeAssertion":
       return 14;
     case "UpdateExpression":
       return expr.prefix ? 14 : 15;
@@ -298,11 +434,21 @@ function needs_type_parens_in_array_or_index(t: TSType): boolean {
 class FastPrinter {
   private sink!: FastPrintSink;
   private source_map = false;
+  private direct_map = false;
+  private has_non_lf = true;
   private locator: FastSourceLocator | undefined;
   private lang: "ts" | "tsx" = "ts";
   private buf = "";
+  private map_buf = "";
   private col = 0;
   private depth = 0;
+  private out_gen_col = 0;
+  private out_orig_line = 0;
+  private out_orig_col = 0;
+  private line_has_seg = false;
+  private last_mark_start = -1;
+  private last_orig_line = 0;
+  private last_orig_col = 0;
 
   private write(text: string): void {
     this.buf += text;
@@ -311,7 +457,15 @@ class FastPrinter {
 
   private write_nl(): void {
     this.buf += "\n";
-    if (this.source_map) this.sink.emit_newline();
+    if (this.source_map) {
+      if (this.direct_map) {
+        this.map_buf += ";";
+        this.out_gen_col = 0;
+        this.line_has_seg = false;
+      } else {
+        this.sink.emit_newline();
+      }
+    }
     this.col = 0;
   }
 
@@ -323,37 +477,92 @@ class FastPrinter {
     }
   }
 
-  private write_multiline(text: string): void {
-    if (
-      text.includes("\r") || text.includes("\u2028") || text.includes("\u2029")
-    ) throw BAIL;
-    this.buf += text;
-    const nl = text.indexOf("\n");
+  private write_multiline(text: string, from_source = true): void {
+    let out = text;
+    if (!from_source || this.has_non_lf) {
+      if (out.includes("\u2028") || out.includes("\u2029")) throw BAIL;
+      if (out.includes("\r")) {
+        out = out.replace(/\r\n|\r/g, "\n");
+      }
+    }
+    this.buf += out;
+    const nl = out.indexOf("\n");
     if (nl < 0) {
-      this.col += text.length;
+      this.col += out.length;
       return;
     }
     if (!this.source_map) {
-      const last = text.lastIndexOf("\n");
-      this.col = text.length - last - 1;
+      const last = out.lastIndexOf("\n");
+      this.col = out.length - last - 1;
       return;
     }
     let pos = nl;
     let last = 0;
-    while (pos >= 0) {
-      this.sink.emit_newline();
-      last = pos + 1;
-      pos = text.indexOf("\n", last);
+    if (this.direct_map) {
+      while (pos >= 0) {
+        this.map_buf += ";";
+        last = pos + 1;
+        pos = out.indexOf("\n", last);
+      }
+      this.out_gen_col = 0;
+      this.line_has_seg = false;
+    } else {
+      while (pos >= 0) {
+        this.sink.emit_newline();
+        last = pos + 1;
+        pos = out.indexOf("\n", last);
+      }
     }
-    this.col = text.length - last;
+    this.col = out.length - last;
   }
 
   private mark(n: Node): void {
-    if (!this.source_map || n.start < 0 || this.locator === undefined) return;
-    const loc = this.locator;
-    loc.lookup(n.start);
-    const orig_line = loc.line - 1;
-    const orig_col = loc.column;
+    if (!this.source_map) return;
+    const start = n.start;
+    if (start < 0) return;
+    let orig_line: number;
+    let orig_col: number;
+    if (start === this.last_mark_start) {
+      orig_line = this.last_orig_line;
+      orig_col = this.last_orig_col;
+    } else {
+      const loc = this.locator;
+      if (loc === undefined) return;
+      loc.lookup(start);
+      orig_line = loc.line - 1;
+      orig_col = loc.column;
+      this.last_mark_start = start;
+      this.last_orig_line = orig_line;
+      this.last_orig_col = orig_col;
+    }
+    if (this.direct_map) {
+      if (
+        !this.line_has_seg ||
+        this.col !== this.out_gen_col ||
+        orig_line !== this.out_orig_line ||
+        orig_col !== this.out_orig_col
+      ) {
+        const d_gen = this.col - this.out_gen_col;
+        const d_line = orig_line - this.out_orig_line;
+        const d_col = orig_col - this.out_orig_col;
+        this.map_buf += (this.line_has_seg ? "," : "") +
+          (d_gen >= -256 && d_gen <= 255
+            ? VLQ_SMALL[d_gen + 256]
+            : encode_vlq_slow(d_gen)) +
+          "A" +
+          (d_line >= -256 && d_line <= 255
+            ? VLQ_SMALL[d_line + 256]
+            : encode_vlq_slow(d_line)) +
+          (d_col >= -256 && d_col <= 255
+            ? VLQ_SMALL[d_col + 256]
+            : encode_vlq_slow(d_col));
+        this.out_gen_col = this.col;
+        this.out_orig_line = orig_line;
+        this.out_orig_col = orig_col;
+        this.line_has_seg = true;
+      }
+      return;
+    }
     const sink = this.sink;
     if (
       !sink.line_has_seg ||
@@ -423,6 +632,11 @@ class FastPrinter {
       this.write(name.right.name);
       return;
     }
+    if (name.type === "TSThisType" || name.type === "ThisExpression") {
+      this.mark(name);
+      this.write("this");
+      return;
+    }
     throw BAIL;
   }
 
@@ -490,6 +704,9 @@ class FastPrinter {
         return;
       case "TSThisType":
         this.write("this");
+        return;
+      case "TSIntrinsicKeyword":
+        this.write("intrinsic");
         return;
       case "TSTypeReference":
         this.print_type_name(t.typeName);
@@ -591,6 +808,47 @@ class FastPrinter {
               this.write(": ");
               this.print_type(m.typeAnnotation.typeAnnotation);
             }
+          } else if (m.type === "TSMethodSignature") {
+            this.mark(m);
+            if (m.kind === "get") this.write("get ");
+            else if (m.kind === "set") this.write("set ");
+            if (m.computed) {
+              this.write("[");
+              this.print_expr(m.key as Expression, 0, false);
+              this.write("]");
+            } else {
+              this.print_prop_key(m.key);
+            }
+            if (m.optional) this.write("?");
+            this.print_type_params_decl(m.typeParameters);
+            this.write("(");
+            this.print_params(m.params);
+            this.write(")");
+            if (m.returnType != null) {
+              this.write(": ");
+              this.print_type(m.returnType.typeAnnotation);
+            }
+          } else if (m.type === "TSCallSignatureDeclaration") {
+            this.mark(m);
+            this.print_type_params_decl(m.typeParameters);
+            this.write("(");
+            this.print_params(m.params);
+            this.write(")");
+            if (m.returnType != null) {
+              this.write(": ");
+              this.print_type(m.returnType.typeAnnotation);
+            }
+          } else if (m.type === "TSConstructSignatureDeclaration") {
+            this.mark(m);
+            this.write("new ");
+            this.print_type_params_decl(m.typeParameters);
+            this.write("(");
+            this.print_params(m.params);
+            this.write(")");
+            if (m.returnType != null) {
+              this.write(": ");
+              this.print_type(m.returnType.typeAnnotation);
+            }
           } else {
             throw BAIL;
           }
@@ -604,6 +862,44 @@ class FastPrinter {
         this.print_params(t.params);
         this.write(") => ");
         this.print_type(t.returnType.typeAnnotation);
+        return;
+      }
+      case "TSConstructorType": {
+        if (t.abstract) this.write("abstract ");
+        this.write("new ");
+        this.print_type_params_decl(t.typeParameters);
+        this.write("(");
+        this.print_params(t.params);
+        this.write(") => ");
+        this.print_type(t.returnType.typeAnnotation);
+        return;
+      }
+      case "TSTemplateLiteralType": {
+        this.write("`");
+        const quasis = t.quasis;
+        const types = t.types;
+        const from_src = t.start >= 0;
+        for (let i = 0; i < quasis.length; i += 1) {
+          this.write_multiline(quasis[i].value.raw, from_src);
+          if (i < types.length) {
+            this.write("${");
+            this.print_type(types[i]);
+            this.write("}");
+          }
+        }
+        this.write("`");
+        return;
+      }
+      case "TSImportType": {
+        if (t.options != null) throw BAIL;
+        this.write("import(");
+        this.print_literal(t.source);
+        this.write(")");
+        if (t.qualifier != null) {
+          this.write(".");
+          this.print_type_name(t.qualifier);
+        }
+        this.print_type_args(t.typeArguments);
         return;
       }
       case "TSLiteralType": {
@@ -625,7 +921,7 @@ class FastPrinter {
         return;
       }
       case "TSTypeOperator": {
-        this.write(t.operator + " ");
+        this.write(TYPE_OPS[t.operator] ?? (t.operator + " "));
         const wrap = needs_type_parens_in_array_or_index(t.typeAnnotation);
         if (wrap) this.write("(");
         this.print_type(t.typeAnnotation);
@@ -721,7 +1017,11 @@ class FastPrinter {
   ): void {
     this.mark(lit);
     if (lit.raw != null) {
-      this.write_multiline(lit.raw);
+      if (typeof lit.value !== "string") {
+        this.write(lit.raw);
+        return;
+      }
+      this.write_multiline(lit.raw, lit.start >= 0);
       return;
     }
     const v = lit.value;
@@ -827,6 +1127,16 @@ class FastPrinter {
         }
         return;
       }
+      case "TSParameterProperty": {
+        if (pat.decorators !== undefined && pat.decorators.length > 0) {
+          throw BAIL;
+        }
+        if (pat.accessibility != null) this.write(pat.accessibility + " ");
+        if (pat.override) this.write("override ");
+        if (pat.readonly) this.write("readonly ");
+        this.print_pattern(pat.parameter);
+        return;
+      }
       default:
         throw BAIL;
     }
@@ -857,23 +1167,275 @@ class FastPrinter {
     this.write(")");
   }
 
+  private print_jsx_name(name: JSXElementName | JSXAttributeName): void {
+    this.mark(name);
+    if (name.type === "JSXIdentifier") {
+      this.write(name.name);
+      return;
+    }
+    if (name.type === "JSXMemberExpression") {
+      this.print_jsx_name(name.object);
+      this.write(".");
+      this.mark(name.property);
+      this.write(name.property.name);
+      return;
+    }
+    this.print_jsx_name(name.namespace);
+    this.write(":");
+    this.mark(name.name);
+    this.write(name.name.name);
+  }
+
+  private print_jsx_child(child: JSXChild): void {
+    switch (child.type) {
+      case "JSXText":
+        this.mark(child);
+        this.write_multiline(child.raw ?? child.value, child.start >= 0);
+        return;
+      case "JSXElement":
+        this.print_jsx_element(child);
+        return;
+      case "JSXFragment":
+        this.print_jsx_fragment(child);
+        return;
+      case "JSXExpressionContainer":
+        this.mark(child);
+        this.write("{");
+        if (child.expression.type !== "JSXEmptyExpression") {
+          this.print_expr(child.expression, 0, false);
+        }
+        this.write("}");
+        return;
+      case "JSXSpreadChild":
+        this.mark(child);
+        this.write("{...");
+        this.print_expr(child.expression, 0, false);
+        this.write("}");
+        return;
+    }
+  }
+
+  private print_jsx_element(el: JSXElement): void {
+    this.mark(el);
+    const open = el.openingElement;
+    this.mark(open);
+    this.write("<");
+    this.print_jsx_name(open.name);
+    this.print_type_args(open.typeArguments);
+    const attrs = open.attributes;
+    for (let i = 0; i < attrs.length; i += 1) {
+      this.write(" ");
+      const attr = attrs[i];
+      if (attr.type === "JSXSpreadAttribute") {
+        this.mark(attr);
+        this.write("{...");
+        this.print_expr(attr.argument, 0, false);
+        this.write("}");
+      } else {
+        this.mark(attr);
+        this.print_jsx_name(attr.name);
+        if (attr.value !== null) {
+          this.write("=");
+          const val = attr.value;
+          if (val.type === "Literal") {
+            this.print_literal(val);
+          } else if (val.type === "JSXExpressionContainer") {
+            this.mark(val);
+            this.write("{");
+            if (val.expression.type !== "JSXEmptyExpression") {
+              this.print_expr(val.expression, 0, false);
+            }
+            this.write("}");
+          } else if (val.type === "JSXElement") {
+            this.print_jsx_element(val);
+          } else if (val.type === "JSXFragment") {
+            this.print_jsx_fragment(val);
+          } else {
+            throw BAIL;
+          }
+        }
+      }
+    }
+    if (open.selfClosing) {
+      this.write(" />");
+      return;
+    }
+    this.write(">");
+    const children = el.children;
+    for (let i = 0; i < children.length; i += 1) {
+      this.print_jsx_child(children[i]);
+    }
+    if (el.closingElement !== null) {
+      this.mark(el.closingElement);
+      this.write("</");
+      this.print_jsx_name(el.closingElement.name);
+      this.write(">");
+    }
+  }
+
+  private print_jsx_fragment(frag: JSXFragment): void {
+    this.mark(frag);
+    this.write("<>");
+    const children = frag.children;
+    for (let i = 0; i < children.length; i += 1) {
+      this.print_jsx_child(children[i]);
+    }
+    this.write("</>");
+  }
+
+  private print_class(cls: Class): void {
+    if (cls.decorators.length > 0 || cls.declare || cls.abstract) throw BAIL;
+    this.write("class");
+    if (cls.id !== null) {
+      this.write(" ");
+      this.mark(cls.id);
+      this.write(cls.id.name);
+    }
+    this.print_type_params_decl(cls.typeParameters);
+    if (cls.superClass !== null) {
+      this.write(" extends ");
+      this.print_expr(cls.superClass, 17, false);
+      this.print_type_args(cls.superTypeArguments);
+    }
+    if (cls.implements != null && cls.implements.length > 0) {
+      this.write(" implements ");
+      for (let i = 0; i < cls.implements.length; i += 1) {
+        if (i > 0) this.write(", ");
+        const impl = cls.implements[i];
+        this.print_expr(impl.expression, 17, false);
+        this.print_type_args(impl.typeArguments);
+      }
+    }
+    this.write(" ");
+    const members = cls.body.body;
+    if (members.length === 0) {
+      this.write("{}");
+      return;
+    }
+    this.write("{");
+    this.write_nl();
+    this.depth += 1;
+    for (let i = 0; i < members.length; i += 1) {
+      this.write_indent();
+      const m = members[i];
+      if (m.type === "StaticBlock") {
+        this.mark(m);
+        this.write("static ");
+        this.print_block(m.body as Statement[]);
+      } else if (m.type === "MethodDefinition") {
+        if (m.decorators.length > 0 || m.value.body === null) throw BAIL;
+        this.mark(m);
+        if (m.accessibility != null) this.write(m.accessibility + " ");
+        if (m.static) this.write("static ");
+        if (m.override) this.write("override ");
+        if (m.kind === "get") {
+          this.write("get ");
+        } else if (m.kind === "set") {
+          this.write("set ");
+        } else {
+          if (m.value.async) this.write("async ");
+          if (m.value.generator) this.write("*");
+        }
+        if (m.computed) {
+          this.write("[");
+          this.print_expr(m.key as Expression, 0, false);
+          this.write("]");
+        } else if (m.key.type === "PrivateIdentifier") {
+          this.mark(m.key);
+          this.write("#" + m.key.name);
+        } else {
+          this.print_prop_key(m.key);
+        }
+        if (m.optional) this.write("?");
+        this.print_type_params_decl(m.value.typeParameters);
+        this.write("(");
+        this.print_params(m.value.params);
+        this.write(")");
+        if (m.value.returnType != null) {
+          this.write(": ");
+          this.print_type(m.value.returnType.typeAnnotation);
+        }
+        this.write(" ");
+        this.print_block(m.value.body.body as Statement[]);
+      } else if (m.type === "PropertyDefinition") {
+        if (m.decorators.length > 0 || m.declare) throw BAIL;
+        this.mark(m);
+        if (m.accessibility != null) this.write(m.accessibility + " ");
+        if (m.static) this.write("static ");
+        if (m.override) this.write("override ");
+        if (m.readonly) this.write("readonly ");
+        if (m.computed) {
+          this.write("[");
+          this.print_expr(m.key as Expression, 0, false);
+          this.write("]");
+        } else if (m.key.type === "PrivateIdentifier") {
+          this.mark(m.key);
+          this.write("#" + m.key.name);
+        } else {
+          this.print_prop_key(m.key);
+        }
+        if (m.optional) this.write("?");
+        if (m.definite) this.write("!");
+        if (m.typeAnnotation != null) {
+          this.write(": ");
+          this.print_type(m.typeAnnotation.typeAnnotation);
+        }
+        if (m.value !== null) {
+          this.write(" = ");
+          this.print_expr(m.value, 1, false);
+        }
+        this.write(";");
+      } else if (m.type === "TSIndexSignature") {
+        this.mark(m);
+        if (m.readonly) this.write("readonly ");
+        this.write("[");
+        const p = m.parameters[0];
+        if (p === undefined) throw BAIL;
+        this.print_pattern(p as unknown as ParamPattern);
+        this.write("]");
+        if (m.typeAnnotation != null) {
+          this.write(": ");
+          this.print_type(m.typeAnnotation.typeAnnotation);
+        }
+        this.write(";");
+      } else {
+        throw BAIL;
+      }
+      this.write_nl();
+    }
+    this.depth -= 1;
+    this.write_indent();
+    this.write("}");
+  }
+
   private print_expr(
     expr: Expression,
     min_prec: number,
     no_in: boolean,
   ): void {
-    const prec = expr_prec(expr);
-    const wrap = prec < min_prec ||
-      (no_in && expr.type === "BinaryExpression" && expr.operator === "in");
+    const type = expr.type;
+    if (type === "Identifier") {
+      this.mark(expr);
+      this.write(expr.name);
+      return;
+    }
+    if (type === "Literal") {
+      this.print_literal(expr);
+      return;
+    }
+    let wrap = false;
+    if (min_prec > 1) {
+      wrap = expr_prec(expr) < min_prec ||
+        (no_in && type === "BinaryExpression" && expr.operator === "in");
+    } else if (min_prec === 1) {
+      wrap = type === "SequenceExpression" ||
+        (no_in && type === "BinaryExpression" && expr.operator === "in");
+    } else if (no_in) {
+      wrap = type === "BinaryExpression" && expr.operator === "in";
+    }
     if (wrap) this.write("(");
     this.mark(expr);
-    switch (expr.type) {
-      case "Identifier":
-        this.write(expr.name);
-        break;
-      case "Literal":
-        this.print_literal(expr);
-        break;
+    switch (type) {
       case "ThisExpression":
         this.write("this");
         break;
@@ -898,8 +1460,9 @@ class FastPrinter {
         this.write("`");
         const quasis = expr.quasis;
         const exprs = expr.expressions;
+        const from_src = expr.start >= 0;
         for (let i = 0; i < quasis.length; i += 1) {
-          this.write_multiline(quasis[i].value.raw);
+          this.write_multiline(quasis[i].value.raw, from_src);
           if (i < exprs.length) {
             this.write("${");
             this.print_expr(exprs[i], 0, false);
@@ -954,9 +1517,35 @@ class FastPrinter {
             this.print_expr(prop.argument, 1, false);
           } else {
             const p = prop as ObjectProperty;
-            if (p.kind !== "init") throw BAIL;
             this.mark(p);
-            if (p.method) {
+            if (p.kind === "get" || p.kind === "set") {
+              if (
+                p.value.type !== "FunctionExpression" || p.value.body === null
+              ) {
+                throw BAIL;
+              }
+              const fn = p.value;
+              this.write(p.kind === "get" ? "get " : "set ");
+              if (p.computed) {
+                this.write("[");
+                this.print_expr(p.key as Expression, 0, false);
+                this.write("]");
+              } else {
+                this.print_prop_key(p.key);
+              }
+              this.print_type_params_decl(fn.typeParameters);
+              this.write("(");
+              this.print_params(fn.params);
+              this.write(")");
+              if (fn.returnType != null) {
+                this.write(": ");
+                this.print_type(fn.returnType.typeAnnotation);
+              }
+              this.write(" ");
+              this.print_block(fn.body!.body as Statement[]);
+            } else if (p.kind !== "init") {
+              throw BAIL;
+            } else if (p.method) {
               if (
                 p.value.type !== "FunctionExpression" || p.value.body === null
               ) {
@@ -1111,7 +1700,7 @@ class FastPrinter {
         } else {
           this.print_expr(expr.left, p, no_in);
         }
-        this.write(" " + op + " ");
+        this.write(SPACED_OPS[op] ?? (" " + op + " "));
         this.print_expr(expr.right, op === "**" ? p : p + 0.5, no_in);
         break;
       }
@@ -1128,7 +1717,7 @@ class FastPrinter {
         } else {
           this.print_expr(expr.left, p, no_in);
         }
-        this.write(" " + op + " ");
+        this.write(SPACED_OPS[op] ?? (" " + op + " "));
         const mix_right = expr.right.type === "LogicalExpression" &&
           ((op === "??" && expr.right.operator !== "??") ||
             (op !== "??" && expr.right.operator === "??"));
@@ -1157,7 +1746,7 @@ class FastPrinter {
         } else {
           this.print_pattern(expr.left as BindingPattern);
         }
-        this.write(" " + expr.operator + " ");
+        this.write(SPACED_OPS[expr.operator] ?? (" " + expr.operator + " "));
         this.print_expr(expr.right, 1, no_in);
         break;
       case "SequenceExpression": {
@@ -1195,6 +1784,18 @@ class FastPrinter {
         this.print_function(expr as FunctionNode);
         break;
       }
+      case "ClassExpression": {
+        this.print_class(expr as Class);
+        break;
+      }
+      case "JSXElement": {
+        this.print_jsx_element(expr);
+        break;
+      }
+      case "JSXFragment": {
+        this.print_jsx_fragment(expr);
+        break;
+      }
       case "TSAsExpression":
         this.print_expr(expr.expression, 2, no_in);
         this.write(" as ");
@@ -1204,6 +1805,12 @@ class FastPrinter {
         this.print_expr(expr.expression, 2, no_in);
         this.write(" satisfies ");
         this.print_type(expr.typeAnnotation);
+        break;
+      case "TSTypeAssertion":
+        this.write("<");
+        this.print_type(expr.typeAnnotation);
+        this.write(">");
+        this.print_expr(expr.expression, 14, false);
         break;
       case "TSNonNullExpression":
         this.print_expr(expr.expression, 16, false);
@@ -1262,10 +1869,11 @@ class FastPrinter {
     decl: VariableDeclaration,
     semicolon: boolean,
     no_in: boolean,
+    mark_decl: boolean,
   ): void {
     if (decl.declare) throw BAIL;
-    this.mark(decl);
-    this.write(decl.kind + " ");
+    if (mark_decl) this.mark(decl);
+    this.write(VAR_KINDS[decl.kind] ?? (decl.kind + " "));
     const list = decl.declarations;
     for (let i = 0; i < list.length; i += 1) {
       if (i > 0) this.write(", ");
@@ -1283,7 +1891,6 @@ class FastPrinter {
 
   private print_import_decl(imp: ImportDeclaration): void {
     if (imp.attributes !== undefined && imp.attributes.length > 0) throw BAIL;
-    this.mark(imp);
     this.write("import ");
     if (imp.importKind === "type") this.write("type ");
     const specs = imp.specifiers;
@@ -1339,11 +1946,29 @@ class FastPrinter {
     this.write(";");
   }
 
+  private print_for_lhs(left: Node): void {
+    if (left.type === "VariableDeclaration") {
+      this.print_var_decl(left, false, false, true);
+    } else if (
+      left.type === "MemberExpression" ||
+      left.type === "TSNonNullExpression" ||
+      left.type === "TSAsExpression" ||
+      left.type === "ParenthesizedExpression"
+    ) {
+      this.print_expr(left as Expression, 17, false);
+    } else {
+      this.print_pattern(left as BindingPattern);
+    }
+  }
+
   private print_stmt(stmt: Statement): void {
     this.mark(stmt);
     switch (stmt.type) {
       case "EmptyStatement":
         this.write(";");
+        return;
+      case "DebuggerStatement":
+        this.write("debugger;");
         return;
       case "BlockStatement":
         this.print_block(stmt.body as Statement[]);
@@ -1358,7 +1983,7 @@ class FastPrinter {
         return;
       }
       case "VariableDeclaration":
-        this.print_var_decl(stmt, true, false);
+        this.print_var_decl(stmt, true, false, false);
         return;
       case "ReturnStatement":
         this.write("return");
@@ -1404,7 +2029,7 @@ class FastPrinter {
         this.write("for (");
         if (stmt.init !== null) {
           if (stmt.init.type === "VariableDeclaration") {
-            this.print_var_decl(stmt.init, false, true);
+            this.print_var_decl(stmt.init, false, true, true);
           } else {
             this.print_expr(stmt.init, 0, true);
           }
@@ -1419,11 +2044,7 @@ class FastPrinter {
       }
       case "ForOfStatement": {
         this.write(stmt.await ? "for await (" : "for (");
-        if (stmt.left.type === "VariableDeclaration") {
-          this.print_var_decl(stmt.left, false, false);
-        } else {
-          this.print_pattern(stmt.left as BindingPattern);
-        }
+        this.print_for_lhs(stmt.left);
         this.write(" of ");
         this.print_expr(stmt.right, 1, false);
         this.write(") ");
@@ -1432,11 +2053,7 @@ class FastPrinter {
       }
       case "ForInStatement": {
         this.write("for (");
-        if (stmt.left.type === "VariableDeclaration") {
-          this.print_var_decl(stmt.left, false, false);
-        } else {
-          this.print_pattern(stmt.left as BindingPattern);
-        }
+        this.print_for_lhs(stmt.left);
         this.write(" in ");
         this.print_expr(stmt.right, 0, false);
         this.write(") ");
@@ -1513,6 +2130,9 @@ class FastPrinter {
       case "FunctionDeclaration":
         this.print_function(stmt as FunctionNode);
         return;
+      case "ClassDeclaration":
+        this.print_class(stmt as Class);
+        return;
       case "ImportDeclaration":
         this.print_import_decl(stmt);
         return;
@@ -1524,6 +2144,25 @@ class FastPrinter {
         this.write("export ");
         this.print_stmt(stmt.declaration as Statement);
         return;
+      case "ExportDefaultDeclaration": {
+        const decl = stmt.declaration;
+        this.write("export default ");
+        if (
+          decl.type === "FunctionDeclaration" ||
+          decl.type === "ClassDeclaration"
+        ) {
+          this.print_stmt(decl as Statement);
+        } else {
+          const expr = decl as Expression;
+          const wrap_def = expr.type === "FunctionExpression" ||
+            expr.type === "ClassExpression";
+          if (wrap_def) this.write("(");
+          this.print_expr(expr, 1, false);
+          if (wrap_def) this.write(")");
+          this.write(";");
+        }
+        return;
+      }
       case "TSTypeAliasDeclaration":
         if (stmt.declare) throw BAIL;
         this.write("type ");
@@ -1539,56 +2178,69 @@ class FastPrinter {
     }
   }
 
-  run(root: Node, sink: FastPrintSink, lang: "ts" | "tsx"): boolean {
+  run(
+    root: Node,
+    sink: FastPrintSink,
+    lang: "ts" | "tsx",
+    mode?: "program" | "statement" | "expression",
+  ): boolean {
     this.sink = sink;
     this.source_map = sink.source_map;
+    this.direct_map = sink.source_map && sink.mapping_parts !== undefined;
+    this.has_non_lf = sink.has_non_lf !== false;
     this.locator = sink.locator;
     this.lang = lang;
     this.buf = "";
     this.col = sink.gen_col;
     this.depth = 0;
+    this.last_mark_start = -1;
+    if (this.direct_map) {
+      this.map_buf = "";
+      this.out_gen_col = sink.out_gen_col;
+      this.out_orig_line = sink.out_orig_line;
+      this.out_orig_col = sink.out_orig_col;
+      this.line_has_seg = sink.line_has_seg;
+    }
     try {
-      if (root.type === "Program") {
+      if (mode === "expression") {
+        this.print_expr(root as Expression, 0, false);
+      } else if (mode === "program") {
         const body = (root as Program).body as Statement[];
         for (let i = 0; i < body.length; i += 1) {
           if (i > 0) this.write_nl();
           this.print_stmt(body[i]);
         }
-      } else if (
-        root.type === "ExpressionStatement" ||
-        root.type === "VariableDeclaration" ||
-        root.type === "ReturnStatement" ||
-        root.type === "ThrowStatement" ||
-        root.type === "IfStatement" ||
-        root.type === "BlockStatement" ||
-        root.type === "ForStatement" ||
-        root.type === "ForOfStatement" ||
-        root.type === "ForInStatement" ||
-        root.type === "WhileStatement" ||
-        root.type === "DoWhileStatement" ||
-        root.type === "SwitchStatement" ||
-        root.type === "TryStatement" ||
-        root.type === "LabeledStatement" ||
-        root.type === "BreakStatement" ||
-        root.type === "ContinueStatement" ||
-        root.type === "EmptyStatement" ||
-        root.type === "FunctionDeclaration" ||
-        root.type === "ImportDeclaration" ||
-        root.type === "ExportNamedDeclaration" ||
-        root.type === "TSTypeAliasDeclaration"
-      ) {
+      } else if (mode === "statement") {
+        this.print_stmt(root as Statement);
+      } else if (root.type === "Program") {
+        const body = (root as Program).body as Statement[];
+        for (let i = 0; i < body.length; i += 1) {
+          if (i > 0) this.write_nl();
+          this.print_stmt(body[i]);
+        }
+      } else if (STMT_TYPES.has(root.type)) {
         this.print_stmt(root as Statement);
       } else {
         this.print_expr(root as Expression, 0, false);
       }
       sink.code_chunks.push(this.buf);
       sink.gen_col = this.col;
+      if (this.direct_map) {
+        if (this.map_buf.length > 0) {
+          sink.mapping_parts!.push(this.map_buf);
+        }
+        sink.out_gen_col = this.out_gen_col;
+        sink.out_orig_line = this.out_orig_line;
+        sink.out_orig_col = this.out_orig_col;
+        sink.line_has_seg = this.line_has_seg;
+      }
       return true;
     } catch (err) {
       if (err === BAIL) return false;
       throw err;
     } finally {
       this.buf = "";
+      this.map_buf = "";
     }
   }
 }
@@ -1598,12 +2250,14 @@ const shared_fast_printer = /* @__PURE__ */ new FastPrinter();
 /**
  * Fast direct TypeScript/JavaScript AST printer with inline V3 source map emission.
  * Returns true if printed directly into `sink`, or false (leaving `sink` untouched
- * after caller rollback) if an unsupported AST construct requires esrap fallback.
+ * when `mapping_parts` is provided, or after caller rollback) if an unsupported AST
+ * construct requires esrap fallback.
  */
 export function try_print_fast(
   root: Node,
   sink: FastPrintSink,
   lang: "ts" | "tsx",
+  mode?: "program" | "statement" | "expression",
 ): boolean {
-  return shared_fast_printer.run(root, sink, lang);
+  return shared_fast_printer.run(root, sink, lang, mode);
 }

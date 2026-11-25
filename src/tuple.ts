@@ -3,13 +3,16 @@ import {
   type Data,
   data,
   type Dictionary,
+  kind,
   type type_data,
   type type_item,
   type WrappedData,
 } from "./typeclass.ts";
 import { inspect } from "./inspect.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
+  applicative_lift_method,
   Bifunctor,
   type BifunctorContext,
   Comonad,
@@ -23,6 +26,7 @@ import {
   Show,
   Traversable,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 
 /** @ignore */
 export const tuple_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -122,6 +126,31 @@ function tuple_with_left<left>(): TupleDictionary<left> {
   return Tuple as unknown as TupleDictionary<left>;
 }
 
+function carry_add<output extends MonoidDictionary<output>, left>(
+  pending: (Data<output, left> | undefined)[],
+  value: Data<output, left>,
+): void {
+  let level = 0;
+  while (pending[level] !== undefined) {
+    value = pending[level]!.concat(value);
+    pending[level++] = undefined;
+  }
+  pending[level] = value;
+}
+
+function carry_done<output extends MonoidDictionary<output>, left>(
+  pending: (Data<output, left> | undefined)[],
+): Data<output, left> {
+  let result: Data<output, left> | undefined;
+  for (let i = pending.length - 1; i >= 0; i -= 1) {
+    const chunk = pending[i];
+    if (chunk !== undefined) {
+      result = result === undefined ? chunk : result.concat(chunk);
+    }
+  }
+  return result!;
+}
+
 function tuple_with_monoid<
   output extends MonoidDictionary<output>,
   left,
@@ -130,8 +159,8 @@ function tuple_with_monoid<
 
   Functor.instance(dictionary)({
     map(fn) {
-      const [output, value] = this.value();
-      return wrap(output, fn(value));
+      const pair = this.value();
+      return wrap(pair[0], fn(pair[1]));
     },
   });
 
@@ -140,22 +169,78 @@ function tuple_with_monoid<
       return wrap(empty.empty(), value);
     },
 
-    ap(value) {
-      const [left_output, fn] = this.value();
-      const [right_output, item] = value.value();
+    [applicative_lift_method](fn, rest) {
+      const [out0, first] = this.value();
+      const len = rest.length;
+      if (len === 0) return wrap(out0, fn(first));
+      if (len === 1) {
+        const pair = rest[0].value();
+        return wrap(out0.concat(pair[0]), fn(first, pair[1]));
+      }
+      const values = [first];
+      let combined = out0;
+      for (let i = 0; i < len; i += 1) {
+        const pair = rest[i].value();
+        combined = combined.concat(pair[0]);
+        values.push(pair[1]);
+      }
+      return wrap(combined, fn(...values));
+    },
 
-      return wrap(left_output.concat(right_output), fn(item));
+    ap(value) {
+      const a = this.value();
+      const b = value.value();
+      return wrap(a[0].concat(b[0]), a[1](b[1]));
     },
   });
 
   Monad.instance(dictionary)({
     bind(fn) {
-      const [left_output, value] = this.value();
-      const [right_output, item] = fn(value).value();
-
-      return wrap(left_output.concat(right_output), item);
+      const a = this.value();
+      const b = fn(a[1]).value();
+      return wrap(a[0].concat(b[0]), b[1]);
     },
   });
+
+  const c_bind = dictionary.bind;
+  const c_pure = dictionary.pure;
+  const tuple_do: CustomDoRunner = (first_value, first_iterator) => {
+    const first = first_value as TupleMonoidValue<output, left, unknown>;
+    if (
+      first[kind] !== dictionary[kind] || first.bind !== c_bind ||
+      first.pure !== c_pure
+    ) return undefined;
+    const [o0, v0] = first.value();
+    const pending: (Data<output, left> | undefined)[] = [o0];
+    let next = first_iterator.next(v0);
+    while (!next.done) {
+      const pair = (next.value as TupleMonoidValue<output, left, unknown>)
+        .value();
+      carry_add(pending, pair[0]);
+      next = first_iterator.next(pair[1]);
+    }
+    return wrap(carry_done(pending), next.value);
+  };
+  Object.defineProperty(dictionary, do_runner_method, { value: tuple_do });
+
+  const traverse_impl = <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsTupleMonoid<output, left>, to>,
+    build?: (items: Iterable<to>) => result,
+  ): Data<AsTupleMonoid<output, left>, result> => {
+    const pending: (Data<output, left> | undefined)[] = [];
+    const out: to[] = [];
+    for (const item of items) {
+      const pair = fn(item).value();
+      carry_add(pending, pair[0]);
+      out.push(pair[1]);
+    }
+    return wrap(
+      pending.length === 0 ? empty.empty<left>() : carry_done(pending),
+      build ? build(out) : out as unknown as result,
+    );
+  };
+  register_traversal(dictionary, traverse_impl, traverse_impl as never);
 
   return dictionary;
 
@@ -189,9 +274,8 @@ export function snd<left, right>(value: Tuple<left, right>): right {
 export function swap<left, right>(
   value: Tuple<left, right>,
 ): Tuple<right, left> {
-  const [left, right] = value.value();
-
-  return tuple(right, left);
+  const pair = value.value();
+  return tuple(pair[1], pair[0]);
 }
 
 function create_tuple(): TupleConstructor {
@@ -199,48 +283,34 @@ function create_tuple(): TupleConstructor {
     tuple_identity,
   ) as unknown as TupleConstructor;
 
-  Object.defineProperty(Tuple, "with_left", {
-    value: tuple_with_left,
-  });
-
-  Object.defineProperty(Tuple, "with_monoid", {
-    value: tuple_with_monoid,
+  Object.defineProperties(Tuple, {
+    with_left: { value: tuple_with_left },
+    with_monoid: { value: tuple_with_monoid },
   });
 
   Show.instance(Tuple)({
     show() {
-      const [left, right] = this.value();
-
-      return "Tuple(" + inspect(left) + ", " + inspect(right) + ")";
+      const pair = this.value();
+      return "Tuple(" + inspect(pair[0]) + ", " + inspect(pair[1]) + ")";
     },
   });
 
   Eq.instance(Tuple)({
     eq(right) {
-      const [left_first, left_second] = this.value();
-      const [right_first, right_second] = right.value();
-
-      if (!Object.is(left_first, right_first)) {
-        return false;
-      }
-
-      return Object.is(left_second, right_second);
+      if (this === right) return true;
+      const a = this.value();
+      const b = right.value();
+      return Object.is(a[0], b[0]) && Object.is(a[1], b[1]);
     },
   });
 
   Ord.instance(Tuple)({
     compare(right) {
-      const [left_first, left_second] = this.value();
-      const [right_first, right_second] = right.value();
-      const first_order = compare_unknown(left_first, right_first);
-
-      switch (first_order) {
-        case "eq":
-          return compare_unknown(left_second, right_second);
-        case "lt":
-        case "gt":
-          return first_order;
-      }
+      if (this === right) return "eq";
+      const a = this.value();
+      const b = right.value();
+      const first_order = compare_unknown(a[0], b[0]);
+      return first_order === "eq" ? compare_unknown(a[1], b[1]) : first_order;
     },
   });
 
@@ -250,47 +320,39 @@ function create_tuple(): TupleConstructor {
       map_left: (value: unknown) => next_left,
       map_right: (value: right) => next_right,
     ) {
-      const [left, right] = this.value();
-
-      return tuple(map_left(left), map_right(right));
+      const pair = this.value();
+      return tuple(map_left(pair[0]), map_right(pair[1]));
     },
   });
 
   Functor.instance(Tuple)({
     map(fn) {
-      const [left, right] = this.value();
-
-      return tuple(left, fn(right));
+      const pair = this.value();
+      return tuple(pair[0], fn(pair[1]));
     },
   });
 
   Foldable.instance(Tuple)({
     fold(initial, fn) {
-      const [_left, right] = this.value();
-
-      return fn(initial, right);
+      return fn(initial, this.value()[1]);
     },
   });
 
   Traversable.instance(Tuple)({
     traverse(_applicative, fn) {
-      const [left, right] = this.value();
-
-      return Functor.map(fn(right), (value) => tuple(left, value));
+      const pair = this.value();
+      const left = pair[0];
+      return Functor.map(fn(pair[1]), (value) => tuple(left, value));
     },
   });
 
   Comonad.instance(Tuple)({
     extract() {
-      const [_left, right] = this.value();
-
-      return right;
+      return this.value()[1];
     },
 
     extend(fn) {
-      const [left] = this.value();
-
-      return tuple(left, fn(this));
+      return tuple(this.value()[0], fn(this));
     },
   });
 

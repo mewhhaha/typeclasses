@@ -74,8 +74,11 @@ Show.instance(FormDataT)({
 
 Eq.instance(FormDataT)({
   eq(right) {
-    const left_iter = this.value().entries();
-    const right_iter = right.value().entries();
+    const left_fd = this.value();
+    const right_fd = right.value();
+    if (left_fd === right_fd) return true;
+    const left_iter = left_fd.entries();
+    const right_iter = right_fd.entries();
     while (true) {
       const l = left_iter.next();
       const r = right_iter.next();
@@ -91,11 +94,9 @@ Eq.instance(FormDataT)({
 Semigroup.instance(FormDataT)({
   concat(right) {
     const out = clone_form_data(this.value());
-
-    for (const [name, value] of right.value().entries()) {
+    right.value().forEach((value, name) => {
       out.append(name, value);
-    }
-
+    });
     return as_data(FormDataT, out);
   },
 });
@@ -144,7 +145,11 @@ Foldable.instance(FormDataT)({
 });
 
 function clone_form_data(form_data: FormData): FormData {
-  return form_data_from_entries(form_data.entries());
+  const out = new FormData();
+  form_data.forEach((value, name) => {
+    out.append(name, value);
+  });
+  return out;
 }
 
 function form_data_from_entries(entries: Iterable<FormDataEntry>): FormData {

@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -40,6 +40,6 @@ export const Eq: EqTypeclass = /* @__PURE__ */ typeclass(eq_typeclass, {
     left: Data<dictionary, item>,
     right: Data<dictionary, item>,
   ): boolean {
-    return call_typeclass_method(this.instance_for(left).eq<item>, left, right);
+    return (instance_for_token(eq_typeclass, left).eq<item>).call(left, right);
   },
 });

@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -86,15 +86,15 @@ export const MonadError: MonadErrorTypeclass = /* @__PURE__ */ typeclass(
       witness: dictionary | Data<dictionary, unknown>,
       error: MonadErrorType<dictionary>,
     ): Data<dictionary, item> {
-      const implementation = this.instance_for(
+      const implementation = instance_for_token(
+        monad_error_typeclass,
         witness,
       ) as unknown as MonadErrorImplementation<
         dictionary,
         MonadErrorType<dictionary>
       >;
 
-      return call_typeclass_method(
-        implementation.throw_error<item>,
+      return (implementation.throw_error<item>).call(
         witness as dictionary,
         error,
       );
@@ -106,18 +106,15 @@ export const MonadError: MonadErrorTypeclass = /* @__PURE__ */ typeclass(
         error: MonadErrorType<dictionary>,
       ) => Data<dictionary, item>,
     ): Data<dictionary, item> {
-      const implementation = this.instance_for(
+      const implementation = instance_for_token(
+        monad_error_typeclass,
         value,
       ) as unknown as MonadErrorImplementation<
         dictionary,
         MonadErrorType<dictionary>
       >;
 
-      return call_typeclass_method(
-        implementation.catch_error<item>,
-        value,
-        handler,
-      );
+      return (implementation.catch_error<item>).call(value, handler);
     },
   },
 );

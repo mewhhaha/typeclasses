@@ -258,14 +258,7 @@ function make_reader_cell<key extends PropertyKey, environment>(
 
   Monad.instance(dictionary)({
     bind(fn) {
-      const read = this.value();
-
-      return wrap(
-        bind_reader_computation(
-          read,
-          (value) => fn(value).value(),
-        ),
-      );
+      return wrap(bind_reader_computation(this.value(), fn));
     },
   });
 
@@ -582,12 +575,7 @@ Applicative.instance(Reader)({
 
 Monad.instance(Reader)({
   bind(fn) {
-    return Reader(
-      bind_reader_computation(
-        this.value(),
-        (value) => fn(value).value(),
-      ),
-    );
+    return Reader(bind_reader_computation(this.value(), fn));
   },
 });
 

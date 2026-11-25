@@ -114,6 +114,7 @@ export function operation<
         },
         is(candidate: unknown): boolean {
           return Array.isArray(candidate) &&
+            !is_effect(candidate) &&
             (candidate.length === 1 || candidate.length === 2) &&
             candidate[0] === value;
         },
@@ -287,7 +288,9 @@ type EffectResume = (value: unknown) => Effect<unknown, unknown>;
 
 type EffectFrame = {
   readonly previous: EffectFrame | undefined;
-  readonly resume: EffectResume;
+  readonly fn: (value: unknown) => unknown;
+  readonly is_map: boolean;
+  ordered: EffectFrame[] | undefined;
 };
 
 // A suspended continuation shares its unconsumed array instead of copying its
@@ -295,7 +298,7 @@ type EffectFrame = {
 type EffectQueue =
   | {
     readonly tag: "chunk";
-    readonly resumes: readonly EffectResume[];
+    readonly frames: readonly EffectFrame[];
     readonly index: number;
   }
   | {
@@ -304,57 +307,13 @@ type EffectQueue =
     readonly right: EffectQueue;
   };
 
-const effect_resume = Symbol("Effect.resume");
-const effect_frames = Symbol("Effect.frames");
-const effect_queue = Symbol("Effect.queue");
-
-const EffectPrototype: EffectBase<unknown, unknown> = {
-  [Symbol.iterator]: effect_iterator,
+type EffectState = {
+  readonly resume: EffectResume;
+  readonly frames: EffectFrame | undefined;
+  readonly queue: EffectQueue | undefined;
 };
 
-const EffectInterpreterPrototype = {
-  handle(
-    this: EffectInterpreterTarget<unknown, unknown>,
-    handler: EffectHandler<unknown, unknown, unknown, unknown>,
-  ): EffectInterpreter<unknown, unknown> {
-    return interpret(handler(this.effect));
-  },
-
-  run<result>(
-    this: EffectInterpreterTarget<unknown, unknown>,
-    runner: EffectRunner<unknown, unknown, result>,
-  ): result {
-    return runner(this.effect);
-  },
-
-  value(
-    this: EffectInterpreterTarget<unknown, unknown>,
-  ): Effect<unknown, unknown> {
-    return this.effect;
-  },
-};
-
-type EffectInterpreterTarget<requirements, item> = {
-  readonly effect: Effect<requirements, item>;
-};
-
-type PureEffectTarget = {
-  0: "pure";
-  1: unknown;
-};
-
-type ImpureEffectTarget = {
-  0: "impure";
-  1: unknown;
-  2: (value: unknown) => Effect<unknown, unknown>;
-  [effect_resume]: (value: unknown) => Effect<unknown, unknown>;
-  [effect_frames]: EffectFrame | undefined;
-  [effect_queue]: EffectQueue | undefined;
-};
-
-type MutableEffectInterpreterTarget = {
-  effect: Effect<unknown, unknown>;
-};
+const effect_state = Symbol();
 
 /** Builds effects with generator syntax. */
 export const Program = /* @__PURE__ */ Object.assign(program, {
@@ -402,66 +361,58 @@ export const Effect: EffectConstructors = {
   interpret,
 };
 
-function PureEffect(this: PureEffectTarget, value: unknown) {
-  this[0] = "pure";
-  this[1] = value;
-}
-
-const NewPureEffect = /* @__PURE__ */ (() => {
-  PureEffect.prototype = EffectPrototype;
-  return PureEffect as unknown as {
-    new <item>(value: item): Effect<never, item>;
-  };
+const DetachedEffectBase = /* @__PURE__ */ (() => {
+  class DetachedEffectArr extends Array<unknown> {}
+  Object.setPrototypeOf(DetachedEffectArr.prototype, Object.prototype);
+  Object.defineProperty(DetachedEffectArr.prototype, Symbol.iterator, {
+    value: effect_iterator,
+  });
+  return DetachedEffectArr;
 })();
 
-function ImpureEffect(
-  this: ImpureEffectTarget,
-  operation: unknown,
-  resume: (value: unknown) => Effect<unknown, unknown>,
-  frames: EffectFrame | undefined = undefined,
-  queue: EffectQueue | undefined = undefined,
-) {
-  this[0] = "impure";
-  this[1] = operation;
-  this[2] = frames === undefined && queue === undefined
-    ? resume
-    : (value) => resume_effect(resume, frames, queue, value);
-  this[effect_resume] = resume;
-  this[effect_frames] = frames;
-  this[effect_queue] = queue;
+function make_impure<requirements, item>(
+  operation: requirements,
+  resume: (value: unknown) => Effect<requirements, item>,
+): Effect<requirements, item> {
+  const e = new DetachedEffectBase(3);
+  e[0] = "impure";
+  e[1] = operation;
+  e[2] = resume;
+  return e as unknown as Effect<requirements, item>;
 }
 
-const NewImpureEffect = /* @__PURE__ */ (() => {
-  ImpureEffect.prototype = EffectPrototype;
-  return ImpureEffect as unknown as {
-    new <requirements, item>(
-      operation: requirements,
-      resume: (value: unknown) => Effect<requirements, item>,
-      frames?: EffectFrame,
-      queue?: EffectQueue,
-    ): Effect<requirements, item>;
+function make_framed<requirements, item>(
+  operation: requirements,
+  resume: EffectResume,
+  frames: EffectFrame | undefined,
+  queue: EffectQueue | undefined,
+): Effect<requirements, item> {
+  const e = new DetachedEffectBase(3) as unknown as {
+    0: "impure";
+    1: unknown;
+    2: EffectResume;
+    [effect_state]: EffectState;
   };
-})();
-
-function EffectInterpreterValue(
-  this: MutableEffectInterpreterTarget,
-  effect: Effect<unknown, unknown>,
-) {
-  this.effect = effect;
+  e[0] = "impure";
+  e[1] = operation;
+  e[2] = (value: unknown) => resume_effect(resume, frames, queue, value);
+  e[effect_state] = { resume, frames, queue };
+  return e as unknown as Effect<requirements, item>;
 }
 
-const NewEffectInterpreter = /* @__PURE__ */ (() => {
-  EffectInterpreterValue.prototype = EffectInterpreterPrototype;
-  return EffectInterpreterValue as unknown as {
-    new <requirements, item>(
-      effect: Effect<requirements, item>,
-    ): EffectInterpreter<requirements, item>;
-  };
-})();
+type MaybeFramedEffect = {
+  readonly 0: "impure";
+  readonly 1: unknown;
+  readonly 2: EffectResume;
+  readonly [effect_state]?: EffectState;
+};
 
 /** Creates an effect that has already produced `value`. */
 export function pure<item>(value: item): Effect<never, item> {
-  return new NewPureEffect(value);
+  const e = new DetachedEffectBase(2);
+  e[0] = "pure";
+  e[1] = value;
+  return e as unknown as Effect<never, item>;
 }
 
 /** Returns an existing effect unchanged. */
@@ -480,7 +431,7 @@ export function from(value: unknown): Effect<unknown, unknown> {
 export function lift<dictionary extends Dictionary, item>(
   value: Data<dictionary, item>,
 ): Effect<Lift<dictionary, item>, item> {
-  return new NewImpureEffect(
+  return make_impure(
     ["lift", value] as Lift<dictionary, item>,
     resume_pure,
   ) as Effect<Lift<dictionary, item>, item>;
@@ -490,7 +441,7 @@ export function lift<dictionary extends Dictionary, item>(
 export function send<operation extends TaggedOperation & Operation<unknown>>(
   operation: operation,
 ): Effect<operation, OperationOutput<operation>> {
-  return new NewImpureEffect(operation, resume_pure) as Effect<
+  return make_impure(operation, resume_pure) as Effect<
     operation,
     OperationOutput<operation>
   >;
@@ -514,7 +465,7 @@ export function suspend<requirements, item>(
   operation: requirements,
   resume: (value: unknown) => Effect<requirements, item>,
 ): Effect<requirements, item> {
-  return new NewImpureEffect(operation, resume);
+  return make_impure(operation, resume);
 }
 
 /** Transforms the successful item produced by an effect. */
@@ -528,7 +479,8 @@ export function map<requirements, from, to>(
 
   return append_effect_frame(
     effect,
-    (value) => pure(fn(value as from)),
+    fn as (value: unknown) => unknown,
+    true,
   ) as Effect<requirements, to>;
 }
 
@@ -547,7 +499,7 @@ export function map_from<from, to>(
   fn: (value: from) => to,
 ): Effect<unknown, to> {
   if (is_data(value)) {
-    return new NewImpureEffect(
+    return make_impure(
       ["lift", value] as unknown as Lift<Dictionary, from>,
       (item) => pure(fn(item as from)),
     ) as Effect<unknown, to>;
@@ -567,7 +519,8 @@ export function bind<left, from, right, to>(
 
   return append_effect_frame(
     effect,
-    fn as unknown as EffectResume,
+    fn as (value: unknown) => unknown,
+    false,
   ) as Effect<left | right, to>;
 }
 
@@ -586,7 +539,7 @@ export function bind_from<from, right, to>(
   fn: (value: from) => Effect<right, to>,
 ): Effect<unknown | right, to> {
   if (is_data(value)) {
-    return new NewImpureEffect(
+    return make_impure(
       ["lift", value] as unknown,
       fn as unknown as (value: unknown) => Effect<unknown | right, to>,
     ) as Effect<unknown | right, to>;
@@ -614,7 +567,7 @@ export function ensuring<requirements, item>(
     },
   ];
 
-  return new NewImpureEffect(operation, resume_pure) as Effect<
+  return make_impure(operation, resume_pure) as Effect<
     requirements | Ensuring,
     item
   >;
@@ -797,7 +750,11 @@ export function handle_with(
 export function interpret<requirements, item>(
   effect: Effect<requirements, item>,
 ): EffectInterpreter<requirements, item> {
-  return new NewEffectInterpreter(effect);
+  return {
+    handle: (handler) => interpret(handler(effect)),
+    run: (runner) => runner(effect),
+    value: () => effect,
+  };
 }
 
 /** Extracts the item from an effect with no remaining requirements. */
@@ -843,7 +800,7 @@ export function handle_operation<
     }
     const suspended = current;
     if (!select(suspended[1])) {
-      return new NewImpureEffect(
+      return make_impure(
         suspended[1] as WithoutOperation<requirements, selected>,
         (value) => handle_operation(suspended[2](value), select, handle),
       ) as Effect<
@@ -910,7 +867,7 @@ function handle_lift_step<
     }
     const suspended = current;
     const suspended_state = current_state;
-    return new NewImpureEffect(
+    return make_impure(
       suspended[1],
       (value) =>
         handle_lift_step(
@@ -987,15 +944,14 @@ function program<yielded, item>(
   } {
     const iterator = run();
     let next = iterator.next();
-
-    for (const value of values_from_path(path)) {
-      if (next.done) {
-        return { iterator, next };
-      }
-
-      next = iterator.next(value);
+    const values: unknown[] = [];
+    for (let node = path; node !== undefined; node = node.previous) {
+      values.push(node.value);
     }
-
+    for (let i = values.length - 1; i >= 0; i -= 1) {
+      if (next.done) return { iterator, next };
+      next = iterator.next(values[i]);
+    }
     return { iterator, next };
   }
 
@@ -1039,7 +995,7 @@ function program<yielded, item>(
     };
 
     return effect === undefined
-      ? new NewImpureEffect(
+      ? make_impure(
         ["lift", item_value] as EffectRequirements<yielded>,
         resume_step,
       )
@@ -1048,11 +1004,7 @@ function program<yielded, item>(
 }
 
 function scope<requirements>(): ProgramScope<requirements> {
-  return function scoped_program<yielded, item>(
-    run: () => Generator<ScopedYield<requirements, yielded>, item, unknown>,
-  ): Effect<EffectRequirements<yielded>, item> {
-    return program(run as () => Generator<yielded, item, unknown>);
-  };
+  return program as unknown as ProgramScope<requirements>;
 }
 
 /** Tests whether an unknown operation lifts the given dictionary kind. */
@@ -1080,40 +1032,22 @@ export function has_tag<tag extends string>(
 
 function append_effect_frame<requirements, item>(
   effect: Impure<requirements, item>,
-  resume: (value: unknown) => Effect<unknown, unknown>,
+  fn: (value: unknown) => unknown,
+  is_map: boolean,
 ): Effect<requirements, unknown> {
-  const target = effect as unknown as ImpureEffectTarget;
-  if (
-    target[effect_resume] === resume_pure &&
-    target[effect_frames] === undefined &&
-    target[effect_queue] === undefined
-  ) {
-    return new NewImpureEffect(
+  const target = effect as unknown as MaybeFramedEffect;
+  const state = target[effect_state];
+  if (state === undefined && !is_map && target[2] === resume_pure) {
+    return make_impure(
       effect[1],
-      resume as (value: unknown) => Effect<requirements, unknown>,
+      fn as (value: unknown) => Effect<requirements, unknown>,
     );
   }
-  const frames: EffectFrame = {
-    previous: target[effect_frames],
-    resume,
-  };
-
-  return new NewImpureEffect(
+  return make_framed(
     effect[1],
-    target[effect_resume] as (
-      value: unknown,
-    ) => Effect<requirements, unknown>,
-    frames,
-    target[effect_queue],
-  );
-}
-
-function own_effect_queue(
-  target: ImpureEffectTarget,
-): EffectQueue | undefined {
-  return append_effect_queue(
-    target[effect_queue],
-    queue_from_frames(target[effect_frames]),
+    state === undefined ? target[2] : state.resume,
+    { previous: state?.frames, fn, is_map, ordered: undefined },
+    state?.queue,
   );
 }
 
@@ -1123,64 +1057,103 @@ function resume_effect(
   queue: EffectQueue | undefined,
   value: unknown,
 ): Effect<unknown, unknown> {
-  let current = resume(value);
+  let current: Effect<unknown, unknown> | undefined;
+  let pure_value: unknown;
+  if (resume === resume_pure) {
+    pure_value = value;
+  } else {
+    const next = resume(value);
+    if (next[0] === "pure") pure_value = next[1];
+    else current = next;
+  }
+
   if (
     queue === undefined && frames !== undefined && frames.previous === undefined
   ) {
-    if (current[0] === "pure") {
-      return frames.resume(current[1]);
+    if (current === undefined) {
+      return frames.is_map
+        ? pure(frames.fn(pure_value))
+        : frames.fn(pure_value) as Effect<unknown, unknown>;
     }
-    const target = current as unknown as ImpureEffectTarget;
-    if (target[effect_queue] === undefined) {
-      return new NewImpureEffect(
-        current[1],
-        target[effect_resume],
-        { previous: target[effect_frames], resume: frames.resume },
-        undefined,
-      );
-    }
-    return new NewImpureEffect(
-      current[1],
-      target[effect_resume],
-      undefined,
-      append_effect_queue(
-        own_effect_queue(target),
-        { tag: "chunk", resumes: [frames.resume], index: 0 },
-      ),
+    return append_effect_frame(
+      current as Impure<unknown, unknown>,
+      frames.fn,
+      frames.is_map,
     );
   }
-  let pending = append_effect_queue(queue, queue_from_frames(frames));
 
-  while (pending !== undefined) {
-    if (current[0] === "impure") {
-      const target = current as unknown as ImpureEffectTarget;
-      return new NewImpureEffect(
-        current[1],
-        target[effect_resume],
-        undefined,
-        append_effect_queue(own_effect_queue(target), pending),
-      );
-    }
-
-    if (pending.tag === "chunk") {
-      const chunk = pending;
-      let index = chunk.index;
-      while (index < chunk.resumes.length && current[0] === "pure") {
-        current = chunk.resumes[index](current[1]);
-        index += 1;
-      }
-      pending = undefined;
-      if (index < chunk.resumes.length) {
-        pending = { tag: "chunk", resumes: chunk.resumes, index };
-      }
-      continue;
-    }
-    const [next, rest] = shift_effect_queue(pending);
-    pending = rest;
-    current = next(current[1]);
+  let chunk_frames: readonly EffectFrame[] | undefined;
+  let index = 0;
+  let pending: EffectQueue | undefined;
+  if (queue === undefined && frames !== undefined) {
+    chunk_frames = effect_frames_in_order(frames);
+  } else {
+    pending = append_effect_queue(queue, queue_from_frames(frames));
   }
 
-  return current;
+  while (chunk_frames !== undefined || pending !== undefined) {
+    if (current !== undefined) {
+      const rem = chunk_frames !== undefined
+        ? { tag: "chunk" as const, frames: chunk_frames, index }
+        : undefined;
+      const tail = append_effect_queue(rem, pending)!;
+      const target = current as unknown as MaybeFramedEffect;
+      const state = target[effect_state];
+      return state === undefined
+        ? make_framed(current[1], target[2], undefined, tail)
+        : make_framed(
+          current[1],
+          state.resume,
+          undefined,
+          append_effect_queue(
+            append_effect_queue(state.queue, queue_from_frames(state.frames)),
+            tail,
+          ),
+        );
+    }
+
+    if (chunk_frames === undefined) {
+      let right_queue: EffectQueue | undefined;
+      if (pending!.tag === "chunk") {
+        chunk_frames = pending!.frames;
+        index = pending!.index;
+      } else {
+        while (pending!.left.tag === "concat") {
+          const left: Extract<EffectQueue, { tag: "concat" }> = pending!.left;
+          pending = {
+            tag: "concat",
+            left: left.left,
+            right: { tag: "concat", left: left.right, right: pending!.right },
+          };
+        }
+        chunk_frames = pending!.left.frames;
+        index = pending!.left.index;
+        right_queue = pending!.right;
+      }
+      pending = right_queue;
+    }
+
+    const len = chunk_frames.length;
+    while (index < len) {
+      const frame = chunk_frames[index++];
+      if (frame.is_map) {
+        pure_value = frame.fn(pure_value);
+      } else {
+        const next = frame.fn(pure_value) as Effect<unknown, unknown>;
+        if (next[0] === "pure") pure_value = next[1];
+        else {
+          current = next;
+          break;
+        }
+      }
+    }
+    if (index === len) {
+      chunk_frames = undefined;
+      index = 0;
+    }
+  }
+
+  return current ?? pure(pure_value);
 }
 
 function queue_from_frames(
@@ -1188,7 +1161,7 @@ function queue_from_frames(
 ): EffectQueue | undefined {
   return frames === undefined ? undefined : {
     tag: "chunk",
-    resumes: effect_frames_in_order(frames),
+    frames: effect_frames_in_order(frames),
     index: 0,
   };
 }
@@ -1202,87 +1175,32 @@ function append_effect_queue(
   return { tag: "concat", left: first, right: rest };
 }
 
-function shift_effect_queue(
-  queue: EffectQueue,
-): readonly [EffectResume, EffectQueue | undefined] {
-  let current = queue;
-  while (true) {
-    switch (current.tag) {
-      case "chunk":
-        return [current.resumes[current.index], remaining_chunk(current)];
-      case "concat": {
-        const left = current.left;
-        switch (left.tag) {
-          case "chunk":
-            return [
-              left.resumes[left.index],
-              append_effect_queue(remaining_chunk(left), current.right),
-            ];
-          case "concat":
-            // Rotate once toward the first chunk. The returned suffix retains
-            // this order, so later takes do not walk the consumed prefix again.
-            current = {
-              tag: "concat",
-              left: left.left,
-              right: { tag: "concat", left: left.right, right: current.right },
-            };
-            break;
-        }
-        break;
-      }
-    }
-  }
-}
-
-function remaining_chunk(
-  chunk: Extract<EffectQueue, { tag: "chunk" }>,
-): EffectQueue | undefined {
-  return chunk.index + 1 === chunk.resumes.length
-    ? undefined
-    : { ...chunk, index: chunk.index + 1 };
-}
-
 // Bound cached arrays by total slots. WeakRef would keep every newly flattened
 // prefix alive until the current job ends, producing quadratic transient memory.
-const ordered_effect_frames = new Map<EffectFrame, EffectResume[]>();
+const ordered_effect_frames = new Set<EffectFrame>();
 let ordered_frame_count = 0;
-function effect_frames_in_order(
-  frames: EffectFrame,
-): ((value: unknown) => Effect<unknown, unknown>)[] {
-  if (frames.previous === undefined) return [frames.resume];
-  const cached = ordered_effect_frames.get(frames);
+function effect_frames_in_order(frames: EffectFrame): EffectFrame[] {
+  const cached = frames.ordered;
   if (cached !== undefined) return cached;
-  let length = 0;
-
+  if (frames.previous === undefined) return [frames];
+  const ordered: EffectFrame[] = [];
   for (
     let frame: EffectFrame | undefined = frames;
     frame !== undefined;
     frame = frame.previous
   ) {
-    length += 1;
+    ordered.push(frame);
   }
-
-  const ordered = new Array<
-    (value: unknown) => Effect<unknown, unknown>
-  >(length);
-  let index = length - 1;
-
-  for (
-    let frame: EffectFrame | undefined = frames;
-    frame !== undefined;
-    frame = frame.previous
-  ) {
-    ordered[index] = frame.resume;
-    index -= 1;
-  }
-
+  ordered.reverse();
   if (ordered.length >= 16 && ordered.length <= 4096) {
-    ordered_effect_frames.set(frames, ordered);
+    frames.ordered = ordered;
+    ordered_effect_frames.add(frames);
     ordered_frame_count += ordered.length;
     while (ordered_frame_count > 4096) {
-      const [oldest, array] = ordered_effect_frames.entries().next().value!;
+      const oldest = ordered_effect_frames.values().next().value!;
       ordered_effect_frames.delete(oldest);
-      ordered_frame_count -= array.length;
+      ordered_frame_count -= oldest.ordered!.length;
+      oldest.ordered = undefined;
     }
   }
   return ordered;
@@ -1296,7 +1214,7 @@ function as_effect<requirements, item>(
   }
 
   if (is_data(value)) {
-    return new NewImpureEffect(
+    return make_impure(
       ["lift", value] as unknown as Lift<Dictionary, item>,
       resume_pure,
     ) as Effect<requirements, item>;
@@ -1307,8 +1225,7 @@ function as_effect<requirements, item>(
 
 /** Tests whether an unknown value is an Effect created by this module. */
 export function is_effect(value: unknown): value is Effect<unknown, unknown> {
-  return typeof value === "object" && value !== null &&
-    Object.getPrototypeOf(value) === EffectPrototype;
+  return value instanceof DetachedEffectBase;
 }
 
 function resume_pure(value: unknown): Effect<never, unknown> {
@@ -1320,14 +1237,6 @@ function append_program_path(
   value: unknown,
 ): ProgramPath {
   return { previous, value };
-}
-
-function values_from_path(path: ProgramPath | undefined): unknown[] {
-  const values: unknown[] = [];
-  for (let node = path; node !== undefined; node = node.previous) {
-    values.push(node.value);
-  }
-  return values.reverse();
 }
 
 function effect_iterator<requirements, item>(

@@ -1,14 +1,14 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
 import {
-  Semigroup,
   type Semigroup as SemigroupDictionary,
+  semigroup_typeclass,
 } from "./semigroup.ts";
 
 /** Runtime token for the Monoid typeclass. */
@@ -53,8 +53,7 @@ export const Monoid: MonoidTypeclass = /* @__PURE__ */ typeclass(
     >(
       witness: dictionary | Data<dictionary, unknown>,
     ): Data<dictionary, item> {
-      return call_typeclass_method(
-        this.instance_for(witness).empty<item>,
+      return (instance_for_token(monoid_typeclass, witness).empty<item>).call(
         witness as dictionary,
       );
     },
@@ -66,7 +65,8 @@ export const Monoid: MonoidTypeclass = /* @__PURE__ */ typeclass(
       left: Data<dictionary, item>,
       right: Data<dictionary, item>,
     ): Data<dictionary, item> {
-      return Semigroup.concat(left, right);
+      return (instance_for_token(semigroup_typeclass, left)
+        .concat<item>).call(left, right);
     },
   },
 );

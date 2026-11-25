@@ -1,10 +1,9 @@
 import { inspect } from "./inspect.ts";
 
-const data_constructor_key = Symbol("Data.constructor");
-const data_marker = Symbol("Data.marker");
-const data_prototype_key = Symbol("Data.prototype");
-const data_value = Symbol("Data.value");
-const has_own = Object.prototype.hasOwnProperty;
+const data_constructor_key = Symbol();
+const data_marker = Symbol();
+const data_prototype_key = Symbol();
+const data_value = Symbol();
 const deno_custom_inspect = Symbol.for("Deno.customInspect");
 const node_custom_inspect = Symbol.for("nodejs.util.inspect.custom");
 
@@ -194,63 +193,54 @@ export function data_constructor<dictionary extends object>(
   return create_data_constructor(dictionary, data_dictionary);
 }
 
-export function data_dictionary<dictionary extends object>(): dictionary {
-  const NewDataValue = DataValue as unknown as NewWrappedDataTarget;
-
-  const construct_data = function construct_data<value, item = unknown>(
-    value: value,
-  ): WrappedData<dictionary, value, item> {
-    const target = new NewDataValue<value>(value);
-
-    return target as unknown as WrappedData<dictionary, value, item>;
-  } as unknown as DataConstructor<dictionary> & DataDictionary<dictionary>;
-
-  detach_function_prototype(construct_data);
-
-  const prototype = data_prototype(construct_data);
-
-  function DataValue(
-    this: WrappedDataTarget<unknown>,
-    value: unknown,
-  ) {
-    this[data_value] = value;
-  }
-
-  NewDataValue.prototype = prototype;
-
-  Object.defineProperty(construct_data, data_constructor_key, {
-    value: construct_data,
-  });
-
-  return construct_data as unknown as dictionary;
-}
-
-function create_data_constructor<dictionary extends object>(
-  dictionary: dictionary,
-  data_dictionary: DataDictionary<dictionary>,
-): DataConstructor<dictionary> {
-  const prototype = data_prototype(dictionary);
-  const DataValue = function DataValue(
+function make_data_value(): NewWrappedDataTarget {
+  return function DataValue(
     this: WrappedDataTarget<unknown>,
     value: unknown,
   ) {
     this[data_value] = value;
   } as unknown as NewWrappedDataTarget;
+}
 
-  DataValue.prototype = prototype;
-
+export function data_dictionary<dictionary extends object>(): dictionary {
+  const DataValue = make_data_value();
   const construct_data = function construct_data<value, item = unknown>(
     value: value,
   ): WrappedData<dictionary, value, item> {
-    const target = new DataValue<value>(value);
+    return new DataValue<value>(value) as unknown as WrappedData<
+      dictionary,
+      value,
+      item
+    >;
+  } as unknown as dictionary;
 
-    return target as unknown as WrappedData<dictionary, value, item>;
-  };
+  detach_function_prototype(construct_data);
+  DataValue.prototype = data_prototype(construct_data);
+  cache_data_constructor(
+    construct_data,
+    construct_data as unknown as DataConstructor<dictionary>,
+  );
 
-  Object.defineProperty(data_dictionary, data_constructor_key, {
-    value: construct_data,
-  });
+  return construct_data;
+}
 
+function create_data_constructor<dictionary extends object>(
+  dictionary: dictionary,
+  _data_dictionary: DataDictionary<dictionary>,
+): DataConstructor<dictionary> {
+  const DataValue = make_data_value();
+  DataValue.prototype = data_prototype(dictionary);
+
+  const construct_data: DataConstructor<dictionary> = <value, item = unknown>(
+    value: value,
+  ) =>
+    new DataValue<value>(value) as unknown as WrappedData<
+      dictionary,
+      value,
+      item
+    >;
+
+  cache_data_constructor(dictionary, construct_data);
   return construct_data;
 }
 
@@ -259,8 +249,7 @@ export function is_data(
   value: unknown,
 ): value is WrappedData<object, unknown, unknown> {
   return typeof value === "object" && value !== null &&
-    ((value as { [data_marker]?: boolean })[data_marker] === true ||
-      has_own.call(value, data_value));
+    (value as { [data_marker]?: boolean })[data_marker] === true;
 }
 
 function data_prototype(dictionary: object): object {
@@ -445,5 +434,5 @@ class DataYield<yielded, item> extends Iterator<yielded, item, unknown> {
 export function yield_data<yielded, item>(
   value: yielded,
 ): Generator<yielded, item, unknown> {
-  return new DataYield(value);
+  return new DataYield<yielded, item>(value);
 }
