@@ -1963,7 +1963,11 @@ function clone_untrusted_shape(
       if (!Array.isArray(value)) return shape_mismatch;
       if (copies !== undefined) {
         const existing = copies.get(value);
-        if (existing !== undefined) return existing;
+        if (existing !== undefined) {
+          return validate_cloned_shape(existing, shape)
+            ? existing
+            : shape_mismatch;
+        }
       }
       const len = value.length;
       if (len > 32) return shape_mismatch;
@@ -1988,13 +1992,17 @@ function clone_untrusted_shape(
     }
     case SHAPE_RECORD: {
       if (typeof value !== "object" || value === null) return shape_mismatch;
-      if (copies !== undefined) {
-        const existing = copies.get(value);
-        if (existing !== undefined) return existing;
-      }
       const prototype = Object.getPrototypeOf(value);
       if (prototype !== Object.prototype && prototype !== null) {
         return shape_mismatch;
+      }
+      if (copies !== undefined) {
+        const existing = copies.get(value);
+        if (existing !== undefined) {
+          return validate_cloned_shape(existing, shape)
+            ? existing
+            : shape_mismatch;
+        }
       }
       const own_keys = Reflect.ownKeys(value);
       if (own_keys.length !== shape.keys.length) return shape_mismatch;
@@ -2035,6 +2043,7 @@ function clone_untrusted_shape(
 function validate_cloned_shape(
   value: unknown,
   shape: CompiledShape,
+  active?: Set<object>,
 ): boolean {
   switch (shape.kind) {
     case SHAPE_NUMBER:
@@ -2071,11 +2080,19 @@ function validate_cloned_shape(
             if (value[i] !== null) return false;
           }
           return true;
-        default:
+        default: {
+          const stack = active ?? new Set<object>();
+          if (stack.has(value)) return false;
+          stack.add(value);
           for (let i = 0; i < len; i += 1) {
-            if (!validate_cloned_shape(value[i], elem)) return false;
+            if (!validate_cloned_shape(value[i], elem, stack)) {
+              stack.delete(value);
+              return false;
+            }
           }
+          stack.delete(value);
           return true;
+        }
       }
     }
     case SHAPE_RECORD: {
@@ -2086,11 +2103,21 @@ function validate_cloned_shape(
       const children = shape.children;
       const len = keys.length;
       if (Object.keys(obj).length !== len) return false;
+      const stack = active ?? new Set<object>();
+      if (stack.has(obj)) return false;
+      stack.add(obj);
       for (let i = 0; i < len; i += 1) {
         const k = keys[i];
-        if (!Object.hasOwn(obj, k)) return false;
-        if (!validate_cloned_shape(obj[k], children[i])) return false;
+        if (!Object.hasOwn(obj, k)) {
+          stack.delete(obj);
+          return false;
+        }
+        if (!validate_cloned_shape(obj[k], children[i], stack)) {
+          stack.delete(obj);
+          return false;
+        }
       }
+      stack.delete(obj);
       return true;
     }
   }

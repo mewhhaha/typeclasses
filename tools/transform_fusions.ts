@@ -397,6 +397,180 @@ export function create_round5_fusions(
   services: TransformServices,
   flags?: Round5Flags,
 ) {
+  function find_scope_anchor(root: Node): Node | undefined {
+    let anchor: Node | undefined;
+    walk(root, (child) => {
+      if (anchor !== undefined) return false;
+      if (child.type === "Identifier") {
+        anchor = child;
+        return false;
+      }
+    });
+    return anchor;
+  }
+
+  function intrinsics_unshadowed(
+    at: Node,
+    names: readonly string[],
+  ): boolean {
+    const anchor = find_scope_anchor(at);
+    if (anchor === undefined) return false;
+    for (let i = 0; i < names.length; i += 1) {
+      if (services.bindings.resolve_name_at(names[i], anchor) !== null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function is_inline_fn_expr(expr: Expression): boolean {
+    const e = unwrap(expr);
+    return e.type === "ArrowFunctionExpression" ||
+      e.type === "FunctionExpression";
+  }
+
+  function is_const_literal_expr(expr: Expression): boolean {
+    const e = unwrap(expr);
+    return e.type === "Literal" ||
+      (e.type === "UnaryExpression" &&
+        (e.operator === "-" || e.operator === "+" || e.operator === "!" ||
+          e.operator === "void") &&
+        e.argument.type === "Literal");
+  }
+
+  function is_pure_first_yield_expr(
+    expr: Expression,
+    strict_literals_only: boolean,
+  ): boolean {
+    const e = unwrap(expr);
+    if (e.type !== "YieldExpression" || !e.delegate || e.argument === null) {
+      return false;
+    }
+    const cls = classify_task_yield(e.argument, false);
+    if (cls === undefined) return false;
+    switch (cls.kind) {
+      case "from_fn":
+      case "task_ctor":
+        return is_inline_fn_expr(cls.fn);
+      case "pure":
+        return strict_literals_only
+          ? is_const_literal_expr(cls.value)
+          : is_pure_no_call(cls.value);
+      default:
+        return false;
+    }
+  }
+
+  function hoist_task_kind_eager(
+    tk: TaskYieldKind,
+    eager_stmts: Statement[],
+    prefix: string,
+  ): TaskYieldKind {
+    const hoist_expr = (expr: Expression): Expression => {
+      if (is_const_literal_expr(expr)) return expr;
+      const eid = services.fresh(prefix);
+      eager_stmts.push(variable(eid, expr, "const"));
+      return eid;
+    };
+    switch (tk.kind) {
+      case "pure":
+        return { ...tk, value: hoist_expr(tk.value) };
+      case "from_fn":
+      case "task_ctor":
+        if (is_inline_fn_expr(tk.fn)) return tk;
+        return { ...tk, fn: hoist_expr(tk.fn) };
+      case "from_promise":
+        return { ...tk, promise: hoist_expr(tk.promise) };
+      case "throw_error":
+        return { ...tk, error: hoist_expr(tk.error) };
+      case "catch_error": {
+        const inner = classify_task_yield(tk.task, false);
+        const handler_expr = is_inline_fn_expr(tk.handler)
+          ? tk.handler
+          : hoist_expr(tk.handler);
+        if (
+          inner !== undefined &&
+          (inner.kind === "from_fn" || inner.kind === "task_ctor") &&
+          is_inline_fn_expr(inner.fn)
+        ) {
+          return { ...tk, handler: handler_expr };
+        }
+        return { ...tk, task: hoist_expr(tk.task), handler: handler_expr };
+      }
+      case "arbitrary":
+        return { ...tk, expr: hoist_expr(tk.expr) };
+    }
+  }
+
+  function invoke_task_cb(
+    fn_expr: Expression,
+    cb: Expression,
+    sig_arg: Expression,
+    target_stmts: Statement[],
+  ): Expression {
+    if (
+      cb.type === "ArrowFunctionExpression" ||
+      cb.type === "FunctionExpression"
+    ) {
+      return call(fn_expr, [sig_arg]);
+    }
+    let fn_ref: IdentifierReference;
+    if (fn_expr.type === "Identifier") {
+      fn_ref = fn_expr;
+    } else {
+      fn_ref = services.fresh("task_cb");
+      target_stmts.push(variable(fn_ref, fn_expr, "const"));
+    }
+    const fn_cast: Expression = node({
+      type: "TSAsExpression",
+      expression: fn_ref,
+      typeAnnotation: node({
+        type: "TSFunctionType",
+        typeParameters: null,
+        params: [
+          {
+            ...id("signal"),
+            typeAnnotation: node({
+              type: "TSTypeAnnotation",
+              typeAnnotation: node({
+                type: "TSUnionType",
+                types: Array.from<TSType>([
+                  node({
+                    type: "TSTypeReference",
+                    typeName: id("AbortSignal"),
+                    typeArguments: null,
+                  }),
+                  node({ type: "TSUndefinedKeyword" }),
+                ]),
+              }),
+            }),
+          } as BindingPattern,
+        ],
+        returnType: node({
+          type: "TSTypeAnnotation",
+          typeAnnotation: node({
+            type: "TSTypeReference",
+            typeName: id("ReturnType"),
+            typeArguments: node({
+              type: "TSTypeParameterInstantiation",
+              params: Array.from<TSType>([
+                node({
+                  type: "TSTypeQuery",
+                  exprName: fn_ref,
+                  typeArguments: null,
+                }),
+              ]),
+            }),
+          }),
+        }),
+      }),
+    });
+    return call(
+      node({ type: "ParenthesizedExpression", expression: fn_cast }),
+      [sig_arg],
+    );
+  }
+
   function is_imported_from_set(
     expr: Expression,
     set: ReadonlySet<string> | undefined,
@@ -875,7 +1049,7 @@ export function create_round5_fusions(
   function extract_no_signal_task_expr(
     raw: Expression,
     unwrap_parallel: boolean,
-  ): Expression | undefined {
+  ): { readonly expr: Expression; readonly eager: boolean } | undefined {
     let cur = parentheses(raw);
     if (unwrap_parallel) {
       if (
@@ -890,7 +1064,9 @@ export function create_round5_fusions(
           is_parallel_task_dict(cur.callee.object)
         ) {
           const v = cur.arguments[0] as Expression;
-          return lexical_hazard(v) || contains_await_yield(v) ? undefined : v;
+          return lexical_hazard(v) || contains_await_yield(v)
+            ? undefined
+            : { expr: v, eager: true };
         }
         if (is_parallel_fn(cur.callee)) {
           cur = parentheses(cur.arguments[0] as Expression);
@@ -911,7 +1087,7 @@ export function create_round5_fusions(
       if (kind.type_arg !== undefined) return undefined;
       return lexical_hazard(kind.value) || contains_await_yield(kind.value)
         ? undefined
-        : kind.value;
+        : { expr: kind.value, eager: true };
     }
     if (kind.type_arg !== undefined) return undefined;
     const cb = unwrap(kind.fn);
@@ -922,9 +1098,9 @@ export function create_round5_fusions(
     ) return undefined;
     if (lexical_hazard(cb) || contains_await_yield(cb.body)) return undefined;
     if (cb.body.type !== "BlockStatement") {
-      return cb.body as Expression;
+      return { expr: cb.body as Expression, eager: false };
     }
-    return call(cb, []);
+    return { expr: call(cb, []), eager: false };
   }
 
   /** Extract any ParallelTask branch, including arbitrary parallel(task) & catch_error. */
@@ -934,7 +1110,14 @@ export function create_round5_fusions(
   ): ParallelBranchSpec | undefined {
     const fast = extract_no_signal_task_expr(raw, true);
     if (fast !== undefined) {
-      return { kind: "direct", expr: fast, uses_signal: false };
+      if (fast.eager) {
+        return {
+          kind: "task",
+          task_kind: { kind: "pure", value: fast.expr },
+          uses_signal: false,
+        };
+      }
+      return { kind: "direct", expr: fast.expr, uses_signal: false };
     }
     let cur = parentheses(raw);
     let saw_parallel = false;
@@ -1156,6 +1339,7 @@ export function create_round5_fusions(
 
   function has_pure_prefix_before_yield(
     stmts: readonly Statement[],
+    check_task_first_yield = false,
   ): boolean {
     for (let i = 0; i < stmts.length; i += 1) {
       const s = stmts[i];
@@ -1167,13 +1351,22 @@ export function create_round5_fusions(
       if (s.type === "VariableDeclaration") {
         for (const decl of s.declarations) {
           if (decl.init === null) continue;
-          if (contains_yield(decl.init)) return true;
+          if (contains_yield(decl.init)) {
+            if (check_task_first_yield) {
+              return is_pure_first_yield_expr(decl.init, true);
+            }
+            const e = unwrap(decl.init);
+            return e.type === "YieldExpression" && e.delegate;
+          }
           if (!is_pure_no_call(decl.init)) return false;
         }
         continue;
       }
       if (s.type === "ExpressionStatement") {
         if (contains_yield(s.expression)) {
+          if (check_task_first_yield) {
+            return is_pure_first_yield_expr(s.expression, true);
+          }
           const e = unwrap(s.expression);
           return e.type === "YieldExpression" && e.delegate;
         }
@@ -1193,13 +1386,16 @@ export function create_round5_fusions(
           const inner = s.body.type === "BlockStatement"
             ? s.body.body as Statement[]
             : [s.body];
-          return has_pure_prefix_before_yield(inner);
+          return has_pure_prefix_before_yield(inner, check_task_first_yield);
         }
         return false;
       }
       if (s.type === "BlockStatement") {
         if (contains_yield(s)) {
-          return has_pure_prefix_before_yield(s.body as Statement[]);
+          return has_pure_prefix_before_yield(
+            s.body as Statement[],
+            check_task_first_yield,
+          );
         }
         return false;
       }
@@ -1209,19 +1405,26 @@ export function create_round5_fusions(
           const cons = s.consequent.type === "BlockStatement"
             ? s.consequent.body as Statement[]
             : [s.consequent];
-          if (!has_pure_prefix_before_yield(cons)) return false;
+          if (!has_pure_prefix_before_yield(cons, check_task_first_yield)) {
+            return false;
+          }
         }
         if (s.alternate !== null && contains_yield(s.alternate)) {
           const alt = s.alternate.type === "BlockStatement"
             ? s.alternate.body as Statement[]
             : [s.alternate];
-          if (!has_pure_prefix_before_yield(alt)) return false;
+          if (!has_pure_prefix_before_yield(alt, check_task_first_yield)) {
+            return false;
+          }
         }
         return true;
       }
       if (s.type === "ReturnStatement") {
         if (s.argument === null) return true;
         if (contains_yield(s.argument)) {
+          if (check_task_first_yield) {
+            return is_pure_first_yield_expr(s.argument, true);
+          }
           const e = unwrap(s.argument);
           return e.type === "YieldExpression" && e.delegate;
         }
@@ -1374,15 +1577,16 @@ export function create_round5_fusions(
         if (s.kind !== "const") return false;
         for (const decl of s.declarations) {
           if (decl.init === null) continue;
-          if (contains_yield(decl.init)) return true;
+          if (contains_yield(decl.init)) {
+            return is_pure_first_yield_expr(decl.init, true);
+          }
           if (!is_non_allocating_pure(decl.init)) return false;
         }
         continue;
       }
       if (s.type === "ExpressionStatement") {
         if (contains_yield(s.expression)) {
-          const e = unwrap(s.expression);
-          return e.type === "YieldExpression" && e.delegate;
+          return is_pure_first_yield_expr(s.expression, true);
         }
         if (!is_non_allocating_pure(s.expression)) return false;
         continue;
@@ -1390,8 +1594,7 @@ export function create_round5_fusions(
       if (s.type === "ReturnStatement") {
         if (s.argument === null) return true;
         if (contains_yield(s.argument)) {
-          const e = unwrap(s.argument);
-          return e.type === "YieldExpression" && e.delegate;
+          return is_pure_first_yield_expr(s.argument, true);
         }
         return is_non_allocating_pure(s.argument);
       }
@@ -1657,7 +1860,12 @@ export function create_round5_fusions(
           }
           return node({ type: "AwaitExpression", argument: invoke });
         }
-        const invoke = call(classified.fn, [sig_id ?? void_zero()]);
+        const invoke = invoke_task_cb(
+          classified.fn,
+          cb,
+          sig_id ?? void_zero(),
+          target_stmts,
+        );
         if (sig_id !== undefined && await_sig_id !== undefined) {
           return node({
             type: "AwaitExpression",
@@ -1706,7 +1914,12 @@ export function create_round5_fusions(
           }
           return node({ type: "AwaitExpression", argument: inner });
         }
-        const invoke = call(classified.fn, [sig_id ?? void_zero()]);
+        const invoke = invoke_task_cb(
+          classified.fn,
+          cb,
+          sig_id ?? void_zero(),
+          target_stmts,
+        );
         if (sig_id !== undefined && await_sig_id !== undefined) {
           return node({
             type: "AwaitExpression",
@@ -1930,8 +2143,11 @@ export function create_round5_fusions(
         item_id,
         services,
       );
-      const step_expr = extract_no_signal_task_expr(inlined_body, true);
-      if (step_expr === undefined) return undefined;
+      const step_info = extract_no_signal_task_expr(inlined_body, true);
+      if (step_info === undefined) return undefined;
+      if (step_info.eager && !is_pure_no_call(step_info.expr)) return undefined;
+      if (!intrinsics_unshadowed(inner, ["Array", "Promise"])) return undefined;
+      const step_expr = step_info.expr;
       const src_id = services.fresh("pt_src");
       const len_id = services.fresh("pt_len");
       const idx_id = services.fresh("pt_i");
@@ -1982,12 +2198,10 @@ export function create_round5_fusions(
       });
       const pass_src_as_param = exit_cancel_id !== undefined &&
         !is_pure_no_call(trav_items);
-      const iife_params: IdentifierReference[] = [];
-      const iife_args: Expression[] = [];
+      const eager_stmts: Statement[] = [];
       const body_stmts: Statement[] = [];
       if (pass_src_as_param) {
-        iife_params.push(src_id);
-        iife_args.push(trav_items);
+        eager_stmts.push(variable(src_id, trav_items, "const"));
       } else {
         body_stmts.push(variable(src_id, trav_items, "const"));
       }
@@ -2173,12 +2387,18 @@ export function create_round5_fusions(
         expression: false,
         generator: false,
         async: true,
-        params: iife_params,
+        params: [],
         body: block(final_body),
         typeParameters: null,
         returnType: null,
       });
-      return { expression: call(async_fn, iife_args), direct: true };
+      const async_call = call(async_fn, []);
+      return {
+        expression: eager_stmts.length > 0
+          ? call(arrow([], block([...eager_stmts, ret(async_call)])), [])
+          : async_call,
+        direct: true,
+      };
     }
 
     // 2. ParallelTask Applicative.lift(fn, parallel(t1), ...) or
@@ -2305,6 +2525,9 @@ export function create_round5_fusions(
     if (branch_specs === undefined || lift_builder === undefined) {
       return undefined;
     }
+    if (!intrinsics_unshadowed(inner, ["Promise", "AbortController"])) {
+      return undefined;
+    }
 
     // Fast path: immediate run with no AbortSignal and all direct zero-signal branches
     const all_direct = branch_specs.every((b) => b.kind === "direct");
@@ -2315,15 +2538,16 @@ export function create_round5_fusions(
         (b as Extract<ParallelBranchSpec, { kind: "direct" }>).expr
       );
       const body_stmts: Statement[] = [];
-      const iife_params: IdentifierReference[] = [];
-      const iife_args: Expression[] = [];
+      const eager_stmts: Statement[] = [];
       if (lift_builder.hoist_fn !== undefined) {
-        if (
-          exit_cancel_id !== undefined &&
-          !is_pure_no_call(lift_builder.hoist_fn.expr)
-        ) {
-          iife_params.push(lift_builder.hoist_fn.id);
-          iife_args.push(lift_builder.hoist_fn.expr);
+        if (!is_inline_fn_expr(lift_builder.hoist_fn.expr)) {
+          eager_stmts.push(
+            variable(
+              lift_builder.hoist_fn.id,
+              lift_builder.hoist_fn.expr,
+              "const",
+            ),
+          );
         } else {
           body_stmts.push(
             variable(
@@ -2437,12 +2661,18 @@ export function create_round5_fusions(
         expression: false,
         generator: false,
         async: true,
-        params: iife_params,
+        params: [],
         body: block(final_body),
         typeParameters: null,
         returnType: null,
       });
-      return { expression: call(async_fn, iife_args), direct: true };
+      const async_call = call(async_fn, []);
+      return {
+        expression: eager_stmts.length > 0
+          ? call(arrow([], block([...eager_stmts, ret(async_call)])), [])
+          : async_call,
+        direct: true,
+      };
     }
 
     // General path: standalone Task/ParallelTask, { signal }, or arbitrary/catch_error branches
@@ -2482,9 +2712,43 @@ export function create_round5_fusions(
       ? services.fresh("pt_sig")
       : parent_sig_id;
 
+    const eager_stmts: Statement[] = [];
+    const body_stmts: Statement[] = [];
+    // Evaluate combiner fn and eager branch constructor arguments left-to-right
+    // BEFORE creating the deferred task or evaluating options.signal.
+    if (lift_builder.hoist_fn !== undefined) {
+      if (!is_inline_fn_expr(lift_builder.hoist_fn.expr)) {
+        eager_stmts.push(
+          variable(
+            lift_builder.hoist_fn.id,
+            lift_builder.hoist_fn.expr,
+            "const",
+          ),
+        );
+      } else {
+        body_stmts.push(
+          variable(
+            lift_builder.hoist_fn.id,
+            lift_builder.hoist_fn.expr,
+            "const",
+          ),
+        );
+      }
+    }
+    const hoisted_specs: ParallelBranchSpec[] = branch_specs.map((spec) =>
+      spec.kind === "direct" ? spec : {
+        ...spec,
+        task_kind: hoist_task_kind_eager(
+          spec.task_kind,
+          eager_stmts,
+          "pt_e",
+        ),
+      }
+    );
+
     // Build concurrent starter expression for each branch
     const started_exprs: Expression[] = [];
-    for (const spec of branch_specs) {
+    for (const spec of hoisted_specs) {
       if (spec.kind === "direct") {
         started_exprs.push(spec.expr);
         continue;
@@ -2545,32 +2809,11 @@ export function create_round5_fusions(
       }
     }
 
-    const iife_params: IdentifierReference[] = [];
-    const iife_args: Expression[] = [];
-    const body_stmts: Statement[] = [];
     if (standalone_mode === "none" && signal_expr !== undefined) {
-      if (exit_cancel_id !== undefined && !is_pure_no_call(signal_expr)) {
-        iife_params.push(parent_sig_id!);
-        iife_args.push(signal_expr);
+      if (eager_stmts.length > 0 || !is_const_literal_expr(signal_expr)) {
+        eager_stmts.push(variable(parent_sig_id!, signal_expr, "const"));
       } else {
         body_stmts.push(variable(parent_sig_id!, signal_expr, "const"));
-      }
-    }
-    if (lift_builder.hoist_fn !== undefined) {
-      if (
-        standalone_mode === "none" && exit_cancel_id !== undefined &&
-        !is_pure_no_call(lift_builder.hoist_fn.expr)
-      ) {
-        iife_params.push(lift_builder.hoist_fn.id);
-        iife_args.push(lift_builder.hoist_fn.expr);
-      } else {
-        body_stmts.push(
-          variable(
-            lift_builder.hoist_fn.id,
-            lift_builder.hoist_fn.expr,
-            "const",
-          ),
-        );
       }
     }
     if (parent_sig_id !== undefined) {
@@ -2778,7 +3021,13 @@ export function create_round5_fusions(
         typeParameters: null,
         returnType: null,
       });
-      return { expression: call(wrapper_ctor, [task_fn]), direct: true };
+      const wrapped = call(wrapper_ctor, [task_fn]);
+      return {
+        expression: eager_stmts.length > 0
+          ? call(arrow([], block([...eager_stmts, ret(wrapped)])), [])
+          : wrapped,
+        direct: true,
+      };
     }
 
     const final_body = exit_cancel_id !== undefined
@@ -2790,12 +3039,18 @@ export function create_round5_fusions(
       expression: false,
       generator: false,
       async: true,
-      params: iife_params,
+      params: [],
       body: block(final_body),
       typeParameters: null,
       returnType: null,
     });
-    return { expression: call(async_fn, iife_args), direct: true };
+    const async_call = call(async_fn, []);
+    return {
+      expression: eager_stmts.length > 0
+        ? call(arrow([], block([...eager_stmts, ret(async_call)])), [])
+        : async_call,
+      direct: true,
+    };
   }
 
   function is_effect_method(expr: Expression, prop: string): boolean {
@@ -3018,27 +3273,26 @@ export function create_round5_fusions(
       if (task_ctor === undefined) return undefined;
     }
     const body_stmts: Statement[] = [];
-    const iife_params: IdentifierReference[] = [];
-    const iife_args: Expression[] = [];
-    if (!standalone && sig_id !== undefined && signal_expr !== undefined) {
-      if (exit_cancel_id !== undefined && !is_pure_no_call(signal_expr)) {
-        iife_params.push(sig_id);
-        iife_args.push(signal_expr);
-      } else {
-        body_stmts.push(variable(sig_id, signal_expr, "const"));
-      }
-    }
+    const eager_stmts: Statement[] = [];
     if (builder.hoist_fn !== undefined) {
-      if (
-        !standalone && exit_cancel_id !== undefined &&
-        !is_pure_no_call(builder.hoist_fn.expr)
-      ) {
-        iife_params.push(builder.hoist_fn.id);
-        iife_args.push(builder.hoist_fn.expr);
+      if (!is_inline_fn_expr(builder.hoist_fn.expr)) {
+        eager_stmts.push(
+          variable(builder.hoist_fn.id, builder.hoist_fn.expr, "const"),
+        );
       } else {
         body_stmts.push(
           variable(builder.hoist_fn.id, builder.hoist_fn.expr, "const"),
         );
+      }
+    }
+    const hoisted_kinds: TaskYieldKind[] = kinds.map((cls) =>
+      hoist_task_kind_eager(cls, eager_stmts, "task_e")
+    );
+    if (!standalone && sig_id !== undefined && signal_expr !== undefined) {
+      if (eager_stmts.length > 0 || !is_const_literal_expr(signal_expr)) {
+        eager_stmts.push(variable(sig_id, signal_expr, "const"));
+      } else {
+        body_stmts.push(variable(sig_id, signal_expr, "const"));
       }
     }
     if (sig_id !== undefined && check_sig_id !== undefined) {
@@ -3053,7 +3307,7 @@ export function create_round5_fusions(
       );
     }
     const vals: IdentifierReference[] = [];
-    for (const cls of kinds) {
+    for (const cls of hoisted_kinds) {
       const v_expr = emit_task_kind_expr(
         cls,
         body_stmts,
@@ -3091,7 +3345,13 @@ export function create_round5_fusions(
         typeParameters: null,
         returnType: null,
       });
-      return { expression: call(task_ctor, [task_fn]), direct: true };
+      const wrapped = call(task_ctor, [task_fn]);
+      return {
+        expression: eager_stmts.length > 0
+          ? call(arrow([], block([...eager_stmts, ret(wrapped)])), [])
+          : wrapped,
+        direct: true,
+      };
     }
     const final_body = exit_cancel_id !== undefined
       ? wrap_task_exit_stmts(body_stmts, exit_cancel_id)
@@ -3102,12 +3362,18 @@ export function create_round5_fusions(
       expression: false,
       generator: false,
       async: true,
-      params: iife_params,
+      params: [],
       body: block(final_body),
       typeParameters: null,
       returnType: null,
     });
-    return { expression: call(async_fn, iife_args), direct: true };
+    const async_call = call(async_fn, []);
+    return {
+      expression: eager_stmts.length > 0
+        ? call(arrow([], block([...eager_stmts, ret(async_call)])), [])
+        : async_call,
+      direct: true,
+    };
   }
 
   /** PPF-03: Fluent Task chain fusion (from_fn(...).map(...).bind(...)). */
@@ -3187,18 +3453,17 @@ export function create_round5_fusions(
       if (task_ctor === undefined) return undefined;
     }
     const body_stmts: Statement[] = [];
-    const iife_params: IdentifierReference[] = [];
-    const iife_args: Expression[] = [];
+    const eager_stmts: Statement[] = [];
+    const hoisted_root = hoist_task_kind_eager(root_cls, eager_stmts, "task_e");
     if (!standalone && sig_id !== undefined && signal_expr !== undefined) {
-      if (exit_cancel_id !== undefined && !is_pure_no_call(signal_expr)) {
-        iife_params.push(sig_id);
-        iife_args.push(signal_expr);
+      if (eager_stmts.length > 0 || !is_const_literal_expr(signal_expr)) {
+        eager_stmts.push(variable(sig_id, signal_expr, "const"));
       } else {
         body_stmts.push(variable(sig_id, signal_expr, "const"));
       }
     }
     const first_val = emit_task_kind_expr(
-      root_cls,
+      hoisted_root,
       body_stmts,
       sig_id,
       check_sig_id,
@@ -3255,7 +3520,13 @@ export function create_round5_fusions(
         typeParameters: null,
         returnType: null,
       });
-      return { expression: call(task_ctor, [task_fn]), direct: true };
+      const wrapped = call(task_ctor, [task_fn]);
+      return {
+        expression: eager_stmts.length > 0
+          ? call(arrow([], block([...eager_stmts, ret(wrapped)])), [])
+          : wrapped,
+        direct: true,
+      };
     }
     const final_body = exit_cancel_id !== undefined
       ? wrap_task_exit_stmts(body_stmts, exit_cancel_id)
@@ -3266,12 +3537,18 @@ export function create_round5_fusions(
       expression: false,
       generator: false,
       async: true,
-      params: iife_params,
+      params: [],
       body: block(final_body),
       typeParameters: null,
       returnType: null,
     });
-    return { expression: call(async_fn, iife_args), direct: true };
+    const async_call = call(async_fn, []);
+    return {
+      expression: eager_stmts.length > 0
+        ? call(arrow([], block([...eager_stmts, ret(async_call)])), [])
+        : async_call,
+      direct: true,
+    };
   }
 
   /** PPF-03: Bounded-concurrency traverse_task(inputs, concurrency, fn) fusion. */
@@ -3344,6 +3621,20 @@ export function create_round5_fusions(
         cb.params.length > 1
       ) return undefined;
     }
+    if (
+      !intrinsics_unshadowed(
+        inner,
+        cls.kind === "pure" ? ["Array", "Number", "RangeError"] : [
+          "Array",
+          "Number",
+          "RangeError",
+          "AbortController",
+          "Promise",
+          "AggregateError",
+          "Symbol",
+        ],
+      )
+    ) return undefined;
 
     const anchor = signal_anchor ?? find_task_anchor();
     if (anchor === undefined) return undefined;
@@ -3590,6 +3881,7 @@ export function create_round5_fusions(
       if (val_expr === undefined) return undefined;
 
       const val_tmp = services.fresh("tt_v");
+      const out_param_id = services.fresh("tt_buf");
       const run_item_stmts: Statement[] = [
         ...step_stmts,
         variable(val_tmp, val_expr, "const"),
@@ -3600,13 +3892,28 @@ export function create_round5_fusions(
             operator: "=",
             left: node({
               type: "MemberExpression",
-              object: out_id,
+              object: out_param_id,
               property: idx_id,
               computed: true,
               optional: false,
             }),
             right: val_tmp,
           }),
+        }),
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "<",
+            left: next_id,
+            right: literal(0),
+          }),
+          consequent: ret(
+            as_const(
+              node({ type: "ArrayExpression", elements: [val_tmp] }),
+            ),
+          ),
+          alternate: null,
         }),
       ];
 
@@ -3792,7 +4099,18 @@ export function create_round5_fusions(
         expression: false,
         generator: false,
         async: true,
-        params: [],
+        params: [
+          {
+            ...out_param_id,
+            typeAnnotation: node({
+              type: "TSTypeAnnotation",
+              typeAnnotation: node({
+                type: "TSArrayType",
+                elementType: node({ type: "TSUnknownKeyword" }),
+              }),
+            }),
+          } as BindingPattern,
+        ],
         body: block([
           node({
             type: "WhileStatement",
@@ -3855,189 +4173,69 @@ export function create_round5_fusions(
         computed: true,
         optional: false,
       });
-      const chunk_id = services.fresh("tt_chunk");
-      const chunks_id = services.fresh("tt_chunks");
-      const pair_id = services.fresh("tt_pair");
-      const worker_body_chunked: Statement[] = [
-        variable(
-          chunk_id,
-          node({ type: "ArrayExpression", elements: Array.from([]) }),
-          "const",
-        ),
-        node({
-          type: "WhileStatement",
-          test: literal(true),
-          body: block([
-            node({
-              type: "TryStatement",
-              block: block([
-                ...worker_loop_body.slice(0, worker_loop_body.length - 1),
+      const out_arr_type: TSType = node({
+        type: "TSArrayType",
+        elementType: node({
+          type: "TSIndexedAccessType",
+          objectType: node({
+            type: "TSTypeReference",
+            typeName: id("NonNullable"),
+            typeArguments: node({
+              type: "TSTypeParameterInstantiation",
+              params: Array.from<TSType>([
                 node({
-                  type: "ExpressionStatement",
-                  expression: call(member(chunk_id, "push"), [
-                    as_const(
+                  type: "TSTypeReference",
+                  typeName: id("Awaited"),
+                  typeArguments: node({
+                    type: "TSTypeParameterInstantiation",
+                    params: Array.from<TSType>([
                       node({
-                        type: "ArrayExpression",
-                        elements: [idx_id, val_tmp],
-                      }),
-                    ),
-                  ]),
-                }),
-              ]),
-              handler: node({
-                type: "CatchClause",
-                param: err_id,
-                body: block([
-                  node({
-                    type: "IfStatement",
-                    test: negate_expr(failed_id),
-                    consequent: block([
-                      node({
-                        type: "ExpressionStatement",
-                        expression: node({
-                          type: "AssignmentExpression",
-                          operator: "=",
-                          left: failed_id,
-                          right: literal(true),
+                        type: "TSTypeReference",
+                        typeName: id("ReturnType"),
+                        typeArguments: node({
+                          type: "TSTypeParameterInstantiation",
+                          params: Array.from<TSType>([
+                            node({
+                              type: "TSTypeQuery",
+                              exprName: worker_id,
+                              typeArguments: null,
+                            }),
+                          ]),
                         }),
-                      }),
-                      node({
-                        type: "ExpressionStatement",
-                        expression: node({
-                          type: "AssignmentExpression",
-                          operator: "=",
-                          left: failure_id,
-                          right: err_id,
-                        }),
-                      }),
-                      node({
-                        type: "ExpressionStatement",
-                        expression: call(member(ctrl_id, "abort"), [err_id]),
                       }),
                     ]),
-                    alternate: null,
                   }),
-                  ret(chunk_id),
-                ]),
-              }),
-              finalizer: null,
-            }),
-          ]),
-        }),
-        ret(chunk_id),
-      ];
-      // Fix early `ret(void_zero())` inside worker_loop_body to `ret(chunk_id)`
-      const fix_chunk_ret = (s: Statement): Statement => {
-        if (s.type === "ReturnStatement") return ret(chunk_id);
-        if (s.type === "BlockStatement") {
-          return block((s.body as Statement[]).map(fix_chunk_ret));
-        }
-        if (s.type === "IfStatement") {
-          return {
-            ...s,
-            consequent: fix_chunk_ret(s.consequent),
-            alternate: s.alternate !== null ? fix_chunk_ret(s.alternate) : null,
-          };
-        }
-        return s;
-      };
-      const fixed_worker_loop = worker_loop_body
-        .slice(0, worker_loop_body.length - 1)
-        .map(fix_chunk_ret);
-      worker_body_chunked[1] = node({
-        type: "WhileStatement",
-        test: literal(true),
-        body: block([
-          node({
-            type: "TryStatement",
-            block: block([
-              ...fixed_worker_loop,
-              node({
-                type: "ExpressionStatement",
-                expression: call(member(chunk_id, "push"), [
-                  as_const(
-                    node({
-                      type: "ArrayExpression",
-                      elements: [idx_id, val_tmp],
-                    }),
-                  ),
-                ]),
-              }),
-            ]),
-            handler: node({
-              type: "CatchClause",
-              param: err_id,
-              body: block([
-                node({
-                  type: "IfStatement",
-                  test: negate_expr(failed_id),
-                  consequent: block([
-                    node({
-                      type: "ExpressionStatement",
-                      expression: node({
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: failed_id,
-                        right: literal(true),
-                      }),
-                    }),
-                    node({
-                      type: "ExpressionStatement",
-                      expression: node({
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: failure_id,
-                        right: err_id,
-                      }),
-                    }),
-                    node({
-                      type: "ExpressionStatement",
-                      expression: call(member(ctrl_id, "abort"), [err_id]),
-                    }),
-                  ]),
-                  alternate: null,
                 }),
-                ret(chunk_id),
               ]),
             }),
-            finalizer: null,
           }),
-        ]),
-      });
-      const typed_worker_fn: ArrowFunctionExpression = {
-        ...worker_fn,
-        body: block(worker_body_chunked),
-      };
-      const c_item_id = services.fresh("tt_ch");
-      const out_arr_ctor: Expression = node({
-        type: "NewExpression",
-        callee: id("Array"),
-        typeArguments: node({
-          type: "TSTypeParameterInstantiation",
-          params: Array.from<TSType>([
-            node({
-              type: "TSIndexedAccessType",
-              objectType: node({
-                type: "TSIndexedAccessType",
-                objectType: node({
-                  type: "TSIndexedAccessType",
-                  objectType: node({
-                    type: "TSTypeQuery",
-                    exprName: chunks_id,
-                    typeArguments: null,
-                  }),
-                  indexType: node({ type: "TSNumberKeyword" }),
-                }),
-                indexType: node({ type: "TSNumberKeyword" }),
-              }),
-              indexType: node({
-                type: "TSLiteralType",
-                literal: node({ type: "Literal", value: 1, raw: "1" }),
-              }),
-            }),
-          ]),
+          indexType: node({
+            type: "TSLiteralType",
+            literal: node({ type: "Literal", value: 0, raw: "0" }),
+          }),
         }),
-        arguments: [next_id],
+      });
+      const out_arr_init: Expression = node({
+        type: "ConditionalExpression",
+        test: is_arr_id,
+        consequent: node({
+          type: "NewExpression",
+          callee: id("Array"),
+          arguments: [
+            member(
+              node({
+                type: "TSAsExpression",
+                expression: src_id,
+                typeAnnotation: node({
+                  type: "TSArrayType",
+                  elementType: elem_var_type,
+                }),
+              }),
+              "length",
+            ),
+          ],
+        }),
+        alternate: node({ type: "ArrayExpression", elements: Array.from([]) }),
       });
 
       async_body.push(
@@ -4131,7 +4329,8 @@ export function create_round5_fusions(
         );
       }
       async_body.push(
-        variable(worker_id, typed_worker_fn, "const"),
+        variable(worker_id, worker_fn, "const"),
+        variable(out_id, out_arr_init, "const", out_arr_type),
         node({
           type: "TryStatement",
           block: block([
@@ -4168,18 +4367,17 @@ export function create_round5_fusions(
               body: node({
                 type: "ExpressionStatement",
                 expression: call(member(workers_id, "push"), [
-                  call(worker_id, []),
+                  call(worker_id, [out_id]),
                 ]),
               }),
             }),
-            variable(
-              chunks_id,
-              node({
+            node({
+              type: "ExpressionStatement",
+              expression: node({
                 type: "AwaitExpression",
                 argument: call(member(id("Promise"), "all"), [workers_id]),
               }),
-              "const",
-            ),
+            }),
             node({
               type: "IfStatement",
               test: failed_id,
@@ -4201,65 +4399,24 @@ export function create_round5_fusions(
               }),
               alternate: null,
             }),
-            variable(out_id, out_arr_ctor, "const"),
             node({
-              type: "ForOfStatement",
-              await: false,
-              left: node({
-                type: "VariableDeclaration",
-                kind: "const",
-                declarations: [
-                  node({
-                    type: "VariableDeclarator",
-                    id: c_item_id,
-                    init: null,
-                  }),
-                ],
+              type: "IfStatement",
+              test: node({
+                type: "BinaryExpression",
+                operator: "!==",
+                left: member(out_id, "length"),
+                right: next_id,
               }),
-              right: chunks_id,
-              body: node({
-                type: "ForOfStatement",
-                await: false,
-                left: node({
-                  type: "VariableDeclaration",
-                  kind: "const",
-                  declarations: [
-                    node({
-                      type: "VariableDeclarator",
-                      id: pair_id,
-                      init: null,
-                    }),
-                  ],
-                }),
-                right: c_item_id,
-                body: node({
-                  type: "ExpressionStatement",
-                  expression: node({
-                    type: "AssignmentExpression",
-                    operator: "=",
-                    left: node({
-                      type: "MemberExpression",
-                      object: out_id,
-                      property: node({
-                        type: "MemberExpression",
-                        object: pair_id,
-                        property: literal(0),
-                        computed: true,
-                        optional: false,
-                      }),
-                      computed: true,
-                      optional: false,
-                    }),
-                    right: node({
-                      type: "MemberExpression",
-                      object: pair_id,
-                      property: literal(1),
-                      computed: true,
-                      optional: false,
-                    }),
-                  }),
+              consequent: node({
+                type: "ExpressionStatement",
+                expression: node({
+                  type: "AssignmentExpression",
+                  operator: "=",
+                  left: member(out_id, "length"),
+                  right: next_id,
                 }),
               }),
+              alternate: null,
             }),
             ret(out_id),
           ]),
@@ -4497,6 +4654,7 @@ export function create_round5_fusions(
     }
 
     if (items_expr === undefined || fn_expr === undefined) return undefined;
+    if (!intrinsics_unshadowed(inner, ["Array"])) return undefined;
     if (
       lexical_hazard(items_expr) || contains_await_yield(items_expr) ||
       lexical_hazard(fn_expr) || contains_await_yield(fn_expr)
@@ -4537,8 +4695,8 @@ export function create_round5_fusions(
     }
 
     // For Traversable.traverse (eager task construction), only inline deferred task
-    // constructors (`from_fn`, `Task`) or pure `succeed`/`Task.pure` so no side-effects
-    // in fn(item) are reordered relative to task execution.
+    // constructors (`from_fn`, `Task`) with inline functions or pure `succeed`/`Task.pure`
+    // so no side-effects in fn(item) are reordered relative to task execution.
     if (!is_sequential) {
       if (
         classified === undefined ||
@@ -4546,7 +4704,9 @@ export function create_round5_fusions(
         classified.kind === "from_promise" ||
         classified.kind === "throw_error" ||
         classified.kind === "catch_error" ||
-        (classified.kind === "pure" && !is_pure_no_call(classified.value))
+        (classified.kind === "pure" && !is_pure_no_call(classified.value)) ||
+        ((classified.kind === "from_fn" || classified.kind === "task_ctor") &&
+          !is_inline_fn_expr(classified.fn))
       ) return undefined;
     } else if (
       classified !== undefined &&
@@ -5283,7 +5443,7 @@ export function create_round5_fusions(
     ) return undefined;
     if (
       !program_mode && signal_expr !== undefined &&
-      !has_pure_prefix_before_yield(body.body as Statement[])
+      !has_pure_prefix_before_yield(body.body as Statement[], true)
     ) return undefined;
 
     let sig_id: IdentifierReference | undefined;
@@ -9890,6 +10050,14 @@ export function create_round5_fusions(
         if (ctor !== undefined) {
           const l_src = services.fresh("arr_l");
           const r_src = services.fresh("arr_r");
+          const l_init: Expression = lr.needs_snapshot
+            ? node({
+              type: "ArrayExpression",
+              elements: Array.from([
+                node({ type: "SpreadElement", argument: lr.items }),
+              ]),
+            })
+            : lr.items;
           const out_arr: Expression = node({
             type: "ArrayExpression",
             elements: Array.from([
@@ -9902,7 +10070,7 @@ export function create_round5_fusions(
               arrow(
                 [],
                 block([
-                  variable(l_src, lr.items, "const"),
+                  variable(l_src, l_init, "const"),
                   variable(r_src, rr.items, "const"),
                   ret(call(ctor, [out_arr])),
                 ]),

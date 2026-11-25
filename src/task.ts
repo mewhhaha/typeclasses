@@ -1398,19 +1398,9 @@ function apply_map_frames(
 function eval_signal_free_plan(plan: TaskPlan): unknown {
   if (plan.tag !== "map") return not_signal_free;
   if (plan_of(plan.source) === undefined) {
-    const src = plan.source;
-    const comp = completed_of(src);
+    const comp = completed_of(plan.source);
     if (comp !== undefined) {
       return task_item(plan.apply(completed_item(comp)), plan.operation);
-    }
-    const sf = sync_fn_of(src);
-    if (sf !== undefined && sf.length === 0) {
-      const raw = sf(undefined);
-      if (!is_thenable(raw)) {
-        return task_item(plan.apply(raw), plan.operation);
-      }
-      const p = raw instanceof Promise ? raw : Promise.resolve(raw);
-      return p.then((v) => task_item(plan.apply(v), plan.operation));
     }
     return not_signal_free;
   }
@@ -1419,19 +1409,9 @@ function eval_signal_free_plan(plan: TaskPlan): unknown {
   for (let i = 0; i < frames.length; i += 1) {
     if (frames[i].tag !== "map") return not_signal_free;
   }
-  const src = seg.source;
-  const comp = completed_of(src);
+  const comp = completed_of(seg.source);
   if (comp !== undefined) {
     return apply_map_frames(completed_item(comp), frames);
-  }
-  const sf = sync_fn_of(src);
-  if (sf !== undefined && sf.length === 0) {
-    const raw = sf(undefined);
-    if (!is_thenable(raw)) {
-      return apply_map_frames(raw, frames);
-    }
-    const p = raw instanceof Promise ? raw : Promise.resolve(raw);
-    return p.then((v) => apply_map_frames(v, frames));
   }
   return not_signal_free;
 }
@@ -1444,19 +1424,12 @@ function is_signal_free_plan(plan: TaskPlan): boolean {
     source = current.source;
     current = plan_of(source);
   }
-  if (completed_of(source) !== undefined) return true;
-  const sf = sync_fn_of(source);
-  return sf !== undefined && sf.length === 0;
+  return completed_of(source) !== undefined;
 }
 
 function eval_signal_free(task: RawTask<unknown>): unknown {
   const comp = completed_of(task);
   if (comp !== undefined) return completed_item(comp);
-  const sf = sync_fn_of(task);
-  if (sf !== undefined) {
-    if (sf.length === 0) return sf(undefined);
-    return not_signal_free;
-  }
   const plan = plan_of(task);
   if (plan !== undefined) return eval_signal_free_plan(plan);
   return not_signal_free;
@@ -1468,11 +1441,6 @@ function eval_signal_free_with_options(
 ): unknown {
   const comp = completed_of(task);
   if (comp !== undefined) return completed_item(comp);
-  const sf = sync_fn_of(task);
-  if (sf !== undefined) {
-    if (sf.length === 0) return sf(undefined);
-    return not_signal_free;
-  }
   const plan = plan_of(task);
   if (plan !== undefined) {
     if (options.yield_every === undefined) {
@@ -2006,6 +1974,7 @@ export function traverse_task<input, output>(
     if (array_inputs !== undefined) {
       const results: output[] = [];
       let idx = 0;
+      let sync_ctrl: AbortController | undefined;
       // Preserve live array_inputs.length in the sync fast path.
       while (idx < array_inputs.length) {
         if (parent_signal?.aborted) {
@@ -2015,10 +1984,30 @@ export function traverse_task<input, output>(
           throw task_abort_error("Task.traverse", opt_signal);
         }
         const task = fn(array_inputs[idx], idx).value();
-        const out = eval_signal_free_with_options(
+        let out = eval_signal_free_with_options(
           task as RawTask<unknown>,
           options,
         );
+        if (
+          out === not_signal_free &&
+          parent_signal === undefined &&
+          opt_signal === undefined &&
+          (sync_fn_of(task as RawTask<unknown>) !== undefined ||
+            plan_of(task as RawTask<unknown>) !== undefined)
+        ) {
+          if (sync_ctrl === undefined) sync_ctrl = new AbortController();
+          try {
+            out = eval_task_maybe_sync(
+              task as RawTask<unknown>,
+              sync_ctrl.signal,
+              "Task.traverse",
+              options,
+            );
+          } catch (error) {
+            sync_ctrl.abort(error);
+            throw error;
+          }
+        }
         if (out === not_signal_free) {
           return traverse_async(
             parent_signal,

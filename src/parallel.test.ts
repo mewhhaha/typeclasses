@@ -299,3 +299,73 @@ Deno.test("abort inside a transfer callback never posts cancelled work or strand
   assert_equals(transfers, 1);
   assert_equals(await settles_within(pool.map(["next"])), ["next"]);
 });
+
+Deno.test("pool.stream serializes concurrent next() pulls and closes cleanly on return()", async () => {
+  using script = worker_script(`
+const serialize_error = (error) => ({ name: error.name, message: error.message, stack: error.stack });
+(${serve_worker.toString()})((input) => input);
+`);
+  using pool = create_worker_pool<number, number>(script.url, { workers: 2 });
+
+  // Concurrent next() pulls must preserve order and never drop items
+  const it = pool.stream([1, 2, 3, 4], { window_size: 2 })[
+    Symbol.asyncIterator
+  ]();
+  const [r1, r2] = await Promise.all([it.next(), it.next()]);
+  const out: number[] = [];
+  if (!r1.done) out.push(r1.value);
+  if (!r2.done) out.push(r2.value);
+  while (true) {
+    const step = await it.next();
+    if (step.done) break;
+    out.push(step.value);
+  }
+  assert_equals(out, [1, 2, 3, 4]);
+
+  // return() during a pending pull must keep the stream permanently closed
+  const it2 = pool.stream([1, 2, 3, 4], { window_size: 2 })[
+    Symbol.asyncIterator
+  ]();
+  const pending_first = it2.next();
+  const closed = it2.return!();
+  await Promise.all([pending_first, closed]);
+  assert_equals(await it2.next(), { done: true, value: undefined });
+});
+
+Deno.test("serve_worker preserves legacy range replies for mixed-version clients", async () => {
+  using script = worker_script(`
+const serialize_error = (error) => ({ name: error.name, message: error.message, stack: error.stack });
+(${serve_worker.toString()})((input) => input + 1);
+`);
+  const worker = new Worker(script.url, { type: "module" });
+  try {
+    const replies: unknown[] = [];
+    const wait_reply = () =>
+      new Promise<unknown>((resolve) => {
+        worker.onmessage = (event) => {
+          replies.push(event.data);
+          resolve(event.data);
+        };
+      });
+    // Wait for ready handshake
+    const ready = await wait_reply() as readonly unknown[];
+    assert_equals(ready[0], "ready");
+
+    // Legacy client sends ["range", ...] and expects ["range-results", ...]
+    const legacy_p = wait_reply();
+    worker.postMessage(["range", 1, 0, [10, 20]]);
+    const legacy_reply = await legacy_p;
+    assert_equals(legacy_reply, ["range-results", 1, 0, [
+      ["done", 11],
+      ["done", 21],
+    ]]);
+
+    // New client sends ["range-compact", ...] and gets ["range-ok", ...]
+    const compact_p = wait_reply();
+    worker.postMessage(["range-compact", 2, 0, [10, 20]]);
+    const compact_reply = await compact_p;
+    assert_equals(compact_reply, ["range-ok", 2, 0, [11, 21]]);
+  } finally {
+    worker.terminate();
+  }
+});

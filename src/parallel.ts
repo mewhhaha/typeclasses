@@ -569,7 +569,12 @@ export function create_worker_pool<input, output>(
               Array.isArray(request.inputs)
             ? request.inputs
             : request.inputs.slice(start, end);
-          const msg = ["range", request.batch, start, slice];
+          const msg = [
+            slot.range_ok ? "range-compact" : "range",
+            request.batch,
+            start,
+            slice,
+          ];
           if (transfer !== undefined) slot.worker.postMessage(msg, transfer);
           else slot.worker.postMessage(msg);
         } else {
@@ -1120,12 +1125,46 @@ export function create_worker_pool<input, output>(
         return { value: undefined, done: true };
       };
 
+      let pending_op: Promise<unknown> | undefined;
+      const run_serialized = <result>(
+        op: () => Promise<result>,
+      ): Promise<result> => {
+        const prev = pending_op;
+        const next_promise = prev === undefined ? op() : prev.then(op, op);
+        pending_op = next_promise;
+        void next_promise.then(
+          () => {
+            if (pending_op === next_promise) pending_op = undefined;
+          },
+          () => {
+            if (pending_op === next_promise) pending_op = undefined;
+          },
+        );
+        return next_promise;
+      };
+
+      const step_next = (): Promise<IteratorResult<output, void>> => {
+        if (buf_index < buf_len) {
+          const value = buffer![buf_index++];
+          if (buf_index === buf_len) {
+            buffer = undefined;
+            buf_index = 0;
+            buf_len = 0;
+          }
+          return Promise.resolve({ value, done: false });
+        }
+        if (finished) {
+          return Promise.resolve({ value: undefined, done: true });
+        }
+        return fetch_next_window();
+      };
+
       const async_iter: AsyncIterableIterator<output> = {
         [Symbol.asyncIterator]() {
           return this;
         },
         next(): Promise<IteratorResult<output, void>> {
-          if (buf_index < buf_len) {
+          if (pending_op === undefined && buf_index < buf_len) {
             const value = buffer![buf_index++];
             if (buf_index === buf_len) {
               buffer = undefined;
@@ -1134,39 +1173,43 @@ export function create_worker_pool<input, output>(
             }
             return Promise.resolve({ value, done: false });
           }
-          if (finished) {
+          if (pending_op === undefined && finished) {
             return Promise.resolve({ value: undefined, done: true });
           }
-          return fetch_next_window();
+          return run_serialized(step_next);
         },
         return(value?: unknown): Promise<IteratorResult<output, void>> {
-          finished = true;
-          buffer = undefined;
-          buf_index = 0;
-          buf_len = 0;
-          try {
-            close_source_once();
-            return Promise.resolve({ value: value as void, done: true });
-          } catch (error) {
-            return Promise.reject(error);
-          }
+          return run_serialized(() => {
+            finished = true;
+            buffer = undefined;
+            buf_index = 0;
+            buf_len = 0;
+            try {
+              close_source_once();
+              return Promise.resolve({ value: value as void, done: true });
+            } catch (error) {
+              return Promise.reject(error);
+            }
+          });
         },
         throw(error?: unknown): Promise<IteratorResult<output, void>> {
-          finished = true;
-          buffer = undefined;
-          buf_index = 0;
-          buf_len = 0;
-          try {
-            close_source_once();
-            return Promise.reject(error);
-          } catch (cleanup_error) {
-            return Promise.reject(
-              new AggregateError(
-                [error, cleanup_error],
-                "Worker stream and iterator cleanup both failed",
-              ),
-            );
-          }
+          return run_serialized(() => {
+            finished = true;
+            buffer = undefined;
+            buf_index = 0;
+            buf_len = 0;
+            try {
+              close_source_once();
+              return Promise.reject(error);
+            } catch (cleanup_error) {
+              return Promise.reject(
+                new AggregateError(
+                  [error, cleanup_error],
+                  "Worker stream and iterator cleanup both failed",
+                ),
+              );
+            }
+          });
         },
       };
       return async_iter;
@@ -1335,6 +1378,7 @@ export function serve_worker<input, output>(
     let single: WorkerJob<input>[1] | undefined;
     switch (tag) {
       case "range":
+      case "range-compact":
         batch = data[1] as number;
         start = data[2] as number;
         inputs = data[3] as input[];
@@ -1372,8 +1416,10 @@ export function serve_worker<input, output>(
       }
     };
 
+    const is_range = tag === "range" || tag === "range-compact";
+    const range_compact = tag === "range-compact";
     if (concurrency === 1) {
-      if (tag === "range") {
+      if (is_range) {
         const outputs = new Array<unknown>(count);
         let failed = false;
         let replies: unknown[] | undefined;
@@ -1382,8 +1428,14 @@ export function serve_worker<input, output>(
           if (signal.aborted) scope.postMessage(["cancelled", batch]);
           else if (failed) {
             post(["range-results", batch, start, replies], transfers);
-          } else {
+          } else if (range_compact) {
             post(["range-ok", batch, start, outputs], transfers);
+          } else {
+            const wrapped = new Array<unknown>(count);
+            for (let j = 0; j < count; j += 1) {
+              wrapped[j] = ["done", outputs[j]];
+            }
+            post(["range-results", batch, start, wrapped], transfers);
           }
         };
         const promote_failed = (
@@ -1557,7 +1609,6 @@ export function serve_worker<input, output>(
       return;
     }
 
-    const is_range = tag === "range";
     const replies = tag === "job" ? undefined : new Array<unknown>(count);
     const range_outputs = is_range ? new Array<unknown>(count) : undefined;
     let range_failed = false;
@@ -1621,7 +1672,7 @@ export function serve_worker<input, output>(
       } else if (tag === "job") {
         post(single_reply, transfers);
       } else if (is_range) {
-        if (range_failed) {
+        if (range_failed || !range_compact) {
           for (let i = 0; i < count; i += 1) {
             if (replies![i] === undefined) {
               replies![i] = ["done", range_outputs![i]];

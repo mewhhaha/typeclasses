@@ -141,6 +141,7 @@ const LOG_CHUNK = 5;
 type WriterLogBuffer = {
   readonly items: unknown[];
   sealed: boolean;
+  shared?: boolean;
 };
 const bw_item = Symbol("Writer.item");
 const bw_buf = Symbol("Writer.buf");
@@ -170,7 +171,7 @@ function buffered_writer_value(
   const buf = this[bw_buf];
   const len = this[bw_len];
   let arr: unknown[];
-  if (len === buf.items.length) {
+  if (!buf.shared && len === buf.items.length) {
     buf.sealed = true;
     arr = buf.items;
   } else {
@@ -1138,6 +1139,7 @@ function writer_map(
   const bw = self as unknown as BufferedWriterTarget;
   const buf = bw[bw_buf];
   if (buf !== undefined) {
+    buf.shared = true;
     return make_bw(fn(bw[bw_item]), buf, bw[bw_len]);
   }
   const [value, output] = self.value();
@@ -1161,6 +1163,7 @@ function combine_writer_outputs(
         const left_len = left_bw[bw_len];
         const right_len = right_bw[bw_len];
         if (!left_buf.sealed && left_len === left_buf.items.length) {
+          left_buf.shared = true;
           append_bw_items(left_buf.items, right_buf, right_len);
           return make_bw(result_item, left_buf, left_len + right_len);
         }
@@ -1176,6 +1179,7 @@ function combine_writer_outputs(
         const left_len = left_bw[bw_len];
         const right_items = right_output!.value() as readonly unknown[];
         if (!left_buf.sealed && left_len === left_buf.items.length) {
+          left_buf.shared = true;
           append_array_log(left_buf.items, right_items);
           return make_bw(result_item, left_buf, left_buf.items.length);
         }
@@ -1482,6 +1486,7 @@ function writer_lift(
       const first_buf = first_target[bw_buf];
       const first_len = first_target[bw_len];
       if (!first_buf.sealed && first_len === first_buf.items.length) {
+        first_buf.shared = true;
         acc.arr_obj = first_buf;
         acc.arr = first_buf.items;
       } else {

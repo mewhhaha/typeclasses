@@ -708,7 +708,7 @@ export const from_snapshot = from_async_iterable;
 // --- Concurrent source opening & cleanup helpers ---
 
 type OpenedSource = {
-  // 0 = sync array, 1 = snap array, 2 = sync iter, 3 = chunks, 4 = stream, 5 = async iter
+  // 1 = array (sync/snap), 2 = sync iter, 3 = chunks, 4 = stream, 5 = async iter
   readonly kind: number;
   arr?: readonly unknown[];
   idx: number;
@@ -740,7 +740,7 @@ function open_concurrent_source(
   if (synchronous !== undefined) {
     const iter = synchronous();
     if (is_canonical_array(iter)) {
-      return { kind: 0, arr: iter, idx: 0, prevent_cancel: false };
+      return { kind: 1, arr: iter, idx: 0, prevent_cancel: false };
     }
     return {
       kind: 2,
@@ -764,6 +764,44 @@ function open_concurrent_source(
     async_iter: source()[Symbol.asyncIterator](),
     prevent_cancel: false,
   };
+}
+
+function initial_ring_capacity(concurrency: number): number {
+  let cap = 1;
+  while (cap < concurrency && cap < 64) cap <<= 1;
+  return cap;
+}
+
+function grow_ordered_slots(
+  slots: unknown[],
+  head_seq: number,
+  count: number,
+  cap: number,
+): unknown[] {
+  const next_cap = cap * 2;
+  const old_mask = cap - 1;
+  const next_mask = next_cap - 1;
+  const next_slots = new Array<unknown>(next_cap).fill(PENDING);
+  for (let k = 0; k < count; k += 1) {
+    const s = head_seq + k;
+    next_slots[s & next_mask] = slots[s & old_mask];
+  }
+  return next_slots;
+}
+
+function grow_ready_ring(
+  ready: unknown[],
+  ready_head: number,
+  ready_count: number,
+  ready_cap: number,
+): unknown[] {
+  const next_cap = ready_cap * 2;
+  const old_mask = ready_cap - 1;
+  const next_ready = new Array<unknown>(next_cap);
+  for (let k = 0; k < ready_count; k += 1) {
+    next_ready[k] = ready[(ready_head + k) & old_mask];
+  }
+  return next_ready;
 }
 
 async function close_concurrent_resource(
@@ -853,13 +891,10 @@ export function map_concurrent<from, to>(
       }
     };
     const on_external_abort = () => trigger_abort(external!.reason);
-    if (external !== undefined) {
-      external.addEventListener("abort", on_external_abort, { once: true });
-      if (external.aborted) trigger_abort(external.reason);
-    }
-
-    const slots = new Array<unknown>(concurrency).fill(PENDING);
-    let head = 0;
+    let cap = initial_ring_capacity(concurrency);
+    let mask = cap - 1;
+    let slots = new Array<unknown>(cap).fill(PENDING);
+    let head_seq = 0;
     let count = 0;
     let in_flight = 0;
     let index = 0;
@@ -903,6 +938,10 @@ export function map_concurrent<from, to>(
     };
 
     try {
+      if (external !== undefined) {
+        external.addEventListener("abort", on_external_abort, { once: true });
+        if (external.aborted) trigger_abort(external.reason);
+      }
       if (aborted) throw abort_reason;
       opened = open_concurrent_source(plan.source);
       const src_kind = opened.kind;
@@ -911,14 +950,7 @@ export function map_concurrent<from, to>(
           !ended && count < concurrency && !has_failure && !aborted
         ) {
           let value: unknown;
-          if (src_kind === 0) {
-            const arr = opened.arr!;
-            if (opened.idx >= arr.length) {
-              ended = true;
-              break;
-            }
-            value = arr[opened.idx++];
-          } else if (src_kind === 1) {
+          if (src_kind === 1) {
             const arr = opened.arr!;
             if (opened.idx >= arr.length) {
               ended = true;
@@ -934,7 +966,10 @@ export function map_concurrent<from, to>(
               ended = true;
               break;
             }
-            value = next.value;
+            const raw_item = next.value;
+            value = is_promise_like(raw_item)
+              ? await race_async(raw_item)
+              : raw_item;
           } else if (src_kind === 3) {
             let chunk = opened.arr;
             while (chunk === undefined || opened.idx >= chunk.length) {
@@ -975,19 +1010,24 @@ export function map_concurrent<from, to>(
           }
           if (has_failure) break;
           if (aborted) throw abort_reason;
-          const pos = (head + count) % concurrency;
+          if (count === cap) {
+            slots = grow_ordered_slots(slots, head_seq, count, cap);
+            cap *= 2;
+            mask = cap - 1;
+          }
+          const seq = head_seq + count;
           count += 1;
           const task_index = index++;
           try {
             const raw = plan.fn(value, task_index, signal);
             if (is_promise_like(raw)) {
-              slots[pos] = PENDING;
+              slots[seq & mask] = PENDING;
               in_flight += 1;
               const on_ok = (res: unknown) => {
                 in_flight -= 1;
                 if (aborted) return;
-                slots[pos] = res;
-                if (pos === head && wake_resolve !== undefined) {
+                slots[seq & mask] = res;
+                if (seq === head_seq && wake_resolve !== undefined) {
                   const r = wake_resolve;
                   wake_resolve = undefined;
                   wake_reject = undefined;
@@ -997,7 +1037,7 @@ export function map_concurrent<from, to>(
               if (raw instanceof Promise) raw.then(on_ok, on_fail);
               else Promise.resolve(raw).then(on_ok, on_fail);
             } else {
-              slots[pos] = raw;
+              slots[seq & mask] = raw;
             }
           } catch (error) {
             if (!has_failure) {
@@ -1011,7 +1051,7 @@ export function map_concurrent<from, to>(
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
         if (count === 0) return;
-        let out_val = slots[head];
+        let out_val = slots[head_seq & mask];
         if (out_val === PENDING) {
           await new Promise<void>((resolve, reject) => {
             if (aborted) {
@@ -1023,10 +1063,10 @@ export function map_concurrent<from, to>(
           });
           if (has_failure) throw fail_error;
           if (aborted) throw abort_reason;
-          out_val = slots[head];
+          out_val = slots[head_seq & mask];
         }
-        slots[head] = PENDING;
-        head = (head + 1) % concurrency;
+        slots[head_seq & mask] = PENDING;
+        head_seq += 1;
         count -= 1;
         if (aborted) throw abort_reason;
         yield out_val as to;
@@ -1091,12 +1131,9 @@ export function map_concurrent_unordered<from, to>(
       }
     };
     const on_external_abort = () => trigger_abort(external!.reason);
-    if (external !== undefined) {
-      external.addEventListener("abort", on_external_abort, { once: true });
-      if (external.aborted) trigger_abort(external.reason);
-    }
-
-    const ready = new Array<unknown>(concurrency);
+    let ready_cap = initial_ring_capacity(concurrency);
+    let ready_mask = ready_cap - 1;
+    let ready = new Array<unknown>(ready_cap);
     let ready_head = 0;
     let ready_count = 0;
     let admitted = 0;
@@ -1110,6 +1147,16 @@ export function map_concurrent_unordered<from, to>(
     let fail_error: unknown;
     let primary_failure: { readonly error: unknown } | undefined;
 
+    const push_ready = (val: unknown) => {
+      if (ready_count === ready_cap) {
+        ready = grow_ready_ring(ready, ready_head, ready_count, ready_cap);
+        ready_head = 0;
+        ready_cap *= 2;
+        ready_mask = ready_cap - 1;
+      }
+      ready[(ready_head + ready_count) & ready_mask] = val;
+      ready_count += 1;
+    };
     const wake_now = () => {
       const r = wake_resolve;
       if (r !== undefined) {
@@ -1127,8 +1174,7 @@ export function map_concurrent_unordered<from, to>(
     };
     const on_value = (value: unknown) => {
       if (aborted) return;
-      ready[(ready_head + ready_count) % concurrency] = value;
-      ready_count += 1;
+      push_ready(value);
       wake_now();
     };
     const on_read = (next: IteratorResult<unknown>) => {
@@ -1143,24 +1189,13 @@ export function map_concurrent_unordered<from, to>(
       read_chunk = next;
       wake_now();
     };
-    const on_item_resolved = (resolved: unknown) => {
-      if (aborted) return;
-      const id = index++;
-      try {
-        const raw = plan.fn(resolved, id, signal);
-        if (is_promise_like(raw)) {
-          if (raw instanceof Promise) raw.then(on_value, on_fail);
-          else Promise.resolve(raw).then(on_value, on_fail);
-        } else {
-          ready[(ready_head + ready_count) % concurrency] = raw;
-          ready_count += 1;
-          wake_now();
-        }
-      } catch (error) {
-        on_fail(error);
-      }
+    const await_item_thenable = (raw_item: PromiseLike<unknown>) => {
+      reading = true;
+      const p = raw_item instanceof Promise
+        ? raw_item
+        : Promise.resolve(raw_item);
+      p.then((value) => on_read({ done: false, value }), on_fail);
     };
-
     const admit_value = (val: unknown) => {
       const id = index++;
       admitted += 1;
@@ -1171,8 +1206,7 @@ export function map_concurrent_unordered<from, to>(
           if (raw instanceof Promise) raw.then(on_value, on_fail);
           else Promise.resolve(raw).then(on_value, on_fail);
         } else {
-          ready[(ready_head + ready_count) % concurrency] = raw;
-          ready_count += 1;
+          push_ready(raw);
         }
       } catch (error) {
         on_fail(error);
@@ -1180,6 +1214,10 @@ export function map_concurrent_unordered<from, to>(
     };
 
     try {
+      if (external !== undefined) {
+        external.addEventListener("abort", on_external_abort, { once: true });
+        if (external.aborted) trigger_abort(external.reason);
+      }
       if (aborted) throw abort_reason;
       opened = open_concurrent_source(plan.source);
       const src_kind = opened.kind;
@@ -1187,24 +1225,15 @@ export function map_concurrent_unordered<from, to>(
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
 
-        if (src_kind === 0) {
-          const arr = opened.arr!;
-          while (
-            !ended && admitted < concurrency && !has_failure &&
-            !aborted
-          ) {
-            if (opened.idx >= arr.length) {
-              ended = true;
-              break;
-            }
-            admit_value(arr[opened.idx++]);
+        if (src_kind === 1) {
+          if (read !== undefined) {
+            const next = read;
+            read = undefined;
+            admit_value(next.value);
           }
-          if (has_failure) throw fail_error;
-          if (aborted) throw abort_reason;
-        } else if (src_kind === 1) {
           const arr = opened.arr!;
           while (
-            !ended && admitted < concurrency && !has_failure &&
+            !ended && admitted < concurrency && !reading && !has_failure &&
             !aborted
           ) {
             if (opened.idx >= arr.length) {
@@ -1213,22 +1242,22 @@ export function map_concurrent_unordered<from, to>(
             }
             const raw_item = arr[opened.idx++];
             if (is_promise_like(raw_item)) {
-              admitted += 1;
-              if (raw_item instanceof Promise) {
-                raw_item.then(on_item_resolved, on_fail);
-              } else {
-                Promise.resolve(raw_item).then(on_item_resolved, on_fail);
-              }
-            } else {
-              admit_value(raw_item);
+              await_item_thenable(raw_item);
+              break;
             }
+            admit_value(raw_item);
           }
           if (has_failure) throw fail_error;
           if (aborted) throw abort_reason;
         } else if (src_kind === 2) {
+          if (read !== undefined) {
+            const next = read;
+            read = undefined;
+            admit_value(next.value);
+          }
           const sync_iter = opened.sync_iter!;
           while (
-            !ended && admitted < concurrency && !has_failure &&
+            !ended && admitted < concurrency && !reading && !has_failure &&
             !aborted
           ) {
             const next = sync_iter.next();
@@ -1236,11 +1265,21 @@ export function map_concurrent_unordered<from, to>(
               ended = true;
               break;
             }
-            admit_value(next.value);
+            const raw_item = next.value;
+            if (is_promise_like(raw_item)) {
+              await_item_thenable(raw_item);
+              break;
+            }
+            admit_value(raw_item);
           }
           if (has_failure) throw fail_error;
           if (aborted) throw abort_reason;
         } else if (src_kind === 3) {
+          if (read !== undefined) {
+            const next = read;
+            read = undefined;
+            admit_value(next.value);
+          }
           if (read_chunk !== undefined) {
             const next = read_chunk;
             read_chunk = undefined;
@@ -1251,21 +1290,16 @@ export function map_concurrent_unordered<from, to>(
             }
           }
           while (
-            !ended && admitted < concurrency && !has_failure &&
+            !ended && admitted < concurrency && !reading && !has_failure &&
             !aborted && opened.arr !== undefined &&
             opened.idx < opened.arr.length
           ) {
             const raw_item = opened.arr[opened.idx++];
             if (is_promise_like(raw_item)) {
-              admitted += 1;
-              if (raw_item instanceof Promise) {
-                raw_item.then(on_item_resolved, on_fail);
-              } else {
-                Promise.resolve(raw_item).then(on_item_resolved, on_fail);
-              }
-            } else {
-              admit_value(raw_item);
+              await_item_thenable(raw_item);
+              break;
             }
+            admit_value(raw_item);
           }
           if (has_failure) throw fail_error;
           if (aborted) throw abort_reason;
@@ -1323,12 +1357,12 @@ export function map_concurrent_unordered<from, to>(
           admitted -= 1;
           const value = ready[ready_head];
           ready[ready_head] = undefined;
-          ready_head = (ready_head + 1) % concurrency;
+          ready_head = (ready_head + 1) & ready_mask;
           ready_count -= 1;
           yield value as to;
           continue;
         }
-        if (ended && admitted === 0) return;
+        if (ended && admitted === 0 && !reading && read === undefined) return;
         await new Promise<void>((resolve, reject) => {
           if (aborted) {
             reject(abort_reason);
@@ -1363,20 +1397,33 @@ function drive_concurrent_to_array<item>(
   const external = plan.signal;
   if (external?.aborted) return Promise.reject(external.reason);
   if (limit === 0) return Promise.resolve([]);
+  let preopened: OpenedSource | undefined;
+  let existing_controller: AbortController | undefined;
+  const out: item[] = [];
   const synchronous = sync_of(plan.source);
   if (
     synchronous !== undefined && limit === Infinity && external === undefined
   ) {
-    const iter = synchronous();
+    let iter: Iterable<unknown>;
+    try {
+      iter = synchronous();
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (is_canonical_array(iter)) {
       const controller = new AbortController();
       const signal = controller.signal;
       const fn = plan.fn;
-      const out: item[] = [];
       for (let i = 0; i < iter.length; i += 1) {
+        const raw_item = iter[i];
+        if (is_promise_like(raw_item)) {
+          preopened = { kind: 1, arr: iter, idx: i, prevent_cancel: false };
+          existing_controller = controller;
+          break;
+        }
         let raw: unknown;
         try {
-          raw = fn(iter[i], i, signal);
+          raw = fn(raw_item, i, signal);
         } catch (error) {
           controller.abort(error);
           return Promise.reject(error);
@@ -1393,8 +1440,21 @@ function drive_concurrent_to_array<item>(
         }
         out.push(raw as item);
       }
-      controller.abort();
-      return Promise.resolve(out);
+      if (preopened === undefined) {
+        controller.abort();
+        return Promise.resolve(out);
+      }
+    } else {
+      try {
+        preopened = {
+          kind: 2,
+          idx: 0,
+          sync_iter: iter[Symbol.iterator](),
+          prevent_cancel: false,
+        };
+      } catch (error) {
+        return Promise.reject(error);
+      }
     }
   }
   return plan.ordered
@@ -1403,14 +1463,18 @@ function drive_concurrent_to_array<item>(
       MODE_ARRAY,
       undefined,
       limit,
-      [],
+      out,
+      preopened,
+      existing_controller,
     )
     : drive_concurrent_unordered_push<item, item[]>(
       plan,
       MODE_ARRAY,
       undefined,
       limit,
-      [],
+      out,
+      preopened,
+      existing_controller,
     );
 }
 
@@ -1456,8 +1520,10 @@ async function finish_concurrent_sync_array<item>(
 
   try {
     if (plan.ordered) {
-      const slots = new Array<unknown>(concurrency).fill(PENDING);
-      let head = 0;
+      let cap = initial_ring_capacity(concurrency);
+      let mask = cap - 1;
+      let slots = new Array<unknown>(cap).fill(PENDING);
+      let head_seq = 0;
       let count = 1;
       let idx = start_index + 1;
       const on_fail = (error: unknown) => {
@@ -1470,34 +1536,64 @@ async function finish_concurrent_sync_array<item>(
       const on_first_ok = (res: unknown) => {
         if (aborted) return;
         slots[0] = res;
-        if (head === 0) wake_now();
+        if (head_seq === 0) wake_now();
       };
       if (first_pending instanceof Promise) {
         first_pending.then(on_first_ok, on_fail);
       } else {
         Promise.resolve(first_pending).then(on_first_ok, on_fail);
       }
+      const race_item = (promise: PromiseLike<unknown>): Promise<unknown> =>
+        new Promise((resolve, reject) => {
+          if (aborted) {
+            Promise.resolve(promise).then(noop, noop);
+            reject(abort_reason);
+            return;
+          }
+          wake_reject = reject;
+          const on_res = (v: unknown) => {
+            if (wake_reject === reject) wake_reject = undefined;
+            resolve(v);
+          };
+          const on_err = (e: unknown) => {
+            if (wake_reject === reject) wake_reject = undefined;
+            reject(e);
+          };
+          if (promise instanceof Promise) promise.then(on_res, on_err);
+          else Promise.resolve(promise).then(on_res, on_err);
+        });
 
       while (true) {
         while (
-          count < concurrency && idx < arr.length && !has_failure
+          count < concurrency && idx < arr.length && !has_failure && !aborted
         ) {
-          const pos = (head + count) % concurrency;
-          count += 1;
           const task_index = idx++;
+          const raw_item = arr[task_index];
+          const value = is_promise_like(raw_item)
+            ? await race_item(raw_item)
+            : raw_item;
+          if (has_failure) break;
+          if (aborted) throw abort_reason;
+          if (count === cap) {
+            slots = grow_ordered_slots(slots, head_seq, count, cap);
+            cap *= 2;
+            mask = cap - 1;
+          }
+          const seq = head_seq + count;
+          count += 1;
           try {
-            const raw = fn(arr[task_index], task_index, signal);
+            const raw = fn(value, task_index, signal);
             if (is_promise_like(raw)) {
-              slots[pos] = PENDING;
+              slots[seq & mask] = PENDING;
               const on_ok = (res: unknown) => {
                 if (aborted) return;
-                slots[pos] = res;
-                if (pos === head) wake_now();
+                slots[seq & mask] = res;
+                if (seq === head_seq) wake_now();
               };
               if (raw instanceof Promise) raw.then(on_ok, on_fail);
               else Promise.resolve(raw).then(on_ok, on_fail);
             } else {
-              slots[pos] = raw;
+              slots[seq & mask] = raw;
             }
           } catch (error) {
             on_fail(error);
@@ -1505,8 +1601,9 @@ async function finish_concurrent_sync_array<item>(
           }
         }
         if (has_failure) throw fail_error;
+        if (aborted) throw abort_reason;
         if (count === 0) return out;
-        let val = slots[head];
+        let val = slots[head_seq & mask];
         if (val === PENDING) {
           await new Promise<void>((resolve, reject) => {
             if (aborted) {
@@ -1517,19 +1614,35 @@ async function finish_concurrent_sync_array<item>(
             wake_reject = reject;
           });
           if (has_failure) throw fail_error;
-          val = slots[head];
+          val = slots[head_seq & mask];
         }
-        slots[head] = PENDING;
-        head = (head + 1) % concurrency;
+        slots[head_seq & mask] = PENDING;
+        head_seq += 1;
         count -= 1;
         out.push(val as item);
       }
     } else {
-      const ready = new Array<unknown>(concurrency);
+      let ready_cap = initial_ring_capacity(concurrency);
+      let ready_mask = ready_cap - 1;
+      let ready = new Array<unknown>(ready_cap);
       let ready_head = 0;
       let ready_count = 0;
       let admitted = 1;
       let idx = start_index + 1;
+      let reading = false;
+      let read_val:
+        | { readonly value: unknown; readonly idx: number }
+        | undefined;
+      const push_ready = (val: unknown) => {
+        if (ready_count === ready_cap) {
+          ready = grow_ready_ring(ready, ready_head, ready_count, ready_cap);
+          ready_head = 0;
+          ready_cap *= 2;
+          ready_mask = ready_cap - 1;
+        }
+        ready[(ready_head + ready_count) & ready_mask] = val;
+        ready_count += 1;
+      };
       const on_fail = (error: unknown) => {
         if (!has_failure) {
           has_failure = true;
@@ -1539,9 +1652,22 @@ async function finish_concurrent_sync_array<item>(
       };
       const on_value = (value: unknown) => {
         if (aborted) return;
-        ready[(ready_head + ready_count) % concurrency] = value;
-        ready_count += 1;
+        push_ready(value);
         wake_now();
+      };
+      const admit_item = (val: unknown, task_index: number) => {
+        admitted += 1;
+        try {
+          const raw = fn(val, task_index, signal);
+          if (is_promise_like(raw)) {
+            if (raw instanceof Promise) raw.then(on_value, on_fail);
+            else Promise.resolve(raw).then(on_value, on_fail);
+          } else {
+            push_ready(raw);
+          }
+        } catch (error) {
+          on_fail(error);
+        }
       };
       if (first_pending instanceof Promise) {
         first_pending.then(on_value, on_fail);
@@ -1550,24 +1676,30 @@ async function finish_concurrent_sync_array<item>(
       }
 
       while (true) {
+        if (read_val !== undefined) {
+          const next = read_val;
+          read_val = undefined;
+          admit_item(next.value, next.idx);
+        }
         while (
-          admitted < concurrency && idx < arr.length && !has_failure
+          admitted < concurrency && idx < arr.length && !reading && !has_failure
         ) {
           const task_index = idx++;
-          admitted += 1;
-          try {
-            const raw = fn(arr[task_index], task_index, signal);
-            if (is_promise_like(raw)) {
-              if (raw instanceof Promise) raw.then(on_value, on_fail);
-              else Promise.resolve(raw).then(on_value, on_fail);
-            } else {
-              ready[(ready_head + ready_count) % concurrency] = raw;
-              ready_count += 1;
-            }
-          } catch (error) {
-            on_fail(error);
+          const raw_item = arr[task_index];
+          if (is_promise_like(raw_item)) {
+            reading = true;
+            const p = raw_item instanceof Promise
+              ? raw_item
+              : Promise.resolve(raw_item);
+            p.then((value) => {
+              reading = false;
+              if (aborted) return;
+              read_val = { value, idx: task_index };
+              wake_now();
+            }, on_fail);
             break;
           }
+          admit_item(raw_item, task_index);
         }
         if (has_failure) throw fail_error;
         if (ready_count > 0) {
@@ -1575,12 +1707,17 @@ async function finish_concurrent_sync_array<item>(
             admitted -= 1;
             out.push(ready[ready_head] as item);
             ready[ready_head] = undefined;
-            ready_head = (ready_head + 1) % concurrency;
+            ready_head = (ready_head + 1) & ready_mask;
             ready_count -= 1;
           }
           continue;
         }
-        if (idx >= arr.length && admitted === 0) return out;
+        if (
+          idx >= arr.length && admitted === 0 && !reading &&
+          read_val === undefined
+        ) {
+          return out;
+        }
         await new Promise<void>((resolve, reject) => {
           if (aborted) {
             reject(abort_reason);
@@ -1603,11 +1740,13 @@ async function drive_concurrent_ordered_push<item, result>(
   terminal_fn: unknown,
   limit_or_initial: unknown,
   out?: item[],
+  preopened?: OpenedSource,
+  existing_controller?: AbortController,
 ): Promise<result> {
   const external = plan.signal;
   if (external?.aborted) throw external.reason;
   const concurrency = plan.concurrency;
-  const controller = new AbortController();
+  const controller = existing_controller ?? new AbortController();
   const signal = controller.signal;
   let aborted = false;
   let abort_reason: unknown;
@@ -1627,18 +1766,15 @@ async function drive_concurrent_ordered_push<item, result>(
     }
   };
   const on_external_abort = () => trigger_abort(external!.reason);
-  if (external !== undefined) {
-    external.addEventListener("abort", on_external_abort, { once: true });
-    if (external.aborted) trigger_abort(external.reason);
-  }
-
-  const slots = new Array<unknown>(concurrency).fill(PENDING);
-  let head = 0;
+  let cap = initial_ring_capacity(concurrency);
+  let mask = cap - 1;
+  let slots = new Array<unknown>(cap).fill(PENDING);
+  let head_seq = 0;
   let count = 0;
   let in_flight = 0;
-  let index = 0;
+  let index = preopened !== undefined ? preopened.idx : 0;
   let ended = false;
-  let opened: OpenedSource | undefined;
+  let opened: OpenedSource | undefined = preopened;
   let has_failure = false;
   let fail_error: unknown;
   let primary_failure: { readonly error: unknown } | undefined;
@@ -1679,22 +1815,19 @@ async function drive_concurrent_ordered_push<item, result>(
   };
 
   try {
+    if (external !== undefined) {
+      external.addEventListener("abort", on_external_abort, { once: true });
+      if (external.aborted) trigger_abort(external.reason);
+    }
     if (aborted) throw abort_reason;
-    opened = open_concurrent_source(plan.source);
+    if (opened === undefined) opened = open_concurrent_source(plan.source);
     const src_kind = opened.kind;
     while (true) {
       while (
         !ended && count < concurrency && !has_failure && !aborted
       ) {
         let value: unknown;
-        if (src_kind === 0) {
-          const arr = opened.arr!;
-          if (opened.idx >= arr.length) {
-            ended = true;
-            break;
-          }
-          value = arr[opened.idx++];
-        } else if (src_kind === 1) {
+        if (src_kind === 1) {
           const arr = opened.arr!;
           if (opened.idx >= arr.length) {
             ended = true;
@@ -1710,7 +1843,10 @@ async function drive_concurrent_ordered_push<item, result>(
             ended = true;
             break;
           }
-          value = next.value;
+          const raw_item = next.value;
+          value = is_promise_like(raw_item)
+            ? await race_async(raw_item)
+            : raw_item;
         } else if (src_kind === 3) {
           let chunk = opened.arr;
           while (chunk === undefined || opened.idx >= chunk.length) {
@@ -1764,15 +1900,20 @@ async function drive_concurrent_ordered_push<item, result>(
           break;
         }
         if (is_promise_like(raw)) {
-          const pos = (head + count) % concurrency;
+          if (count === cap) {
+            slots = grow_ordered_slots(slots, head_seq, count, cap);
+            cap *= 2;
+            mask = cap - 1;
+          }
+          const seq = head_seq + count;
           count += 1;
-          slots[pos] = PENDING;
+          slots[seq & mask] = PENDING;
           in_flight += 1;
           const on_ok = (res: unknown) => {
             in_flight -= 1;
             if (aborted) return;
-            slots[pos] = res;
-            if (pos === head && wake_resolve !== undefined) {
+            slots[seq & mask] = res;
+            if (seq === head_seq && wake_resolve !== undefined) {
               const r = wake_resolve;
               wake_resolve = undefined;
               wake_reject = undefined;
@@ -1787,9 +1928,14 @@ async function drive_concurrent_ordered_push<item, result>(
         ) {
           out!.push(raw as item);
         } else {
-          const pos = (head + count) % concurrency;
+          if (count === cap) {
+            slots = grow_ordered_slots(slots, head_seq, count, cap);
+            cap *= 2;
+            mask = cap - 1;
+          }
+          const seq = head_seq + count;
           count += 1;
-          slots[pos] = raw;
+          slots[seq & mask] = raw;
         }
       }
       if (has_failure) throw fail_error;
@@ -1800,7 +1946,7 @@ async function drive_concurrent_ordered_push<item, result>(
         if (mode === MODE_FIND) return Nothing<item>() as unknown as result;
         return fold_state as result;
       }
-      let out_val = slots[head];
+      let out_val = slots[head_seq & mask];
       if (out_val === PENDING) {
         await new Promise<void>((resolve, reject) => {
           if (aborted) {
@@ -1812,10 +1958,10 @@ async function drive_concurrent_ordered_push<item, result>(
         });
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
-        out_val = slots[head];
+        out_val = slots[head_seq & mask];
       }
-      slots[head] = PENDING;
-      head = (head + 1) % concurrency;
+      slots[head_seq & mask] = PENDING;
+      head_seq += 1;
       count -= 1;
       if (aborted) throw abort_reason;
       if (mode === MODE_ARRAY) {
@@ -1866,11 +2012,13 @@ async function drive_concurrent_unordered_push<item, result>(
   terminal_fn: unknown,
   limit_or_initial: unknown,
   out?: item[],
+  preopened?: OpenedSource,
+  existing_controller?: AbortController,
 ): Promise<result> {
   const external = plan.signal;
   if (external?.aborted) throw external.reason;
   const concurrency = plan.concurrency;
-  const controller = new AbortController();
+  const controller = existing_controller ?? new AbortController();
   const signal = controller.signal;
   let aborted = false;
   let abort_reason: unknown;
@@ -1890,27 +2038,34 @@ async function drive_concurrent_unordered_push<item, result>(
     }
   };
   const on_external_abort = () => trigger_abort(external!.reason);
-  if (external !== undefined) {
-    external.addEventListener("abort", on_external_abort, { once: true });
-    if (external.aborted) trigger_abort(external.reason);
-  }
-
-  const ready = new Array<unknown>(concurrency);
+  let ready_cap = initial_ring_capacity(concurrency);
+  let ready_mask = ready_cap - 1;
+  let ready = new Array<unknown>(ready_cap);
   let ready_head = 0;
   let ready_count = 0;
   let admitted = 0;
-  let index = 0;
+  let index = preopened !== undefined ? preopened.idx : 0;
   let ended = false;
   let reading = false;
   let read: IteratorResult<unknown> | undefined;
   let read_chunk: IteratorResult<readonly unknown[]> | undefined;
-  let opened: OpenedSource | undefined;
+  let opened: OpenedSource | undefined = preopened;
   let has_failure = false;
   let fail_error: unknown;
   let primary_failure: { readonly error: unknown } | undefined;
   const limit = mode === MODE_ARRAY ? (limit_or_initial as number) : Infinity;
   let fold_state = mode === MODE_FOLD_WHILE ? limit_or_initial : undefined;
 
+  const push_ready = (val: unknown) => {
+    if (ready_count === ready_cap) {
+      ready = grow_ready_ring(ready, ready_head, ready_count, ready_cap);
+      ready_head = 0;
+      ready_cap *= 2;
+      ready_mask = ready_cap - 1;
+    }
+    ready[(ready_head + ready_count) & ready_mask] = val;
+    ready_count += 1;
+  };
   const wake_now = () => {
     const r = wake_resolve;
     if (r !== undefined) {
@@ -1928,8 +2083,7 @@ async function drive_concurrent_unordered_push<item, result>(
   };
   const on_value = (value: unknown) => {
     if (aborted) return;
-    ready[(ready_head + ready_count) % concurrency] = value;
-    ready_count += 1;
+    push_ready(value);
     wake_now();
   };
   const on_read = (next: IteratorResult<unknown>) => {
@@ -1944,22 +2098,12 @@ async function drive_concurrent_unordered_push<item, result>(
     read_chunk = next;
     wake_now();
   };
-  const on_item_resolved = (resolved: unknown) => {
-    if (aborted) return;
-    const id = index++;
-    try {
-      const raw = plan.fn(resolved, id, signal);
-      if (is_promise_like(raw)) {
-        if (raw instanceof Promise) raw.then(on_value, on_fail);
-        else Promise.resolve(raw).then(on_value, on_fail);
-      } else {
-        ready[(ready_head + ready_count) % concurrency] = raw;
-        ready_count += 1;
-        wake_now();
-      }
-    } catch (error) {
-      on_fail(error);
-    }
+  const await_item_thenable = (raw_item: PromiseLike<unknown>) => {
+    reading = true;
+    const p = raw_item instanceof Promise
+      ? raw_item
+      : Promise.resolve(raw_item);
+    p.then((value) => on_read({ done: false, value }), on_fail);
   };
   const admit_value = (val: unknown) => {
     const id = index++;
@@ -1971,8 +2115,7 @@ async function drive_concurrent_unordered_push<item, result>(
         if (raw instanceof Promise) raw.then(on_value, on_fail);
         else Promise.resolve(raw).then(on_value, on_fail);
       } else {
-        ready[(ready_head + ready_count) % concurrency] = raw;
-        ready_count += 1;
+        push_ready(raw);
       }
     } catch (error) {
       on_fail(error);
@@ -1980,30 +2123,27 @@ async function drive_concurrent_unordered_push<item, result>(
   };
 
   try {
+    if (external !== undefined) {
+      external.addEventListener("abort", on_external_abort, { once: true });
+      if (external.aborted) trigger_abort(external.reason);
+    }
     if (aborted) throw abort_reason;
-    opened = open_concurrent_source(plan.source);
+    if (opened === undefined) opened = open_concurrent_source(plan.source);
     const src_kind = opened.kind;
     while (true) {
       if (has_failure) throw fail_error;
       if (aborted) throw abort_reason;
 
-      if (src_kind === 0) {
-        const arr = opened.arr!;
-        while (
-          !ended && admitted < concurrency && !has_failure && !aborted
-        ) {
-          if (opened.idx >= arr.length) {
-            ended = true;
-            break;
-          }
-          admit_value(arr[opened.idx++]);
+      if (src_kind === 1) {
+        if (read !== undefined) {
+          const next = read;
+          read = undefined;
+          admit_value(next.value);
         }
-        if (has_failure) throw fail_error;
-        if (aborted) throw abort_reason;
-      } else if (src_kind === 1) {
         const arr = opened.arr!;
         while (
-          !ended && admitted < concurrency && !has_failure && !aborted
+          !ended && admitted < concurrency && !reading && !has_failure &&
+          !aborted
         ) {
           if (opened.idx >= arr.length) {
             ended = true;
@@ -2011,33 +2151,44 @@ async function drive_concurrent_unordered_push<item, result>(
           }
           const raw_item = arr[opened.idx++];
           if (is_promise_like(raw_item)) {
-            admitted += 1;
-            if (raw_item instanceof Promise) {
-              raw_item.then(on_item_resolved, on_fail);
-            } else {
-              Promise.resolve(raw_item).then(on_item_resolved, on_fail);
-            }
-          } else {
-            admit_value(raw_item);
+            await_item_thenable(raw_item);
+            break;
           }
+          admit_value(raw_item);
         }
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
       } else if (src_kind === 2) {
+        if (read !== undefined) {
+          const next = read;
+          read = undefined;
+          admit_value(next.value);
+        }
         const sync_iter = opened.sync_iter!;
         while (
-          !ended && admitted < concurrency && !has_failure && !aborted
+          !ended && admitted < concurrency && !reading && !has_failure &&
+          !aborted
         ) {
           const next = sync_iter.next();
           if (next.done) {
             ended = true;
             break;
           }
-          admit_value(next.value);
+          const raw_item = next.value;
+          if (is_promise_like(raw_item)) {
+            await_item_thenable(raw_item);
+            break;
+          }
+          admit_value(raw_item);
         }
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
       } else if (src_kind === 3) {
+        if (read !== undefined) {
+          const next = read;
+          read = undefined;
+          admit_value(next.value);
+        }
         if (read_chunk !== undefined) {
           const next = read_chunk;
           read_chunk = undefined;
@@ -2048,20 +2199,15 @@ async function drive_concurrent_unordered_push<item, result>(
           }
         }
         while (
-          !ended && admitted < concurrency && !has_failure &&
+          !ended && admitted < concurrency && !reading && !has_failure &&
           !aborted && opened.arr !== undefined && opened.idx < opened.arr.length
         ) {
           const raw_item = opened.arr[opened.idx++];
           if (is_promise_like(raw_item)) {
-            admitted += 1;
-            if (raw_item instanceof Promise) {
-              raw_item.then(on_item_resolved, on_fail);
-            } else {
-              Promise.resolve(raw_item).then(on_item_resolved, on_fail);
-            }
-          } else {
-            admit_value(raw_item);
+            await_item_thenable(raw_item);
+            break;
           }
+          admit_value(raw_item);
         }
         if (has_failure) throw fail_error;
         if (aborted) throw abort_reason;
@@ -2118,7 +2264,7 @@ async function drive_concurrent_unordered_push<item, result>(
             admitted -= 1;
             out!.push(ready[ready_head] as item);
             ready[ready_head] = undefined;
-            ready_head = (ready_head + 1) % concurrency;
+            ready_head = (ready_head + 1) & ready_mask;
             ready_count -= 1;
           }
           continue;
@@ -2126,7 +2272,7 @@ async function drive_concurrent_unordered_push<item, result>(
         admitted -= 1;
         const val = ready[ready_head];
         ready[ready_head] = undefined;
-        ready_head = (ready_head + 1) % concurrency;
+        ready_head = (ready_head + 1) & ready_mask;
         ready_count -= 1;
         if (mode === MODE_ARRAY) {
           out!.push(val as item);
@@ -2158,7 +2304,7 @@ async function drive_concurrent_unordered_push<item, result>(
         }
         continue;
       }
-      if (ended && admitted === 0) {
+      if (ended && admitted === 0 && !reading && read === undefined) {
         if (mode === MODE_ARRAY) return out as unknown as result;
         if (mode === MODE_SOME) return false as unknown as result;
         if (mode === MODE_FIND) return Nothing<item>() as unknown as result;
@@ -4149,14 +4295,7 @@ function pipeline<from, to = from>(
     try {
       while (true) {
         let item: unknown;
-        if (opened.kind === 0) {
-          const arr = opened.arr!;
-          if (opened.idx >= arr.length) {
-            ended = true;
-            return;
-          }
-          item = arr[opened.idx++];
-        } else if (opened.kind === 1) {
+        if (opened.kind === 1) {
           const arr = opened.arr!;
           if (opened.idx >= arr.length) {
             ended = true;
@@ -4171,6 +4310,7 @@ function pipeline<from, to = from>(
             return;
           }
           item = next.value;
+          if (is_promise_like(item)) item = await item;
         } else if (opened.kind === 3) {
           let chunk = opened.arr;
           while (chunk === undefined || opened.idx >= chunk.length) {
@@ -4295,12 +4435,25 @@ export function from_sync_factory<item>(
                 ended = true;
                 return Promise.resolve({ done: true, value: undefined });
               }
-              return Promise.resolve({ done: false, value: arr[idx++] });
+              const value = arr[idx++];
+              if (is_promise_like(value)) {
+                return Promise.resolve(value).then((resolved) => ({
+                  done: false,
+                  value: resolved as item,
+                }));
+              }
+              return Promise.resolve({ done: false, value });
             }
             const next = sync!.next();
             if (next.done) {
               ended = true;
               return Promise.resolve({ done: true, value: undefined });
+            }
+            if (is_promise_like(next.value)) {
+              return Promise.resolve(next.value).then((resolved) => ({
+                done: false,
+                value: resolved as item,
+              }));
             }
             return Promise.resolve(next);
           } catch (error) {

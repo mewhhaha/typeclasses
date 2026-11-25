@@ -104,6 +104,8 @@ export function traverse_items<
   return traverse_items_into(items, applicative, fn, identity_array);
 }
 
+const array_iterator = Array.prototype[Symbol.iterator];
+
 /** Traverse into a final collection without an intermediate output array. */
 export function traverse_items_into<
   applicative extends Applicative<applicative>,
@@ -120,6 +122,8 @@ export function traverse_items_into<
     | TraverseItems<applicative>
     | undefined;
   if (specialized !== undefined) return specialized(items, fn, build);
+  const is_canon = Array.isArray(items) &&
+    items[Symbol.iterator] === array_iterator;
   const dict = applicative as unknown as {
     readonly [do_runner_method]?: FastDoSpec;
     readonly pure?: unknown;
@@ -128,38 +132,19 @@ export function traverse_items_into<
   if (Array.isArray(spec) && dict.pure === spec[4]) {
     const [mode, wrap] = spec;
     let failed: Data<applicative, unknown> | undefined;
-    let out: to[];
-    if (Array.isArray(items)) {
-      const len = items.length;
-      out = new Array<to>(len);
-      for (let i = 0; i < len; i += 1) {
-        const current = fn(items[i]);
-        if (failed === undefined) {
-          const val = unwrap_fast<to>(current, mode);
-          if (val === traversal_failed) failed = current;
-          else out[i] = val;
-        }
-      }
-    } else {
-      out = [];
-      for (const item of items) {
-        const current = fn(item);
-        if (failed === undefined) {
-          const val = unwrap_fast<to>(current, mode);
-          if (val === traversal_failed) failed = current;
-          else out.push(val);
-        }
+    const out: to[] = [];
+    for (const item of items) {
+      const current = fn(item);
+      if (failed === undefined) {
+        const val = unwrap_fast<to>(current, mode);
+        if (val === traversal_failed) failed = current;
+        else out.push(val);
       }
     }
     return (failed ?? wrap(build(out))) as Data<applicative, result>;
   }
-  if (Array.isArray(items) && items.length === 1) {
-    return functor_map(fn(items[0]), (item) => build([item]));
-  }
-  // Binary carry combines adjacent groups, without buffering the input first.
   const pending: (Data<applicative, Tree<to>> | undefined)[] = [];
-  for (const item of items) {
-    let action = functor_map(fn(item), make_leaf);
+  const push = (action: Data<applicative, Tree<to>>) => {
     let level = 0;
     while (pending[level] !== undefined) {
       action = Applicative.lift(make_branch, pending[level]!, action);
@@ -167,6 +152,19 @@ export function traverse_items_into<
       level += 1;
     }
     pending[level] = action;
+  };
+  if (is_canon && items.length === 1) {
+    const first = fn(items[0]);
+    if (items.length <= 1) {
+      return functor_map(first, (item) => build([item]));
+    }
+    pending[0] = functor_map(first, make_leaf);
+    for (let i = 1; i < items.length; i += 1) {
+      push(functor_map(fn(items[i]), make_leaf));
+    }
+  } else {
+    // Binary carry combines adjacent groups, without buffering the input first.
+    for (const item of items) push(functor_map(fn(item), make_leaf));
   }
   let result: Data<applicative, Tree<to>> | undefined;
   for (let level = pending.length - 1; level >= 0; level -= 1) {

@@ -993,8 +993,11 @@ function run_fused_cells_step(
   }
 }
 
+let oneshot_fallback_ordered: OrderedBinding[] | undefined;
+
 // 1-pass direct <= 3-cell fast path for 1-shot run_cells / handle_cells:
 // avoids Object.keys, OrderedBinding[], specs[], FusedCellPlan, and values[] when <= 3 built-in cells.
+// If fallback is needed, stores the already-inspected OrderedBinding[] without reading any getter twice.
 function run_oneshot_cells(
   effect: Effect<unknown, unknown>,
   bindings: Bindings,
@@ -1007,11 +1010,28 @@ function run_oneshot_cells(
   let b1: BuiltinBinding | undefined;
   let n2: PropertyKey = "";
   let b2: BuiltinBinding | undefined;
+  let fallback: OrderedBinding[] | undefined;
 
-  for (const key in bindings) {
-    if (!Object.hasOwn(bindings, key)) continue;
+  const visit = (key: PropertyKey) => {
     const binding = bindings[key] as MaybeBuiltinBinding;
-    if (binding[cell_family] === undefined) return undefined;
+    if (fallback !== undefined) {
+      fallback.push({ name: key, family: binding.family, binding });
+      return;
+    }
+    if (binding[cell_family] === undefined || count === 3) {
+      fallback = [];
+      if (count >= 1) {
+        fallback.push({ name: n0, family: b0!.family, binding: b0! });
+      }
+      if (count >= 2) {
+        fallback.push({ name: n1, family: b1!.family, binding: b1! });
+      }
+      if (count === 3) {
+        fallback.push({ name: n2, family: b2!.family, binding: b2! });
+      }
+      fallback.push({ name: key, family: binding.family, binding });
+      return;
+    }
     if (count === 0) {
       n0 = key;
       b0 = binding as BuiltinBinding;
@@ -1020,35 +1040,26 @@ function run_oneshot_cells(
       n1 = key;
       b1 = binding as BuiltinBinding;
       count = 2;
-    } else if (count === 2) {
+    } else {
       n2 = key;
       b2 = binding as BuiltinBinding;
       count = 3;
-    } else {
-      return undefined;
     }
+  };
+
+  for (const key in bindings) {
+    if (!Object.hasOwn(bindings, key)) continue;
+    visit(key);
   }
   const syms = Object.getOwnPropertySymbols(bindings);
   for (let i = 0; i < syms.length; i += 1) {
     const key = syms[i];
     if (!Object.prototype.propertyIsEnumerable.call(bindings, key)) continue;
-    const binding = bindings[key] as MaybeBuiltinBinding;
-    if (binding[cell_family] === undefined) return undefined;
-    if (count === 0) {
-      n0 = key;
-      b0 = binding as BuiltinBinding;
-      count = 1;
-    } else if (count === 1) {
-      n1 = key;
-      b1 = binding as BuiltinBinding;
-      count = 2;
-    } else if (count === 2) {
-      n2 = key;
-      b2 = binding as BuiltinBinding;
-      count = 3;
-    } else {
-      return undefined;
-    }
+    visit(key);
+  }
+  if (fallback !== undefined) {
+    oneshot_fallback_ordered = fallback;
+    return undefined;
   }
 
   let f0 = -1;
@@ -1371,7 +1382,9 @@ export function handle_cells<
       CellResult<item, bindings>
     >;
   }
-  const ordered = collect_ordered_bindings(bindings);
+  const ordered = oneshot_fallback_ordered ??
+    collect_ordered_bindings(bindings);
+  oneshot_fallback_ordered = undefined;
   const fused = build_fused_cell_plan(ordered, false);
   if (fused !== undefined) {
     return run_fused_cells_step(
@@ -1461,7 +1474,9 @@ export function run_cells<requirements, item, const bindings extends Bindings>(
   if (fast !== undefined) {
     return fast as CellResult<item, bindings>;
   }
-  const ordered = collect_ordered_bindings(bindings);
+  const ordered = oneshot_fallback_ordered ??
+    collect_ordered_bindings(bindings);
+  oneshot_fallback_ordered = undefined;
   const fused = build_fused_cell_plan(ordered, false);
   if (fused !== undefined) {
     return run_fused_cells_step(

@@ -3101,3 +3101,160 @@ Deno.test("Wave 2 transformer fusions preserve differential parity and strict Ty
     mod_orig.maybe_either_keep(7),
   );
 });
+
+Deno.test("Codex Wave 2 transformer review regressions (Task eager construction, shadowed intrinsics, ArrayT concat snapshot)", async () => {
+  const mod_url = new URL("../src/mod.ts", import.meta.url).href;
+  const array_url = new URL("../src/array.ts", import.meta.url).href;
+  const task_url = new URL("../src/task.ts", import.meta.url).href;
+  const source = [
+    `import { Applicative, Do } from ${JSON.stringify(mod_url)};`,
+    `import { ArrayT, from_array } from ${JSON.stringify(array_url)};`,
+    `import { Task, from_fn, from_promise, parallel, run_task, succeed, traverse_task } from ${
+      JSON.stringify(task_url)
+    };`,
+    "export async function eager_task_lift() {",
+    "  const trace: string[] = [];",
+    "  const hit = (label: string) => { trace.push(label); return trace.length; };",
+    "  const add = (a: number, b: number) => a + b;",
+    "  const t = Applicative.lift(add, succeed(hit('pure')), from_fn(() => hit('run')));",
+    "  trace.push('built');",
+    "  const value = await run_task(t);",
+    "  return { trace, value };",
+    "}",
+    "export async function eager_parallel_lift() {",
+    "  const trace: string[] = [];",
+    "  const hit = (label: string) => { trace.push(label); return trace.length; };",
+    "  const add = (a: number, b: number) => a + b;",
+    "  const pt = Applicative.lift(add, parallel(succeed(hit('pure'))), parallel(from_fn(() => hit('run'))));",
+    "  trace.push('built');",
+    "  const value = await run_task(pt);",
+    "  return { trace, value };",
+    "}",
+    "export async function eager_lift_before_signal() {",
+    "  const trace: string[] = [];",
+    "  const ctrl = new AbortController();",
+    "  const hit = (label: string) => { trace.push(label); return trace.length; };",
+    "  const get_sig = () => { trace.push('sig'); return ctrl.signal; };",
+    "  const add = (a: number, b: number) => a + b;",
+    "  const value = await run_task(",
+    "    Applicative.lift(add, succeed(hit('pure')), from_fn(() => hit('run'))),",
+    "    { signal: get_sig() },",
+    "  );",
+    "  return { trace, value };",
+    "}",
+    "export async function eager_fluent_chain() {",
+    "  const trace: string[] = [];",
+    "  const make_cb = () => {",
+    "    trace.push('make_cb');",
+    "    return () => { trace.push('run_cb'); return 10; };",
+    "  };",
+    "  const t = from_fn(make_cb()).map((n) => n + 5);",
+    "  trace.push('built');",
+    "  const value = await run_task(t);",
+    "  return { trace, value };",
+    "}",
+    "export async function eager_standalone_do_promise() {",
+    "  const trace: string[] = [];",
+    "  const make_promise = () => { trace.push('make_p'); return Promise.resolve(42); };",
+    "  const t = Do(Task, function* () {",
+    "    return yield* from_promise(make_promise());",
+    "  });",
+    "  trace.push('built');",
+    "  const value = await run_task(t);",
+    "  return { trace, value };",
+    "}",
+    "export function shadowed_array_traverse(",
+    "  Array: { isArray(v: unknown): boolean },",
+    "  xs: number[],",
+    ") {",
+    "  return run_task(traverse_task(xs, 2, (n) => from_fn(() => n * 3)));",
+    "}",
+    "export function concat_snapshot_and_view() {",
+    "  const xs = [1, 2];",
+    "  const snap = from_array(xs).concat(ArrayT((xs[0] = 9, [3]))).value();",
+    "  const ys = [1, 2];",
+    "  const view = ArrayT(ys).concat(ArrayT((ys[0] = 9, [3]))).value();",
+    "  return { snap, view };",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(
+    source,
+    "round7_codex_wave2_regs.ts",
+    { source_map: true },
+  );
+  assert_true(
+    result.diagnostics.every((d) => d.message.startsWith("Skipped")),
+    "expected only skip diagnostics for unsafe standalone Do first-yield",
+  );
+  assert_true(
+    result.transformed >= 5,
+    "expected safe Task/ArrayT fusions to transform",
+  );
+
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-r7-codex-w2-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Codex Wave 2 regression TS failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  const mod_orig = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(source, "cw2_orig.ts"))
+  );
+  const mod_tx = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(result.code, "cw2_tx.ts"))
+  );
+
+  assert_equals(
+    await mod_tx.eager_task_lift(),
+    await mod_orig.eager_task_lift(),
+  );
+  assert_equals(
+    await mod_tx.eager_parallel_lift(),
+    await mod_orig.eager_parallel_lift(),
+  );
+  assert_equals(
+    await mod_tx.eager_lift_before_signal(),
+    await mod_orig.eager_lift_before_signal(),
+  );
+  assert_equals(
+    await mod_tx.eager_fluent_chain(),
+    await mod_orig.eager_fluent_chain(),
+  );
+  assert_equals(
+    await mod_tx.eager_standalone_do_promise(),
+    await mod_orig.eager_standalone_do_promise(),
+  );
+  const hostile_array = {
+    isArray(): boolean {
+      throw new Error("shadowed Array parameter should not be called");
+    },
+  };
+  assert_equals(
+    await mod_tx.shadowed_array_traverse(hostile_array, [1, 2, 3]),
+    await mod_orig.shadowed_array_traverse(hostile_array, [1, 2, 3]),
+  );
+  assert_equals(
+    mod_tx.concat_snapshot_and_view(),
+    mod_orig.concat_snapshot_and_view(),
+  );
+  assert_equals(mod_tx.concat_snapshot_and_view().snap, [1, 2, 3]);
+  assert_equals(mod_tx.concat_snapshot_and_view().view, [9, 2, 3]);
+});

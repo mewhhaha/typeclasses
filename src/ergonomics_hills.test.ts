@@ -2895,3 +2895,301 @@ Deno.test("Wave 2 fast-path parity across core, Writer, Task, STM, AsyncIterable
     assert_equals(cell_out.logs.w.value(), ["sum:15"]);
   }
 });
+
+Deno.test("Codex Wave 2 review regressions (STM, Writer, Task, AsyncIterableT, Fn, Traversal, Array, Prelude, Handlers)", async () => {
+  const [
+    { Do, Traversable },
+    { Writer },
+    { Fn },
+    {
+      from_sync_factory,
+      map_concurrent,
+      map_concurrent_unordered,
+      to_array: ai_to_array,
+    },
+    { from_fn, run_task, traverse_task },
+    { atomically, new_tvar, read_tvar },
+    { to_array: prelude_to_array },
+    { State },
+  ] = await Promise.all([
+    import("./typeclasses.ts"),
+    import("./writer.ts"),
+    import("./fn.ts"),
+    import("./async_iterable.ts"),
+    import("./task.ts"),
+    import("./stm.ts"),
+    import("./prelude.ts"),
+    import("./state.ts"),
+  ]);
+
+  // P1-3: STM trusted shape clone must not turn an aliased array into a plain object
+  {
+    const a = [7];
+    const tv = new_tvar(
+      { asArray: a, asRecord: a as unknown as Record<string, unknown> },
+      {
+        shape: {
+          record: {
+            asRecord: { record: {} },
+            asArray: { array: "number" },
+          },
+        },
+      },
+    );
+    const out = atomically(read_tvar(tv));
+    assert_true(Array.isArray(out.asArray), "asArray remains an array");
+    assert_true(Object.is(out.asArray, out.asRecord), "aliases preserved");
+    assert_equals(out.asArray, [7]);
+  }
+
+  // P1-4: Writer must not expose shared backing storage across chained values
+  {
+    const W = Writer.with(ArrayT<number>([]));
+    const a = W([undefined, ArrayT([0])]).bind(() =>
+      W([undefined, ArrayT([1])])
+    );
+    const b = a.bind(() => W([undefined, ArrayT([2])]));
+    const b_val = b.value();
+    const b_log = b_val[1].value() as number[];
+    assert_equals(b_log, [0, 1, 2]);
+    b_log[0] = 9;
+    assert_equals(a.value()[1].value(), [0, 1]);
+
+    const c = a.map(() => "ok");
+    const c_log = c.value()[1].value() as number[];
+    c_log[1] = 88;
+    assert_equals(a.value()[1].value(), [0, 1]);
+  }
+
+  // P1-5: Task traversal must deliver a real AbortSignal to default-param and rest-param callbacks
+  {
+    const res_no_outer = await run_task(
+      traverse_task([0], 1, () => from_fn((s = undefined) => !!s)),
+    );
+    assert_equals(res_no_outer, [true]);
+
+    const ctrl = new AbortController();
+    const res_with_outer = await run_task(
+      traverse_task([0], 1, () => from_fn((s = undefined) => !!s)),
+      { signal: ctrl.signal },
+    );
+    assert_equals(res_with_outer, [true]);
+
+    const res_rest = await run_task(
+      traverse_task([0], 1, () => from_fn((...args) => !!args[0])),
+      { signal: ctrl.signal },
+    );
+    assert_equals(res_rest, [true]);
+  }
+
+  // P1-7 & P2-1: Concurrent AsyncIterable single factory open, thenable normalization, huge concurrency & cleanup
+  {
+    let ordered_calls = 0;
+    const ord_set = await ai_to_array(
+      map_concurrent(
+        from_sync_factory(() => new Set([++ordered_calls])),
+        2,
+        (x) => x,
+      ),
+    );
+    assert_equals(ordered_calls, 1);
+    assert_equals(ord_set, [1]);
+
+    let unordered_calls = 0;
+    const unord_set = await ai_to_array(
+      map_concurrent_unordered(
+        from_sync_factory(() => new Set([++unordered_calls])),
+        2,
+        (x) => x,
+      ),
+    );
+    assert_equals(unordered_calls, 1);
+    assert_equals(unord_set, [1]);
+
+    // Sync factory yielding Promise.resolve(7) must normalize to 7
+    const seen_ord: unknown[] = [];
+    const ord_prom = await ai_to_array(
+      map_concurrent(
+        from_sync_factory(() => [Promise.resolve(7) as unknown as number]),
+        2,
+        (x) => {
+          seen_ord.push(x);
+          return x;
+        },
+      ),
+    );
+    assert_equals(seen_ord, [7]);
+    assert_equals(ord_prom, [7]);
+
+    const seen_unord: unknown[] = [];
+    const unord_prom = await ai_to_array(
+      map_concurrent_unordered(
+        from_sync_factory(() => [Promise.resolve(7) as unknown as number]),
+        2,
+        (x) => {
+          seen_unord.push(x);
+          return x;
+        },
+      ),
+    );
+    assert_equals(seen_unord, [7]);
+    assert_equals(unord_prom, [7]);
+
+    // Mixed sync-async callback + later promise element (hits finish_concurrent_sync_array)
+    const mixed_ord = await ai_to_array(
+      map_concurrent(
+        from_sync_factory(() => [1, Promise.resolve(7) as unknown as number]),
+        2,
+        (x) => Promise.resolve(x * 10),
+      ),
+    );
+    assert_equals(mixed_ord, [10, 70]);
+
+    const mixed_unord = await ai_to_array(
+      map_concurrent_unordered(
+        from_sync_factory(() => [1, Promise.resolve(7) as unknown as number]),
+        2,
+        (x) => Promise.resolve(x * 10),
+      ),
+    );
+    assert_equals(mixed_unord.slice().sort((a, b) => a - b), [10, 70]);
+
+    // P2-1: Huge concurrency (2 ** 32) succeeds without RangeError and cleans up abort listener
+    let added = 0;
+    let removed = 0;
+    const ctrl = new AbortController();
+    const orig_add = ctrl.signal.addEventListener.bind(ctrl.signal);
+    const orig_rem = ctrl.signal.removeEventListener.bind(ctrl.signal);
+    ctrl.signal.addEventListener = ((...args: Parameters<typeof orig_add>) => {
+      added += 1;
+      return orig_add(...args);
+    }) as typeof ctrl.signal.addEventListener;
+    ctrl.signal.removeEventListener = ((
+      ...args: Parameters<typeof orig_rem>
+    ) => {
+      removed += 1;
+      return orig_rem(...args);
+    }) as typeof ctrl.signal.removeEventListener;
+
+    const async_one = from_sync_factory(() => [42]);
+    const big_ord = await ai_to_array(
+      map_concurrent(async_one, 2 ** 32, (x) => Promise.resolve(x + 1), {
+        signal: ctrl.signal,
+      }),
+    );
+    assert_equals(big_ord, [43]);
+    const big_unord = await ai_to_array(
+      map_concurrent_unordered(
+        async_one,
+        2 ** 32,
+        (x) => Promise.resolve(x + 2),
+        { signal: ctrl.signal },
+      ),
+    );
+    assert_equals(big_unord, [44]);
+    assert_equals(added, 2);
+    assert_equals(removed, 2);
+  }
+
+  // P2-2: Fn Do replay after first action throws + eager Fn array traverse
+  {
+    const FnNum = Fn.with_input<number>();
+    let counter = 0;
+    let attempts = 0;
+    const fn_prog = Do(FnNum, function* () {
+      const n = ++counter;
+      const v = yield* FnNum((x: number) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("boom");
+        return x + 10;
+      });
+      return n * 100 + v;
+    });
+    let threw = false;
+    try {
+      fn_prog.value()(5);
+    } catch {
+      threw = true;
+    }
+    assert_true(threw, "first Fn run throws");
+    assert_equals(fn_prog.value()(5), 115);
+
+    let constructed = 0;
+    const trav_fn = Traversable.traverse(
+      ArrayT([1, 2]),
+      FnNum,
+      (n) => {
+        constructed += 1;
+        return FnNum((env: number) => env + n);
+      },
+    );
+    assert_equals(constructed, 2);
+    assert_equals(trav_fn.value()(10).value(), [11, 12]);
+  }
+
+  // P2-3: Observable array mutation during traverse and custom array [Symbol.iterator]
+  {
+    const live = [1, 2];
+    const m_res = Traversable.traverse(ArrayT(live), Maybe, (n) => {
+      if (n === 1) live.push(3);
+      return Just(n);
+    });
+    assert_equals(m_res.value(), ["Just", ArrayT([1, 2, 3])]);
+
+    const StateNum = State.with_state<number>();
+    const live_single = [1];
+    const s_res = Traversable.traverse(
+      ArrayT(live_single),
+      StateNum,
+      (n) => {
+        if (n === 1) live_single.push(2);
+        return StateNum((s: number) => [n + s, s + 1] as const);
+      },
+    );
+    const [s_arr, s_final] = s_res.value()(0);
+    assert_equals(s_arr.value(), [1, 3]);
+    assert_equals(s_final, 2);
+
+    const custom_iter_arr = [1, 2] as number[];
+    Object.defineProperty(custom_iter_arr, Symbol.iterator, {
+      value: function* () {
+        yield 7;
+      },
+    });
+    assert_equals(
+      ArrayT(custom_iter_arr).concat(ArrayT([3])).value(),
+      [7, 3],
+    );
+    assert_equals(prelude_to_array(ArrayT(custom_iter_arr)), [7]);
+  }
+
+  // P2-4: run_cells one-shot fallback reads each binding getter at most once
+  {
+    const r1 = reader<number>()("p24_r1");
+    const r2 = reader<number>()("p24_r2");
+    const r3 = reader<number>()("p24_r3");
+    const r4 = reader<number>()("p24_r4");
+    let getter_reads = 0;
+    const bindings = {
+      get a() {
+        getter_reads += 1;
+        return provide_reader(r1, 1);
+      },
+      get b() {
+        getter_reads += 1;
+        return provide_reader(r2, 2);
+      },
+      get c() {
+        getter_reads += 1;
+        return provide_reader(r3, 3);
+      },
+      get d() {
+        getter_reads += 1;
+        return provide_reader(r4, 4);
+      },
+    };
+    const out = run_cells(Effect.pure(99), bindings);
+    assert_equals(out.result, 99);
+    assert_equals(getter_reads, 4);
+  }
+});
