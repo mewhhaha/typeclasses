@@ -678,29 +678,31 @@ function register_state_traversal(dictionary: unknown): void {
     if (
       first[kind] !== d_kind || first.bind !== c_bind || first.pure !== c_pure
     ) return undefined;
+    const first_raw = first.value();
     let first_claimed = false;
     return dict((initial: unknown) => {
+      const [v0, s0] = first_raw(initial);
+      let current_state = s0;
       let iter: Generator<unknown, unknown, unknown>;
-      let current: unknown;
+      let next: IteratorResult<unknown, unknown>;
       if (!first_claimed) {
         first_claimed = true;
         iter = first_iterator;
-        current = first_value;
+        next = iter.next(v0);
       } else {
         iter = run();
-        const n0 = iter.next();
-        if (n0.done) return [n0.value, initial] as const;
-        current = n0.value;
+        const skipped = iter.next();
+        if (skipped.done) return [skipped.value, current_state] as const;
+        next = iter.next(v0);
       }
-      let current_state = initial;
-      while (true) {
-        const [val, next_state] = (current as Data<AsState<unknown>, unknown>)
-          .value()(current_state);
+      while (!next.done) {
+        const [val, next_state] =
+          (next.value as Data<AsState<unknown>, unknown>)
+            .value()(current_state);
         current_state = next_state;
-        const next = iter.next(val);
-        if (next.done) return [next.value, current_state] as const;
-        current = next.value;
+        next = iter.next(val);
       }
+      return [next.value, current_state] as const;
     });
   };
   Object.defineProperty(dictionary as object, do_runner_method, {
@@ -739,17 +741,19 @@ function register_state_traversal(dictionary: unknown): void {
     <from, to>(
       items: readonly from[],
       fn: (item: from) => Data<AsState<unknown>, to>,
-    ): Data<AsState<unknown>, to[]> =>
-      dict((initial: unknown) => {
-        const out = new Array<to>(items.length);
+    ): Data<AsState<unknown>, to[]> => {
+      const snapshot = items.slice();
+      return dict((initial: unknown) => {
+        const out = new Array<to>(snapshot.length);
         let current = initial;
-        for (let i = 0; i < items.length; i += 1) {
-          const [value, next] = fn(items[i]).value()(current);
+        for (let i = 0; i < snapshot.length; i += 1) {
+          const [value, next] = fn(snapshot[i]).value()(current);
           out[i] = value as to;
           current = next;
         }
         return [out, current] as const;
-      }) as Data<AsState<unknown>, to[]>,
+      }) as Data<AsState<unknown>, to[]>;
+    },
   );
 }
 

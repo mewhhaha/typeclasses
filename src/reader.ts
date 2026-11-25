@@ -603,28 +603,29 @@ function register_reader_traversal(dictionary: unknown): void {
     if (
       first[kind] !== d_kind || first.bind !== c_bind || first.pure !== c_pure
     ) return undefined;
+    const first_raw = first.value();
     let first_claimed = false;
     return dict((environment: unknown) => {
+      const v0 = first_raw(environment);
       let iter: Generator<unknown, unknown, unknown>;
-      let current: unknown;
+      let next: IteratorResult<unknown, unknown>;
       if (!first_claimed) {
         first_claimed = true;
         iter = first_iterator;
-        current = first_value;
+        next = iter.next(v0);
       } else {
         iter = run();
-        const n0 = iter.next();
-        if (n0.done) return n0.value;
-        current = n0.value;
+        const skipped = iter.next();
+        if (skipped.done) return skipped.value;
+        next = iter.next(v0);
       }
-      while (true) {
-        const val = (current as Data<AsReader<unknown>, unknown>).value()(
+      while (!next.done) {
+        const val = (next.value as Data<AsReader<unknown>, unknown>).value()(
           environment,
         );
-        const next = iter.next(val);
-        if (next.done) return next.value;
-        current = next.value;
+        next = iter.next(val);
       }
+      return next.value;
     });
   };
   Object.defineProperty(dictionary as object, do_runner_method, {
@@ -658,14 +659,16 @@ function register_reader_traversal(dictionary: unknown): void {
     <from, to>(
       items: readonly from[],
       fn: (item: from) => Data<AsReader<unknown>, to>,
-    ): Data<AsReader<unknown>, to[]> =>
-      dict((environment: unknown) => {
-        const out = new Array<to>(items.length);
-        for (let i = 0; i < items.length; i += 1) {
-          out[i] = fn(items[i]).value()(environment) as to;
+    ): Data<AsReader<unknown>, to[]> => {
+      const snapshot = items.slice();
+      return dict((environment: unknown) => {
+        const out = new Array<to>(snapshot.length);
+        for (let i = 0; i < snapshot.length; i += 1) {
+          out[i] = fn(snapshot[i]).value()(environment) as to;
         }
         return out;
-      }) as Data<AsReader<unknown>, to[]>,
+      }) as Data<AsReader<unknown>, to[]>;
+    },
   );
 }
 

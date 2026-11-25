@@ -99,14 +99,22 @@ Monoid.instance(ArrayBufferT)({
 Foldable.instance(ArrayBufferT)({
   [some_method](predicate) {
     const bytes = new Uint8Array(this.value());
-    for (let i = 0; i < bytes.length; i += 1) {
+    const len = bytes.length;
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
       if (predicate(bytes[i])) return true;
     }
     return false;
   },
   [find_method](predicate) {
     const bytes = new Uint8Array(this.value());
-    for (let i = 0; i < bytes.length; i += 1) {
+    const len = bytes.length;
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
       const byte = bytes[i];
       if (predicate(byte)) return byte;
     }
@@ -114,8 +122,12 @@ Foldable.instance(ArrayBufferT)({
   },
   [fold_while_method](initial, fn) {
     const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
     let state = initial;
-    for (let i = 0; i < bytes.length; i += 1) {
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
       const step = fn(state, bytes[i]);
       state = step[1];
       if (step[0] === "Done") return state;
@@ -128,9 +140,13 @@ Foldable.instance(ArrayBufferT)({
     fn: (state: output, item: number) => output,
   ) {
     const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
     let state = initial;
 
-    for (let i = 0; i < bytes.length; i += 1) {
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
       state = fn(state, bytes[i]);
     }
 

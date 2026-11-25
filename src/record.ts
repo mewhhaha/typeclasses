@@ -182,26 +182,27 @@ Monoid.instance(RecordT)({
 Foldable.instance(RecordT)({
   [some_method](predicate) {
     const record = this.value();
-    for (const key in record) {
-      if (Object.hasOwn(record, key) && predicate(record[key])) return true;
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i += 1) {
+      if (predicate(record[keys[i]])) return true;
     }
     return false;
   },
   [find_method](predicate) {
     const record = this.value();
-    for (const key in record) {
-      if (!Object.hasOwn(record, key)) continue;
-      const item = record[key];
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i += 1) {
+      const item = record[keys[i]];
       if (predicate(item)) return item;
     }
     return undefined;
   },
   [fold_while_method](initial, fn) {
     const record = this.value();
+    const keys = Object.keys(record);
     let state = initial;
-    for (const key in record) {
-      if (!Object.hasOwn(record, key)) continue;
-      const step = fn(state, record[key]);
+    for (let i = 0; i < keys.length; i += 1) {
+      const step = fn(state, record[keys[i]]);
       state = step[1];
       if (step[0] === "Done") return state;
     }
@@ -210,10 +211,11 @@ Foldable.instance(RecordT)({
 
   fold(initial, fn) {
     const record = this.value();
+    const keys = Object.keys(record);
     let state = initial;
 
-    for (const key in record) {
-      if (Object.hasOwn(record, key)) state = fn(state, record[key]);
+    for (let i = 0; i < keys.length; i += 1) {
+      state = fn(state, record[keys[i]]);
     }
 
     return state;

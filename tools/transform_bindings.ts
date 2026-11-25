@@ -373,8 +373,28 @@ export function create_binding_analysis(
     resolved.set(identifier, null);
     return null;
   }
+  function resolve_name_at(name: string, at: Node): Node | null {
+    let scope = scopes.get(at);
+    while (scope !== undefined) {
+      const bindings = scope.bindings;
+      if (bindings !== undefined) {
+        const declaration = bindings[name];
+        if (declaration !== undefined) return declaration;
+      }
+      if (
+        scope === root && !top_level_flushed && deferred_top_level.length > 0
+      ) {
+        flush_deferred_top_level();
+        const declaration = root.bindings?.[name];
+        if (declaration !== undefined) return declaration;
+      }
+      scope = scope.parent;
+    }
+    return null;
+  }
   return {
     resolve,
+    resolve_name_at,
     imported(identifier: Extract<Node, { type: "Identifier" }>): boolean {
       return resolve(identifier)?.type === "ImportDeclaration";
     },

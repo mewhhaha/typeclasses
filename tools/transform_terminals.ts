@@ -7471,12 +7471,17 @@ export function create_terminal_transform(
 
     const allowed = new Set<Node>();
     const used = new Set<Node | null>();
-    const program_free_names = new Map<Node, Set<string>>();
-    const owner_declared_names = new Map<Node, Set<string>>();
-    const get_program_free_names = (program_node: Node): Set<string> => {
-      const cached = program_free_names.get(program_node);
+    const program_free_refs = new Map<
+      Node,
+      readonly { readonly name: string; readonly decl: Node | null }[]
+    >();
+    const get_program_free_refs = (
+      program_node: Node,
+    ): readonly { readonly name: string; readonly decl: Node | null }[] => {
+      const cached = program_free_refs.get(program_node);
       if (cached !== undefined) return cached;
-      const free = new Set<string>();
+      const seen = new Set<string>();
+      const free: { readonly name: string; readonly decl: Node | null }[] = [];
       walk(program_node, (child, parent) => {
         if (child.type !== "Identifier") return;
         if (
@@ -7491,9 +7496,14 @@ export function create_terminal_transform(
         if (
           decl === null || decl.start < program_node.start ||
           decl.end > program_node.end
-        ) free.add(child.name);
+        ) {
+          if (!seen.has(child.name)) {
+            seen.add(child.name);
+            free.push({ name: child.name, decl });
+          }
+        }
       });
-      program_free_names.set(program_node, free);
+      program_free_refs.set(program_node, free);
       return free;
     };
     const is_compatible_owner = (
@@ -7505,19 +7515,18 @@ export function create_terminal_transform(
       if (candidate.owner === owner) return true;
       if (candidate.owner !== services.program) return false;
       // Allow top-level non-exported `const p = Program(...)` to be fused inside
-      // a subsequent block when none of its free variables are shadowed.
-      const free = get_program_free_names(candidate.program);
-      let scope_node: Node | null = owner;
-      while (scope_node !== null && scope_node !== services.program) {
-        let declared = owner_declared_names.get(scope_node);
-        if (declared === undefined) {
-          declared = collect_declared_names(scope_node);
-          owner_declared_names.set(scope_node, declared);
-        }
-        for (const name of free) {
-          if (declared.has(name)) return false;
-        }
-        scope_node = services.bindings.parent(scope_node);
+      // a subsequent block only when every free variable resolves to the exact
+      // same lexical binding at the insertion site (including params, catch, TDZ).
+      const free = get_program_free_refs(candidate.program);
+      for (let i = 0; i < free.length; i += 1) {
+        const ref = free[i];
+        const at_use = services.bindings.resolve_name_at(ref.name, cursor);
+        if (at_use !== ref.decl) return false;
+        if (
+          at_use !== null && at_use.start > cursor.start &&
+          at_use.type !== "FunctionDeclaration" &&
+          at_use.type !== "ImportDeclaration"
+        ) return false;
       }
       return true;
     };

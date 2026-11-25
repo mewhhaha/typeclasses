@@ -887,6 +887,185 @@ export function create_round5_fusions(
     });
   }
 
+  function is_non_throwing_branch(expr: Expression): boolean {
+    const e = parentheses(expr);
+    if (is_pure_no_call(e)) return true;
+    if (
+      e.type === "CallExpression" && !e.optional &&
+      e.callee.type === "MemberExpression" && !e.callee.computed &&
+      !e.callee.optional && e.callee.object.type === "Identifier" &&
+      e.callee.object.name === "Promise" &&
+      !services.bindings.resolve(e.callee.object) &&
+      e.callee.property.type === "Identifier" &&
+      e.callee.property.name === "resolve" &&
+      e.arguments.length <= 1 &&
+      (e.arguments.length === 0 ||
+        (e.arguments[0].type !== "SpreadElement" &&
+          is_pure_no_call(e.arguments[0] as Expression)))
+    ) return true;
+    return false;
+  }
+
+  function wrap_catch_to_rejected(expr: Expression): Expression {
+    const err_id = services.fresh("pt_err");
+    const rej_call: Expression = node({
+      type: "TSAsExpression",
+      expression: call(member(id("Promise"), "reject"), [err_id]),
+      typeAnnotation: node({
+        type: "TSTypeReference",
+        typeName: id("Promise"),
+        typeArguments: node({
+          type: "TSTypeParameterInstantiation",
+          params: Array.from<TSType>([node({ type: "TSNeverKeyword" })]),
+        }),
+      }),
+    });
+    const try_stmt: Statement = node({
+      type: "TryStatement",
+      block: block([ret(expr)]),
+      handler: node({
+        type: "CatchClause",
+        param: err_id,
+        body: block([ret(rej_call)]),
+      }),
+      finalizer: null,
+    });
+    return call(arrow([], block([try_stmt])), []);
+  }
+
+  function has_pure_prefix_before_yield(
+    stmts: readonly Statement[],
+  ): boolean {
+    for (let i = 0; i < stmts.length; i += 1) {
+      const s = stmts[i];
+      if (
+        s.type === "ExpressionStatement" && "directive" in s &&
+        s.directive != null
+      ) continue;
+      if (s.type === "EmptyStatement") continue;
+      if (s.type === "VariableDeclaration") {
+        for (const decl of s.declarations) {
+          if (decl.init === null) continue;
+          if (contains_yield(decl.init)) return true;
+          if (!is_pure_no_call(decl.init)) return false;
+        }
+        continue;
+      }
+      if (s.type === "ExpressionStatement") {
+        if (contains_yield(s.expression)) {
+          const e = unwrap(s.expression);
+          return e.type === "YieldExpression" && e.delegate;
+        }
+        if (!is_pure_no_call(s.expression)) return false;
+        continue;
+      }
+      if (s.type === "ForStatement") {
+        if (s.init !== null) {
+          if (s.init.type === "VariableDeclaration") {
+            for (const d of s.init.declarations) {
+              if (d.init !== null && !is_pure_no_call(d.init)) return false;
+            }
+          } else if (!is_pure_no_call(s.init)) return false;
+        }
+        if (s.test !== null && !is_pure_no_call(s.test)) return false;
+        if (contains_yield(s.body)) {
+          const inner = s.body.type === "BlockStatement"
+            ? s.body.body as Statement[]
+            : [s.body];
+          return has_pure_prefix_before_yield(inner);
+        }
+        return false;
+      }
+      if (s.type === "BlockStatement") {
+        if (contains_yield(s)) {
+          return has_pure_prefix_before_yield(s.body as Statement[]);
+        }
+        return false;
+      }
+      if (s.type === "IfStatement") {
+        if (!is_pure_no_call(s.test)) return false;
+        if (contains_yield(s.consequent)) {
+          const cons = s.consequent.type === "BlockStatement"
+            ? s.consequent.body as Statement[]
+            : [s.consequent];
+          if (!has_pure_prefix_before_yield(cons)) return false;
+        }
+        if (s.alternate !== null && contains_yield(s.alternate)) {
+          const alt = s.alternate.type === "BlockStatement"
+            ? s.alternate.body as Statement[]
+            : [s.alternate];
+          if (!has_pure_prefix_before_yield(alt)) return false;
+        }
+        return true;
+      }
+      if (s.type === "ReturnStatement") {
+        if (s.argument === null) return true;
+        if (contains_yield(s.argument)) {
+          const e = unwrap(s.argument);
+          return e.type === "YieldExpression" && e.delegate;
+        }
+        return is_pure_no_call(s.argument);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  function reaches_unconditional_yield(stmts: readonly Statement[]): boolean {
+    for (let i = 0; i < stmts.length; i += 1) {
+      const s = stmts[i];
+      if (
+        s.type === "ExpressionStatement" && "directive" in s &&
+        s.directive != null
+      ) continue;
+      if (s.type === "EmptyStatement") continue;
+      if (s.type === "ReturnStatement") {
+        return s.argument !== null && contains_yield(s.argument);
+      }
+      if (s.type === "ThrowStatement") return false;
+      if (s.type === "VariableDeclaration") {
+        for (const decl of s.declarations) {
+          if (decl.init !== null && contains_yield(decl.init)) return true;
+        }
+        continue;
+      }
+      if (s.type === "ExpressionStatement") {
+        if (contains_yield(s.expression)) return true;
+        continue;
+      }
+      if (s.type === "BlockStatement") {
+        if (reaches_unconditional_yield(s.body as Statement[])) return true;
+        continue;
+      }
+      if (s.type === "ForStatement") {
+        if (
+          s.init !== null && s.init.type === "VariableDeclaration" &&
+          s.init.declarations.length === 1 &&
+          s.init.declarations[0].id.type === "Identifier" &&
+          s.init.declarations[0].init?.type === "Literal" &&
+          typeof s.init.declarations[0].init.value === "number" &&
+          s.test !== null && s.test.type === "BinaryExpression" &&
+          (s.test.operator === "<" || s.test.operator === "<=") &&
+          s.test.left.type === "Identifier" &&
+          s.test.left.name === s.init.declarations[0].id.name &&
+          s.test.right.type === "Literal" &&
+          typeof s.test.right.value === "number" &&
+          (s.test.operator === "<"
+            ? s.init.declarations[0].init.value < s.test.right.value
+            : s.init.declarations[0].init.value <= s.test.right.value)
+        ) {
+          const inner = s.body.type === "BlockStatement"
+            ? s.body.body as Statement[]
+            : [s.body];
+          if (reaches_unconditional_yield(inner)) return true;
+        }
+        return false;
+      }
+      return false;
+    }
+    return false;
+  }
+
   function parallel_task_fusion(
     raw_inner: Expression,
     exit_cancel_id: IdentifierReference | undefined,
@@ -1030,7 +1209,8 @@ export function create_round5_fusions(
       } else {
         body_stmts.push(variable(src_id, trav_items, "const"));
       }
-      const sync_step = is_statically_non_thenable(step_expr);
+      const sync_step = is_statically_non_thenable(step_expr) &&
+        is_non_throwing_branch(step_expr);
       if (sync_step) {
         body_stmts.push(
           variable(len_id, member(src_id, "length"), "const"),
@@ -1086,6 +1266,9 @@ export function create_round5_fusions(
           ret(wrap_col(ps_id)),
         );
       } else {
+        const safe_step = is_non_throwing_branch(step_expr)
+          ? step_expr
+          : wrap_catch_to_rejected(step_expr);
         const async_flag_id = services.fresh("pt_async");
         const step_val_id = services.fresh("pt_v");
         const set_async_true: Statement = node({
@@ -1133,7 +1316,7 @@ export function create_round5_fusions(
           variable(async_flag_id, literal(false), "let"),
           variable(idx_id, zero_idx, "let"),
           variable(item_id, elem_access, "const"),
-          variable(p0_id, step_expr, "const"),
+          variable(p0_id, safe_step, "const"),
           node({
             type: "IfStatement",
             test: is_thenable_expr(p0_id),
@@ -1164,7 +1347,7 @@ export function create_round5_fusions(
             }),
             body: block([
               variable(item_id, elem_access, "const"),
-              variable(step_val_id, step_expr, "const"),
+              variable(step_val_id, safe_step, "const"),
               node({
                 type: "IfStatement",
                 test: node({
@@ -1391,9 +1574,15 @@ export function create_round5_fusions(
       const maybe_async_indices: number[] = [];
       for (let i = 0; i < branch_exprs.length; i += 1) {
         const r_id = services.fresh("pt_r");
-        body_stmts.push(variable(r_id, branch_exprs[i], "const"));
+        const needs_catch = branch_exprs.length > 1 &&
+          i < branch_exprs.length - 1 &&
+          !is_non_throwing_branch(branch_exprs[i]);
+        const init_expr = needs_catch
+          ? wrap_catch_to_rejected(branch_exprs[i])
+          : branch_exprs[i];
+        body_stmts.push(variable(r_id, init_expr, "const"));
         raw_ids.push(r_id);
-        if (!is_statically_non_thenable(branch_exprs[i])) {
+        if (needs_catch || !is_statically_non_thenable(branch_exprs[i])) {
           maybe_async_indices.push(i);
         }
       }
@@ -2248,6 +2437,14 @@ export function create_round5_fusions(
       if (!validate_stmt(stmt as Statement, false, false)) return undefined;
     }
     if (program_mode && yield_count === 0) return undefined;
+    if (
+      !program_mode && gen_call.arguments.length === 1 &&
+      !reaches_unconditional_yield(body.body as Statement[])
+    ) return undefined;
+    if (
+      !program_mode && signal_expr !== undefined &&
+      !has_pure_prefix_before_yield(body.body as Statement[])
+    ) return undefined;
 
     let sig_id: IdentifierReference | undefined;
     let check_sig_id: IdentifierReference | undefined;
@@ -2310,14 +2507,28 @@ export function create_round5_fusions(
             if (!cb.async) {
               const raw_id = services.fresh("task_raw");
               target_stmts.push(variable(raw_id, inner, "const"));
-              if (sig_id !== undefined && await_sig_id !== undefined) {
+              if (
+                sig_id !== undefined && await_sig_id !== undefined &&
+                check_sig_id !== undefined
+              ) {
                 return node({
-                  type: "AwaitExpression",
-                  argument: call(await_sig_id, [
-                    raw_id,
-                    sig_id,
-                    literal("Task.from_fn"),
-                  ]),
+                  type: "ConditionalExpression",
+                  test: is_thenable_expr(raw_id),
+                  consequent: node({
+                    type: "AwaitExpression",
+                    argument: call(await_sig_id, [
+                      raw_id,
+                      sig_id,
+                      literal("Task.from_fn"),
+                    ]),
+                  }),
+                  alternate: node({
+                    type: "SequenceExpression",
+                    expressions: [
+                      call(check_sig_id, [sig_id, literal("Task.from_fn")]),
+                      cast_as_awaited(raw_id),
+                    ],
+                  }),
                 });
               }
               return await_if_thenable_expr(raw_id);
@@ -5517,6 +5728,7 @@ export function create_round5_fusions(
       readonly array_ctor?: IdentifierReference;
       readonly items: Expression;
       readonly is_view?: boolean;
+      readonly needs_snapshot?: boolean;
     }
     | undefined {
     const val = parentheses(expr);
@@ -5530,39 +5742,52 @@ export function create_round5_fusions(
     if (callee.type === "Identifier" && services.bindings.imported(callee)) {
       const name = callee.name;
       if (services.imports.array_constructors?.has(name)) {
-        return { kind: "array", array_ctor: callee, items };
+        return {
+          kind: "array",
+          array_ctor: callee,
+          items,
+          is_view: true,
+          needs_snapshot: false,
+        };
       }
       if (
         services.imports.array_view_functions?.has(name) ||
         services.imports.array_from_array_functions?.has(name)
       ) {
+        const is_view = services.imports.array_view_functions?.has(name) ===
+          true;
         const ctor_name = services.imports.array_constructors?.values().next()
           .value;
         return {
           kind: "array",
           array_ctor: ctor_name !== undefined ? id(ctor_name) : undefined,
           items,
-          is_view: services.imports.array_view_functions?.has(name),
+          is_view,
+          needs_snapshot: !is_view,
         };
       }
       if (services.imports.typed_array_constructors?.has(name)) {
-        return { kind: "typed_array", items };
+        return { kind: "typed_array", items, needs_snapshot: true };
       }
       if (services.imports.set_constructors?.has(name)) {
-        return { kind: "set", items };
+        return { kind: "set", items, needs_snapshot: true };
       }
       if (services.imports.map_constructors?.has(name)) {
+        const is_view = name === "from_map_view";
         return {
           kind: "map",
           items,
-          is_view: name === "from_map_view",
+          is_view,
+          needs_snapshot: !is_view,
         };
       }
       if (services.imports.record_constructors?.has(name)) {
+        const is_view = name === "from_record_view";
         return {
           kind: "record",
           items,
-          is_view: name === "from_record_view",
+          is_view,
+          needs_snapshot: !is_view,
         };
       }
     } else if (
@@ -5575,13 +5800,15 @@ export function create_round5_fusions(
         callee.property.name === "from_array" ||
         callee.property.name === "from_array_view")
     ) {
+      const is_view = callee.property.name !== "from_array";
       const ctor_name = services.imports.array_constructors?.values().next()
         .value;
       return {
         kind: "array",
         array_ctor: ctor_name !== undefined ? id(ctor_name) : undefined,
         items,
-        is_view: callee.property.name === "from_array_view",
+        is_view,
+        needs_snapshot: !is_view,
       };
     }
     return undefined;
@@ -5866,6 +6093,7 @@ export function create_round5_fusions(
           ]),
         });
       }
+      const live_array_len = root.kind === "array" && !root.needs_snapshot;
       return node({
         type: "ForStatement",
         init: variable(idx_id, literal(0), "let"),
@@ -5873,7 +6101,7 @@ export function create_round5_fusions(
           type: "BinaryExpression",
           operator: "<",
           left: idx_id,
-          right: len_id,
+          right: live_array_len ? member(src_id, "length") : len_id,
         }),
         update: node({
           type: "AssignmentExpression",
@@ -5935,8 +6163,17 @@ export function create_round5_fusions(
         }),
         arguments: [len_id],
       });
+      const copy_map_snapshot = root.needs_snapshot === true &&
+        !is_fresh_collection_expr(root.items) &&
+        !stages.every((st) => is_pure_no_call(st.body));
       const body_stmts: Statement[] = [
-        variable(src_id, root.items, "const"),
+        variable(
+          src_id,
+          copy_map_snapshot
+            ? call(member(root.items, "slice"), [])
+            : root.items,
+          "const",
+        ),
         variable(len_id, member(src_id, "length"), "const"),
         node({
           type: "IfStatement",
@@ -5990,24 +6227,33 @@ export function create_round5_fusions(
     }
 
     // Case 2: Zero-array fold / fold_while / some / find
-    const needs_len = root.kind === "array" || root.kind === "typed_array";
+    const stages_all_pure = stages.every((st) => is_pure_no_call(st.body));
+    const needs_len = (root.kind === "array" && root.needs_snapshot === true) ||
+      root.kind === "typed_array";
 
     if (resolved_term.kind === "some" || resolved_term.kind === "find") {
       const pred_arrow = extract_unary_arrow(resolved_term.pred);
       let pred_fn_id: IdentifierReference | undefined;
+      let copy_array_snapshot = false;
+      const pred_pure = pred_arrow !== undefined &&
+        is_pure_no_call(pred_arrow.body);
       if (pred_arrow === undefined) {
         if (!is_safe_callable_ref(resolved_term.pred)) return undefined;
         if (
           root.kind !== "array" && !root.is_view &&
           !is_fresh_collection_expr(root.items)
         ) return undefined;
+        if (
+          root.kind === "array" && root.needs_snapshot &&
+          !is_fresh_collection_expr(root.items)
+        ) copy_array_snapshot = true;
         pred_fn_id = services.fresh("arr_pred");
       } else if (
-        root.kind !== "array" && !root.is_view &&
-        !is_fresh_collection_expr(root.items) &&
-        !is_pure_no_call(pred_arrow.body)
+        root.needs_snapshot && !is_fresh_collection_expr(root.items) &&
+        (!stages_all_pure || !pred_pure)
       ) {
-        return undefined;
+        if (root.kind === "array") copy_array_snapshot = true;
+        else return undefined;
       }
       const loop_stmts: Statement[] = [];
       const item_expr = emit_stages(loop_stmts, elem_access);
@@ -6037,7 +6283,10 @@ export function create_round5_fusions(
           alternate: null,
         }),
       );
-      const stmts: Statement[] = [variable(src_id, root.items, "const")];
+      const src_init = copy_array_snapshot
+        ? call(member(root.items, "slice"), [])
+        : root.items;
+      const stmts: Statement[] = [variable(src_id, src_init, "const")];
       if (needs_len) {
         stmts.push(variable(len_id, member(src_id, "length"), "const"));
       }
@@ -6068,19 +6317,26 @@ export function create_round5_fusions(
     ) return undefined;
     const step_arrow = extract_binary_arrow(resolved_term.step);
     let step_fn_id: IdentifierReference | undefined;
+    let copy_fold_snapshot = false;
+    const step_pure = step_arrow !== undefined &&
+      is_pure_no_call(step_arrow.body);
     if (step_arrow === undefined) {
       if (!is_safe_callable_ref(resolved_term.step)) return undefined;
       if (
         root.kind !== "array" && !root.is_view &&
         !is_fresh_collection_expr(root.items)
       ) return undefined;
+      if (
+        root.kind === "array" && root.needs_snapshot &&
+        !is_fresh_collection_expr(root.items)
+      ) copy_fold_snapshot = true;
       step_fn_id = services.fresh("arr_step_fn");
     } else if (
-      root.kind !== "array" && !root.is_view &&
-      !is_fresh_collection_expr(root.items) &&
-      !is_pure_no_call(step_arrow.body)
+      root.needs_snapshot && !is_fresh_collection_expr(root.items) &&
+      (!stages_all_pure || !step_pure)
     ) {
-      return undefined;
+      if (root.kind === "array") copy_fold_snapshot = true;
+      else return undefined;
     }
 
     const acc_id = services.fresh("arr_acc");
@@ -6216,7 +6472,10 @@ export function create_round5_fusions(
       }
     }
 
-    const stmts: Statement[] = [variable(src_id, root.items, "const")];
+    const fold_src_init = copy_fold_snapshot
+      ? call(member(root.items, "slice"), [])
+      : root.items;
+    const stmts: Statement[] = [variable(src_id, fold_src_init, "const")];
     if (needs_len) {
       stmts.push(variable(len_id, member(src_id, "length"), "const"));
     }
@@ -6394,6 +6653,14 @@ export function create_round5_fusions(
     }
 
     const body = run_arg.body!;
+    if (
+      do_call.arguments.length === 1 &&
+      !reaches_unconditional_yield(body.body as Statement[])
+    ) return undefined;
+    if (
+      (!is_atomically || do_call.arguments.length === 1) &&
+      !has_pure_prefix_before_yield(body.body as Statement[])
+    ) return undefined;
 
     function validate_stm_expr(expr: Expression): boolean {
       if (!contains_await_yield(expr)) return true;

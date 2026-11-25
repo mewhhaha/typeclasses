@@ -606,26 +606,27 @@ const stm_do: CustomDoRunner = (first_value, first_iterator, run) => {
     first[kind] !== stm_kind || first.bind !== canonical_stm_bind ||
     first.pure !== canonical_stm_pure
   ) return undefined;
+  const first_raw = first.value();
   let first_claimed = false;
   return trusted_stm((journal) => {
+    const v0 = first_raw(journal);
     let iter: Generator<unknown, unknown, unknown>;
-    let current: unknown;
+    let next: IteratorResult<unknown, unknown>;
     if (!first_claimed) {
       first_claimed = true;
       iter = first_iterator;
-      current = first_value;
+      next = iter.next(v0);
     } else {
       iter = run();
-      const n0 = iter.next();
-      if (n0.done) return n0.value;
-      current = n0.value;
+      const skipped = iter.next();
+      if (skipped.done) return skipped.value;
+      next = iter.next(v0);
     }
-    while (true) {
-      const val = (current as Stm<unknown>).value()(journal);
-      const next = iter.next(val);
-      if (next.done) return next.value;
-      current = next.value;
+    while (!next.done) {
+      const val = (next.value as Stm<unknown>).value()(journal);
+      next = iter.next(val);
     }
+    return next.value;
   });
 };
 Object.defineProperty(Stm, do_runner_method, { value: stm_do });
@@ -656,14 +657,16 @@ register_traversal(
   <from, to>(
     items: readonly from[],
     fn: (item: from) => Data<AsStm, to>,
-  ): Data<AsStm, to[]> =>
-    trusted_stm((journal) => {
-      const out = new Array<to>(items.length);
-      for (let i = 0; i < items.length; i += 1) {
-        out[i] = fn(items[i]).value()(journal);
+  ): Data<AsStm, to[]> => {
+    const snapshot = items.slice();
+    return trusted_stm((journal) => {
+      const out = new Array<to>(snapshot.length);
+      for (let i = 0; i < snapshot.length; i += 1) {
+        out[i] = fn(snapshot[i]).value()(journal);
       }
       return out;
-    }),
+    });
+  },
 );
 
 function run_stm<item>(

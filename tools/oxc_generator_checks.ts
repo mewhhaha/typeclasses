@@ -17,6 +17,7 @@ function lower(source: string, kind: TransformKind = "do") {
     config: {},
     bindings: {
       resolve: () => null,
+      resolve_name_at: () => null,
       imported: () => false,
       scope: () => null,
       parent: () => null,

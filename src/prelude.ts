@@ -299,29 +299,11 @@ export function fold_map<
     });
     return as_data(MapT, out) as unknown as Data<monoid, result>;
   }
-  // Balanced binary carry avoids O(N^2) left-associated concat on custom Monoids.
-  const pending: (Data<monoid, result> | undefined)[] = [];
-  Foldable.fold(value, undefined, (_s, item) => {
-    let acc = fn(item);
-    let level = 0;
-    while (true) {
-      const earlier = pending[level];
-      if (earlier === undefined) break;
-      acc = Semigroup.concat(earlier, acc);
-      pending[level] = undefined;
-      level += 1;
-    }
-    pending[level] = acc;
-    return undefined;
-  });
-  let total: Data<monoid, result> | undefined;
-  for (let level = pending.length - 1; level >= 0; level -= 1) {
-    const chunk = pending[level];
-    if (chunk !== undefined) {
-      total = total === undefined ? chunk : Semigroup.concat(total, chunk);
-    }
-  }
-  return total ?? Monoid.empty<monoid, result>(monoid as monoid);
+  return Foldable.fold(
+    value,
+    Monoid.empty<monoid, result>(monoid as monoid),
+    (acc, item) => Semigroup.concat(acc, fn(item)),
+  );
 }
 
 /** Haskell `mconcat :: Monoid m => [m] -> m`. */
@@ -345,7 +327,10 @@ export function to_array<
 ): DataItem<dictionary, item>[] {
   const vk = (value as unknown as { [kind]?: unknown })[kind];
   if (vk === ArrayT[kind] && value.fold === canonical_array_fold) {
-    return (value.value() as readonly DataItem<dictionary, item>[]).slice();
+    const src = value.value() as readonly DataItem<dictionary, item>[];
+    const out = new Array<DataItem<dictionary, item>>(src.length);
+    for (let i = 0; i < src.length; i += 1) out[i] = src[i];
+    return out;
   }
   if (vk === SetT[kind] && value.fold === canonical_set_fold) {
     return [...(value.value() as ReadonlySet<DataItem<dictionary, item>>)];

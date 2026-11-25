@@ -475,14 +475,14 @@ export function collect_active_statement_indices(
         (last >= 65 && last <= 90) || (last >= 97 && last <= 122) ||
         (last >= 48 && last <= 57) || last === 95 || last === 36
       ) {
-        escaped += "\\b";
+        escaped += "(?![$\\w])";
       }
       other_parts.push(escaped);
     }
   }
   const branches: string[] = [];
   if (ident_parts.length > 0) {
-    branches.push("\\b(?:" + ident_parts.join("|") + ")\\b");
+    branches.push("(?<![$\\w])(?:" + ident_parts.join("|") + ")(?![$\\w])");
   }
   if (other_parts.length > 0) {
     branches.push("(?:" + other_parts.join("|") + ")");

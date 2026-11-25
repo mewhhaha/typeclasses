@@ -157,8 +157,13 @@ function is_sync_non_thenable_expr(expression: Expression): boolean {
     case "BinaryExpression":
     case "UpdateExpression":
     case "ArrayExpression":
-    case "ObjectExpression":
       return true;
+    case "ObjectExpression":
+      return val.properties.every((p) =>
+        p.type === "Property" && !p.computed &&
+        ((p.key.type === "Identifier" && p.key.name !== "then") ||
+          (p.key.type === "Literal" && p.key.value !== "then"))
+      );
     case "UnaryExpression":
       return true;
     case "LogicalExpression":
@@ -1980,13 +1985,24 @@ export function create_iterable_map_fusion(
     let find_just_id: IdentifierReference | undefined;
     let find_nothing_id: IdentifierReference | undefined;
     if (term.kind === "find") {
+      const callee_u = unwrap(current.callee);
+      const site_ident = callee_u.type === "Identifier"
+        ? callee_u
+        : callee_u.type === "MemberExpression" &&
+            callee_u.object.type === "Identifier"
+        ? callee_u.object
+        : undefined;
+      const unshadowed_import = (name: string | undefined): boolean =>
+        name !== undefined && site_ident !== undefined &&
+        bindings.resolve_name_at(name, site_ident)?.type ===
+          "ImportDeclaration";
       const existing_j = just_locals.values().next().value;
       const existing_n = nothing_locals.values().next().value;
-      find_just_id = existing_j !== undefined
-        ? id(existing_j)
+      find_just_id = unshadowed_import(existing_j)
+        ? id(existing_j!)
         : import_from_module?.(term.anchor, "maybe", "Just");
-      find_nothing_id = existing_n !== undefined
-        ? id(existing_n)
+      find_nothing_id = unshadowed_import(existing_n)
+        ? id(existing_n!)
         : import_from_module?.(term.anchor, "maybe", "Nothing");
       if (find_just_id === undefined || find_nothing_id === undefined) {
         return undefined;
@@ -2692,19 +2708,164 @@ export function create_iterable_map_fusion(
         ]);
       } else {
         const gen_v = make_fresh("aiter_v");
-        const gen_loop: Statement = node({
-          type: "ForOfStatement",
-          await: false,
-          left: node({
-            type: "VariableDeclaration",
-            kind: "const",
-            declarations: [
-              node({ type: "VariableDeclarator", id: gen_v, init: null }),
-            ],
-          }),
-          right: iter_id,
-          body: block(emit_async_body(gen_v)),
-        });
+        const emit_safe_iter_loop = (
+          source_expr: Expression,
+          is_async_iter: boolean,
+          item_id: IdentifierReference,
+          loop_body: Statement[],
+          label?: IdentifierReference,
+        ): Statement => {
+          const it_id = make_fresh("aiter_it");
+          const ended_id = make_fresh("aiter_ended");
+          const failed_id = make_fresh("aiter_failed");
+          const next_id = make_fresh("aiter_n");
+          const err_id = make_fresh("aiter_err");
+          const cerr_id = make_fresh("aiter_cerr");
+          const sym_prop = is_async_iter ? "asyncIterator" : "iterator";
+          const open_it = call(
+            node({
+              type: "MemberExpression",
+              object: source_expr,
+              property: member(id("Symbol"), sym_prop),
+              computed: true,
+              optional: false,
+            }),
+            [],
+          );
+          const next_call: Expression = is_async_iter
+            ? node({
+              type: "AwaitExpression",
+              argument: call(member(it_id, "next"), []),
+            })
+            : call(member(it_id, "next"), []);
+          const ret_call: Expression = is_async_iter
+            ? node({
+              type: "AwaitExpression",
+              argument: call(member(it_id, "return"), []),
+            })
+            : call(member(it_id, "return"), []);
+          const while_stmt: Statement = node({
+            type: "WhileStatement",
+            test: literal(true),
+            body: block([
+              variable("const", next_id, next_call),
+              node({
+                type: "IfStatement",
+                test: member(next_id, "done"),
+                consequent: block([
+                  node({
+                    type: "ExpressionStatement",
+                    expression: node({
+                      type: "AssignmentExpression",
+                      operator: "=",
+                      left: ended_id,
+                      right: literal(true),
+                    }),
+                  }),
+                  node({ type: "BreakStatement", label: null }),
+                ]),
+                alternate: null,
+              }),
+              variable("const", item_id, member(next_id, "value")),
+              ...loop_body,
+            ]),
+          });
+          const loop_node: Statement = label !== undefined
+            ? node({
+              type: "LabeledStatement",
+              label,
+              body: while_stmt,
+            })
+            : while_stmt;
+          const cleanup_try: Statement = node({
+            type: "TryStatement",
+            block: block([
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "BinaryExpression",
+                  operator: "===",
+                  left: node({
+                    type: "UnaryExpression",
+                    operator: "typeof",
+                    prefix: true,
+                    argument: member(it_id, "return"),
+                  }),
+                  right: literal("function"),
+                }),
+                consequent: block([
+                  node({ type: "ExpressionStatement", expression: ret_call }),
+                ]),
+                alternate: null,
+              }),
+            ]),
+            handler: node({
+              type: "CatchClause",
+              param: cerr_id,
+              body: block([
+                node({
+                  type: "IfStatement",
+                  test: node({
+                    type: "UnaryExpression",
+                    operator: "!",
+                    prefix: true,
+                    argument: failed_id,
+                  }),
+                  consequent: node({
+                    type: "ThrowStatement",
+                    argument: cerr_id,
+                  }),
+                  alternate: null,
+                }),
+              ]),
+            }),
+            finalizer: null,
+          });
+          return block([
+            variable("const", it_id, open_it),
+            variable("let", ended_id, literal(false)),
+            variable("let", failed_id, literal(false)),
+            node({
+              type: "TryStatement",
+              block: block([loop_node]),
+              handler: node({
+                type: "CatchClause",
+                param: err_id,
+                body: block([
+                  node({
+                    type: "ExpressionStatement",
+                    expression: node({
+                      type: "AssignmentExpression",
+                      operator: "=",
+                      left: failed_id,
+                      right: literal(true),
+                    }),
+                  }),
+                  node({ type: "ThrowStatement", argument: err_id }),
+                ]),
+              }),
+              finalizer: block([
+                node({
+                  type: "IfStatement",
+                  test: node({
+                    type: "UnaryExpression",
+                    operator: "!",
+                    prefix: true,
+                    argument: ended_id,
+                  }),
+                  consequent: block([cleanup_try]),
+                  alternate: null,
+                }),
+              ]),
+            }),
+          ]);
+        };
+        const gen_loop: Statement = emit_safe_iter_loop(
+          iter_id,
+          false,
+          gen_v,
+          emit_async_body(gen_v),
+        );
         const is_canon_arr: Expression = node({
           type: "LogicalExpression",
           operator: "&&",
@@ -2743,73 +2904,323 @@ export function create_iterable_map_fusion(
       const idx_id = make_fresh("aiter_i");
       const raw_v = make_fresh("aiter_rawv");
       const first_v = make_fresh("aiter_v");
-      const raw_loop: Statement = node({
-        type: "ForOfStatement",
-        await: true,
-        left: node({
-          type: "VariableDeclaration",
-          kind: "const",
-          declarations: [
-            node({ type: "VariableDeclarator", id: chunk_id, init: null }),
-          ],
+      const it_id = make_fresh("aiter_it");
+      const ended_id = make_fresh("aiter_ended");
+      const failed_id = make_fresh("aiter_failed");
+      const next_id = make_fresh("aiter_n");
+      const err_id = make_fresh("aiter_err");
+      const cerr_id = make_fresh("aiter_cerr");
+      const open_it = call(
+        node({
+          type: "MemberExpression",
+          object: call(factory_id!, []),
+          property: member(id("Symbol"), "asyncIterator"),
+          computed: true,
+          optional: false,
         }),
-        right: call(factory_id!, []),
+        [],
+      );
+      const inner_for: Statement = node({
+        type: "ForStatement",
+        init: variable("let", idx_id, literal(0)),
+        test: node({
+          type: "BinaryExpression",
+          operator: "<",
+          left: idx_id,
+          right: member(chunk_id, "length"),
+        }),
+        update: node({
+          type: "AssignmentExpression",
+          operator: "+=",
+          left: idx_id,
+          right: literal(1),
+        }),
         body: block([
-          node({
-            type: "ForStatement",
-            init: variable("let", idx_id, literal(0)),
-            test: node({
-              type: "BinaryExpression",
-              operator: "<",
-              left: idx_id,
-              right: member(chunk_id, "length"),
+          variable(
+            "const",
+            raw_v,
+            node({
+              type: "MemberExpression",
+              object: chunk_id,
+              property: idx_id,
+              computed: true,
+              optional: false,
             }),
-            update: node({
-              type: "AssignmentExpression",
-              operator: "+=",
-              left: idx_id,
-              right: literal(1),
-            }),
-            body: block([
-              variable(
-                "const",
-                raw_v,
-                node({
-                  type: "MemberExpression",
-                  object: chunk_id,
-                  property: idx_id,
-                  computed: true,
-                  optional: false,
-                }),
-              ),
-              variable("const", first_v, await_if_thenable_expr(raw_v)),
-              ...emit_async_body(first_v),
-            ]),
-          }),
+          ),
+          variable("const", first_v, await_if_thenable_expr(raw_v)),
+          ...emit_async_body(first_v),
         ]),
       });
-      loop_stmt = outer_label !== undefined
+      const while_stmt: Statement = node({
+        type: "WhileStatement",
+        test: literal(true),
+        body: block([
+          variable(
+            "const",
+            next_id,
+            node({
+              type: "AwaitExpression",
+              argument: call(member(it_id, "next"), []),
+            }),
+          ),
+          node({
+            type: "IfStatement",
+            test: member(next_id, "done"),
+            consequent: block([
+              node({
+                type: "ExpressionStatement",
+                expression: node({
+                  type: "AssignmentExpression",
+                  operator: "=",
+                  left: ended_id,
+                  right: literal(true),
+                }),
+              }),
+              node({ type: "BreakStatement", label: null }),
+            ]),
+            alternate: null,
+          }),
+          variable("const", chunk_id, member(next_id, "value")),
+          inner_for,
+        ]),
+      });
+      const labeled_while: Statement = outer_label !== undefined
         ? node({
           type: "LabeledStatement",
           label: outer_label,
-          body: raw_loop,
+          body: while_stmt,
         })
-        : raw_loop;
+        : while_stmt;
+      loop_stmt = block([
+        variable("const", it_id, open_it),
+        variable("let", ended_id, literal(false)),
+        variable("let", failed_id, literal(false)),
+        node({
+          type: "TryStatement",
+          block: block([labeled_while]),
+          handler: node({
+            type: "CatchClause",
+            param: err_id,
+            body: block([
+              node({
+                type: "ExpressionStatement",
+                expression: node({
+                  type: "AssignmentExpression",
+                  operator: "=",
+                  left: failed_id,
+                  right: literal(true),
+                }),
+              }),
+              node({ type: "ThrowStatement", argument: err_id }),
+            ]),
+          }),
+          finalizer: block([
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: ended_id,
+              }),
+              consequent: block([
+                node({
+                  type: "TryStatement",
+                  block: block([
+                    node({
+                      type: "IfStatement",
+                      test: node({
+                        type: "BinaryExpression",
+                        operator: "===",
+                        left: node({
+                          type: "UnaryExpression",
+                          operator: "typeof",
+                          prefix: true,
+                          argument: member(it_id, "return"),
+                        }),
+                        right: literal("function"),
+                      }),
+                      consequent: block([
+                        node({
+                          type: "ExpressionStatement",
+                          expression: node({
+                            type: "AwaitExpression",
+                            argument: call(member(it_id, "return"), []),
+                          }),
+                        }),
+                      ]),
+                      alternate: null,
+                    }),
+                  ]),
+                  handler: node({
+                    type: "CatchClause",
+                    param: cerr_id,
+                    body: block([
+                      node({
+                        type: "IfStatement",
+                        test: node({
+                          type: "UnaryExpression",
+                          operator: "!",
+                          prefix: true,
+                          argument: failed_id,
+                        }),
+                        consequent: node({
+                          type: "ThrowStatement",
+                          argument: cerr_id,
+                        }),
+                        alternate: null,
+                      }),
+                    ]),
+                  }),
+                  finalizer: null,
+                }),
+              ]),
+              alternate: null,
+            }),
+          ]),
+        }),
+      ]);
     } else {
       const first_v = make_fresh("aiter_v");
-      loop_stmt = node({
-        type: "ForOfStatement",
-        await: true,
-        left: node({
-          type: "VariableDeclaration",
-          kind: "const",
-          declarations: [
-            node({ type: "VariableDeclarator", id: first_v, init: null }),
-          ],
+      const it_id = make_fresh("aiter_it");
+      const ended_id = make_fresh("aiter_ended");
+      const failed_id = make_fresh("aiter_failed");
+      const next_id = make_fresh("aiter_n");
+      const err_id = make_fresh("aiter_err");
+      const cerr_id = make_fresh("aiter_cerr");
+      const open_it = call(
+        node({
+          type: "MemberExpression",
+          object: call(factory_id!, []),
+          property: member(id("Symbol"), "asyncIterator"),
+          computed: true,
+          optional: false,
         }),
-        right: call(factory_id!, []),
-        body: block(emit_async_body(first_v)),
-      });
+        [],
+      );
+      loop_stmt = block([
+        variable("const", it_id, open_it),
+        variable("let", ended_id, literal(false)),
+        variable("let", failed_id, literal(false)),
+        node({
+          type: "TryStatement",
+          block: block([
+            node({
+              type: "WhileStatement",
+              test: literal(true),
+              body: block([
+                variable(
+                  "const",
+                  next_id,
+                  node({
+                    type: "AwaitExpression",
+                    argument: call(member(it_id, "next"), []),
+                  }),
+                ),
+                node({
+                  type: "IfStatement",
+                  test: member(next_id, "done"),
+                  consequent: block([
+                    node({
+                      type: "ExpressionStatement",
+                      expression: node({
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: ended_id,
+                        right: literal(true),
+                      }),
+                    }),
+                    node({ type: "BreakStatement", label: null }),
+                  ]),
+                  alternate: null,
+                }),
+                variable("const", first_v, member(next_id, "value")),
+                ...emit_async_body(first_v),
+              ]),
+            }),
+          ]),
+          handler: node({
+            type: "CatchClause",
+            param: err_id,
+            body: block([
+              node({
+                type: "ExpressionStatement",
+                expression: node({
+                  type: "AssignmentExpression",
+                  operator: "=",
+                  left: failed_id,
+                  right: literal(true),
+                }),
+              }),
+              node({ type: "ThrowStatement", argument: err_id }),
+            ]),
+          }),
+          finalizer: block([
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: ended_id,
+              }),
+              consequent: block([
+                node({
+                  type: "TryStatement",
+                  block: block([
+                    node({
+                      type: "IfStatement",
+                      test: node({
+                        type: "BinaryExpression",
+                        operator: "===",
+                        left: node({
+                          type: "UnaryExpression",
+                          operator: "typeof",
+                          prefix: true,
+                          argument: member(it_id, "return"),
+                        }),
+                        right: literal("function"),
+                      }),
+                      consequent: block([
+                        node({
+                          type: "ExpressionStatement",
+                          expression: node({
+                            type: "AwaitExpression",
+                            argument: call(member(it_id, "return"), []),
+                          }),
+                        }),
+                      ]),
+                      alternate: null,
+                    }),
+                  ]),
+                  handler: node({
+                    type: "CatchClause",
+                    param: cerr_id,
+                    body: block([
+                      node({
+                        type: "IfStatement",
+                        test: node({
+                          type: "UnaryExpression",
+                          operator: "!",
+                          prefix: true,
+                          argument: failed_id,
+                        }),
+                        consequent: node({
+                          type: "ThrowStatement",
+                          argument: cerr_id,
+                        }),
+                        alternate: null,
+                      }),
+                    ]),
+                  }),
+                  finalizer: null,
+                }),
+              ]),
+              alternate: null,
+            }),
+          ]),
+        }),
+      ]);
     }
 
     if (take_count_ids.length > 0) {

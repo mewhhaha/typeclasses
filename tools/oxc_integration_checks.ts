@@ -2419,8 +2419,9 @@ Deno.test("round-7 post-plugin fusion covers Writer Do/dynamic tell, AsyncIterab
     "export function make_r7_tvar(v: number) { return new_tvar(v); }",
     "export function stm_untagged_atomically(tv: TVar<number>, n: number) {",
     "  return atomically(Do(function* () {",
-    "    let acc = 0;",
-    "    for (let i = 0; i < n; i += 1) {",
+    "    let acc = yield* read_tvar(tv);",
+    "    yield* write_tvar(tv, acc + 1);",
+    "    for (let i = 1; i < n; i += 1) {",
     "      const cur = yield* read_tvar(tv);",
     "      yield* write_tvar(tv, cur + 1);",
     "      acc += cur;",
@@ -2727,4 +2728,222 @@ Deno.test("round-7 post-plugin fusion covers Writer Do/dynamic tell, AsyncIterab
   assert_equals(mod.either_chain_r7(Left("oops")), 4);
   assert_equals(mod.either_fold_r7(Right(3)), [6, "ok", "R:4"]);
   assert_equals(mod.either_fold_r7(Left("bad")), [0, "bad", "L:bad"]);
+});
+
+Deno.test("round-7 codex differential parity: named Program param capture, ParallelTask sync-throw & signal prefix order, STM prefix/zero-yield, snapshot vs live array, AsyncIterable thenable/return/shadowed-Just, and $-prefixed alias scanning", async () => {
+  const mod_url = new URL("../src/mod.ts", import.meta.url).href;
+  const task_url = new URL("../src/task.ts", import.meta.url).href;
+  const reader_url = new URL("../src/reader.ts", import.meta.url).href;
+  const stm_url = new URL("../src/stm.ts", import.meta.url).href;
+  const async_iterable_url = new URL(
+    "../src/async_iterable.ts",
+    import.meta.url,
+  ).href;
+  const array_url = new URL("../src/array.ts", import.meta.url).href;
+  const list_url = new URL("../src/list.ts", import.meta.url).href;
+  const handlers_url = new URL("../src/handlers.ts", import.meta.url).href;
+
+  const fillers = Array.from(
+    { length: 20 },
+    (_, i) => `export function pad_${i}(v: number) { return v + ${i}; }`,
+  );
+
+  const source = [
+    `import { Applicative, Do as $d, Foldable, Just, Program } from ${
+      JSON.stringify(mod_url)
+    };`,
+    `import { from_fn, parallel, run_task, run_task_exit, sequential, succeed, Task } from ${
+      JSON.stringify(task_url)
+    };`,
+    `import { reader } from ${JSON.stringify(reader_url)};`,
+    `import { atomically, new_tvar, read_tvar, Stm, type TVar } from ${
+      JSON.stringify(stm_url)
+    };`,
+    `import { find, from_sync_factory, to_array } from ${
+      JSON.stringify(async_iterable_url)
+    };`,
+    `import { ArrayT, from_array as array_from_array } from ${
+      JSON.stringify(array_url)
+    };`,
+    `import { from_array as list_from_array, List, to_array as list_to_array } from ${
+      JSON.stringify(list_url)
+    };`,
+    `import { provide_reader, run_cells } from ${
+      JSON.stringify(handlers_url)
+    };`,
+    ...fillers,
+    // 1. Named Program closing over module-level `n = 3` run inside function with parameter `n`
+    "const cfg_c = reader<{ mul: number }>()('cdx_cfg');",
+    "const n = 3;",
+    "const cap_prog = Program(function* () { const c = yield* cfg_c.ask(); return c.mul + n; });",
+    "export function run_param_shadow(n: number) {",
+    "  return run_cells(cap_prog, { cfg: provide_reader(cfg_c, { mul: 2 }) }).result + (n * 0);",
+    "}",
+    // 2a. ParallelTask branch 0 sync throw still starts branch 1
+    "export async function par_sync_throw_order(trace: string[]) {",
+    "  try {",
+    "    await run_task(sequential(Applicative.lift(",
+    "      (a: number, b: number) => a + b,",
+    "      parallel(from_fn((): number => { trace.push('b0'); throw new Error('boom'); })),",
+    "      parallel(from_fn(() => { trace.push('b1'); return 2; })),",
+    "    )));",
+    "  } catch {",
+    "    // expected",
+    "  }",
+    "}",
+    // 2b. run_task_exit(Do, { signal }) preserves eager prefix before signal expression
+    "export function task_exit_prefix_order(trace: string[], sig: AbortSignal) {",
+    "  const get_sig = () => { trace.push('signal'); return sig; };",
+    "  return run_task_exit($d(Task, function* () {",
+    "    trace.push('prefix');",
+    "    return yield* succeed(1);",
+    "  }), { signal: get_sig() });",
+    "}",
+    // 3a. Standalone Do(Stm) preserves construction-time eager prefix
+    "export function stm_eager_prefix(trace: string[]) {",
+    "  const tv = new_tvar(4);",
+    "  const tx = $d(Stm, function* () { trace.push('stm-prefix'); return yield* read_tvar(tv); });",
+    "  const before = trace.slice();",
+    "  const val = atomically(tx);",
+    "  return { before, val };",
+    "}",
+    // 3b. Untagged STM Do returning before first yield still throws
+    "export function stm_untagged_zero_yield(tv: TVar<number>, early: boolean) {",
+    "  return atomically($d(function* () { if (early) return 7; return yield* read_tvar(tv); }));",
+    "}",
+    "export function mk_tv(v: number) { return new_tvar(v); }",
+    // 4a. from_array snapshot parity during fold
+    "export function fold_from_array_snapshot(xs: number[]) {",
+    "  return Foldable.fold(array_from_array(xs), 0, (acc, x) => { xs[1] = 100; return acc + x; });",
+    "}",
+    // 4b. list.from_array snapshot parity during Do(List) comprehension
+    "export function list_from_array_snapshot(xs: number[]) {",
+    "  return list_to_array($d(List, function* () { const x = yield* list_from_array(xs); xs[1] = 99; return x; }));",
+    "}",
+    // 4c. ArrayT live iteration sees push during fold
+    "export function fold_array_t_live_push(xs: number[]) {",
+    "  return Foldable.fold(ArrayT(xs), 0, (acc, x) => { if (x === 1) xs.push(3); return acc + x; });",
+    "}",
+    // 5a. AsyncIterable .map returning object-literal thenable resolves it
+    "export function ai_object_thenable(xs: number[]) {",
+    "  return to_array(from_sync_factory(() => xs).map((x) => ({ then(resolve: (v: number) => void) { resolve(x * 10); } })));",
+    "}",
+    // 5b. AsyncIterable throwing next() calls return() once
+    "export async function ai_throwing_next_cleanup() {",
+    "  let returns = 0;",
+    "  const src: Iterable<number> = { [Symbol.iterator]() { return { next() { throw new Error('next-boom'); }, return() { returns += 1; return { done: true, value: undefined }; } }; } };",
+    "  try { await to_array(from_sync_factory(() => src).map((x) => x + 1)); } catch { /* expected */ }",
+    "  return returns;",
+    "}",
+    // 5c. AsyncIterable find with local parameter shadowing Just
+    "export function ai_find_shadowed_just(xs: number[], Just: number) {",
+    "  return find(from_sync_factory(() => xs), (x) => x === Just);",
+    "}",
+    // 8. $-prefixed Do alias ($d) with 20 filler functions still gets scanned and rewritten
+    "export function dollar_alias_do(x: number) {",
+    "  return $d(function* () { const a = yield* Just(x); return a + 1; });",
+    "}",
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round7_codex_parity.ts", {
+    source_map: true,
+  });
+  assert_equals(result.diagnostics.length, 3);
+  // Ensure `$d` alias was actually recognized by candidate scanning and rewritten!
+  assert_true(
+    !/\$d\(function\* \(\) \{ const a = yield\* Just\(x\)/.test(result.code),
+    "expected $-prefixed Do alias to be rewritten under candidate scanning\n\n" +
+      result.code,
+  );
+
+  // Strict deno check on generated TS (specifically catches shadowed `Just` parameter!)
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-r7-codex-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Codex parity TS failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Differential comparison: transformed vs original unfused execution!
+  const mod_orig = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(source, "codex_orig.ts"))
+  );
+  const mod_tx = await import(
+    "data:application/javascript," +
+      encodeURIComponent(executable_typescript(result.code, "codex_tx.ts"))
+  );
+
+  // 1. Named Program parameter shadowing
+  assert_equals(mod_tx.run_param_shadow(10), 5);
+  assert_equals(mod_tx.run_param_shadow(10), mod_orig.run_param_shadow(10));
+
+  // 2a. ParallelTask sync throw startup order
+  const t_orig: string[] = [];
+  const t_tx: string[] = [];
+  await mod_orig.par_sync_throw_order(t_orig);
+  await mod_tx.par_sync_throw_order(t_tx);
+  assert_equals(t_tx, ["b0", "b1"]);
+  assert_equals(t_tx, t_orig);
+
+  // 2b. run_task_exit eager prefix vs signal evaluation order
+  const ac = new AbortController();
+  ac.abort(new Error("pre"));
+  const p_orig: string[] = [];
+  const p_tx: string[] = [];
+  const r_orig = await mod_orig.task_exit_prefix_order(p_orig, ac.signal);
+  const r_tx = await mod_tx.task_exit_prefix_order(p_tx, ac.signal);
+  assert_equals(p_tx, ["prefix", "signal"]);
+  assert_equals(p_tx, p_orig);
+  assert_equals(r_tx.status, r_orig.status);
+
+  // 3a. STM eager prefix
+  const s_orig: string[] = [];
+  const s_tx: string[] = [];
+  assert_equals(
+    mod_tx.stm_eager_prefix(s_tx),
+    mod_orig.stm_eager_prefix(s_orig),
+  );
+  assert_equals(mod_tx.stm_eager_prefix([]).before, ["stm-prefix"]);
+
+  // 3b. Untagged STM zero-yield throws
+  const tv_tx = mod_tx.mk_tv(1);
+  let threw_zero = false;
+  try {
+    mod_tx.stm_untagged_zero_yield(tv_tx, true);
+  } catch (err) {
+    threw_zero = err instanceof Error &&
+      err.message.includes("Do requires at least one yielded value");
+  }
+  assert_true(threw_zero, "untagged STM Do with early return must throw");
+
+  // 4a, 4b, 4c. Snapshot vs live array iteration
+  assert_equals(mod_tx.fold_from_array_snapshot([1, 2]), 3);
+  assert_equals(mod_tx.list_from_array_snapshot([1, 2]), [1, 2]);
+  assert_equals(mod_tx.fold_array_t_live_push([1, 2]), 6);
+
+  // 5a, 5b, 5c. AsyncIterable object thenable, throwing next() return(), shadowed Just
+  assert_equals(await mod_tx.ai_object_thenable([1, 2]), [10, 20]);
+  assert_equals(await mod_tx.ai_throwing_next_cleanup(), 1);
+  assert_equals((await mod_tx.ai_find_shadowed_just([1, 2, 3], 2)).value(), [
+    "Just",
+    2,
+  ]);
+
+  // 8. $-prefixed Do alias
+  assert_equals(mod_tx.dollar_alias_do(41).value(), ["Just", 42]);
 });

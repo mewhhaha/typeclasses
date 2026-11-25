@@ -3189,8 +3189,49 @@ function direct_list_comprehension(
         );
       }
       loop_body.push(...body_stmts);
+      let body_may_mutate = false;
+      if (unwrap(raw_arr).type !== "ArrayExpression") {
+        for (const stmt of body_stmts) {
+          walk_values(stmt, (child) => {
+            if (body_may_mutate) return false;
+            if (
+              child.type === "CallExpression" &&
+              !(child.callee.type === "MemberExpression" &&
+                !child.callee.computed &&
+                child.callee.object.type === "Identifier" &&
+                child.callee.object.name === out_id.name &&
+                child.callee.property.type === "Identifier" &&
+                child.callee.property.name === "push")
+            ) {
+              body_may_mutate = true;
+              return false;
+            }
+            if (
+              child.type === "AssignmentExpression" ||
+              child.type === "UpdateExpression" ||
+              (child.type === "UnaryExpression" && child.operator === "delete")
+            ) {
+              if (
+                child.type === "AssignmentExpression" &&
+                child.left.type === "Identifier" &&
+                child.left.name.startsWith("list_")
+              ) return;
+              if (
+                child.type === "UpdateExpression" &&
+                child.argument.type === "Identifier" &&
+                child.argument.name.startsWith("list_")
+              ) return;
+              body_may_mutate = true;
+              return false;
+            }
+          });
+        }
+      }
+      const arr_init = body_may_mutate
+        ? call(member(raw_arr, "slice"), [])
+        : raw_arr;
       return block([
-        variable("const", arr_id, raw_arr),
+        variable("const", arr_id, arr_init),
         node({
           type: "ForStatement",
           init: variable("let", idx_id, literal(0)),

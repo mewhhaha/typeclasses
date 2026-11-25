@@ -807,63 +807,76 @@ const task_do: CustomDoRunner = (first_value, first_iterator, run) => {
     (first as unknown as Record<symbol, unknown>)[monad_error_typeclass] !==
       canonical_task_err
   ) return undefined;
+  const first_raw = first.value();
   let first_claimed = false;
   return Task(async (signal) => {
     if (signal?.aborted) throw task_abort_error("Task", signal);
+    const run_step = async (
+      task: RawTask<unknown>,
+    ): Promise<{ failed: boolean; val: unknown; err: unknown }> => {
+      if (signal?.aborted) throw task_abort_error("Task", signal);
+      const completed = completed_of(task);
+      if (completed !== undefined) {
+        return {
+          failed: false,
+          val: completed_item(completed),
+          err: undefined,
+        };
+      }
+      const sync_fn = sync_fn_of(task);
+      if (sync_fn !== undefined) {
+        try {
+          const raw = sync_fn(signal);
+          if (is_thenable(raw)) {
+            const p = raw instanceof Promise ? raw : Promise.resolve(raw);
+            return {
+              failed: false,
+              val: await await_with_signal(p, signal, "Task.from_fn"),
+              err: undefined,
+            };
+          }
+          if (signal?.aborted) {
+            throw task_abort_error("Task.from_fn", signal);
+          }
+          return { failed: false, val: raw, err: undefined };
+        } catch (error) {
+          if (is_task_cancellation(error)) throw error;
+          return { failed: true, val: undefined, err: error };
+        }
+      }
+      try {
+        return {
+          failed: false,
+          val: await start_task(task, signal, "Task"),
+          err: undefined,
+        };
+      } catch (error) {
+        if (is_task_cancellation(error)) throw error;
+        return { failed: true, val: undefined, err: error };
+      }
+    };
+    const first_step = await run_step(first_raw);
     let iter: Generator<unknown, unknown, unknown>;
-    let current: unknown;
+    let next: IteratorResult<unknown, unknown>;
     if (!first_claimed) {
       first_claimed = true;
       iter = first_iterator;
-      current = first_value;
+      next = first_step.failed
+        ? iter.throw(first_step.err)
+        : iter.next(first_step.val);
     } else {
       iter = run();
-      const n0 = iter.next();
-      if (n0.done) return task_item(n0.value, "Task.pure");
-      current = n0.value;
+      const skipped = iter.next();
+      if (skipped.done) return task_item(skipped.value, "Task.pure");
+      next = first_step.failed
+        ? iter.throw(first_step.err)
+        : iter.next(first_step.val);
     }
-    while (true) {
-      if (signal?.aborted) throw task_abort_error("Task", signal);
-      const task = (current as Task<unknown>).value();
-      let failed = false;
-      let val: unknown;
-      let err: unknown;
-      const completed = completed_of(task);
-      if (completed !== undefined) {
-        val = completed_item(completed);
-      } else {
-        const sync_fn = sync_fn_of(task);
-        if (sync_fn !== undefined) {
-          try {
-            const raw = sync_fn(signal);
-            if (is_thenable(raw)) {
-              const p = raw instanceof Promise ? raw : Promise.resolve(raw);
-              val = await await_with_signal(p, signal, "Task.from_fn");
-            } else {
-              if (signal?.aborted) {
-                throw task_abort_error("Task.from_fn", signal);
-              }
-              val = raw;
-            }
-          } catch (error) {
-            if (is_task_cancellation(error)) throw error;
-            failed = true;
-            err = error;
-          }
-        } else {
-          try {
-            val = await start_task(task, signal, "Task");
-          } catch (error) {
-            if (is_task_cancellation(error)) throw error;
-            failed = true;
-            err = error;
-          }
-        }
-      }
-      const next = failed ? iter.throw(err) : iter.next(val);
-      if (next.done) return task_item(next.value, "Task.pure");
-      current = next.value;
+    while (!next.done) {
+      const step = await run_step((next.value as Task<unknown>).value());
+      next = step.failed ? iter.throw(step.err) : iter.next(step.val);
     }
+    return task_item(next.value, "Task.pure");
   });
 };
 Object.defineProperty(Task, do_runner_method, { value: task_do });
@@ -1253,10 +1266,9 @@ export function traverse_task<input, output>(
       parent_signal === undefined &&
       options.signal === undefined
     ) {
-      const len = array_inputs.length;
-      const sync_results = new Array<output>(len);
+      const sync_results: output[] = [];
       let idx = 0;
-      while (idx < len) {
+      while (idx < array_inputs.length) {
         const task = fn(array_inputs[idx], idx).value();
         const completed = completed_of(task);
         if (completed !== undefined) {
@@ -1284,11 +1296,6 @@ export function traverse_task<input, output>(
             idx,
             raw instanceof Promise ? raw : Promise.resolve(raw),
           );
-        }
-        if (concurrency === 1 && plan_of(task) === undefined) {
-          sync_results[idx] = await task(undefined);
-          idx += 1;
-          continue;
         }
         return await traverse_async(
           undefined,
@@ -1344,6 +1351,9 @@ export function traverse_task<input, output>(
     };
     signal.addEventListener("abort", on_abort, { once: true });
     function await_shared<T>(pending: Promise<T>): Promise<T> {
+      if (protected_promises.get(pending) === signal) {
+        return pending;
+      }
       if (signal.aborted) {
         void pending.catch(ignore_failure);
         return Promise.reject(task_abort_error("Task.traverse", signal));
@@ -1715,15 +1725,16 @@ register_traversal(
   <from, to>(
     items: readonly from[],
     fn: (item: from) => Data<AsTask, to>,
-  ): Data<AsTask, to[]> =>
-    Task(async (signal) => {
-      const len = items.length;
+  ): Data<AsTask, to[]> => {
+    const snapshot = items.slice();
+    return Task(async (signal) => {
+      const len = snapshot.length;
       const out = new Array<to>(len);
       for (let i = 0; i < len; i += 1) {
         if (signal?.aborted) {
           throw task_abort_error("Task.traverse_sequential", signal);
         }
-        const current = fn(items[i]).value();
+        const current = fn(snapshot[i]).value();
         const completed = completed_of(current);
         if (completed !== undefined) {
           out[i] = completed_item(completed) as to;
@@ -1754,7 +1765,8 @@ register_traversal(
         }
       }
       return out;
-    }),
+    });
+  },
 );
 
 register_traversal(

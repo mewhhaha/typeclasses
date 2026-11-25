@@ -28,13 +28,16 @@ import { state } from "./state.ts";
 import { from_fn, run_task } from "./task.ts";
 import {
   $slot,
+  type As,
   type DataOf,
   define_data,
   define_union,
   field,
   kind,
+  type type_data,
+  type type_item,
 } from "./typeclass.ts";
-import { Applicative } from "./typeclasses.ts";
+import { Applicative, type Monoid } from "./typeclasses.ts";
 import {
   InvalidMessages,
   Valid,
@@ -1790,4 +1793,203 @@ Deno.test("round-7 core runtime optimizations preserve Do runners, sequential tr
     map_concurrent_unordered(src_stream, 3, (n) => n + 1),
   );
   assert_equals(unordered.sort((a, b) => a - b), [2, 3, 4, 5, 6]);
+});
+
+Deno.test("round-7 codex differential parity: Do replay, sequential snapshot, traverse_task AggregateError/signal/live-array, sparse to_array, RecordT deleted keys, ArrayBufferT detach, custom fold_map order", async () => {
+  const { Do, Foldable, Monoid, Semigroup } = await import("./typeclasses.ts");
+  const { Task, from_fn, run_task, traverse_task } = await import("./task.ts");
+  const { Reader } = await import("./reader.ts");
+  const { State } = await import("./state.ts");
+  const { Stm, atomically } = await import("./stm.ts");
+  const { traverse_sequential } = await import("./traversal.ts");
+  const { fold_map, to_array } = await import("./prelude.ts");
+  const { from_record_view } = await import("./record.ts");
+  const { ArrayBufferT } = await import("./array_buffer.ts");
+  const { data } = await import("./typeclass.ts");
+
+  // 1. Do(Reader/State/Stm) replay parity: first yielded action captured at construction time
+  let rd_counter = 0;
+  const rd_replay = Do(Reader.with_environment<number>(), function* () {
+    const snap = ++rd_counter;
+    const a = yield* Reader((e: number) => snap + e);
+    return a;
+  });
+  assert_equals(rd_replay.run(10), 11);
+  assert_equals(rd_replay.run(10), 11);
+
+  let st_counter = 0;
+  const st_replay = Do(State.with_state<number>(), function* () {
+    const snap = ++st_counter;
+    const a = yield* State((s: number) => [snap + s, s + 1] as const);
+    return a;
+  });
+  assert_equals(st_replay.run(10), [11, 11]);
+  assert_equals(st_replay.run(10), [11, 11]);
+
+  let stm_counter = 0;
+  const stm_replay = Do(Stm, function* () {
+    const snap = ++stm_counter;
+    const a = yield* Stm(() => snap);
+    return a;
+  });
+  assert_equals(atomically(stm_replay), 1);
+  assert_equals(atomically(stm_replay), 1);
+
+  // 2. traverse_sequential snapshots input array at construction time
+  const seq_arr = [1, 2];
+  const seq_rd = traverse_sequential(
+    seq_arr,
+    Reader.with_environment<number>(),
+    (x) => Reader((e: number) => e + x),
+  );
+  seq_arr[1] = 99;
+  assert_equals(seq_rd.run(10), [11, 12]);
+
+  // 3. traverse_task: nested abort with throwing iterator cleanup yields AggregateError
+  const ac = new AbortController();
+  const throwing_iter: Iterable<number> = {
+    [Symbol.iterator]() {
+      let i = 0;
+      return {
+        next() {
+          i += 1;
+          return { done: false, value: i };
+        },
+        return() {
+          throw new Error("cleanup-boom");
+        },
+      };
+    },
+  };
+  const nested_trav = traverse_task(
+    [1],
+    1,
+    () =>
+      traverse_task(
+        throwing_iter,
+        1,
+        () =>
+          Task((sig) =>
+            new Promise<number>((_res, rej) => {
+              sig?.addEventListener(
+                "abort",
+                () => rej(new Error("inner-abort")),
+                {
+                  once: true,
+                },
+              );
+              setTimeout(() => ac.abort(new Error("outer-abort")), 5);
+            })
+          ),
+      ),
+  );
+  let got_agg = false;
+  try {
+    await run_task(nested_trav, { signal: ac.signal });
+  } catch (err) {
+    got_agg = err instanceof AggregateError && err.errors.length === 2;
+  }
+  assert_true(
+    got_agg,
+    "nested traverse_task abort + throwing cleanup must surface AggregateError",
+  );
+
+  // 4. traverse_task no-signal array path: passes AbortSignal to raw Task & visits live push
+  const live_items = [1, 2];
+  let saw_signal = false;
+  const live_out = await run_task(
+    traverse_task(live_items, 1, (n) => {
+      if (n === 1) live_items.push(3);
+      return Task((sig) => {
+        if (sig !== undefined) saw_signal = true;
+        return Promise.resolve(n * 10);
+      });
+    }),
+  );
+  assert_true(saw_signal, "raw Task must receive traversal AbortSignal");
+  assert_equals(live_out, [10, 20, 30]);
+
+  const live_sync = [1, 2];
+  const live_sync_out = await run_task(
+    traverse_task(live_sync, 1, (n) => {
+      if (n === 1) live_sync.push(3);
+      return from_fn(() => n * 2);
+    }),
+  );
+  assert_equals(live_sync_out, [2, 4, 6]);
+
+  // 5. prelude.to_array fills sparse holes with own undefined entries
+  // deno-lint-ignore no-sparse-arrays
+  const sparse = [1, , 3] as number[];
+  const materialized = to_array(ArrayT(sparse));
+  assert_equals(materialized.length, 3);
+  assert_true(1 in materialized, "hole must become own undefined property");
+  assert_equals(materialized[1], undefined);
+
+  // 6. RecordT fold visits keys snapshotted before callback deletes them
+  const mut_rec: Record<string, number> = { a: 1, b: 2 };
+  const visited = Foldable.fold(
+    from_record_view(mut_rec),
+    [] as (number | undefined)[],
+    (acc, v) => {
+      delete mut_rec.b;
+      acc.push(v);
+      return acc;
+    },
+  );
+  assert_equals(visited, [1, undefined]);
+
+  // 7. ArrayBufferT fold throws TypeError if buffer is detached mid-fold
+  const ab_wrapped = ArrayBufferT(new Uint8Array([1, 2, 3]).buffer);
+  const underlying = ab_wrapped.value();
+  let detach_threw = false;
+  try {
+    Foldable.fold(ab_wrapped, 0, (acc, b) => {
+      if (acc === 0) structuredClone(underlying, { transfer: [underlying] });
+      return acc + b;
+    });
+  } catch (err) {
+    detach_threw = err instanceof TypeError;
+  }
+  assert_true(
+    detach_threw,
+    "detaching ArrayBuffer mid-fold must throw TypeError",
+  );
+
+  // 8. Custom monoid fold_map preserves observable empty() + left-to-right concat() order
+  const trace: string[] = [];
+  const log_sym = Symbol("TraceMonoid");
+  interface AsTraceLambda {
+    readonly [type_item]: unknown;
+    readonly [type_data]: string;
+  }
+  interface AsTrace
+    extends As<AsTraceLambda, typeof log_sym>, Monoid<AsTrace> {}
+  const TraceM = data<AsTrace>(log_sym);
+  Semigroup.instance(TraceM)({
+    concat(right) {
+      const l = this.value();
+      const r = right.value();
+      trace.push(`concat(${l},${r})`);
+      return TraceM(l + r);
+    },
+  });
+  Monoid.instance(TraceM)({
+    empty() {
+      trace.push("empty");
+      return TraceM("");
+    },
+  });
+  const folded = fold_map(
+    TraceM,
+    (s: string) => TraceM(s),
+    ArrayT(["a", "b", "c"]),
+  );
+  assert_equals(folded.value(), "abc");
+  assert_equals(trace, [
+    "empty",
+    "concat(,a)",
+    "concat(a,b)",
+    "concat(ab,c)",
+  ]);
 });
