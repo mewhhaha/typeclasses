@@ -120,7 +120,7 @@ export function typeclasses_rollup_plugin(
 }
 
 const rolldown_target_code_filter =
-  /\\u|\b(?:Do|Program|collect|Traversable|traverse_sequential)\b|\.\s*traverse\b|\.\s*match\s*\(\s*\{|(?:^|[^.\w$])match\s*\(|run_(?:reader|state|writer|cells|except|task)|prepare_(?:cells|handle_cells|operations)|handle_(?:cells|operations)|(?:eval|exec)_state|Effect|from_(?:array|iterable|factory|snapshot)|IterableT|to_array|preview|filter_map|compile_fold|Foldable/;
+  /\\u|\b(?:Do|Program|collect|Traversable|traverse_sequential|from_maybe|to_nullable|ArrayT|from_array_view)\b|\.\s*(?:traverse|map|bind|fold)\b|\.\s*match\s*\(\s*\{|(?:^|[^.\w$])match\s*\(|run_(?:reader|state|writer|cells|except|task)|prepare_(?:cells|handle_cells|operations)|handle_(?:cells|operations)|(?:eval|exec)_state|Effect|from_(?:array|iterable|factory|snapshot)|IterableT|to_array|preview|filter_map|compile_fold|Foldable/;
 
 /** A Rolldown adapter with native id and code hook filters to avoid needless JS calls. */
 export function typeclasses_rolldown_plugin(

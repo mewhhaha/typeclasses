@@ -3,7 +3,7 @@ import { print } from "esrap";
 import ts_language from "esrap/languages/ts";
 import tsx_language from "esrap/languages/tsx";
 import { basename } from "node:path";
-import { node, walk } from "./transform_ast.ts";
+import { node, value_visitor_keys } from "./transform_ast.ts";
 import type { TransformSourceMap } from "./transform_context.ts";
 
 export type SourcePosition = { readonly line: number; readonly column: number };
@@ -164,16 +164,41 @@ function encode_vlq(value: number): string {
   return out;
 }
 
-function attach_locations(root: Node, position: PositionLookup): void {
-  walk(root, (current) => {
-    if (current.start < 0) return;
-    (current as unknown as {
-      loc?: { start: SourcePosition; end: SourcePosition };
-    }).loc = {
-      start: position(current.start),
-      end: position(current.end),
-    };
-  });
+function attach_locations(
+  root: Node,
+  position: PositionLookup,
+  needs_end: boolean,
+): void {
+  function visit(current: Node): void {
+    if (current.start >= 0) {
+      const start = position(current.start);
+      (current as unknown as {
+        loc?: { start: SourcePosition; end: SourcePosition };
+      }).loc = {
+        start,
+        end: needs_end ? position(current.end) : start,
+      };
+    }
+    const keys = value_visitor_keys[current.type];
+    if (keys === undefined || keys.length === 0) return;
+    const record = current as unknown as Record<string, unknown>;
+    for (let i = 0; i < keys.length; i += 1) {
+      const val = record[keys[i]];
+      if (val === null || typeof val !== "object") continue;
+      if (Array.isArray(val)) {
+        for (let j = 0; j < val.length; j += 1) {
+          const item = val[j];
+          if (
+            item !== null && typeof item === "object" &&
+            typeof (item as { type?: unknown }).type === "string"
+          ) visit(item as Node);
+        }
+      } else if (typeof (val as { type?: unknown }).type === "string") {
+        visit(val as Node);
+      }
+    }
+  }
+  visit(root);
 }
 
 function comments_in_range(
@@ -545,7 +570,6 @@ export function splice_edits(
     return print(target, language, {
       indent: "  ",
       sourceMapSource: base,
-      sourceMapContent: source,
     });
   }
 
@@ -561,7 +585,7 @@ export function splice_edits(
     }
     if (edit.kind === "insert") {
       const prog = synthetic_program(edit.statements);
-      if (position !== undefined) attach_locations(prog, position);
+      if (position !== undefined) attach_locations(prog, position, false);
       const printed = print_node(prog, []);
       if (edit.prefix) emit_plain_text(edit.prefix);
       code_chunks.push(printed.code);
@@ -586,7 +610,7 @@ export function splice_edits(
       ? synthetic_program(edit.statements)
       : edit.node;
     if (source_map || edit_comments.length > 0) {
-      attach_locations(target, get_position());
+      attach_locations(target, get_position(), edit_comments.length > 0);
     }
     const printed = print_node(target, edit_comments);
     let wrap = false;

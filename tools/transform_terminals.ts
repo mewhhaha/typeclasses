@@ -112,6 +112,11 @@ type YieldMatch =
     readonly kind: "operation";
     readonly slot: number;
     readonly send: OperationSend;
+  }
+  | {
+    readonly kind: "task";
+    readonly task_kind: "pure" | "from_fn" | "task_ctor" | "arbitrary";
+    readonly expr: Expression;
   };
 type ControlAnalysis = {
   readonly yield_count: number;
@@ -207,7 +212,35 @@ export function create_terminal_transform(
     (services.imports.nil_constructors?.size ?? 0) > 0 ||
     (services.imports.cons_constructors?.size ?? 0) > 0
   );
-  const round5 = (has_r5_task || has_r5_traverse || has_r5_match)
+  const has_r5_stm = (services.imports.stm_dictionaries?.size ?? 0) > 0 ||
+    (services.imports.stm_namespaces?.size ?? 0) > 0;
+  const has_r5_chain = (
+    services.source.includes(".map(") || services.source.includes(".bind(") ||
+    services.source.includes("from_maybe") ||
+    services.source.includes("to_nullable")
+  ) && (
+    (services.imports.just_constructors?.size ?? 0) > 0 ||
+    (services.imports.nothing_constructors?.size ?? 0) > 0 ||
+    (services.imports.from_nullable_functions?.size ?? 0) > 0 ||
+    (services.imports.from_maybe_functions?.size ?? 0) > 0 ||
+    (services.imports.to_nullable_functions?.size ?? 0) > 0 ||
+    (services.imports.left_constructors?.size ?? 0) > 0 ||
+    (services.imports.right_constructors?.size ?? 0) > 0 ||
+    (services.imports.direct_maybe_dictionaries?.size ?? 0) > 0 ||
+    (services.imports.direct_either_dictionaries?.size ?? 0) > 0 ||
+    (services.imports.tagged_type_names?.size ?? 0) > 0
+  );
+  const has_r5_array = (
+    (services.imports.array_constructors?.size ?? 0) > 0 ||
+    (services.imports.array_view_functions?.size ?? 0) > 0
+  ) && (
+    services.source.includes(".map(") || services.source.includes(".fold(") ||
+    services.source.includes("Foldable") || services.source.includes("to_array")
+  );
+  const round5 = (
+      has_r5_task || has_r5_traverse || has_r5_match || has_r5_stm ||
+      has_r5_chain || has_r5_array
+    )
     ? create_round5_fusions(services)
     : undefined;
   const prepared_cells = collect_prepared_cells();
@@ -1427,6 +1460,8 @@ export function create_terminal_transform(
             for (const arg of matched.operation.arguments) {
               if (!validate_expr(arg, in_control, true)) return false;
             }
+          } else if (matched.kind === "task") {
+            if (!validate_expr(matched.expr, in_control, true)) return false;
           } else if (matched.send.payload !== undefined) {
             if (!validate_expr(matched.send.payload, in_control, true)) {
               return false;
@@ -1734,6 +1769,7 @@ export function create_terminal_transform(
         readonly init: Expression;
       }[];
       readonly wrap_dictionary?: Expression;
+      readonly async_task?: boolean;
       readonly except?: {
         readonly slot_index: number;
         readonly either_id: IdentifierReference;
@@ -1743,6 +1779,7 @@ export function create_terminal_transform(
     },
   ): Expression {
     const eager = options.eager_init;
+    const is_async_task = options.async_task === true;
     const except_info = options.except;
     const except_idx = except_info?.slot_index ?? -1;
 
@@ -1969,7 +2006,7 @@ export function create_terminal_transform(
           }
           const right_stmts: Statement[] = [];
           const right_val = lower_expr(expr.right, right_stmts);
-          if (except_info === undefined) {
+          if (except_info === undefined && !is_async_task) {
             const rhs_iife = call(
               arrow([], block([...right_stmts, ret(right_val)])),
               [],
@@ -2035,7 +2072,7 @@ export function create_terminal_transform(
           const cons_val = lower_expr(expr.consequent, cons_stmts);
           const alt_stmts: Statement[] = [];
           const alt_val = lower_expr(expr.alternate, alt_stmts);
-          if (except_info === undefined) {
+          if (except_info === undefined && !is_async_task) {
             const cons_expr = cons_stmts.length > 0
               ? call(arrow([], block([...cons_stmts, ret(cons_val)])), [])
               : cons_val;
@@ -2267,6 +2304,60 @@ export function create_terminal_transform(
       target_stmts: Statement[],
       discard_result: boolean,
     ): Expression {
+      if (matched.kind === "task") {
+        const lowered = lower_expr(matched.expr, target_stmts);
+        switch (matched.task_kind) {
+          case "pure":
+            return lowered;
+          case "from_fn": {
+            const cb = parentheses(lowered);
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.typeParameters == null && cb.returnType == null &&
+              cb.params.length === 0 && cb.body.type !== "BlockStatement"
+            ) {
+              const inner = cb.body as Expression;
+              if (!cb.async && is_sync_non_thenable_expr(inner)) return inner;
+              return node({ type: "AwaitExpression", argument: inner });
+            }
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.params.length === 0
+            ) {
+              return node({
+                type: "AwaitExpression",
+                argument: call(cb, []),
+              });
+            }
+            return node({
+              type: "AwaitExpression",
+              argument: call(lowered, [void_zero()]),
+            });
+          }
+          case "task_ctor": {
+            const cb = parentheses(lowered);
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.typeParameters == null && cb.returnType == null &&
+              cb.params.length === 0 && cb.body.type !== "BlockStatement"
+            ) {
+              return node({
+                type: "AwaitExpression",
+                argument: cb.body as Expression,
+              });
+            }
+            return node({
+              type: "AwaitExpression",
+              argument: call(lowered, [void_zero()]),
+            });
+          }
+          case "arbitrary":
+            return node({
+              type: "AwaitExpression",
+              argument: call(call(member(lowered, "value"), []), []),
+            });
+        }
+      }
       const slot = slots[matched.slot];
       if (matched.kind === "except") {
         const op = matched.operation;
@@ -3117,7 +3208,29 @@ export function create_terminal_transform(
       }
       const except_out = services.fresh("except_out");
       out_statements.push(
-        variable(except_out, call(arrow([], block(inner_stmts)), []), "const"),
+        variable(
+          except_out,
+          is_async_task
+            ? node({
+              type: "AwaitExpression",
+              argument: call(
+                node({
+                  type: "ArrowFunctionExpression",
+                  id: null,
+                  expression: false,
+                  generator: false,
+                  async: true,
+                  params: [],
+                  body: block(inner_stmts),
+                  typeParameters: null,
+                  returnType: null,
+                }),
+                [],
+              ),
+            })
+            : call(arrow([], block(inner_stmts)), []),
+          "const",
+        ),
       );
       emit_range_ensure(except_idx + 1, slots.length, out_statements);
       const either_id = except_info.either_id;
@@ -3239,6 +3352,22 @@ export function create_terminal_transform(
           ),
         );
       }
+    }
+    if (is_async_task) {
+      return call(
+        node({
+          type: "ArrowFunctionExpression",
+          id: null,
+          expression: false,
+          generator: false,
+          async: true,
+          params: thunk_params,
+          body: block(out_statements),
+          typeParameters: null,
+          returnType: null,
+        }),
+        thunk_args,
+      );
     }
     return call(arrow(thunk_params, block(out_statements)), thunk_args);
   }
@@ -3446,13 +3575,111 @@ export function create_terminal_transform(
     }
     return undefined;
   }
+  function is_run_task_callee(expression: Expression): boolean {
+    if (
+      expression.type === "Identifier" &&
+      services.imports.task_run_functions?.has(expression.name) &&
+      services.bindings.imported(expression)
+    ) return true;
+    return expression.type === "MemberExpression" && !expression.computed &&
+      !expression.optional && expression.object.type === "Identifier" &&
+      expression.property.type === "Identifier" &&
+      expression.property.name === "run_task" &&
+      services.bindings.imported(expression.object) &&
+      ((services.imports.task_namespaces?.has(expression.object.name) ??
+        false) ||
+        services.imports.namespaces.has(expression.object.name));
+  }
+  function is_task_dict_expr(expression: Expression): boolean {
+    return expression.type === "Identifier" &&
+      services.task_dictionaries.has(expression.name) &&
+      services.bindings.imported(expression);
+  }
+  function is_task_fn_expr(
+    expression: Expression,
+    set: ReadonlySet<string> | undefined,
+    prop: string,
+  ): boolean {
+    if (
+      set !== undefined && expression.type === "Identifier" &&
+      set.has(expression.name) && services.bindings.imported(expression)
+    ) return true;
+    return expression.type === "MemberExpression" && !expression.computed &&
+      !expression.optional && expression.object.type === "Identifier" &&
+      expression.property.type === "Identifier" &&
+      expression.property.name === prop &&
+      services.bindings.imported(expression.object) &&
+      ((services.imports.task_namespaces?.has(expression.object.name) ??
+        false) ||
+        services.imports.namespaces.has(expression.object.name));
+  }
+  function match_task_yield(expression: Expression): YieldMatch | undefined {
+    let val = parentheses(expression);
+    let lifted = false;
+    if (
+      val.type === "CallExpression" && !val.optional &&
+      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) {
+      if (effect_method(val.callee, "pure")) {
+        return {
+          kind: "task",
+          task_kind: "pure",
+          expr: val.arguments[0] as Expression,
+        };
+      }
+      if (effect_method(val.callee, "lift")) {
+        val = parentheses(val.arguments[0] as Expression);
+        lifted = true;
+      }
+    }
+    if (
+      val.type === "CallExpression" && !val.optional &&
+      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) {
+      const arg = val.arguments[0] as Expression;
+      if (
+        is_task_fn_expr(
+          val.callee,
+          services.imports.task_succeed_functions,
+          "succeed",
+        ) ||
+        (val.callee.type === "MemberExpression" && !val.callee.computed &&
+          !val.callee.optional && val.callee.property.type === "Identifier" &&
+          val.callee.property.name === "pure" &&
+          is_task_dict_expr(val.callee.object))
+      ) {
+        return { kind: "task", task_kind: "pure", expr: arg };
+      }
+      if (
+        is_task_fn_expr(
+          val.callee,
+          services.imports.task_from_fn_functions,
+          "from_fn",
+        )
+      ) {
+        return { kind: "task", task_kind: "from_fn", expr: arg };
+      }
+      if (is_task_dict_expr(val.callee)) {
+        return { kind: "task", task_kind: "task_ctor", expr: arg };
+      }
+    }
+    if (lifted) {
+      return { kind: "task", task_kind: "arbitrary", expr: val };
+    }
+    return undefined;
+  }
   function stacked_terminal_program(
     outer: CallExpression,
   ): { expression: Expression; direct: boolean } | undefined {
     if (
-      !plain_call(outer, 1) || target(outer.callee)?.imported !== "run" ||
+      !plain_call(outer, 1) ||
       services.config.optimizations?.terminal_body === false
     ) return undefined;
+    const is_run = target(outer.callee)?.imported === "run";
+    const is_async_task = !is_run && is_run_task_callee(outer.callee);
+    if (!is_run && !is_async_task) return undefined;
     type RawLayer =
       | {
         readonly kind: TerminalKind;
@@ -3602,7 +3829,10 @@ export function create_terminal_transform(
       l.kind === "except" || l.kind === "operations" || l.kind === "cells"
     );
     if (layers_outer_to_inner.length === 0) return undefined;
-    if (layers_outer_to_inner.length === 1 && !has_special_layer) {
+    if (
+      layers_outer_to_inner.length === 1 && !has_special_layer &&
+      !is_async_task
+    ) {
       return undefined;
     }
     const resolved_prog = resolve_program_arg(cursor);
@@ -3780,6 +4010,9 @@ export function create_terminal_transform(
             send,
           };
         }
+      }
+      if (is_async_task) {
+        return match_task_yield(expression);
       }
       return undefined;
     };
@@ -3986,6 +4219,7 @@ export function create_terminal_transform(
         (value) => wrap_range(value, 0, slots.length),
         {
           eager_init,
+          async_task: is_async_task,
           except: except_slot_index >= 0
             ? {
               slot_index: except_slot_index,
@@ -5511,14 +5745,16 @@ export function create_terminal_transform(
       owner: Node,
     ) => {
       if (expression == null || expression.type !== "CallExpression") return;
-      // 1. run(run_*(p, input)), run(run_except(p)), run(handle_operations(p, ...)), run(preparedOps(p)), or stacked run(...)
+      // 1. run(run_*(p, input)), run_task(run_*(p, input)), run(run_except(p)), ...
       if (
         plain_call(expression, 1) &&
-        target(expression.callee)?.imported === "run"
+        (target(expression.callee)?.imported === "run" ||
+          is_run_task_callee(expression.callee))
       ) {
+        const is_async_outer = is_run_task_callee(expression.callee);
         let cursor = parentheses(expression.arguments[0] as Expression);
         let steps = 0;
-        let saw_special = false;
+        let saw_special = is_async_outer;
         while (
           cursor.type === "CallExpression" && !cursor.optional &&
           cursor.typeArguments == null &&
@@ -5836,12 +6072,25 @@ export function create_terminal_transform(
       phase: "before" | "after" = "after",
     ): { expression: Expression; direct: boolean } | undefined {
       if (services.config.optimizations?.terminal !== false) {
-        if (phase === "before" && round5 !== undefined && has_r5_task) {
+        if (
+          phase === "before" && round5 !== undefined &&
+          (has_r5_task || has_r5_stm || has_r5_chain || has_r5_array)
+        ) {
           const r5_before = round5.lower_before(value);
           if (r5_before !== undefined) return r5_before;
         }
         const fused = terminal_program(value);
         if (fused !== undefined) return fused;
+        if (
+          phase === "before" &&
+          services.config.optimizations?.interpreter !== false
+        ) {
+          const eff = effect_lower(value);
+          if (eff !== undefined && eff.type === "CallExpression") {
+            const eff_fused = terminal_program(eff);
+            if (eff_fused !== undefined) return eff_fused;
+          }
+        }
         if (phase === "before") return undefined;
         const lift = terminal_lift(value);
         if (lift !== undefined) return { expression: lift, direct: false };
@@ -6102,6 +6351,29 @@ function primitive_kind(name: PrimitiveFunctionName): TerminalKind {
     case "writer":
     case "tell":
       return "writer";
+  }
+}
+function is_sync_non_thenable_expr(expression: Expression): boolean {
+  const val = parentheses(expression);
+  switch (val.type) {
+    case "Literal":
+    case "TemplateLiteral":
+    case "BinaryExpression":
+    case "UnaryExpression":
+    case "UpdateExpression":
+    case "ArrayExpression":
+      return true;
+    case "ObjectExpression":
+      return val.properties.every((prop) =>
+        prop.type === "Property" && !prop.computed &&
+        !(prop.key.type === "Identifier" && prop.key.name === "then") &&
+        !(prop.key.type === "Literal" && prop.key.value === "then")
+      );
+    case "ConditionalExpression":
+      return is_sync_non_thenable_expr(val.consequent) &&
+        is_sync_non_thenable_expr(val.alternate);
+    default:
+      return false;
   }
 }
 function is_direct_terminal(

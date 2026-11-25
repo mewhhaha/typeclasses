@@ -2531,11 +2531,1767 @@ export function create_round5_fusions(services: TransformServices) {
     };
   }
 
+  // =========================================================================
+  // Shared helper: avoid swallowing nested generator calls inside chain lambdas
+  // =========================================================================
+  function contains_generator_or_do(root: Node): boolean {
+    let found = false;
+    walk(root, (child) => {
+      if (found) return false;
+      if (
+        (child.type === "FunctionExpression" ||
+          child.type === "FunctionDeclaration") && child.generator
+      ) {
+        found = true;
+        return false;
+      }
+      if (
+        child.type === "CallExpression" &&
+        services.kind(child) !== undefined
+      ) {
+        found = true;
+        return false;
+      }
+    });
+    return found;
+  }
+
+  function extract_unary_arrow(
+    expr: Expression,
+  ):
+    | {
+      readonly param_decl: Node | null;
+      readonly body: Expression;
+    }
+    | undefined {
+    const fn = unwrap(expr);
+    if (
+      fn.type !== "ArrowFunctionExpression" || fn.async || fn.generator ||
+      fn.typeParameters != null || fn.returnType != null ||
+      fn.body.type === "BlockStatement" ||
+      lexical_hazard(fn) || contains_await_yield(fn.body) ||
+      contains_generator_or_do(fn.body)
+    ) return undefined;
+    if (fn.params.length === 0) {
+      return { param_decl: null, body: fn.body as Expression };
+    }
+    if (fn.params.length !== 1) return undefined;
+    const p0 = fn.params[0];
+    if (
+      p0.type !== "Identifier" || p0.optional || p0.typeAnnotation != null ||
+      (p0.decorators !== undefined && p0.decorators.length > 0)
+    ) return undefined;
+    const decl = services.bindings.resolve(p0);
+    if (decl === null) return undefined;
+    return { param_decl: decl, body: fn.body as Expression };
+  }
+
+  function extract_binary_arrow(
+    expr: Expression,
+  ):
+    | {
+      readonly first_decl: Node | null;
+      readonly second_decl: Node | null;
+      readonly body: Expression;
+    }
+    | undefined {
+    const fn = unwrap(expr);
+    if (
+      fn.type !== "ArrowFunctionExpression" || fn.async || fn.generator ||
+      fn.typeParameters != null || fn.returnType != null ||
+      fn.body.type === "BlockStatement" ||
+      fn.params.length > 2 ||
+      lexical_hazard(fn) || contains_await_yield(fn.body) ||
+      contains_generator_or_do(fn.body)
+    ) return undefined;
+    let first_decl: Node | null = null;
+    let second_decl: Node | null = null;
+    for (let i = 0; i < fn.params.length; i += 1) {
+      const p = fn.params[i];
+      if (
+        p.type !== "Identifier" || p.optional || p.typeAnnotation != null ||
+        (p.decorators !== undefined && p.decorators.length > 0)
+      ) return undefined;
+      const decl = services.bindings.resolve(p);
+      if (decl === null) return undefined;
+      if (i === 0) first_decl = decl;
+      else second_decl = decl;
+    }
+    return { first_decl, second_decl, body: fn.body as Expression };
+  }
+
+  // =========================================================================
+  // P7: Fluent Maybe & Either chain fusion (.map/.bind + match/from_maybe/to_nullable)
+  // =========================================================================
+  type ChainMode = "maybe" | "either";
+  type ChainRoot =
+    | { readonly kind: "just"; readonly value: Expression }
+    | { readonly kind: "right"; readonly value: Expression }
+    | { readonly kind: "from_nullable"; readonly value: Expression }
+    | { readonly kind: "wrapped"; readonly expr: Expression };
+  type ChainStage = {
+    readonly kind: "map" | "bind";
+    readonly param_decl: Node | null;
+    readonly body: Expression;
+  };
+  type ChainTerminal =
+    | { readonly kind: "wrap" }
+    | { readonly kind: "from_maybe"; readonly fallback: Expression }
+    | { readonly kind: "to_nullable" }
+    | {
+      readonly kind: "match";
+      readonly ok_decl: Node | null;
+      readonly ok_body: Expression;
+      readonly err_decl: Node | null;
+      readonly err_body: Expression;
+    };
+
+  function match_chain_root(
+    expr: Expression,
+    expected?: ChainMode,
+  ): { readonly mode: ChainMode; readonly root: ChainRoot } | undefined {
+    const val = parentheses(expr);
+    if (
+      lexical_hazard(val) || contains_await_yield(val) ||
+      contains_generator_or_do(val)
+    ) return undefined;
+    if (
+      val.type === "CallExpression" && !val.optional &&
+      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) {
+      const arg = val.arguments[0] as Expression;
+      const callee = parentheses(val.callee);
+      if (
+        expected !== "either" &&
+        is_imported_from_set(callee, services.imports.from_nullable_functions)
+      ) {
+        return { mode: "maybe", root: { kind: "from_nullable", value: arg } };
+      }
+      if (expected !== "either") {
+        const mc = match_ctor_call(val, "maybe");
+        if (mc !== undefined && mc.ok && mc.arg !== undefined) {
+          return { mode: "maybe", root: { kind: "just", value: mc.arg } };
+        }
+      }
+      if (expected !== "maybe") {
+        const ec = match_ctor_call(val, "either");
+        if (ec !== undefined && ec.ok && ec.arg !== undefined) {
+          return { mode: "either", root: { kind: "right", value: ec.arg } };
+        }
+      }
+    }
+    const kind = expr_wrapped_tagged_kind(val);
+    if (kind === "maybe" && expected !== "either") {
+      return { mode: "maybe", root: { kind: "wrapped", expr: val } };
+    }
+    if (kind === "either" && expected !== "maybe") {
+      return { mode: "either", root: { kind: "wrapped", expr: val } };
+    }
+    return undefined;
+  }
+
+  function parse_match_pair(
+    cases_expr: Expression,
+    mode: ChainMode,
+  ):
+    | {
+      readonly ok_decl: Node | null;
+      readonly ok_body: Expression;
+      readonly err_decl: Node | null;
+      readonly err_body: Expression;
+    }
+    | undefined {
+    const obj = parentheses(cases_expr);
+    if (obj.type !== "ObjectExpression" || obj.properties.length !== 2) {
+      return undefined;
+    }
+    const ok_tag = mode === "maybe" ? "Just" : "Right";
+    const err_tag = mode === "maybe" ? "Nothing" : "Left";
+    let ok_arrow: { param_decl: Node | null; body: Expression } | undefined;
+    let err_arrow: { param_decl: Node | null; body: Expression } | undefined;
+    for (const prop of obj.properties) {
+      if (
+        prop.type !== "Property" || prop.kind !== "init" || prop.computed
+      ) return undefined;
+      const tag = prop.key.type === "Identifier"
+        ? prop.key.name
+        : prop.key.type === "Literal" && typeof prop.key.value === "string"
+        ? prop.key.value
+        : undefined;
+      if (tag === ok_tag) {
+        ok_arrow = extract_unary_arrow(prop.value as Expression);
+      } else if (tag === err_tag) {
+        err_arrow = extract_unary_arrow(prop.value as Expression);
+      } else return undefined;
+    }
+    if (ok_arrow === undefined || err_arrow === undefined) return undefined;
+    return {
+      ok_decl: ok_arrow.param_decl,
+      ok_body: ok_arrow.body,
+      err_decl: err_arrow.param_decl,
+      err_body: err_arrow.body,
+    };
+  }
+
+  function maybe_either_chain_fusion(
+    outer: CallExpression,
+  ): { expression: Expression; direct: boolean } | undefined {
+    if (
+      services.config.optimizations?.terminal_body === false ||
+      outer.optional || outer.typeArguments != null ||
+      outer.arguments.some((a) => a.type === "SpreadElement")
+    ) return undefined;
+
+    const callee = parentheses(outer.callee);
+    let cursor: Expression | undefined;
+    let terminal: ChainTerminal | undefined;
+    let expected_mode: ChainMode | undefined;
+    let match_cases_expr: Expression | undefined;
+
+    if (
+      outer.arguments.length === 2 &&
+      is_imported_from_set(callee, services.imports.from_maybe_functions)
+    ) {
+      const fb = outer.arguments[0] as Expression;
+      if (
+        lexical_hazard(fb) || contains_await_yield(fb) ||
+        contains_generator_or_do(fb)
+      ) return undefined;
+      terminal = { kind: "from_maybe", fallback: fb };
+      expected_mode = "maybe";
+      cursor = outer.arguments[1] as Expression;
+    } else if (
+      outer.arguments.length === 1 &&
+      is_imported_from_set(callee, services.imports.to_nullable_functions)
+    ) {
+      terminal = { kind: "to_nullable" };
+      expected_mode = "maybe";
+      cursor = outer.arguments[0] as Expression;
+    } else if (
+      outer.arguments.length === 2 &&
+      (is_imported_from_set(callee, services.imports.match_functions) ||
+        is_ns_member(callee, services.imports.match_namespaces, "match"))
+    ) {
+      cursor = outer.arguments[0] as Expression;
+      match_cases_expr = outer.arguments[1] as Expression;
+    } else if (
+      outer.arguments.length === 1 &&
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.property.type === "Identifier"
+    ) {
+      const mname = callee.property.name;
+      if (mname === "match") {
+        cursor = callee.object;
+        match_cases_expr = outer.arguments[0] as Expression;
+      } else if (mname === "map" || mname === "bind") {
+        cursor = outer;
+        terminal = { kind: "wrap" };
+      } else {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
+
+    // Peel .map(...) and .bind(...) stages from outermost inward
+    const stages_rev: ChainStage[] = [];
+    while (true) {
+      const cur = parentheses(cursor!);
+      if (
+        cur.type === "CallExpression" && !cur.optional &&
+        cur.typeArguments == null && cur.arguments.length === 1 &&
+        cur.arguments[0].type !== "SpreadElement" &&
+        cur.callee.type === "MemberExpression" && !cur.callee.computed &&
+        !cur.callee.optional && cur.callee.property.type === "Identifier" &&
+        (cur.callee.property.name === "map" ||
+          cur.callee.property.name === "bind")
+      ) {
+        const parsed = extract_unary_arrow(cur.arguments[0] as Expression);
+        if (parsed === undefined) return undefined;
+        stages_rev.push({
+          kind: cur.callee.property.name,
+          param_decl: parsed.param_decl,
+          body: parsed.body,
+        });
+        cursor = cur.callee.object;
+        continue;
+      }
+      break;
+    }
+
+    // For match terminals, require at least 1 stage (0-stage match is handled by match_fusion).
+    if (match_cases_expr !== undefined && stages_rev.length === 0) {
+      return undefined;
+    }
+    if (terminal?.kind === "wrap" && stages_rev.length === 0) {
+      return undefined;
+    }
+
+    const root_info = match_chain_root(cursor!, expected_mode);
+    if (root_info === undefined) return undefined;
+    const mode = root_info.mode;
+    const root = root_info.root;
+
+    if (match_cases_expr !== undefined) {
+      const pair = parse_match_pair(match_cases_expr, mode);
+      if (pair === undefined) return undefined;
+      terminal = { kind: "match", ...pair };
+    }
+    if (terminal === undefined) return undefined;
+
+    // Resolve constructor identifiers if wrapping final result.
+    let maybe_just_expr: ((v: Expression) => Expression) | undefined;
+    let maybe_nothing_expr: (() => Expression) | undefined;
+    let either_dict_id: IdentifierReference | undefined;
+
+    if (terminal.kind === "wrap") {
+      if (mode === "maybe") {
+        const jn = services.imports.just_constructors?.values().next().value;
+        const nn = services.imports.nothing_constructors?.values().next().value;
+        const md = services.imports.direct_maybe_dictionaries?.values().next()
+          .value;
+        if (jn !== undefined) maybe_just_expr = (v) => call(id(jn), [v]);
+        else if (md !== undefined) {
+          maybe_just_expr = (v) => call(member(id(md), "pure"), [v]);
+        } else return undefined;
+        if (nn !== undefined) maybe_nothing_expr = () => call(id(nn), []);
+        else if (md !== undefined) {
+          maybe_nothing_expr = () => call(member(id(md), "empty"), []);
+        } else return undefined;
+      } else {
+        const ed = services.imports.direct_either_dictionaries?.values().next()
+          .value;
+        if (ed === undefined) return undefined;
+        either_dict_id = id(ed);
+      }
+    }
+
+    const stages = stages_rev.reverse();
+    const stmts: Statement[] = [];
+    let fb_id: IdentifierReference | undefined;
+    if (terminal.kind === "from_maybe") {
+      fb_id = services.fresh("ch_fb");
+      stmts.push(variable(fb_id, terminal.fallback, "const"));
+    }
+
+    const fail_return = (err_expr?: Expression): Statement => {
+      if (terminal!.kind === "from_maybe") return ret(fb_id!);
+      if (terminal!.kind === "to_nullable") return ret(literal(null));
+      if (terminal!.kind === "match") {
+        const body = terminal!.err_decl !== null && err_expr !== undefined
+          ? substitute_ident(
+            terminal!.err_body,
+            terminal!.err_decl,
+            err_expr,
+            services,
+          )
+          : terminal!.err_body;
+        return ret(body);
+      }
+      if (mode === "maybe") {
+        return ret(
+          node({
+            type: "TSAsExpression",
+            expression: maybe_nothing_expr!(),
+            typeAnnotation: node({ type: "TSNeverKeyword" }),
+          }),
+        );
+      }
+      return ret(
+        as_const(
+          node({
+            type: "ArrayExpression",
+            elements: [literal("Left"), err_expr!],
+          }),
+        ),
+      );
+    };
+
+    const fail_return_raw_left = (raw_id: IdentifierReference): Statement => {
+      const payload = node({
+        type: "MemberExpression",
+        object: raw_id,
+        property: literal(1),
+        computed: true,
+        optional: false,
+      });
+      if (terminal!.kind === "match") return fail_return(payload);
+      return ret(raw_id);
+    };
+
+    let current_var = services.fresh("ch_v");
+    switch (root.kind) {
+      case "just":
+      case "right":
+        stmts.push(variable(current_var, root.value, "const"));
+        break;
+      case "from_nullable": {
+        const null_id = services.fresh("ch_null");
+        stmts.push(
+          variable(null_id, root.value, "const"),
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "BinaryExpression",
+              operator: "==",
+              left: null_id,
+              right: literal(null),
+            }),
+            consequent: fail_return(),
+            alternate: null,
+          }),
+          variable(current_var, null_id, "const"),
+        );
+        break;
+      }
+      case "wrapped": {
+        const raw_id = services.fresh("ch_raw");
+        const fail_tag = mode === "maybe" ? "Nothing" : "Left";
+        stmts.push(
+          variable(raw_id, call(member(root.expr, "value"), []), "const"),
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "BinaryExpression",
+              operator: "===",
+              left: node({
+                type: "MemberExpression",
+                object: raw_id,
+                property: literal(0),
+                computed: true,
+                optional: false,
+              }),
+              right: literal(fail_tag),
+            }),
+            consequent: mode === "maybe"
+              ? fail_return()
+              : fail_return_raw_left(raw_id),
+            alternate: null,
+          }),
+          variable(
+            current_var,
+            node({
+              type: "MemberExpression",
+              object: raw_id,
+              property: literal(1),
+              computed: true,
+              optional: false,
+            }),
+            "const",
+          ),
+        );
+        break;
+      }
+    }
+
+    for (const stage of stages) {
+      const inlined = stage.param_decl !== null
+        ? substitute_ident(stage.body, stage.param_decl, current_var, services)
+        : stage.body;
+      const next_var = services.fresh("ch_v");
+      if (stage.kind === "map") {
+        stmts.push(variable(next_var, inlined, "const"));
+        current_var = next_var;
+        continue;
+      }
+      // stage.kind === "bind"
+      const elided = match_elided_body(inlined, mode);
+      if (elided !== undefined) {
+        if (elided.kind === "ok") {
+          stmts.push(variable(next_var, elided.expr, "const"));
+          current_var = next_var;
+          continue;
+        }
+        stmts.push(
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "UnaryExpression",
+              operator: "!",
+              prefix: true,
+              argument: elided.test,
+            }),
+            consequent: fail_return(elided.err_expr),
+            alternate: null,
+          }),
+          variable(next_var, elided.ok_expr, "const"),
+        );
+        current_var = next_var;
+        continue;
+      }
+      // General bind: inspect returned Maybe/Either raw tuple
+      const raw_id = services.fresh("ch_raw");
+      const fail_tag = mode === "maybe" ? "Nothing" : "Left";
+      stmts.push(
+        variable(raw_id, call(member(inlined, "value"), []), "const"),
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: node({
+              type: "MemberExpression",
+              object: raw_id,
+              property: literal(0),
+              computed: true,
+              optional: false,
+            }),
+            right: literal(fail_tag),
+          }),
+          consequent: mode === "maybe"
+            ? fail_return()
+            : fail_return_raw_left(raw_id),
+          alternate: null,
+        }),
+        variable(
+          next_var,
+          node({
+            type: "MemberExpression",
+            object: raw_id,
+            property: literal(1),
+            computed: true,
+            optional: false,
+          }),
+          "const",
+        ),
+      );
+      current_var = next_var;
+    }
+
+    if (terminal.kind === "from_maybe" || terminal.kind === "to_nullable") {
+      stmts.push(ret(current_var));
+      return { expression: call(arrow([], block(stmts)), []), direct: true };
+    }
+    if (terminal.kind === "match") {
+      const ok_res = terminal.ok_decl !== null
+        ? substitute_ident(
+          terminal.ok_body,
+          terminal.ok_decl,
+          current_var,
+          services,
+        )
+        : terminal.ok_body;
+      stmts.push(ret(ok_res));
+      return { expression: call(arrow([], block(stmts)), []), direct: true };
+    }
+    if (mode === "maybe") {
+      stmts.push(ret(maybe_just_expr!(current_var)));
+      return { expression: call(arrow([], block(stmts)), []), direct: true };
+    }
+    stmts.push(
+      ret(
+        as_const(
+          node({
+            type: "ArrayExpression",
+            elements: [literal("Right"), current_var],
+          }),
+        ),
+      ),
+    );
+    return {
+      expression: call(either_dict_id!, [call(arrow([], block(stmts)), [])]),
+      direct: true,
+    };
+  }
+
+  // =========================================================================
+  // P8: ArrayT fluent .map chain & Foldable.fold/fold_while/some/find fusion
+  // =========================================================================
+  function is_foldable_obj(expr: Expression): boolean {
+    return is_imported_from_set(expr, services.imports.foldable_objects) ||
+      is_ns_member(expr, services.imports.foldable_namespaces, "Foldable") ||
+      is_ns_member(expr, services.imports.namespaces, "Foldable");
+  }
+
+  function unwrap_array_root(
+    expr: Expression,
+  ):
+    | {
+      readonly array_ctor?: IdentifierReference;
+      readonly items: Expression;
+    }
+    | undefined {
+    const val = parentheses(expr);
+    if (
+      val.type !== "CallExpression" || val.optional ||
+      val.typeArguments != null || val.arguments.length !== 1 ||
+      val.arguments[0].type === "SpreadElement" ||
+      val.callee.type !== "Identifier" ||
+      !services.bindings.imported(val.callee)
+    ) return undefined;
+    if (services.imports.array_constructors?.has(val.callee.name)) {
+      return {
+        array_ctor: val.callee,
+        items: val.arguments[0] as Expression,
+      };
+    }
+    if (services.imports.array_view_functions?.has(val.callee.name)) {
+      const ctor_name = services.imports.array_constructors?.values().next()
+        .value;
+      return {
+        array_ctor: ctor_name !== undefined ? id(ctor_name) : undefined,
+        items: val.arguments[0] as Expression,
+      };
+    }
+    return undefined;
+  }
+
+  type FoldStepTuple = {
+    readonly done: boolean;
+    readonly value: Expression;
+  };
+
+  function match_fold_step(expr: Expression): FoldStepTuple | undefined {
+    const val = unwrap(expr);
+    if (val.type !== "ArrayExpression" || val.elements.length !== 2) {
+      return undefined;
+    }
+    const tag = val.elements[0];
+    const payload = val.elements[1];
+    if (
+      tag === null || tag.type !== "Literal" ||
+      (tag.value !== "Continue" && tag.value !== "Done") ||
+      payload === null || payload.type === "SpreadElement"
+    ) return undefined;
+    return { done: tag.value === "Done", value: payload };
+  }
+
+  function array_chain_fusion(
+    outer: CallExpression,
+  ): { expression: Expression; direct: boolean } | undefined {
+    if (
+      services.config.optimizations?.terminal_body === false ||
+      outer.optional || outer.typeArguments != null ||
+      outer.arguments.some((a) => a.type === "SpreadElement")
+    ) return undefined;
+
+    const callee = parentheses(outer.callee);
+    type ArrTerm =
+      | { readonly kind: "wrap" }
+      | { readonly kind: "raw_array" }
+      | {
+        readonly kind: "fold";
+        readonly init: Expression;
+        readonly step: Expression;
+      }
+      | {
+        readonly kind: "fold_while";
+        readonly init: Expression;
+        readonly step: Expression;
+      }
+      | { readonly kind: "some" | "find"; readonly pred: Expression };
+
+    let cursor: Expression | undefined;
+    let term: ArrTerm | undefined;
+
+    if (
+      outer.arguments.length === 1 &&
+      is_imported_from_set(callee, services.imports.array_to_array_functions)
+    ) {
+      cursor = outer.arguments[0] as Expression;
+      term = { kind: "raw_array" };
+    } else if (
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.property.type === "Identifier"
+    ) {
+      const mname = callee.property.name;
+      if (
+        (mname === "fold" || mname === "fold_while") &&
+        outer.arguments.length === 3 &&
+        is_foldable_obj(parentheses(callee.object))
+      ) {
+        cursor = outer.arguments[0] as Expression;
+        term = {
+          kind: mname,
+          init: outer.arguments[1] as Expression,
+          step: outer.arguments[2] as Expression,
+        };
+      } else if (
+        (mname === "some" || mname === "find") &&
+        outer.arguments.length === 2 &&
+        is_foldable_obj(parentheses(callee.object))
+      ) {
+        cursor = outer.arguments[0] as Expression;
+        term = { kind: mname, pred: outer.arguments[1] as Expression };
+      } else if (mname === "fold" && outer.arguments.length === 2) {
+        cursor = callee.object;
+        term = {
+          kind: "fold",
+          init: outer.arguments[0] as Expression,
+          step: outer.arguments[1] as Expression,
+        };
+      } else if (mname === "value" && outer.arguments.length === 0) {
+        cursor = callee.object;
+        term = { kind: "raw_array" };
+      } else if (mname === "map" && outer.arguments.length === 1) {
+        cursor = outer;
+        term = { kind: "wrap" };
+      } else {
+        return undefined;
+      }
+    } else {
+      return undefined;
+    }
+
+    // Peel .map(...) stages
+    const stages_rev: {
+      readonly param_decl: Node | null;
+      readonly body: Expression;
+    }[] = [];
+    while (true) {
+      const cur = parentheses(cursor!);
+      if (
+        cur.type === "CallExpression" && !cur.optional &&
+        cur.typeArguments == null && cur.arguments.length === 1 &&
+        cur.arguments[0].type !== "SpreadElement" &&
+        cur.callee.type === "MemberExpression" && !cur.callee.computed &&
+        !cur.callee.optional && cur.callee.property.type === "Identifier" &&
+        cur.callee.property.name === "map"
+      ) {
+        const parsed = extract_unary_arrow(cur.arguments[0] as Expression);
+        if (parsed === undefined) return undefined;
+        stages_rev.push(parsed);
+        cursor = cur.callee.object;
+        continue;
+      }
+      break;
+    }
+
+    if (term === undefined) return undefined;
+    const resolved_term = term;
+    if (
+      (resolved_term.kind === "wrap" || resolved_term.kind === "raw_array") &&
+      stages_rev.length === 0
+    ) return undefined;
+
+    const root = unwrap_array_root(cursor!);
+    if (root === undefined) return undefined;
+    if (
+      lexical_hazard(root.items) || contains_await_yield(root.items) ||
+      contains_generator_or_do(root.items)
+    ) return undefined;
+    if (resolved_term.kind === "wrap" && root.array_ctor === undefined) {
+      return undefined;
+    }
+
+    const stages = stages_rev.reverse();
+    const src_id = services.fresh("arr_src");
+    const len_id = services.fresh("arr_len");
+    const idx_id = services.fresh("arr_i");
+    const elem_access: Expression = node({
+      type: "MemberExpression",
+      object: src_id,
+      property: idx_id,
+      computed: true,
+      optional: false,
+    });
+
+    const emit_stages = (
+      stmts: Statement[],
+      seed_expr: Expression,
+    ): Expression => {
+      let cur_expr = seed_expr;
+      for (const st of stages) {
+        const v_id = services.fresh("arr_v");
+        stmts.push(variable(v_id, cur_expr, "const"));
+        cur_expr = st.param_decl !== null
+          ? substitute_ident(st.body, st.param_decl, v_id, services)
+          : st.body;
+      }
+      return cur_expr;
+    };
+
+    // Case 1: Preallocated mapped array output (ArrayT(xs).map(...)... / .value() / to_array(...))
+    if (resolved_term.kind === "wrap" || resolved_term.kind === "raw_array") {
+      const out_id = services.fresh("arr_out");
+      const first_val = services.fresh("arr_v0");
+      const wrap_arr = (expr: Expression): Expression =>
+        resolved_term.kind === "wrap" ? call(root.array_ctor!, [expr]) : expr;
+      const zero_idx = literal(0);
+      const out_set = (index_expr: Expression, val: Expression): Statement =>
+        node({
+          type: "ExpressionStatement",
+          expression: node({
+            type: "AssignmentExpression",
+            operator: "=",
+            left: node({
+              type: "MemberExpression",
+              object: out_id,
+              property: index_expr,
+              computed: true,
+              optional: false,
+            }),
+            right: val,
+          }),
+        });
+      const first_stmts: Statement[] = [];
+      const first_expr = emit_stages(first_stmts, elem_access);
+      first_stmts.push(variable(first_val, first_expr, "const"));
+
+      const loop_stmts: Statement[] = [];
+      const loop_expr = emit_stages(loop_stmts, elem_access);
+      loop_stmts.push(out_set(idx_id, loop_expr));
+
+      const empty_arr = node({
+        type: "ArrayExpression",
+        elements: Array.from([]),
+      });
+      const new_arr: Expression = node({
+        type: "NewExpression",
+        callee: id("Array"),
+        typeArguments: node({
+          type: "TSTypeParameterInstantiation",
+          params: Array.from<TSType>([
+            node({
+              type: "TSTypeQuery",
+              exprName: first_val,
+              typeArguments: null,
+            }),
+          ]),
+        }),
+        arguments: [len_id],
+      });
+      const body_stmts: Statement[] = [
+        variable(src_id, root.items, "const"),
+        variable(len_id, member(src_id, "length"), "const"),
+        node({
+          type: "IfStatement",
+          test: node({
+            type: "BinaryExpression",
+            operator: "===",
+            left: len_id,
+            right: zero_idx,
+          }),
+          consequent: ret(
+            node({
+              type: "TSAsExpression",
+              expression: wrap_arr(empty_arr),
+              typeAnnotation: node({ type: "TSNeverKeyword" }),
+            }),
+          ),
+          alternate: null,
+        }),
+        variable(idx_id, zero_idx, "let"),
+        ...first_stmts,
+        variable(out_id, new_arr, "const"),
+        out_set(zero_idx, first_val),
+        node({
+          type: "ForStatement",
+          init: node({
+            type: "AssignmentExpression",
+            operator: "=",
+            left: idx_id,
+            right: literal(1),
+          }),
+          test: node({
+            type: "BinaryExpression",
+            operator: "<",
+            left: idx_id,
+            right: len_id,
+          }),
+          update: node({
+            type: "AssignmentExpression",
+            operator: "+=",
+            left: idx_id,
+            right: literal(1),
+          }),
+          body: block(loop_stmts),
+        }),
+        ret(wrap_arr(out_id)),
+      ];
+      return {
+        expression: call(arrow([], block(body_stmts)), []),
+        direct: true,
+      };
+    }
+
+    // Case 2: Zero-array fold / fold_while / some / find
+    const make_for = (loop_body: Statement[]): Statement =>
+      node({
+        type: "ForStatement",
+        init: variable(idx_id, literal(0), "let"),
+        test: node({
+          type: "BinaryExpression",
+          operator: "<",
+          left: idx_id,
+          right: len_id,
+        }),
+        update: node({
+          type: "AssignmentExpression",
+          operator: "+=",
+          left: idx_id,
+          right: literal(1),
+        }),
+        body: block(loop_body),
+      });
+
+    if (resolved_term.kind === "some" || resolved_term.kind === "find") {
+      const pred_arrow = extract_unary_arrow(resolved_term.pred);
+      if (pred_arrow === undefined) return undefined;
+      const loop_stmts: Statement[] = [];
+      const item_expr = emit_stages(loop_stmts, elem_access);
+      const item_var = services.fresh("arr_item");
+      loop_stmts.push(variable(item_var, item_expr, "const"));
+      const test_expr = pred_arrow.param_decl !== null
+        ? substitute_ident(
+          pred_arrow.body,
+          pred_arrow.param_decl,
+          item_var,
+          services,
+        )
+        : pred_arrow.body;
+      loop_stmts.push(
+        node({
+          type: "IfStatement",
+          test: test_expr,
+          consequent: ret(
+            resolved_term.kind === "some" ? literal(true) : item_var,
+          ),
+          alternate: null,
+        }),
+      );
+      const stmts: Statement[] = [
+        variable(src_id, root.items, "const"),
+        variable(len_id, member(src_id, "length"), "const"),
+        make_for(loop_stmts),
+        ret(resolved_term.kind === "some" ? literal(false) : void_zero()),
+      ];
+      return { expression: call(arrow([], block(stmts)), []), direct: true };
+    }
+
+    // fold or fold_while
+    if (
+      resolved_term.kind !== "fold" && resolved_term.kind !== "fold_while"
+    ) return undefined;
+    if (
+      lexical_hazard(resolved_term.init) ||
+      contains_await_yield(resolved_term.init) ||
+      contains_generator_or_do(resolved_term.init)
+    ) return undefined;
+    // Skip untyped empty array literal init (`[]`) to preserve strict TS inference.
+    const init_unwrapped = parentheses(resolved_term.init);
+    if (
+      init_unwrapped.type === "ArrayExpression" &&
+      init_unwrapped.elements.length === 0
+    ) return undefined;
+    const step_arrow = extract_binary_arrow(resolved_term.step);
+    if (step_arrow === undefined) return undefined;
+
+    const acc_id = services.fresh("arr_acc");
+    const loop_stmts: Statement[] = [];
+    const item_expr = emit_stages(loop_stmts, elem_access);
+    const item_var = services.fresh("arr_item");
+    loop_stmts.push(variable(item_var, item_expr, "const"));
+    let step_body = step_arrow.body;
+    if (step_arrow.first_decl !== null) {
+      step_body = substitute_ident(
+        step_body,
+        step_arrow.first_decl,
+        acc_id,
+        services,
+      );
+    }
+    if (step_arrow.second_decl !== null) {
+      step_body = substitute_ident(
+        step_body,
+        step_arrow.second_decl,
+        item_var,
+        services,
+      );
+    }
+
+    if (resolved_term.kind === "fold") {
+      loop_stmts.push(
+        node({
+          type: "ExpressionStatement",
+          expression: node({
+            type: "AssignmentExpression",
+            operator: "=",
+            left: acc_id,
+            right: step_body,
+          }),
+        }),
+      );
+    } else {
+      // fold_while: try eliding ["Continue", ...] / ["Done", ...] ternary
+      const cond = unwrap(step_body);
+      let elided_fw = false;
+      if (cond.type === "ConditionalExpression") {
+        const c_yes = match_fold_step(cond.consequent);
+        const c_no = match_fold_step(cond.alternate);
+        if (
+          c_yes !== undefined && c_no !== undefined && c_yes.done !== c_no.done
+        ) {
+          const done_test = c_yes.done ? cond.test : node({
+            type: "UnaryExpression",
+            operator: "!",
+            prefix: true,
+            argument: cond.test,
+          });
+          const done_val = c_yes.done ? c_yes.value : c_no.value;
+          const cont_val = c_yes.done ? c_no.value : c_yes.value;
+          loop_stmts.push(
+            node({
+              type: "IfStatement",
+              test: done_test,
+              consequent: block([
+                node({
+                  type: "ExpressionStatement",
+                  expression: node({
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: acc_id,
+                    right: done_val,
+                  }),
+                }),
+                node({ type: "BreakStatement", label: null }),
+              ]),
+              alternate: null,
+            }),
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: acc_id,
+                right: cont_val,
+              }),
+            }),
+          );
+          elided_fw = true;
+        }
+      }
+      if (!elided_fw) {
+        const step_var = services.fresh("arr_step");
+        loop_stmts.push(
+          variable(step_var, step_body, "const"),
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: acc_id,
+              right: node({
+                type: "MemberExpression",
+                object: step_var,
+                property: literal(1),
+                computed: true,
+                optional: false,
+              }),
+            }),
+          }),
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "BinaryExpression",
+              operator: "===",
+              left: node({
+                type: "MemberExpression",
+                object: step_var,
+                property: literal(0),
+                computed: true,
+                optional: false,
+              }),
+              right: literal("Done"),
+            }),
+            consequent: node({ type: "BreakStatement", label: null }),
+            alternate: null,
+          }),
+        );
+      }
+    }
+
+    const stmts: Statement[] = [
+      variable(src_id, root.items, "const"),
+      variable(len_id, member(src_id, "length"), "const"),
+      variable(acc_id, resolved_term.init, "let"),
+      make_for(loop_stmts),
+      ret(acc_id),
+    ];
+    return { expression: call(arrow([], block(stmts)), []), direct: true };
+  }
+
+  // =========================================================================
+  // P9: Direct Do(Stm, function* () { ... }) journal fusion
+  // =========================================================================
+  function is_stm_dict(expr: Expression): boolean {
+    return is_imported_from_set(expr, services.imports.stm_dictionaries) ||
+      is_ns_member(expr, services.imports.stm_namespaces, "Stm");
+  }
+
+  function stm_do_fusion(
+    outer: CallExpression,
+  ): { expression: Expression; direct: boolean } | undefined {
+    if (
+      services.config.optimizations?.generator === false ||
+      services.config.optimizations?.terminal_body === false ||
+      outer.optional || outer.typeArguments != null ||
+      outer.arguments.length !== 2 ||
+      outer.arguments[0].type === "SpreadElement" ||
+      outer.arguments[1].type === "SpreadElement" ||
+      services.kind(outer) !== "do"
+    ) return undefined;
+
+    const stm_dict = parentheses(outer.arguments[0] as Expression);
+    if (!is_stm_dict(stm_dict)) return undefined;
+    const run_arg = outer.arguments[1];
+    if (
+      run_arg.type !== "FunctionExpression" || !valid_generator(run_arg) ||
+      lexical_hazard(run_arg.body!)
+    ) return undefined;
+
+    const body = run_arg.body!;
+
+    function validate_stm_expr(expr: Expression): boolean {
+      if (!contains_await_yield(expr)) return true;
+      const target = unwrap(expr);
+      if (target.type === "AwaitExpression") return false;
+      if (target.type === "YieldExpression") {
+        if (!target.delegate || target.argument === null) return false;
+        return validate_stm_expr(target.argument);
+      }
+      switch (target.type) {
+        case "BinaryExpression":
+          return (target.left.type === "PrivateIdentifier" ||
+            validate_stm_expr(target.left)) && validate_stm_expr(target.right);
+        case "UnaryExpression":
+          return validate_stm_expr(target.argument);
+        case "SequenceExpression":
+        case "TemplateLiteral":
+          return target.expressions.every(validate_stm_expr);
+        case "ArrayExpression":
+          return target.elements.every((el) =>
+            el === null
+              ? true
+              : el.type === "SpreadElement"
+              ? validate_stm_expr(el.argument)
+              : validate_stm_expr(el)
+          );
+        case "ObjectExpression":
+          return target.properties.every((prop) =>
+            prop.type === "SpreadElement"
+              ? validate_stm_expr(prop.argument)
+              : (!prop.computed || validate_stm_expr(prop.key as Expression)) &&
+                validate_stm_expr(prop.value as Expression)
+          );
+        case "MemberExpression":
+          return !target.optional && validate_stm_expr(target.object) &&
+            (!target.computed ||
+              validate_stm_expr(target.property as Expression));
+        case "CallExpression":
+        case "NewExpression":
+          if (target.type === "CallExpression" && target.optional) return false;
+          return validate_stm_expr(target.callee as Expression) &&
+            target.arguments.every((arg) =>
+              arg.type === "SpreadElement"
+                ? validate_stm_expr(arg.argument)
+                : validate_stm_expr(arg)
+            );
+        case "AssignmentExpression":
+          return target.left.type === "Identifier" &&
+            validate_stm_expr(target.right);
+        case "ConditionalExpression":
+          return validate_stm_expr(target.test) &&
+            validate_stm_expr(target.consequent) &&
+            validate_stm_expr(target.alternate);
+        case "LogicalExpression":
+          return validate_stm_expr(target.left) &&
+            validate_stm_expr(target.right);
+        case "TSAsExpression":
+        case "TSTypeAssertion":
+        case "TSNonNullExpression":
+        case "TSSatisfiesExpression":
+          return validate_stm_expr(target.expression);
+        default:
+          return false;
+      }
+    }
+
+    function validate_stm_stmt(
+      stmt: Statement,
+      in_loop: boolean,
+      in_switch: boolean,
+    ): boolean {
+      if (
+        stmt.type === "ExpressionStatement" && "directive" in stmt &&
+        stmt.directive != null
+      ) return true;
+      switch (stmt.type) {
+        case "EmptyStatement":
+          return true;
+        case "ThrowStatement":
+          return !contains_await_yield(stmt.argument);
+        case "TryStatement":
+          return !contains_await_yield(stmt);
+        case "LabeledStatement":
+        case "WithStatement":
+          return false;
+        case "BreakStatement":
+          return stmt.label === null && (in_loop || in_switch);
+        case "ContinueStatement":
+          return stmt.label === null && in_loop;
+        case "ReturnStatement":
+          return stmt.argument === null || validate_stm_expr(stmt.argument);
+        case "VariableDeclaration":
+          if (stmt.kind === "var") return false;
+          return stmt.declarations.every((d) =>
+            d.init === null || validate_stm_expr(d.init)
+          );
+        case "ExpressionStatement":
+          return validate_stm_expr(stmt.expression);
+        case "BlockStatement":
+          return stmt.body.every((s) =>
+            validate_stm_stmt(s as Statement, in_loop, in_switch)
+          );
+        case "IfStatement":
+          return validate_stm_expr(stmt.test) &&
+            validate_stm_stmt(stmt.consequent, in_loop, in_switch) &&
+            (stmt.alternate === null ||
+              validate_stm_stmt(stmt.alternate, in_loop, in_switch));
+        case "ForStatement":
+          if (
+            stmt.init !== null &&
+            ((stmt.init.type === "VariableDeclaration" &&
+              stmt.init.kind === "var") ||
+              contains_await_yield(stmt.init))
+          ) return false;
+          if (stmt.update !== null && contains_await_yield(stmt.update)) {
+            return false;
+          }
+          if (stmt.test !== null && !validate_stm_expr(stmt.test)) return false;
+          return validate_stm_stmt(stmt.body, true, in_switch);
+        case "WhileStatement":
+          return validate_stm_expr(stmt.test) &&
+            validate_stm_stmt(stmt.body, true, in_switch);
+        case "DoWhileStatement":
+          return !contains_await_yield(stmt.test) &&
+            validate_stm_stmt(stmt.body, true, in_switch);
+        case "ForOfStatement":
+          if (
+            stmt.await ||
+            (stmt.left.type === "VariableDeclaration" &&
+              stmt.left.kind === "var") ||
+            contains_await_yield(stmt.left) ||
+            contains_await_yield(stmt.right)
+          ) return false;
+          return validate_stm_stmt(stmt.body, true, in_switch);
+        case "ForInStatement":
+          if (
+            (stmt.left.type === "VariableDeclaration" &&
+              stmt.left.kind === "var") ||
+            contains_await_yield(stmt.left) ||
+            contains_await_yield(stmt.right)
+          ) return false;
+          return validate_stm_stmt(stmt.body, true, in_switch);
+        case "SwitchStatement":
+          if (!validate_stm_expr(stmt.discriminant)) return false;
+          return stmt.cases.every((c) =>
+            (c.test === null || !contains_await_yield(c.test)) &&
+            c.consequent.every((inner) =>
+              validate_stm_stmt(inner as Statement, in_loop, true)
+            )
+          );
+        default:
+          return !contains_await_yield(stmt);
+      }
+    }
+
+    for (const stmt of body.body) {
+      if (!validate_stm_stmt(stmt as Statement, false, false)) return undefined;
+    }
+
+    const journal_id = services.fresh("stm_j");
+
+    function emit_stm_yield(
+      raw_arg: Expression,
+      target_stmts: Statement[],
+    ): Expression {
+      const lowered = lower_stm_expr(raw_arg, target_stmts);
+      const val = parentheses(lowered);
+      if (
+        val.type === "CallExpression" && !val.optional &&
+        val.typeArguments == null && val.arguments.length === 1 &&
+        val.arguments[0].type !== "SpreadElement" &&
+        val.callee.type === "MemberExpression" && !val.callee.computed &&
+        !val.callee.optional && val.callee.property.type === "Identifier" &&
+        val.callee.property.name === "pure" && is_stm_dict(val.callee.object)
+      ) {
+        return val.arguments[0] as Expression;
+      }
+      return call(call(member(lowered, "value"), []), [journal_id]);
+    }
+
+    function lower_stm_ordered<T extends Expression | null>(
+      items: readonly T[],
+      target_stmts: Statement[],
+    ): T[] {
+      let last_yield = -1;
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item !== null && contains_yield(item)) last_yield = i;
+      }
+      if (last_yield < 0) return [...items];
+      const out: T[] = [];
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item === null) {
+          out.push(item);
+          continue;
+        }
+        if (i < last_yield) {
+          const lowered = contains_yield(item)
+            ? lower_stm_expr(item, target_stmts)
+            : item;
+          if (!is_trivial_pure(lowered)) {
+            const tmp = services.fresh("stm_arg");
+            target_stmts.push(variable(tmp, lowered, "const"));
+            out.push(tmp as T);
+          } else out.push(lowered as T);
+        } else if (i === last_yield) {
+          out.push(lower_stm_expr(item, target_stmts) as T);
+        } else {
+          out.push(item);
+        }
+      }
+      return out;
+    }
+
+    function lower_stm_expr(
+      expr: Expression,
+      target_stmts: Statement[],
+    ): Expression {
+      if (!contains_yield(expr)) return expr;
+      if (expr.type === "ParenthesizedExpression") {
+        return lower_stm_expr(expr.expression, target_stmts);
+      }
+      if (yield_star(expr)) {
+        return emit_stm_yield(expr.argument, target_stmts);
+      }
+      switch (expr.type) {
+        case "BinaryExpression": {
+          if (expr.left.type === "PrivateIdentifier") {
+            return { ...expr, right: lower_stm_expr(expr.right, target_stmts) };
+          }
+          const [left, right] = lower_stm_ordered(
+            [expr.left, expr.right],
+            target_stmts,
+          );
+          return { ...expr, left: left!, right: right! };
+        }
+        case "UnaryExpression":
+          return {
+            ...expr,
+            argument: lower_stm_expr(expr.argument, target_stmts),
+          };
+        case "SequenceExpression":
+          return {
+            ...expr,
+            expressions: lower_stm_ordered(expr.expressions, target_stmts),
+          };
+        case "TemplateLiteral":
+          return {
+            ...expr,
+            expressions: lower_stm_ordered(expr.expressions, target_stmts),
+          };
+        case "ArrayExpression": {
+          let last_yield = -1;
+          for (let i = 0; i < expr.elements.length; i += 1) {
+            const el = expr.elements[i];
+            if (el !== null && contains_yield(el)) last_yield = i;
+          }
+          const elements = expr.elements.map((el, i) => {
+            if (el === null || i > last_yield) return el;
+            if (el.type === "SpreadElement") {
+              const lowered = lower_stm_expr(el.argument, target_stmts);
+              if (i < last_yield && !is_trivial_pure(lowered)) {
+                const tmp = services.fresh("stm_arg");
+                target_stmts.push(variable(tmp, lowered, "const"));
+                return { ...el, argument: tmp };
+              }
+              return { ...el, argument: lowered };
+            }
+            const lowered = lower_stm_expr(el, target_stmts);
+            if (i < last_yield && !is_trivial_pure(lowered)) {
+              const tmp = services.fresh("stm_arg");
+              target_stmts.push(variable(tmp, lowered, "const"));
+              return tmp;
+            }
+            return lowered;
+          });
+          return { ...expr, elements };
+        }
+        case "ObjectExpression": {
+          let last_yield = -1;
+          for (let i = 0; i < expr.properties.length; i += 1) {
+            if (contains_yield(expr.properties[i])) last_yield = i;
+          }
+          const properties = expr.properties.map((prop, i) => {
+            if (i > last_yield) return prop;
+            if (prop.type === "SpreadElement") {
+              const lowered = lower_stm_expr(prop.argument, target_stmts);
+              if (i < last_yield && !is_trivial_pure(lowered)) {
+                const tmp = services.fresh("stm_arg");
+                target_stmts.push(variable(tmp, lowered, "const"));
+                return { ...prop, argument: tmp };
+              }
+              return { ...prop, argument: lowered };
+            }
+            let key = prop.key;
+            if (prop.computed) {
+              const lk = lower_stm_expr(prop.key as Expression, target_stmts);
+              if (
+                contains_yield(prop.value) ||
+                (i < last_yield && !is_trivial_pure(lk))
+              ) {
+                const tmp = services.fresh("stm_key");
+                target_stmts.push(variable(tmp, lk, "const"));
+                key = tmp;
+              } else key = lk;
+            }
+            const lv = lower_stm_expr(prop.value as Expression, target_stmts);
+            if (i < last_yield && !is_trivial_pure(lv)) {
+              const tmp = services.fresh("stm_val");
+              target_stmts.push(variable(tmp, lv, "const"));
+              return { ...prop, key, value: tmp, shorthand: false };
+            }
+            return { ...prop, key, value: lv, shorthand: false };
+          });
+          return { ...expr, properties };
+        }
+        case "MemberExpression": {
+          if (!expr.computed) {
+            return {
+              ...expr,
+              object: lower_stm_expr(expr.object, target_stmts),
+            };
+          }
+          const [object, property] = lower_stm_ordered(
+            [expr.object, expr.property as Expression],
+            target_stmts,
+          );
+          return { ...expr, object, property };
+        }
+        case "CallExpression":
+        case "NewExpression": {
+          let last_arg = -1;
+          for (let i = 0; i < expr.arguments.length; i += 1) {
+            if (contains_yield(expr.arguments[i])) last_arg = i;
+          }
+          let inner_callee = expr.callee;
+          if (last_arg >= 0) {
+            if (
+              expr.type === "CallExpression" &&
+              inner_callee.type === "MemberExpression" && !inner_callee.optional
+            ) {
+              const obj = lower_stm_expr(inner_callee.object, target_stmts);
+              const obj_tmp = services.fresh("stm_recv");
+              target_stmts.push(variable(obj_tmp, obj, "const"));
+              if (inner_callee.computed) {
+                const lp = lower_stm_expr(
+                  inner_callee.property as Expression,
+                  target_stmts,
+                );
+                const prop_tmp = services.fresh("stm_prop");
+                target_stmts.push(variable(prop_tmp, lp, "const"));
+                inner_callee = {
+                  ...inner_callee,
+                  object: obj_tmp,
+                  property: prop_tmp,
+                };
+              } else inner_callee = { ...inner_callee, object: obj_tmp };
+            } else if (
+              contains_yield(inner_callee) ||
+              !is_trivial_pure(inner_callee as Expression)
+            ) {
+              const lc = lower_stm_expr(
+                inner_callee as Expression,
+                target_stmts,
+              );
+              const tmp = services.fresh("stm_fn");
+              target_stmts.push(variable(tmp, lc, "const"));
+              inner_callee = tmp;
+            }
+          } else {
+            inner_callee = lower_stm_expr(
+              inner_callee as Expression,
+              target_stmts,
+            );
+          }
+          const args = expr.arguments.map((arg, i) => {
+            if (i > last_arg) return arg;
+            if (arg.type === "SpreadElement") {
+              const la = lower_stm_expr(arg.argument, target_stmts);
+              if (i < last_arg && !is_trivial_pure(la)) {
+                const tmp = services.fresh("stm_arg");
+                target_stmts.push(variable(tmp, la, "const"));
+                return { ...arg, argument: tmp };
+              }
+              return { ...arg, argument: la };
+            }
+            const la = lower_stm_expr(arg, target_stmts);
+            if (i < last_arg && !is_trivial_pure(la)) {
+              const tmp = services.fresh("stm_arg");
+              target_stmts.push(variable(tmp, la, "const"));
+              return tmp;
+            }
+            return la;
+          });
+          return { ...expr, callee: inner_callee, arguments: args };
+        }
+        case "AssignmentExpression":
+          return { ...expr, right: lower_stm_expr(expr.right, target_stmts) };
+        case "ConditionalExpression": {
+          const test = lower_stm_expr(expr.test, target_stmts);
+          if (
+            !contains_yield(expr.consequent) && !contains_yield(expr.alternate)
+          ) return { ...expr, test };
+          const out = services.fresh("stm_cond");
+          const cons_stmts: Statement[] = [];
+          const cons_val = lower_stm_expr(expr.consequent, cons_stmts);
+          cons_stmts.push(
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: out,
+                right: cons_val,
+              }),
+            }),
+          );
+          const alt_stmts: Statement[] = [];
+          const alt_val = lower_stm_expr(expr.alternate, alt_stmts);
+          alt_stmts.push(
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: out,
+                right: alt_val,
+              }),
+            }),
+          );
+          target_stmts.push(
+            node({
+              type: "VariableDeclaration",
+              kind: "let",
+              declarations: [
+                node({ type: "VariableDeclarator", id: out, init: null }),
+              ],
+            }),
+            node({
+              type: "IfStatement",
+              test,
+              consequent: block(cons_stmts),
+              alternate: block(alt_stmts),
+            }),
+          );
+          return out;
+        }
+        case "LogicalExpression": {
+          const left = lower_stm_expr(expr.left, target_stmts);
+          if (!contains_yield(expr.right)) return { ...expr, left };
+          const out = services.fresh("stm_logic");
+          target_stmts.push(variable(out, left, "let"));
+          const right_stmts: Statement[] = [];
+          const right_val = lower_stm_expr(expr.right, right_stmts);
+          right_stmts.push(
+            node({
+              type: "ExpressionStatement",
+              expression: node({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: out,
+                right: right_val,
+              }),
+            }),
+          );
+          const guard: Expression = expr.operator === "&&"
+            ? out
+            : expr.operator === "||"
+            ? node({
+              type: "UnaryExpression",
+              operator: "!",
+              prefix: true,
+              argument: out,
+            })
+            : node({
+              type: "BinaryExpression",
+              operator: "==",
+              left: out,
+              right: literal(null),
+            });
+          target_stmts.push(
+            node({
+              type: "IfStatement",
+              test: guard,
+              consequent: block(right_stmts),
+              alternate: null,
+            }),
+          );
+          return out;
+        }
+        case "TSAsExpression":
+        case "TSTypeAssertion":
+        case "TSNonNullExpression":
+        case "TSSatisfiesExpression":
+          return {
+            ...expr,
+            expression: lower_stm_expr(expr.expression, target_stmts),
+          };
+        default:
+          return expr;
+      }
+    }
+
+    function lower_stm_stmt(stmt: Statement): Statement[] {
+      if (
+        stmt.type === "ExpressionStatement" && "directive" in stmt &&
+        stmt.directive != null
+      ) return [stmt];
+      switch (stmt.type) {
+        case "VariableDeclaration": {
+          const stmts: Statement[] = [];
+          const declarations = stmt.declarations.map((decl) =>
+            decl.init !== null && contains_yield(decl.init)
+              ? { ...decl, init: lower_stm_expr(decl.init, stmts) }
+              : decl
+          );
+          stmts.push({ ...stmt, declarations });
+          return stmts;
+        }
+        case "ExpressionStatement": {
+          if (!contains_yield(stmt.expression)) return [stmt];
+          const stmts: Statement[] = [];
+          const lowered = lower_stm_expr(stmt.expression, stmts);
+          stmts.push({ ...stmt, expression: lowered });
+          return stmts;
+        }
+        case "ReturnStatement": {
+          if (stmt.argument === null || !contains_yield(stmt.argument)) {
+            return [stmt];
+          }
+          const stmts: Statement[] = [];
+          stmts.push(ret(lower_stm_expr(stmt.argument, stmts)));
+          return stmts;
+        }
+        case "BlockStatement":
+          return [block(lower_stm_list(stmt.body as Statement[]))];
+        case "IfStatement": {
+          const stmts: Statement[] = [];
+          const test = lower_stm_expr(stmt.test, stmts);
+          const consequent = lower_stm_single(stmt.consequent);
+          const alternate = stmt.alternate !== null
+            ? lower_stm_single(stmt.alternate)
+            : null;
+          stmts.push({ ...stmt, test, consequent, alternate });
+          return stmts;
+        }
+        case "ForStatement": {
+          const lowered_body = lower_stm_single(stmt.body);
+          if (stmt.test !== null && contains_yield(stmt.test)) {
+            const test_stmts: Statement[] = [];
+            const test_val = lower_stm_expr(stmt.test, test_stmts);
+            test_stmts.push(
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "UnaryExpression",
+                  operator: "!",
+                  prefix: true,
+                  argument: test_val,
+                }),
+                consequent: node({ type: "BreakStatement", label: null }),
+                alternate: null,
+              }),
+            );
+            const body_stmts = lowered_body.type === "BlockStatement"
+              ? lowered_body.body
+              : [lowered_body];
+            return [{
+              ...stmt,
+              test: null,
+              body: block([...test_stmts, ...(body_stmts as Statement[])]),
+            }];
+          }
+          return [{ ...stmt, body: lowered_body }];
+        }
+        case "WhileStatement": {
+          const lowered_body = lower_stm_single(stmt.body);
+          if (contains_yield(stmt.test)) {
+            const test_stmts: Statement[] = [];
+            const test_val = lower_stm_expr(stmt.test, test_stmts);
+            test_stmts.push(
+              node({
+                type: "IfStatement",
+                test: node({
+                  type: "UnaryExpression",
+                  operator: "!",
+                  prefix: true,
+                  argument: test_val,
+                }),
+                consequent: node({ type: "BreakStatement", label: null }),
+                alternate: null,
+              }),
+            );
+            const body_stmts = lowered_body.type === "BlockStatement"
+              ? lowered_body.body
+              : [lowered_body];
+            return [{
+              ...stmt,
+              test: literal(true),
+              body: block([...test_stmts, ...(body_stmts as Statement[])]),
+            }];
+          }
+          return [{ ...stmt, body: lowered_body }];
+        }
+        case "DoWhileStatement":
+        case "ForOfStatement":
+        case "ForInStatement":
+          return [{ ...stmt, body: lower_stm_single(stmt.body) }];
+        case "SwitchStatement": {
+          const stmts: Statement[] = [];
+          const discriminant = lower_stm_expr(stmt.discriminant, stmts);
+          const cases = stmt.cases.map((c) => ({
+            ...c,
+            consequent: lower_stm_list(c.consequent as Statement[]),
+          }));
+          stmts.push({ ...stmt, discriminant, cases });
+          return stmts;
+        }
+        default:
+          return [stmt];
+      }
+    }
+
+    function lower_stm_list(list: readonly Statement[]): Statement[] {
+      const out: Statement[] = [];
+      for (const item of list) out.push(...lower_stm_stmt(item));
+      return out;
+    }
+
+    function lower_stm_single(stmt: Statement): Statement {
+      const list = lower_stm_stmt(stmt);
+      return list.length === 1 ? list[0] : block(list);
+    }
+
+    const emitted = lower_stm_list(body.body as Statement[]);
+    return {
+      expression: call(stm_dict, [arrow([journal_id], block(emitted))]),
+      direct: true,
+    };
+  }
+
   return {
     lower_before(
       outer: CallExpression,
     ): { expression: Expression; direct: boolean } | undefined {
-      return task_terminal_fusion(outer);
+      return task_terminal_fusion(outer) ??
+        stm_do_fusion(outer) ??
+        maybe_either_chain_fusion(outer) ??
+        array_chain_fusion(outer);
     },
     lower_after(
       outer: CallExpression,

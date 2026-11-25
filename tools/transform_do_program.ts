@@ -163,6 +163,18 @@ function transform_do_program_checked(
       headers.list_constructors.size > 0 ||
       headers.nil_constructors.size > 0 ||
       headers.cons_constructors.size > 0;
+    const has_array_chain = headers.array_constructors.size > 0 ||
+      headers.array_view_functions.size > 0;
+    const has_maybe_either_chain = headers.just_constructors.size > 0 ||
+      headers.nothing_constructors.size > 0 ||
+      headers.from_nullable_functions.size > 0 ||
+      headers.from_maybe_functions.size > 0 ||
+      headers.to_nullable_functions.size > 0 ||
+      headers.left_constructors.size > 0 ||
+      headers.right_constructors.size > 0 ||
+      headers.direct_maybe_dictionaries.size > 0 ||
+      headers.direct_either_dictionaries.size > 0 ||
+      headers.tagged_type_names.size > 0;
     const target_tokens: string[] = [
       "Do",
       "Program",
@@ -189,6 +201,9 @@ function transform_do_program_checked(
       ...headers.traverse_sequential_namespaces,
       ...headers.match_functions,
       ...headers.match_namespaces,
+      ...headers.from_maybe_functions,
+      ...headers.to_nullable_functions,
+      ...headers.array_to_array_functions,
     ];
     if (has_effect_interp) {
       target_tokens.push("run", "handle_with", "value");
@@ -208,6 +223,17 @@ function transform_do_program_checked(
     }
     if (has_match && source.indexOf("match", scan_from) >= 0) {
       target_tokens.push(".match", "match(");
+    }
+    if (has_maybe_either_chain) {
+      if (source.indexOf(".map", scan_from) >= 0) target_tokens.push(".map");
+      if (source.indexOf(".bind", scan_from) >= 0) target_tokens.push(".bind");
+    }
+    if (has_array_chain) {
+      if (source.indexOf(".map", scan_from) >= 0) target_tokens.push(".map");
+      if (source.indexOf(".fold", scan_from) >= 0) target_tokens.push(".fold");
+      if (source.indexOf("Foldable", scan_from) >= 0) {
+        target_tokens.push("Foldable");
+      }
     }
     if (has_iterable) {
       target_tokens.push(
@@ -1030,8 +1056,8 @@ function inline_expression(value: Expression): InlineResult | undefined {
   const callee = unwrap(value.callee);
   if (
     value.start < 0 && value.arguments.length === 0 &&
-    callee.type === "ArrowFunctionExpression" && callee.params.length === 0 &&
-    callee.body.type === "BlockStatement"
+    callee.type === "ArrowFunctionExpression" && !callee.async &&
+    callee.params.length === 0 && callee.body.type === "BlockStatement"
   ) {
     const body = callee.body.body;
     const last = body[body.length - 1];
@@ -1164,8 +1190,16 @@ function inline_statement(current: Statement): Statement[] | undefined {
 }
 function inline_iifes<T extends Node>(root: T): T {
   function descend(current: Node): Node {
+    const type = current.type;
+    if (
+      type === "Identifier" || type === "Literal" ||
+      type === "ThisExpression" || type === "TemplateElement" ||
+      type === "PrivateIdentifier" || type === "EmptyStatement" ||
+      type === "BreakStatement" || type === "ContinueStatement" ||
+      type.startsWith("TS")
+    ) return current;
     let result = current;
-    const keys = value_visitor_keys[current.type];
+    const keys = value_visitor_keys[type];
     if (keys !== undefined && keys.length > 0) {
       const record = current as unknown as Record<string, unknown>;
       for (let index = 0; index < keys.length; index += 1) {
@@ -1274,7 +1308,7 @@ async function run_cli(args: readonly string[]) {
 
 /** Compiler and transform revision included in every cache key. */
 export const transform_cache_version: string =
-  "11:oxc-parser@0.154.0:esrap@2.4.0";
+  "12:oxc-parser@0.154.0:esrap@2.4.0";
 
 /** A bounded transform cache with observable hit, miss and retention counts. */
 export type TransformCache = {

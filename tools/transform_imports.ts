@@ -74,6 +74,7 @@ for (
     "mod",
     "reader",
     "state",
+    "stm",
     "tagged",
     "task",
     "traversal",
@@ -299,12 +300,21 @@ export type UnverifiedImports = {
   readonly direct_maybe_dictionaries: Set<string>;
   readonly just_constructors: Set<string>;
   readonly nothing_constructors: Set<string>;
+  readonly from_nullable_functions: Set<string>;
+  readonly from_maybe_functions: Set<string>;
+  readonly to_nullable_functions: Set<string>;
   readonly direct_either_dictionaries: Set<string>;
   readonly left_constructors: Set<string>;
   readonly right_constructors: Set<string>;
   readonly direct_identity_dictionaries: Set<string>;
   readonly identity_constructors: Set<string>;
   readonly array_constructors: Set<string>;
+  readonly array_view_functions: Set<string>;
+  readonly array_to_array_functions: Set<string>;
+  readonly foldable_objects: Set<string>;
+  readonly foldable_namespaces: Set<string>;
+  readonly stm_dictionaries: Set<string>;
+  readonly stm_namespaces: Set<string>;
   readonly list_constructors: Set<string>;
   readonly nil_constructors: Set<string>;
   readonly cons_constructors: Set<string>;
@@ -444,6 +454,20 @@ export function might_contain_transform_target(
     source.includes("Effect") &&
     (source.includes("interpret") || source.includes("handle_with"))
   ) return true;
+  if (
+    source.includes("from_maybe") || source.includes("to_nullable") ||
+    (source.includes(".map(") &&
+      (source.includes("Just") || source.includes("Right") ||
+        source.includes("Maybe") || source.includes("Either") ||
+        source.includes("from_nullable") || source.includes("ArrayT") ||
+        source.includes("from_array_view"))) ||
+    (source.includes(".bind(") &&
+      (source.includes("Just") || source.includes("Right") ||
+        source.includes("Maybe") || source.includes("Either") ||
+        source.includes("from_nullable"))) ||
+    ((source.includes("ArrayT") || source.includes("from_array_view")) &&
+      (source.includes("Foldable") || source.includes(".fold(")))
+  ) return true;
   return might_contain_iterable_maps(source);
 }
 
@@ -494,12 +518,21 @@ export function scan_import_headers(
   const direct_maybe_dictionaries = new Set<string>();
   const just_constructors = new Set<string>();
   const nothing_constructors = new Set<string>();
+  const from_nullable_functions = new Set<string>();
+  const from_maybe_functions = new Set<string>();
+  const to_nullable_functions = new Set<string>();
   const direct_either_dictionaries = new Set<string>();
   const left_constructors = new Set<string>();
   const right_constructors = new Set<string>();
   const direct_identity_dictionaries = new Set<string>();
   const identity_constructors = new Set<string>();
   const array_constructors = new Set<string>();
+  const array_view_functions = new Set<string>();
+  const array_to_array_functions = new Set<string>();
+  const foldable_objects = new Set<string>();
+  const foldable_namespaces = new Set<string>();
+  const stm_dictionaries = new Set<string>();
+  const stm_namespaces = new Set<string>();
   const list_constructors = new Set<string>();
   const nil_constructors = new Set<string>();
   const cons_constructors = new Set<string>();
@@ -650,6 +683,15 @@ export function scan_import_headers(
           task_namespaces.add(local);
         }
         if (
+          loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "foldable"
+        ) {
+          foldable_namespaces.add(local);
+        }
+        if (loop_kind === "stm") {
+          stm_namespaces.add(local);
+        }
+        if (
           loop_kind === "iterable" || loop_kind === "mod" ||
           loop_kind === "typeclasses" || loop_kind === "foldable"
         ) {
@@ -782,6 +824,31 @@ export function scan_import_headers(
         nothing_constructors.add(local);
       }
       if (
+        (loop_kind === "mod" || loop_kind === "maybe") &&
+        imported === "from_nullable"
+      ) from_nullable_functions.add(local);
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") &&
+        imported === "from_maybe"
+      ) from_maybe_functions.add(local);
+      if (
+        (loop_kind === "mod" || loop_kind === "maybe") &&
+        imported === "to_nullable"
+      ) to_nullable_functions.add(local);
+      if (
+        (loop_kind === "mod" || loop_kind === "typeclasses" ||
+          loop_kind === "foldable") && imported === "Foldable"
+      ) foldable_objects.add(local);
+      if (loop_kind === "array" && imported === "from_array_view") {
+        array_view_functions.add(local);
+      }
+      if (loop_kind === "array" && imported === "to_array") {
+        array_to_array_functions.add(local);
+      }
+      if (loop_kind === "stm" && imported === "Stm") {
+        stm_dictionaries.add(local);
+      }
+      if (
         (loop_kind === "mod" || loop_kind === "either") && imported === "Left"
       ) {
         left_constructors.add(local);
@@ -889,12 +956,21 @@ export function scan_import_headers(
     direct_maybe_dictionaries,
     just_constructors,
     nothing_constructors,
+    from_nullable_functions,
+    from_maybe_functions,
+    to_nullable_functions,
     direct_either_dictionaries,
     left_constructors,
     right_constructors,
     direct_identity_dictionaries,
     identity_constructors,
     array_constructors,
+    array_view_functions,
+    array_to_array_functions,
+    foldable_objects,
+    foldable_namespaces,
+    stm_dictionaries,
+    stm_namespaces,
     list_constructors,
     nil_constructors,
     cons_constructors,
@@ -1104,12 +1180,21 @@ export function create_import_shadow_tracker(
         headers.direct_maybe_dictionaries.delete(name);
         headers.just_constructors.delete(name);
         headers.nothing_constructors.delete(name);
+        headers.from_nullable_functions.delete(name);
+        headers.from_maybe_functions.delete(name);
+        headers.to_nullable_functions.delete(name);
         headers.direct_either_dictionaries.delete(name);
         headers.left_constructors.delete(name);
         headers.right_constructors.delete(name);
         headers.direct_identity_dictionaries.delete(name);
         headers.identity_constructors.delete(name);
         headers.array_constructors.delete(name);
+        headers.array_view_functions.delete(name);
+        headers.array_to_array_functions.delete(name);
+        headers.foldable_objects.delete(name);
+        headers.foldable_namespaces.delete(name);
+        headers.stm_dictionaries.delete(name);
+        headers.stm_namespaces.delete(name);
         headers.list_constructors.delete(name);
         headers.nil_constructors.delete(name);
         headers.cons_constructors.delete(name);
@@ -1169,12 +1254,21 @@ export function create_import_shadow_tracker(
           direct_maybe_dictionaries: headers.direct_maybe_dictionaries,
           just_constructors: headers.just_constructors,
           nothing_constructors: headers.nothing_constructors,
+          from_nullable_functions: headers.from_nullable_functions,
+          from_maybe_functions: headers.from_maybe_functions,
+          to_nullable_functions: headers.to_nullable_functions,
           direct_either_dictionaries: headers.direct_either_dictionaries,
           left_constructors: headers.left_constructors,
           right_constructors: headers.right_constructors,
           direct_identity_dictionaries: headers.direct_identity_dictionaries,
           identity_constructors: headers.identity_constructors,
           array_constructors: headers.array_constructors,
+          array_view_functions: headers.array_view_functions,
+          array_to_array_functions: headers.array_to_array_functions,
+          foldable_objects: headers.foldable_objects,
+          foldable_namespaces: headers.foldable_namespaces,
+          stm_dictionaries: headers.stm_dictionaries,
+          stm_namespaces: headers.stm_namespaces,
           list_constructors: headers.list_constructors,
           nil_constructors: headers.nil_constructors,
           cons_constructors: headers.cons_constructors,
