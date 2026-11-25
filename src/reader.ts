@@ -26,6 +26,7 @@ import {
   type NominalKey,
   type WithoutCell,
 } from "./cell.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -262,6 +263,8 @@ function make_reader_cell<key extends PropertyKey, environment>(
       );
     },
   });
+
+  register_reader_traversal(dictionary);
 
   return dictionary;
 
@@ -586,3 +589,36 @@ Monad.instance(Reader)({
     );
   },
 });
+
+function register_reader_traversal(dictionary: unknown): void {
+  register_traversal(
+    dictionary as AsReader<unknown>,
+    <from, to, result>(
+      items: Iterable<from>,
+      fn: (item: from) => Data<AsReader<unknown>, to>,
+      build: (items: Iterable<to>) => result,
+    ): Data<AsReader<unknown>, result> => {
+      let fns: RawReader<unknown, to>[];
+      if (Array.isArray(items)) {
+        fns = new Array<RawReader<unknown, to>>(items.length);
+        for (let i = 0; i < items.length; i += 1) {
+          fns[i] = fn(items[i]).value() as RawReader<unknown, to>;
+        }
+      } else {
+        fns = [];
+        for (const item of items) {
+          fns.push(fn(item).value() as RawReader<unknown, to>);
+        }
+      }
+      return (dictionary as (
+        v: RawReader<unknown, result>,
+      ) => Data<AsReader<unknown>, result>)((environment: unknown) => {
+        const out = new Array<to>(fns.length);
+        for (let i = 0; i < fns.length; i += 1) out[i] = fns[i](environment);
+        return build(out);
+      });
+    },
+  );
+}
+
+register_reader_traversal(Reader);

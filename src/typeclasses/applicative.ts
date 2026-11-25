@@ -292,48 +292,73 @@ export function collect(
   dictionary_or_values: unknown,
   explicit_values?: unknown,
 ): unknown {
-  let values = explicit_values as Record<
-    PropertyKey,
-    Data<CollectRuntime, unknown>
-  >;
+  const values =
+    (explicit_values === undefined
+      ? dictionary_or_values
+      : explicit_values) as Record<PropertyKey, Data<CollectRuntime, unknown>>;
+  const tuple = Array.isArray(values);
+  const enum_own = Object.prototype.propertyIsEnumerable;
+  const length = tuple ? (values as unknown as readonly unknown[]).length : 0;
+  let dense = tuple && Object.keys(values).length === length &&
+    Object.getOwnPropertySymbols(values).length === 0;
+  if (dense) {
+    for (let i = 0; i < length; i += 1) {
+      if (!enum_own.call(values, i)) {
+        dense = false;
+        break;
+      }
+    }
+  }
+  const keys = dense
+    ? undefined
+    : Reflect.ownKeys(values).filter((key) => enum_own.call(values, key));
   let selected = dictionary_or_values as CollectRuntime;
   if (explicit_values === undefined) {
-    values = dictionary_or_values as typeof values;
-  }
-  const keys = Reflect.ownKeys(values).filter((key) =>
-    Object.prototype.propertyIsEnumerable.call(values, key)
-  );
-  if (explicit_values === undefined) {
-    const first = keys[0];
+    const first = dense
+      ? (values as unknown as readonly Data<CollectRuntime, unknown>[])[0]
+      : keys![0] === undefined
+      ? undefined
+      : values[keys![0]];
     if (first === undefined) {
       throw new TypeError("Empty collect requires a dictionary");
     }
-    selected = dictionary_of(values[first]) as CollectRuntime;
+    selected = dictionary_of(first) as CollectRuntime;
   }
-  const tuple = Array.isArray(values);
-  let length = 0;
-  if (tuple) length = (values as unknown as readonly unknown[]).length;
-  return traverse_items_into(keys, selected, (key) => {
-    const value = values[key];
-    if (value[kind] !== selected[kind]) {
+  const selected_kind = selected[kind];
+  const check = (value: Data<CollectRuntime, unknown>) => {
+    if (value[kind] !== selected_kind) {
       throw new TypeError(
         "collect requires values from the selected dictionary",
       );
     }
     return value;
-  }, (items) => {
-    let out: Record<PropertyKey, unknown> | unknown[] = Object.create(null);
-    let prototype: object = Object.prototype;
-    if (tuple) {
-      out = new Array(length);
-      Object.setPrototypeOf(out, null);
-      prototype = Array.prototype;
-    }
-    let index = 0;
-    for (const value of items) {
-      (out as Record<PropertyKey, unknown>)[keys[index++]] = value;
-    }
-    Object.setPrototypeOf(out, prototype);
-    return out;
-  });
+  };
+  if (dense) {
+    return traverse_items_into(
+      values as unknown as readonly Data<CollectRuntime, unknown>[],
+      selected,
+      check,
+      (items) => (Array.isArray(items) ? items : [...items]),
+    );
+  }
+  return traverse_items_into(
+    keys!,
+    selected,
+    (key) => check(values[key]),
+    (items) => {
+      const out: Record<PropertyKey, unknown> | unknown[] = tuple
+        ? new Array(length)
+        : {};
+      let index = 0;
+      for (const value of items) {
+        Object.defineProperty(out, keys![index++], {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return out;
+    },
+  );
 }

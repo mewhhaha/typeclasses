@@ -147,22 +147,6 @@ function list_append<item>(
   return out.finish(right);
 }
 
-function lift_list_one<output>(
-  fn: (...values: unknown[]) => output,
-  first: RawList<unknown>,
-): List<output> {
-  let source = first;
-  const out = list_builder<output>();
-
-  while (source[0] === "Cons") {
-    const [, head, tail] = source;
-    out.push(fn(head));
-    source = tail;
-  }
-
-  return List(out.finish());
-}
-
 function lift_list_two<output>(
   fn: (...values: unknown[]) => output,
   first: RawList<unknown>,
@@ -394,7 +378,7 @@ function create_list(): ListConstructor {
 
       switch (rest.length) {
         case 0:
-          return lift_list_one(fn, first);
+          return Functor.map(this, fn);
         case 1:
           return lift_list_two(fn, first, rest[0].value());
         case 2:
@@ -429,10 +413,15 @@ function create_list(): ListConstructor {
     },
   });
 
+  function append_list<item>(
+    this: Data<AsList, item>,
+    right: Data<AsList, item>,
+  ): Data<AsList, item> {
+    return List(list_append(this.value(), right.value()));
+  }
+
   Semigroup.instance(List)({
-    concat(right) {
-      return List(list_append(this.value(), right.value()));
-    },
+    concat: append_list,
   });
 
   Monoid.instance(List)({
@@ -441,10 +430,7 @@ function create_list(): ListConstructor {
 
   Alternative.instance(List)({
     empty: empty_list,
-
-    alt(right) {
-      return List(list_append(this.value(), right.value()));
-    },
+    alt: append_list,
   });
 
   Monad.instance(List)({

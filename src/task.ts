@@ -20,6 +20,7 @@ import {
 } from "./effects.ts";
 import { is_kind_of } from "./internal.ts";
 import { loop_done, loop_rec } from "./loop.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -58,7 +59,7 @@ type TaskStep =
     readonly tag: "bind";
     readonly apply: (value: unknown) => Task<unknown>;
   };
-type TaskPlan = TaskStep & { source: RawTask<unknown> };
+type TaskPlan = TaskStep & { source: RawTask<unknown>; runs: number };
 const task_plan = Symbol("Task.plan");
 type PlannedTask = RawTask<unknown> & {
   [task_plan]?: TaskPlan;
@@ -828,8 +829,15 @@ export function traverse_task<input, output>(
       signal = AbortSignal.any([options.signal, signal]);
     }
     if (signal.aborted) throw task_abort_error("Task.traverse", signal);
-    const iterator = inputs[Symbol.iterator]();
-    const results: output[] = [];
+    const array_inputs = Array.isArray(inputs)
+      ? (inputs as readonly input[])
+      : undefined;
+    const iterator = array_inputs === undefined
+      ? inputs[Symbol.iterator]()
+      : undefined;
+    const results: output[] = array_inputs !== undefined
+      ? new Array<output>(array_inputs.length)
+      : [];
     let next_index = 0;
     let exhausted = false;
     let failed = false;
@@ -837,13 +845,25 @@ export function traverse_task<input, output>(
     async function worker(): Promise<void> {
       while (!signal.aborted && !failed && !exhausted) {
         try {
-          const next = iterator.next();
-          if (next.done) {
-            exhausted = true;
-            return;
+          let index: number;
+          let value: input;
+          if (array_inputs !== undefined) {
+            if (next_index >= array_inputs.length) {
+              exhausted = true;
+              return;
+            }
+            index = next_index++;
+            value = array_inputs[index];
+          } else {
+            const next = iterator!.next();
+            if (next.done) {
+              exhausted = true;
+              return;
+            }
+            index = next_index++;
+            value = next.value;
           }
-          const index = next_index++;
-          const task = fn(next.value, index).value();
+          const task = fn(value, index).value();
           const completed = completed_of(task);
           if (completed !== undefined) {
             results[index] = completed_item(completed) as output;
@@ -879,20 +899,22 @@ export function traverse_task<input, output>(
     } catch (error) {
       if (!exhausted) {
         exhausted = true;
-        try {
-          iterator.return?.();
-        } catch (cleanup_error) {
-          throw new AggregateError(
-            [error, cleanup_error],
-            "Task traversal and iterator cleanup both failed",
-          );
+        if (iterator !== undefined) {
+          try {
+            iterator.return?.();
+          } catch (cleanup_error) {
+            throw new AggregateError(
+              [error, cleanup_error],
+              "Task traversal and iterator cleanup both failed",
+            );
+          }
         }
       }
       throw error;
     } finally {
       if (!exhausted) {
         exhausted = true;
-        iterator.return?.();
+        iterator?.return?.();
       }
     }
   }
@@ -919,6 +941,7 @@ function compose_task(
 ): RawTask<unknown> {
   const plan = step as TaskPlan;
   plan.source = source;
+  plan.runs = 0;
   const task: RawTask<unknown> = (signal) => {
     const pending = evaluate_task(plan, signal, {});
     if (signal !== undefined) protected_promises.set(pending, signal);
@@ -947,7 +970,8 @@ function compile_task(plan: TaskPlan): CompiledTask {
   }
   frames.reverse();
   const segment = { source, frames };
-  if (frames.length <= 4096) {
+  plan.runs += 1;
+  if (frames.length <= 4096 && (frames.length >= 16 || plan.runs >= 2)) {
     compiled_tasks.set(plan, segment);
     compiled_task_frames += frames.length;
     while (compiled_task_frames > 4096) {
@@ -959,14 +983,47 @@ function compile_task(plan: TaskPlan): CompiledTask {
   return segment;
 }
 async function evaluate_task(
-  plan: TaskPlan,
+  initial_plan: TaskPlan,
   signal: AbortSignal | undefined,
   options: RunTaskOptions,
 ): Promise<unknown> {
+  let plan = initial_plan;
+  let steps = 0;
+  const yield_every = options.yield_every;
+  // Fast path: single-frame right-nested chains avoid compile_task & Map overhead.
+  while (plan_of(plan.source) === undefined) {
+    if (signal?.aborted) throw task_abort_error("Task plan", signal);
+    const src = plan.source;
+    const completed = completed_of(src);
+    const value = completed !== undefined
+      ? completed_item(completed)
+      : await start_task(src, signal, "Task plan");
+    if (signal?.aborted) throw task_abort_error("Task plan", signal);
+    if (yield_every !== undefined && ++steps >= yield_every) {
+      steps = 0;
+      const scheduled = options.schedule !== undefined
+        ? options.schedule()
+        : new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await await_with_signal(scheduled, signal, "Task scheduler");
+      if (signal?.aborted) throw task_abort_error("Task plan", signal);
+    }
+    if (plan.tag === "map") {
+      return task_item(plan.apply(value), plan.operation);
+    }
+    const next_raw = plan.apply(value).value();
+    const next_plan = plan_of(next_raw);
+    if (next_plan === undefined) {
+      const next_completed = completed_of(next_raw);
+      return next_completed !== undefined
+        ? completed_item(next_completed)
+        : await start_task(next_raw, signal, "Task plan");
+    }
+    plan = next_plan;
+  }
+
   let segment = compile_task(plan);
   let pending: { segment: CompiledTask; index: number }[] | undefined;
   let index = 0;
-  let steps = 0;
   let current = segment.source;
   let value: unknown;
   while (true) {
@@ -984,7 +1041,7 @@ async function evaluate_task(
         continue;
       }
       const step = segment.frames[index++];
-      if (options.yield_every !== undefined && ++steps >= options.yield_every) {
+      if (yield_every !== undefined && ++steps >= yield_every) {
         steps = 0;
         let scheduled: Promise<void>;
         if (options.schedule !== undefined) scheduled = options.schedule();
@@ -1018,3 +1075,44 @@ async function evaluate_task(
     }
   }
 }
+
+register_traversal(
+  Task,
+  <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsTask, to>,
+    build: (items: Iterable<to>) => result,
+  ): Data<AsTask, result> => {
+    const tasks: RawTask<to>[] = [];
+    for (const item of items) tasks.push(fn(item).value());
+    return Task(async (signal) => {
+      const out = new Array<to>(tasks.length);
+      for (let i = 0; i < tasks.length; i += 1) {
+        if (signal?.aborted) throw task_abort_error("Task.traverse", signal);
+        const current = tasks[i];
+        const completed = completed_of(current);
+        out[i] = completed !== undefined
+          ? completed_item(completed) as to
+          : await start_task(current, signal, "Task.traverse");
+      }
+      return task_item(build(out), "Task.traverse");
+    });
+  },
+);
+
+register_traversal(
+  ParallelTask,
+  <from, to, result>(
+    items: Iterable<from>,
+    fn: (item: from) => Data<AsParallelTask, to>,
+    build: (items: Iterable<to>) => result,
+  ): Data<AsParallelTask, result> => {
+    const tasks: RawTask<unknown>[] = [];
+    for (const item of items) tasks.push(fn(item).value());
+    return ParallelTask((signal) =>
+      run_concurrently(tasks, signal, "ParallelTask.traverse").then((values) =>
+        task_item(build(values as readonly to[]), "ParallelTask.traverse")
+      )
+    );
+  },
+);

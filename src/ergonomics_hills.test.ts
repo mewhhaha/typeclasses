@@ -755,3 +755,236 @@ Deno.test("round-3 runtime hills preserve deep Effect fusion, fast Do semantics,
   assert_equals(found, 9);
   assert_equals(visited, 3);
 });
+
+Deno.test("round-4 runtime hills cover specialized traversals, dense collect, Task fast plans, merged Computation, and Writer ArrayT concat", async () => {
+  const { Identity, identity } = await import("./identity.ts");
+  const { collect, Traversable } = await import("./typeclasses.ts");
+  const { traverse_sequential } = await import("./traversal.ts");
+  const { Reader, ask } = await import("./reader.ts");
+  const { State, get, modify } = await import("./state.ts");
+  const { ParallelTask, sequential, Task, traverse_task } = await import(
+    "./task.ts"
+  );
+  const { tell, run_writer_terminal } = await import("./writer.ts");
+
+  // R1a: Specialized Maybe / Either / Identity Traversable.traverse preserves Applicative eager evaluation
+  let maybe_calls = 0;
+  const m_trav_ok = Traversable.traverse(
+    ArrayT([1, 2, 3, 4]),
+    Maybe,
+    (n) => {
+      maybe_calls += 1;
+      return Just(n * 10);
+    },
+  );
+  assert_equals(maybe_calls, 4);
+  const m_trav_raw = m_trav_ok.value();
+  assert_equals(m_trav_raw[0], "Just");
+  if (m_trav_raw[0] === "Just") {
+    assert_equals(m_trav_raw[1].value(), [10, 20, 30, 40]);
+  }
+  maybe_calls = 0;
+  const m_trav_none = Traversable.traverse(
+    ArrayT([1, 2, 3, 4]),
+    Maybe,
+    (n) => {
+      maybe_calls += 1;
+      return n === 2 ? Nothing<number>() : Just(n);
+    },
+  );
+  assert_equals(maybe_calls, 4);
+  assert_equals(m_trav_none.value(), ["Nothing"]);
+
+  let either_calls = 0;
+  const e_trav_err = Traversable.traverse(
+    ArrayT([1, 2, 3, 4]),
+    Either.with_left<string>(),
+    (n) => {
+      either_calls += 1;
+      return n >= 2
+        ? Left<string, number>(`err:${n}`)
+        : Right<string, number>(n);
+    },
+  );
+  assert_equals(either_calls, 4);
+  assert_equals(e_trav_err.value(), ["Left", "err:2"]);
+
+  const id_trav = Traversable.traverse(
+    ArrayT([2, 4, 6]),
+    Identity,
+    (n) => identity(n + 1),
+  );
+  assert_equals(id_trav.value().value(), [3, 5, 7]);
+
+  // R1a: traverse_sequential short-circuits immediately on first failure
+  let seq_calls = 0;
+  const seq_m = traverse_sequential([1, 2, 3, 4], Maybe, (n) => {
+    seq_calls += 1;
+    return n === 2 ? Nothing<number>() : Just(n * 2);
+  });
+  assert_equals(seq_calls, 2);
+  assert_equals(seq_m.value(), ["Nothing"]);
+
+  seq_calls = 0;
+  const seq_e = traverse_sequential(
+    [1, 2, 3, 4],
+    Either.with_left<string>(),
+    (n) => {
+      seq_calls += 1;
+      return n === 3
+        ? Left<string, number>("stop")
+        : Right<string, number>(n * 3);
+    },
+  );
+  assert_equals(seq_calls, 3);
+  assert_equals(seq_e.value(), ["Left", "stop"]);
+
+  const seq_id = traverse_sequential([1, 2, 3], Identity, (n) => identity(n));
+  assert_equals(seq_id.value(), [1, 2, 3]);
+
+  // R1b: Dense array & record collect preserve exact values, __proto__, symbols, and mixed-dict errors
+  const tup = collect([Just(1), Just("a"), Just(true)]);
+  assert_equals(tup.value(), ["Just", [1, "a", true]]);
+  assert_equals(collect(Maybe, []).value(), ["Just", []]);
+  const rec = collect(Either.with_left<string>(), {
+    a: Right<string, number>(1),
+    b: Right<string, string>("ok"),
+  });
+  assert_equals(rec.value(), ["Right", { a: 1, b: "ok" }]);
+  let mixed_err = false;
+  try {
+    collect(Maybe, [
+      Just(1),
+      Right(2) as unknown as ReturnType<typeof Just<number>>,
+    ]);
+  } catch (e) {
+    mixed_err = e instanceof TypeError;
+  }
+  assert_true(mixed_err, "collect must reject mixed dictionaries");
+
+  // R1c: Specialized Validation traversal & configured semigroup
+  const Errors = Validation.with_semigroup<readonly string[]>({
+    concat: (a, b) => [...a, ...b],
+  });
+  const v_ok = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    Errors,
+    (n) => Errors.Valid(n * 2),
+  );
+  const v_ok_raw = v_ok.value();
+  assert_equals(v_ok_raw[0], "valid");
+  if (v_ok_raw[0] === "valid") {
+    assert_equals(v_ok_raw[1].value(), [2, 4, 6]);
+  }
+  const v_err = Traversable.traverse(
+    ArrayT([1, 2, 3, 4]),
+    Errors,
+    (n) => n % 2 === 0 ? Errors.Invalid([`even:${n}`]) : Errors.Valid(n),
+  );
+  assert_equals(validation_to_either(v_err).value(), [
+    "Left",
+    ["even:2", "even:4"],
+  ]);
+  const v_lift_4 = Applicative.lift(
+    (a, b, c, d) => a + b + c + d,
+    Errors.Valid(1),
+    Errors.Invalid<number>(["e1"]),
+    Errors.Valid(3),
+    Errors.Invalid<number>(["e2"]),
+  );
+  assert_equals(validation_to_either(v_lift_4).value(), [
+    "Left",
+    ["e1", "e2"],
+  ]);
+
+  // R1e: Specialized Reader & State traversals (unkeyed and keyed cells)
+  const r_cell = reader<number>()("r4_reader");
+  const r_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    Reader.with_environment<number>(),
+    (n) => ask<number>().map((env) => env + n),
+  );
+  assert_equals(r_trav.run(10).value(), [11, 12, 13]);
+  const rc_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    r_cell,
+    (n) => r_cell.asks((env) => env * n),
+  );
+  assert_equals(rc_trav.run(5).value(), [5, 10, 15]);
+
+  const s_cell = state<number>()("r4_state");
+  const s_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    State.with_state<number>(),
+    (n) => modify((s: number) => s + n).bind(() => get<number>()),
+  );
+  const [s_res, s_final] = s_trav.run(0);
+  assert_equals([s_res.value(), s_final], [[1, 3, 6], 6]);
+  const sc_trav = Traversable.traverse(
+    ArrayT([10, 20]),
+    s_cell,
+    (n) => s_cell.modify((s) => s + n).bind(() => s_cell.get()),
+  );
+  const [sc_res, sc_final] = sc_trav.run(1);
+  assert_equals([sc_res.value(), sc_final], [[11, 31], 31]);
+
+  // R2: Task single-frame fast loop, deep stack-safe chain, and Task/ParallelTask traversals
+  const short_task = Task.pure(5).map((n) => n * 2).bind((n) =>
+    Task.pure(n + 3)
+  );
+  assert_equals(await run_task(short_task), 13);
+  assert_equals(await run_task(short_task), 13);
+
+  let deep_task = Task.pure(0);
+  for (let i = 0; i < 2000; i += 1) {
+    deep_task = deep_task.map((n) => n + 1);
+  }
+  assert_equals(await run_task(deep_task), 2000);
+  assert_equals(await run_task(deep_task), 2000);
+
+  const t_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    Task,
+    (n) => from_fn(() => n * 4),
+  );
+  assert_equals((await run_task(t_trav)).value(), [4, 8, 12]);
+  const pt_trav = Traversable.traverse(
+    ArrayT([1, 2, 3]),
+    ParallelTask,
+    (n) => ParallelTask.pure(n * 5),
+  );
+  assert_equals((await run_task(sequential(pt_trav))).value(), [5, 10, 15]);
+  assert_equals(
+    await run_task(traverse_task([2, 4, 6], 2, (n) => from_fn(() => n + 1))),
+    [3, 5, 7],
+  );
+
+  // R3: Merged Computation plans (single-step + deep reuse for State & Reader)
+  let deep_state = get<number>();
+  for (let i = 0; i < 2000; i += 1) {
+    deep_state = deep_state.bind((n) =>
+      State((_s: number) => [n + 1, n + 1] as const)
+    );
+  }
+  assert_equals(deep_state.run(0), [2000, 2000]);
+  assert_equals(deep_state.run(5), [2005, 2005]);
+
+  let deep_reader = ask<number>();
+  for (let i = 0; i < 2000; i += 1) {
+    deep_reader = deep_reader.map((n) => n + 1);
+  }
+  assert_equals(deep_reader.run(10), 2010);
+  assert_equals(deep_reader.run(20), 2020);
+
+  // R4: Writer single-element and multi-element ArrayT tell
+  const [w_res, w_log] = run_writer_terminal(
+    Program(function* () {
+      yield* tell(ArrayT([1]));
+      yield* tell(ArrayT([2, 3]));
+      yield* tell(ArrayT([4]));
+      return "done";
+    }),
+    ArrayT<number>([]),
+  );
+  assert_equals([w_res, w_log.value()], ["done", [1, 2, 3, 4]]);
+});

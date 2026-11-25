@@ -15,6 +15,7 @@ import {
 import { type Either, Left, Right } from "./either.ts";
 import { same_context } from "./internal.ts";
 import { inspect } from "./inspect.ts";
+import { register_traversal } from "./traversal.ts";
 import {
   Applicative,
   applicative_lift_method,
@@ -257,6 +258,10 @@ function validation_with_semigroup<error>(
       },
     },
   });
+  register_traversal(
+    dictionary as unknown as AsValidation<unknown>,
+    traverse_validation,
+  );
 
   return dictionary;
 }
@@ -354,86 +359,6 @@ function construct_invalid<error, item = never>(
   ]);
 }
 
-function invalid_from_error<error, item = never>(
-  error: error,
-  semigroup: ValidationSemigroup<error>,
-): Validation<error, item> {
-  return Invalid(error, semigroup);
-}
-
-function lift_validation_valid<result>(
-  fn: (...values: unknown[]) => result,
-  first: unknown,
-  rest: readonly Validation<unknown, unknown>[],
-): Validation<unknown, result> {
-  switch (rest.length) {
-    case 0:
-      return Valid(fn(first));
-    case 1: {
-      const [tag, payload, semigroup] = rest[0].value();
-
-      switch (tag) {
-        case "invalid":
-          return invalid_from_error(payload, semigroup);
-        case "valid":
-          return Valid(fn(first, payload));
-      }
-    }
-  }
-
-  const values = [first];
-  let error: unknown;
-  let semigroup: ValidationSemigroup<unknown> | undefined;
-
-  for (const current of rest) {
-    const [tag, payload, current_semigroup] = current.value();
-
-    switch (tag) {
-      case "invalid":
-        if (semigroup === undefined) {
-          semigroup = current_semigroup;
-          error = payload;
-        } else {
-          assert_same_semigroup(semigroup, current_semigroup);
-          error = semigroup.concat(error, payload);
-        }
-        break;
-      case "valid":
-        values.push(payload);
-        break;
-    }
-  }
-
-  if (semigroup !== undefined) {
-    return invalid_from_error(error, semigroup);
-  }
-
-  return Valid(fn(...values));
-}
-
-function lift_validation_invalid<result>(
-  first: unknown,
-  semigroup: ValidationSemigroup<unknown>,
-  rest: readonly Validation<unknown, unknown>[],
-): Validation<unknown, result> {
-  let error = first;
-
-  for (const current of rest) {
-    const [tag, payload, current_semigroup] = current.value();
-
-    switch (tag) {
-      case "invalid":
-        assert_same_semigroup(semigroup, current_semigroup);
-        error = semigroup.concat(error, payload);
-        break;
-      case "valid":
-        break;
-    }
-  }
-
-  return invalid_from_error(error, semigroup);
-}
-
 function array_semigroup<item>(): ValidationSemigroup<readonly item[]> {
   return array_validation_semigroup as ValidationSemigroup<readonly item[]>;
 }
@@ -502,6 +427,33 @@ function compare_errors(left: unknown, right: unknown) {
   }
 
   return compare_unknown(left, right);
+}
+
+function traverse_validation<from, to, result>(
+  items: Iterable<from>,
+  fn: (item: from) => Data<AsValidation<unknown>, to>,
+  build: (items: Iterable<to>) => result,
+): Data<AsValidation<unknown>, result> {
+  let semigroup: ValidationSemigroup<unknown> | undefined;
+  let error: unknown;
+  const values: to[] = [];
+  for (const item of items) {
+    const [tag, payload, current_semigroup] = fn(item).value();
+    if (tag === "invalid") {
+      if (semigroup === undefined) {
+        semigroup = current_semigroup;
+        error = payload;
+      } else {
+        assert_same_semigroup(semigroup, current_semigroup);
+        error = semigroup.concat(error, payload);
+      }
+    } else if (semigroup === undefined) {
+      values.push(payload);
+    }
+  }
+  return (semigroup !== undefined
+    ? Invalid(error, semigroup)
+    : Valid(build(values))) as Data<AsValidation<unknown>, result>;
 }
 
 function create_validation(): ValidationConstructor {
@@ -599,15 +551,31 @@ function create_validation(): ValidationConstructor {
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
     [applicative_lift_method](fn, rest) {
-      const validation = this.value();
-      const [tag, payload, semigroup] = validation;
-
-      switch (tag) {
-        case "invalid":
-          return lift_validation_invalid(payload, semigroup, rest);
-        case "valid":
-          return lift_validation_valid(fn, payload, rest);
+      if (rest.length === 0) {
+        const [tag, payload] = this.value();
+        return (tag === "invalid" ? this : Valid(fn(payload))) as Validation<
+          unknown,
+          ReturnType<typeof fn>
+        >;
       }
+      if (rest.length === 1) {
+        const left = this.value();
+        const right = rest[0].value();
+        if (left[0] === "valid") {
+          return (right[0] === "valid"
+            ? Valid(fn(left[1], right[1]))
+            : rest[0]) as Validation<unknown, ReturnType<typeof fn>>;
+        }
+        if (right[0] === "invalid") {
+          return Invalid(concat_errors(left, right), left[2]);
+        }
+        return this as Validation<unknown, ReturnType<typeof fn>>;
+      }
+      return traverse_validation(
+        [this, ...rest],
+        (current) => current,
+        (values) => fn(...(values as unknown[])),
+      );
     },
 
     ap(value) {
@@ -620,16 +588,16 @@ function create_validation(): ValidationConstructor {
       switch (fn_tag) {
         case "invalid":
           if (validation_tag === "invalid") {
-            return invalid_from_error(
+            return Invalid(
               concat_errors(fn, validation),
               fn_semigroup,
             );
           }
 
-          return invalid_from_error(fn_payload, fn_semigroup);
+          return Invalid(fn_payload, fn_semigroup);
         case "valid":
           if (validation_tag === "invalid") {
-            return invalid_from_error(
+            return Invalid(
               validation_payload,
               validation_semigroup,
             );
@@ -661,7 +629,7 @@ function create_validation(): ValidationConstructor {
         case "invalid":
           return Applicative.pure(
             applicative,
-            invalid_from_error(
+            Invalid(
               payload,
               semigroup,
             ),
@@ -672,5 +640,6 @@ function create_validation(): ValidationConstructor {
     },
   });
 
+  register_traversal(Validation, traverse_validation);
   return Validation;
 }
