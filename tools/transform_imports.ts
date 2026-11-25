@@ -1051,61 +1051,10 @@ export function create_import_shadow_tracker(
   const check_effect =
     (headers.program_names.size > 0 || headers.namespaces.size > 0) &&
     source.includes("Effect");
-  const candidates = new Set<string>([
-    ...headers.do_names,
-    ...headers.program_names,
-    ...headers.effect_names,
-    ...headers.namespaces,
-    ...headers.terminal_functions.keys(),
-    ...headers.terminal_namespaces.keys(),
-    ...headers.primitive_functions.keys(),
-    ...headers.primitive_namespaces.keys(),
-    ...headers.except_primitives.keys(),
-    ...headers.except_namespaces.keys(),
-    ...headers.state_eval_functions.keys(),
-    ...headers.state_eval_namespaces.keys(),
-    ...headers.operation_runners.keys(),
-    ...headers.operation_runner_namespaces.keys(),
-    ...headers.operation_helpers.keys(),
-    ...headers.cell_factories.keys(),
-    ...headers.cell_namespaces.keys(),
-    ...headers.cell_runners.keys(),
-    ...headers.cell_runner_namespaces.keys(),
-    ...headers.cell_providers.keys(),
-    ...headers.cell_provider_namespaces.keys(),
-    ...headers.direct_maybe_dictionaries,
-    ...headers.just_constructors,
-    ...headers.nothing_constructors,
-    ...headers.direct_either_dictionaries,
-    ...headers.left_constructors,
-    ...headers.right_constructors,
-    ...headers.direct_identity_dictionaries,
-    ...headers.identity_constructors,
-    ...headers.array_constructors,
-    ...headers.list_constructors,
-    ...headers.nil_constructors,
-    ...headers.cons_constructors,
-    ...headers.direct_reader_dictionaries,
-    ...headers.direct_state_dictionaries,
-    ...headers.task_from_fn_functions,
-    ...headers.task_succeed_functions,
-    ...headers.task_run_functions,
-    ...headers.task_namespaces,
-    ...headers.traversable_objects,
-    ...headers.traversable_namespaces,
-    ...headers.traverse_sequential_functions,
-    ...headers.traverse_sequential_namespaces,
-    ...headers.match_functions,
-    ...headers.match_namespaces,
-    ...headers.validation_constructors,
-    ...headers.collect_functions,
-    ...headers.collect_namespaces,
-    ...headers.applicative_objects,
-    ...headers.applicative_namespaces,
-    ...headers.iterable_locals,
-    ...headers.loop_dictionaries,
-    ...scope_declarations.keys(),
-  ]);
+  const candidates = new Set<string>(headers.import_declarations.keys());
+  if (scope_declarations.size > 0) {
+    for (const name of scope_declarations.keys()) candidates.add(name);
+  }
   if (check_effect) candidates.add("Effect");
   const counts = new Map<string, number>();
   const tdz_violated = new Set<string>();

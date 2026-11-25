@@ -146,6 +146,128 @@ function is_trivial_pure(expression: Expression): boolean {
       val.argument.type === "Literal");
 }
 
+function negate_expr(expression: Expression): Expression {
+  const val = parentheses(expression);
+  if (val.type === "UnaryExpression" && val.operator === "!" && val.prefix) {
+    return val.argument;
+  }
+  return node({
+    type: "UnaryExpression",
+    operator: "!",
+    prefix: true,
+    argument: expression,
+  });
+}
+
+export function await_if_thenable_expr(
+  raw_id: IdentifierReference,
+): Expression {
+  const typeof_raw: Expression = node({
+    type: "UnaryExpression",
+    operator: "typeof",
+    prefix: true,
+    argument: raw_id,
+  });
+  const is_obj_non_null: Expression = node({
+    type: "LogicalExpression",
+    operator: "&&",
+    left: node({
+      type: "BinaryExpression",
+      operator: "===",
+      left: typeof_raw,
+      right: literal("object"),
+    }),
+    right: node({
+      type: "BinaryExpression",
+      operator: "!==",
+      left: raw_id,
+      right: literal(null),
+    }),
+  });
+  const is_obj_or_fn: Expression = node({
+    type: "LogicalExpression",
+    operator: "||",
+    left: is_obj_non_null,
+    right: node({
+      type: "BinaryExpression",
+      operator: "===",
+      left: typeof_raw,
+      right: literal("function"),
+    }),
+  });
+  const then_type: TSType = node({
+    type: "TSTypeLiteral",
+    members: Array.from([
+      node({
+        type: "TSPropertySignature",
+        key: id("then"),
+        computed: false,
+        optional: true,
+        readonly: true,
+        accessibility: null,
+        static: false,
+        typeAnnotation: node({
+          type: "TSTypeAnnotation",
+          typeAnnotation: node({ type: "TSUnknownKeyword" }),
+        }),
+      }),
+    ]),
+  });
+  const cast_thenable: Expression = node({
+    type: "TSAsExpression",
+    expression: node({
+      type: "TSAsExpression",
+      expression: raw_id,
+      typeAnnotation: node({ type: "TSUnknownKeyword" }),
+    }),
+    typeAnnotation: then_type,
+  });
+  const has_then_fn: Expression = node({
+    type: "BinaryExpression",
+    operator: "===",
+    left: node({
+      type: "UnaryExpression",
+      operator: "typeof",
+      prefix: true,
+      argument: member(cast_thenable, "then"),
+    }),
+    right: literal("function"),
+  });
+  const awaited_type: TSType = node({
+    type: "TSTypeReference",
+    typeName: id("Awaited"),
+    typeArguments: node({
+      type: "TSTypeParameterInstantiation",
+      params: Array.from<TSType>([
+        node({
+          type: "TSTypeQuery",
+          exprName: raw_id,
+          typeArguments: null,
+        }),
+      ]),
+    }),
+  });
+  return node({
+    type: "ConditionalExpression",
+    test: node({
+      type: "LogicalExpression",
+      operator: "&&",
+      left: is_obj_or_fn,
+      right: has_then_fn,
+    }),
+    consequent: node({ type: "AwaitExpression", argument: raw_id }),
+    alternate: node({
+      type: "TSAsExpression",
+      expression: node({
+        type: "TSAsExpression",
+        expression: raw_id,
+        typeAnnotation: node({ type: "TSUnknownKeyword" }),
+      }),
+      typeAnnotation: awaited_type,
+    }),
+  });
+}
+
 function void_zero(): Expression {
   return node({
     type: "UnaryExpression",
@@ -618,6 +740,11 @@ export function create_round5_fusions(services: TransformServices) {
           ) {
             const inner = cb.body as Expression;
             if (!cb.async && is_sync_non_thenable(inner)) return inner;
+            if (!cb.async) {
+              const raw_id = services.fresh("task_raw");
+              target_stmts.push(variable(raw_id, inner, "const"));
+              return await_if_thenable_expr(raw_id);
+            }
             return node({ type: "AwaitExpression", argument: inner });
           }
           if (
@@ -1183,23 +1310,34 @@ export function create_round5_fusions(services: TransformServices) {
   }
 
   type ElidedBranch =
-    | { readonly kind: "ok"; readonly expr: Expression }
+    | {
+      readonly kind: "ok";
+      readonly expr: Expression;
+      readonly ok_type?: TSType;
+    }
     | {
       readonly kind: "cond";
       readonly test: Expression;
       readonly ok_expr: Expression;
+      readonly ok_type?: TSType;
       readonly err_expr?: Expression;
+      readonly err_type?: TSType;
     };
 
   function match_ctor_call(
     expr: Expression,
     mode: "maybe" | "either" | "identity",
-  ): { readonly ok: boolean; readonly arg?: Expression } | undefined {
+  ):
+    | {
+      readonly ok: boolean;
+      readonly arg?: Expression;
+      readonly ok_type?: TSType;
+      readonly err_type?: TSType;
+    }
+    | undefined {
     const val = parentheses(expr);
-    if (
-      val.type !== "CallExpression" || val.optional ||
-      val.typeArguments != null
-    ) return undefined;
+    if (val.type !== "CallExpression" || val.optional) return undefined;
+    const tparams = val.typeArguments?.params;
     const callee = parentheses(val.callee);
     if (callee.type === "Identifier" && services.bindings.imported(callee)) {
       const name = callee.name;
@@ -1208,7 +1346,13 @@ export function create_round5_fusions(services: TransformServices) {
           services.imports.just_constructors?.has(name) &&
           val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
         if (
           services.imports.nothing_constructors?.has(name) &&
           val.arguments.length === 0
@@ -1218,18 +1362,38 @@ export function create_round5_fusions(services: TransformServices) {
           services.imports.right_constructors?.has(name) &&
           val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams !== undefined
+              ? (tparams.length >= 2 ? tparams[1] : tparams[0])
+              : undefined,
+          };
+        }
         if (
           services.imports.left_constructors?.has(name) &&
           val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: false, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: false,
+            arg: val.arguments[0] as Expression,
+            err_type: tparams?.[0],
+          };
+        }
       } else {
         if (
           services.imports.identity_constructors?.has(name) &&
           val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
       }
     } else if (
       callee.type === "MemberExpression" && !callee.computed &&
@@ -1245,7 +1409,13 @@ export function create_round5_fusions(services: TransformServices) {
         if (
           (prop === "Just" || prop === "pure") && val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
         if (
           (prop === "Nothing" || prop === "empty") && val.arguments.length === 0
         ) {
@@ -1258,11 +1428,25 @@ export function create_round5_fusions(services: TransformServices) {
         if (
           (prop === "Right" || prop === "pure") && val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams !== undefined
+              ? (tparams.length >= 2 ? tparams[1] : tparams[0])
+              : undefined,
+          };
+        }
         if (
           prop === "Left" && val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: false, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: false,
+            arg: val.arguments[0] as Expression,
+            err_type: tparams?.[0],
+          };
+        }
       } else if (
         mode === "identity" &&
         services.imports.direct_identity_dictionaries?.has(obj)
@@ -1270,7 +1454,13 @@ export function create_round5_fusions(services: TransformServices) {
         if (
           prop === "pure" && val.arguments.length === 1 &&
           val.arguments[0].type !== "SpreadElement"
-        ) return { ok: true, arg: val.arguments[0] as Expression };
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
       }
     }
     return undefined;
@@ -1282,7 +1472,7 @@ export function create_round5_fusions(services: TransformServices) {
   ): ElidedBranch | undefined {
     const direct = match_ctor_call(expr, mode);
     if (direct !== undefined && direct.ok && direct.arg !== undefined) {
-      return { kind: "ok", expr: direct.arg };
+      return { kind: "ok", expr: direct.arg, ok_type: direct.ok_type };
     }
     const val = parentheses(expr);
     if (mode !== "identity" && val.type === "ConditionalExpression") {
@@ -1294,19 +1484,18 @@ export function create_round5_fusions(services: TransformServices) {
             kind: "cond",
             test: val.test,
             ok_expr: cons.arg!,
+            ok_type: cons.ok_type,
             err_expr: alt.arg,
+            err_type: alt.err_type,
           };
         }
         return {
           kind: "cond",
-          test: node({
-            type: "UnaryExpression",
-            operator: "!",
-            prefix: true,
-            argument: val.test,
-          }),
+          test: negate_expr(val.test),
           ok_expr: alt.arg!,
+          ok_type: alt.ok_type,
           err_expr: cons.arg,
+          err_type: cons.err_type,
         };
       }
     }
@@ -2625,9 +2814,20 @@ export function create_round5_fusions(services: TransformServices) {
   // =========================================================================
   type ChainMode = "maybe" | "either";
   type ChainRoot =
-    | { readonly kind: "just"; readonly value: Expression }
-    | { readonly kind: "right"; readonly value: Expression }
-    | { readonly kind: "from_nullable"; readonly value: Expression }
+    | {
+      readonly kind: "just";
+      readonly value: Expression;
+      readonly value_type?: TSType;
+    }
+    | {
+      readonly kind: "right";
+      readonly value: Expression;
+      readonly value_type?: TSType;
+    }
+    | {
+      readonly kind: "from_nullable";
+      readonly value: Expression;
+    }
     | { readonly kind: "wrapped"; readonly expr: Expression };
   type ChainStage = {
     readonly kind: "map" | "bind";
@@ -2657,12 +2857,13 @@ export function create_round5_fusions(services: TransformServices) {
     ) return undefined;
     if (
       val.type === "CallExpression" && !val.optional &&
-      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments.length === 1 &&
       val.arguments[0].type !== "SpreadElement"
     ) {
       const arg = val.arguments[0] as Expression;
       const callee = parentheses(val.callee);
       if (
+        val.typeArguments == null &&
         expected !== "either" &&
         is_imported_from_set(callee, services.imports.from_nullable_functions)
       ) {
@@ -2671,13 +2872,19 @@ export function create_round5_fusions(services: TransformServices) {
       if (expected !== "either") {
         const mc = match_ctor_call(val, "maybe");
         if (mc !== undefined && mc.ok && mc.arg !== undefined) {
-          return { mode: "maybe", root: { kind: "just", value: mc.arg } };
+          return {
+            mode: "maybe",
+            root: { kind: "just", value: mc.arg, value_type: mc.ok_type },
+          };
         }
       }
       if (expected !== "maybe") {
         const ec = match_ctor_call(val, "either");
         if (ec !== undefined && ec.ok && ec.arg !== undefined) {
-          return { mode: "either", root: { kind: "right", value: ec.arg } };
+          return {
+            mode: "either",
+            root: { kind: "right", value: ec.arg, value_type: ec.ok_type },
+          };
         }
       }
     }
@@ -2924,7 +3131,7 @@ export function create_round5_fusions(services: TransformServices) {
     switch (root.kind) {
       case "just":
       case "right":
-        stmts.push(variable(current_var, root.value, "const"));
+        stmts.push(variable(current_var, root.value, "const", root.value_type));
         break;
       case "from_nullable": {
         const null_id = services.fresh("ch_null");
@@ -2999,23 +3206,30 @@ export function create_round5_fusions(services: TransformServices) {
       const elided = match_elided_body(inlined, mode);
       if (elided !== undefined) {
         if (elided.kind === "ok") {
-          stmts.push(variable(next_var, elided.expr, "const"));
+          stmts.push(
+            variable(next_var, elided.expr, "const", elided.ok_type),
+          );
           current_var = next_var;
           continue;
         }
+        const fail_consequent: Statement =
+          elided.err_type !== undefined && elided.err_expr !== undefined
+            ? (() => {
+              const err_var = services.fresh("ch_err");
+              return block([
+                variable(err_var, elided.err_expr, "const", elided.err_type),
+                fail_return(err_var),
+              ]);
+            })()
+            : fail_return(elided.err_expr);
         stmts.push(
           node({
             type: "IfStatement",
-            test: node({
-              type: "UnaryExpression",
-              operator: "!",
-              prefix: true,
-              argument: elided.test,
-            }),
-            consequent: fail_return(elided.err_expr),
+            test: negate_expr(elided.test),
+            consequent: fail_consequent,
             alternate: null,
           }),
-          variable(next_var, elided.ok_expr, "const"),
+          variable(next_var, elided.ok_expr, "const", elided.ok_type),
         );
         current_var = next_var;
         continue;

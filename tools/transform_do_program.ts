@@ -27,7 +27,10 @@ import {
   scan_scope_declarations,
 } from "./transform_imports.ts";
 import { lower_generator } from "./transform_generator.ts";
-import { create_terminal_transform } from "./transform_terminals.ts";
+import {
+  create_terminal_transform,
+  type Round5TokenHints,
+} from "./transform_terminals.ts";
 import {
   create_iterable_map_fusion,
   might_contain_iterable_maps,
@@ -91,6 +94,31 @@ function parse_source(
   });
 }
 
+const r5_syntax_re =
+  /\.\s*(?:map|bind|fold)\s*\(|\bmatch\b|traverse|\bFoldable\b/g;
+
+function push_set(target: string[], set: ReadonlySet<string>): void {
+  if (set.size === 0) return;
+  for (const item of set) target.push(item);
+}
+
+function push_keys(target: string[], map: ReadonlyMap<string, unknown>): void {
+  if (map.size === 0) return;
+  for (const key of map.keys()) target.push(key);
+}
+
+function has_any_token(
+  source: string,
+  from: number,
+  set: ReadonlySet<string>,
+): boolean {
+  if (set.size === 0) return false;
+  for (const name of set) {
+    if (source.indexOf(name, from) >= 0) return true;
+  }
+  return false;
+}
+
 /** Lower supported generators, effect runners, and lazy iterable map chains. */
 export function transform_do_program_source(
   source: string,
@@ -139,6 +167,7 @@ function transform_do_program_checked(
 
   let skipped_statements = false;
   let skip_statement: ((statement: Statement) => boolean) | undefined;
+  let r5_hints: Round5TokenHints | undefined;
   if (!has_unicode && headers.leading_imports_end >= 0) {
     const scan_from = headers.leading_imports_end;
     const has_effect_interp = headers.effect_names.size > 0 ||
@@ -175,36 +204,33 @@ function transform_do_program_checked(
       headers.direct_maybe_dictionaries.size > 0 ||
       headers.direct_either_dictionaries.size > 0 ||
       headers.tagged_type_names.size > 0;
-    const target_tokens: string[] = [
-      "Do",
-      "Program",
-      ...headers.do_names,
-      ...headers.program_names,
-      ...headers.namespaces,
-      ...headers.terminal_functions.keys(),
-      ...headers.terminal_namespaces.keys(),
-      ...headers.cell_runners.keys(),
-      ...headers.cell_runner_namespaces.keys(),
-      ...headers.operation_runners.keys(),
-      ...headers.operation_runner_namespaces.keys(),
-      ...headers.state_eval_functions.keys(),
-      ...headers.state_eval_namespaces.keys(),
-      ...headers.task_run_functions,
-      ...headers.task_namespaces,
-      ...headers.collect_functions,
-      ...headers.collect_namespaces,
-      ...headers.applicative_objects,
-      ...headers.applicative_namespaces,
-      ...headers.traversable_objects,
-      ...headers.traversable_namespaces,
-      ...headers.traverse_sequential_functions,
-      ...headers.traverse_sequential_namespaces,
-      ...headers.match_functions,
-      ...headers.match_namespaces,
-      ...headers.from_maybe_functions,
-      ...headers.to_nullable_functions,
-      ...headers.array_to_array_functions,
-    ];
+    const target_tokens: string[] = ["Do", "Program"];
+    push_set(target_tokens, headers.do_names);
+    push_set(target_tokens, headers.program_names);
+    push_set(target_tokens, headers.namespaces);
+    push_keys(target_tokens, headers.terminal_functions);
+    push_keys(target_tokens, headers.terminal_namespaces);
+    push_keys(target_tokens, headers.cell_runners);
+    push_keys(target_tokens, headers.cell_runner_namespaces);
+    push_keys(target_tokens, headers.operation_runners);
+    push_keys(target_tokens, headers.operation_runner_namespaces);
+    push_keys(target_tokens, headers.state_eval_functions);
+    push_keys(target_tokens, headers.state_eval_namespaces);
+    push_set(target_tokens, headers.task_run_functions);
+    push_set(target_tokens, headers.task_namespaces);
+    push_set(target_tokens, headers.collect_functions);
+    push_set(target_tokens, headers.collect_namespaces);
+    push_set(target_tokens, headers.applicative_objects);
+    push_set(target_tokens, headers.applicative_namespaces);
+    push_set(target_tokens, headers.traversable_objects);
+    push_set(target_tokens, headers.traversable_namespaces);
+    push_set(target_tokens, headers.traverse_sequential_functions);
+    push_set(target_tokens, headers.traverse_sequential_namespaces);
+    push_set(target_tokens, headers.match_functions);
+    push_set(target_tokens, headers.match_namespaces);
+    push_set(target_tokens, headers.from_maybe_functions);
+    push_set(target_tokens, headers.to_nullable_functions);
+    push_set(target_tokens, headers.array_to_array_functions);
     if (has_effect_interp) {
       target_tokens.push("run", "handle_with", "value");
     } else if (
@@ -218,23 +244,54 @@ function transform_do_program_checked(
     }
     if (has_collect) target_tokens.push("collect");
     if (has_lift) target_tokens.push("lift");
-    if (has_traverse && source.indexOf("traverse", scan_from) >= 0) {
-      target_tokens.push("traverse");
+    let has_r5_syntax = false;
+    if (
+      has_traverse || has_match || has_maybe_either_chain || has_array_chain
+    ) {
+      r5_syntax_re.lastIndex = scan_from;
+      has_r5_syntax = r5_syntax_re.test(source);
     }
-    if (has_match && source.indexOf("match", scan_from) >= 0) {
-      target_tokens.push(".match", "match(");
-    }
-    if (has_maybe_either_chain) {
-      if (source.indexOf(".map", scan_from) >= 0) target_tokens.push(".map");
-      if (source.indexOf(".bind", scan_from) >= 0) target_tokens.push(".bind");
-    }
-    if (has_array_chain) {
-      if (source.indexOf(".map", scan_from) >= 0) target_tokens.push(".map");
-      if (source.indexOf(".fold", scan_from) >= 0) target_tokens.push(".fold");
-      if (source.indexOf("Foldable", scan_from) >= 0) {
-        target_tokens.push("Foldable");
-      }
-    }
+    const hint_traverse = has_traverse && (
+      (has_r5_syntax && source.indexOf("traverse", scan_from) >= 0) ||
+      has_any_token(source, scan_from, headers.traverse_sequential_functions) ||
+      has_any_token(source, scan_from, headers.traversable_objects)
+    );
+    const hint_match = has_match && (
+      (has_r5_syntax && source.indexOf("match", scan_from) >= 0) ||
+      has_any_token(source, scan_from, headers.match_functions)
+    );
+    const has_dot_map = has_r5_syntax &&
+      (has_maybe_either_chain || has_array_chain) &&
+      source.indexOf(".map", scan_from) >= 0;
+    const has_dot_bind = has_r5_syntax && has_maybe_either_chain &&
+      source.indexOf(".bind", scan_from) >= 0;
+    const has_dot_fold = has_r5_syntax && has_array_chain &&
+      source.indexOf(".fold", scan_from) >= 0;
+    const has_foldable_tok = has_array_chain && (
+      (has_r5_syntax && source.indexOf("Foldable", scan_from) >= 0) ||
+      has_any_token(source, scan_from, headers.foldable_objects)
+    );
+    const hint_chain = has_maybe_either_chain && (
+      has_dot_map || has_dot_bind ||
+      headers.from_maybe_functions.size > 0 ||
+      headers.to_nullable_functions.size > 0
+    );
+    const hint_array = has_array_chain && (
+      has_dot_map || has_dot_fold || has_foldable_tok ||
+      headers.array_to_array_functions.size > 0
+    );
+    r5_hints = {
+      traverse: hint_traverse,
+      match: hint_match,
+      chain: hint_chain,
+      array: hint_array,
+    };
+    if (hint_traverse) target_tokens.push("traverse");
+    if (hint_match) target_tokens.push(".match", "match(");
+    if (has_dot_map) target_tokens.push(".map");
+    if (has_dot_bind) target_tokens.push(".bind");
+    if (has_dot_fold) target_tokens.push(".fold");
+    if (has_foldable_tok) target_tokens.push("Foldable");
     if (has_iterable) {
       target_tokens.push(
         "IterableT",
@@ -254,8 +311,8 @@ function transform_do_program_checked(
         ".map",
         ".fold",
         "fold_while",
-        ...headers.iterable_locals,
       );
+      push_set(target_tokens, headers.iterable_locals);
     }
     let has_target_token = false;
     for (let index = 0; index < target_tokens.length; index += 1) {
@@ -271,40 +328,37 @@ function transform_do_program_checked(
       !config.explain &&
       config.optimizations?.candidate_scan !== false
     ) {
-      const relevant_tokens: string[] = [
-        ...target_tokens,
-        "Effect",
-        ...headers.effect_names,
-        ...headers.primitive_functions.keys(),
-        ...headers.primitive_namespaces.keys(),
-        ...headers.except_primitives.keys(),
-        ...headers.except_namespaces.keys(),
-        ...headers.operation_helpers.keys(),
-        ...headers.cell_factories.keys(),
-        ...headers.cell_namespaces.keys(),
-        ...headers.cell_providers.keys(),
-        ...headers.cell_provider_namespaces.keys(),
-        ...headers.loop_dictionaries,
-        ...headers.direct_maybe_dictionaries,
-        ...headers.just_constructors,
-        ...headers.nothing_constructors,
-        ...headers.direct_either_dictionaries,
-        ...headers.left_constructors,
-        ...headers.right_constructors,
-        ...headers.direct_identity_dictionaries,
-        ...headers.identity_constructors,
-        ...headers.array_constructors,
-        ...headers.list_constructors,
-        ...headers.nil_constructors,
-        ...headers.cons_constructors,
-        ...headers.direct_reader_dictionaries,
-        ...headers.direct_state_dictionaries,
-        ...headers.task_from_fn_functions,
-        ...headers.task_succeed_functions,
-        ...headers.validation_constructors,
-        ...headers.iterable_locals,
-        ...scope_declarations.keys(),
-      ];
+      const relevant_tokens: string[] = [...target_tokens, "Effect"];
+      push_set(relevant_tokens, headers.effect_names);
+      push_keys(relevant_tokens, headers.primitive_functions);
+      push_keys(relevant_tokens, headers.primitive_namespaces);
+      push_keys(relevant_tokens, headers.except_primitives);
+      push_keys(relevant_tokens, headers.except_namespaces);
+      push_keys(relevant_tokens, headers.operation_helpers);
+      push_keys(relevant_tokens, headers.cell_factories);
+      push_keys(relevant_tokens, headers.cell_namespaces);
+      push_keys(relevant_tokens, headers.cell_providers);
+      push_keys(relevant_tokens, headers.cell_provider_namespaces);
+      push_set(relevant_tokens, headers.loop_dictionaries);
+      push_set(relevant_tokens, headers.direct_maybe_dictionaries);
+      push_set(relevant_tokens, headers.just_constructors);
+      push_set(relevant_tokens, headers.nothing_constructors);
+      push_set(relevant_tokens, headers.direct_either_dictionaries);
+      push_set(relevant_tokens, headers.left_constructors);
+      push_set(relevant_tokens, headers.right_constructors);
+      push_set(relevant_tokens, headers.direct_identity_dictionaries);
+      push_set(relevant_tokens, headers.identity_constructors);
+      push_set(relevant_tokens, headers.array_constructors);
+      push_set(relevant_tokens, headers.list_constructors);
+      push_set(relevant_tokens, headers.nil_constructors);
+      push_set(relevant_tokens, headers.cons_constructors);
+      push_set(relevant_tokens, headers.direct_reader_dictionaries);
+      push_set(relevant_tokens, headers.direct_state_dictionaries);
+      push_set(relevant_tokens, headers.task_from_fn_functions);
+      push_set(relevant_tokens, headers.task_succeed_functions);
+      push_set(relevant_tokens, headers.validation_constructors);
+      push_set(relevant_tokens, headers.iterable_locals);
+      push_keys(relevant_tokens, scope_declarations);
       const has_relevant = create_span_scanner(
         source,
         relevant_tokens,
@@ -602,7 +656,11 @@ function transform_do_program_checked(
       return lower_generator(current, services);
     },
   };
-  const terminals = create_terminal_transform(services, skip_statement);
+  const terminals = create_terminal_transform(
+    services,
+    skip_statement,
+    r5_hints,
+  );
   let iterable: ReturnType<typeof create_iterable_map_fusion> | undefined;
   if (has_iterable) {
     iterable = create_iterable_map_fusion(

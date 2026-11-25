@@ -38,7 +38,10 @@ import type {
   TransformServices,
 } from "./transform_context.ts";
 import { create_span_scanner } from "./transform_imports.ts";
-import { create_round5_fusions } from "./transform_fusions.ts";
+import {
+  await_if_thenable_expr,
+  create_round5_fusions,
+} from "./transform_fusions.ts";
 
 type TerminalKind = "reader" | "state" | "writer";
 type Target = {
@@ -181,71 +184,131 @@ type NamedProgramCandidate = {
   readonly name: Node;
 };
 
+export type Round5TokenHints = {
+  readonly traverse: boolean;
+  readonly match: boolean;
+  readonly chain: boolean;
+  readonly array: boolean;
+};
+
 /** Terminal dispatch, primitive fusion, multi-cell fusion, and static Effect interpreter lowering. */
 export function create_terminal_transform(
   services: TransformServices,
   skip_statement?: (statement: Statement) => boolean,
+  r5_hints?: Round5TokenHints,
 ) {
-  const removed = new Set<Node>();
-  const hoisted_statements = new Map<Node, Statement[]>();
+  const imp = services.imports;
   const has_r5_task = services.task_dictionaries.size > 0 ||
-    (services.imports.task_run_functions?.size ?? 0) > 0 ||
-    (services.imports.task_namespaces?.size ?? 0) > 0 ||
-    services.imports.namespaces.size > 0;
-  const has_r5_traverse = services.source.includes("traverse") && (
-    (services.imports.traversable_objects?.size ?? 0) > 0 ||
-    (services.imports.traversable_namespaces?.size ?? 0) > 0 ||
-    (services.imports.traverse_sequential_functions?.size ?? 0) > 0 ||
-    (services.imports.traverse_sequential_namespaces?.size ?? 0) > 0 ||
-    (services.imports.array_constructors?.size ?? 0) > 0
-  );
-  const has_r5_match = services.source.includes("match") && (
-    (services.imports.match_functions?.size ?? 0) > 0 ||
-    (services.imports.match_namespaces?.size ?? 0) > 0 ||
-    (services.imports.tagged_type_names?.size ?? 0) > 0 ||
-    (services.imports.just_constructors?.size ?? 0) > 0 ||
-    (services.imports.nothing_constructors?.size ?? 0) > 0 ||
-    (services.imports.left_constructors?.size ?? 0) > 0 ||
-    (services.imports.right_constructors?.size ?? 0) > 0 ||
-    (services.imports.validation_constructors?.size ?? 0) > 0 ||
-    (services.imports.list_constructors?.size ?? 0) > 0 ||
-    (services.imports.nil_constructors?.size ?? 0) > 0 ||
-    (services.imports.cons_constructors?.size ?? 0) > 0
-  );
-  const has_r5_stm = (services.imports.stm_dictionaries?.size ?? 0) > 0 ||
-    (services.imports.stm_namespaces?.size ?? 0) > 0;
-  const has_r5_chain = (
+    (imp.task_run_functions?.size ?? 0) > 0 ||
+    (imp.task_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0;
+  const has_r5_traverse = r5_hints !== undefined
+    ? r5_hints.traverse
+    : services.source.includes("traverse") && (
+      (imp.traversable_objects?.size ?? 0) > 0 ||
+      (imp.traversable_namespaces?.size ?? 0) > 0 ||
+      (imp.traverse_sequential_functions?.size ?? 0) > 0 ||
+      (imp.traverse_sequential_namespaces?.size ?? 0) > 0 ||
+      (imp.array_constructors?.size ?? 0) > 0
+    );
+  const has_r5_match = r5_hints !== undefined
+    ? r5_hints.match
+    : services.source.includes("match") && (
+      (imp.match_functions?.size ?? 0) > 0 ||
+      (imp.match_namespaces?.size ?? 0) > 0 ||
+      (imp.tagged_type_names?.size ?? 0) > 0 ||
+      (imp.just_constructors?.size ?? 0) > 0 ||
+      (imp.nothing_constructors?.size ?? 0) > 0 ||
+      (imp.left_constructors?.size ?? 0) > 0 ||
+      (imp.right_constructors?.size ?? 0) > 0 ||
+      (imp.validation_constructors?.size ?? 0) > 0 ||
+      (imp.list_constructors?.size ?? 0) > 0 ||
+      (imp.nil_constructors?.size ?? 0) > 0 ||
+      (imp.cons_constructors?.size ?? 0) > 0
+    );
+  const has_r5_stm = (imp.stm_dictionaries?.size ?? 0) > 0 ||
+    (imp.stm_namespaces?.size ?? 0) > 0;
+  const has_r5_chain = r5_hints !== undefined ? r5_hints.chain : (
     services.source.includes(".map(") || services.source.includes(".bind(") ||
     services.source.includes("from_maybe") ||
     services.source.includes("to_nullable")
   ) && (
-    (services.imports.just_constructors?.size ?? 0) > 0 ||
-    (services.imports.nothing_constructors?.size ?? 0) > 0 ||
-    (services.imports.from_nullable_functions?.size ?? 0) > 0 ||
-    (services.imports.from_maybe_functions?.size ?? 0) > 0 ||
-    (services.imports.to_nullable_functions?.size ?? 0) > 0 ||
-    (services.imports.left_constructors?.size ?? 0) > 0 ||
-    (services.imports.right_constructors?.size ?? 0) > 0 ||
-    (services.imports.direct_maybe_dictionaries?.size ?? 0) > 0 ||
-    (services.imports.direct_either_dictionaries?.size ?? 0) > 0 ||
-    (services.imports.tagged_type_names?.size ?? 0) > 0
+    (imp.just_constructors?.size ?? 0) > 0 ||
+    (imp.nothing_constructors?.size ?? 0) > 0 ||
+    (imp.from_nullable_functions?.size ?? 0) > 0 ||
+    (imp.from_maybe_functions?.size ?? 0) > 0 ||
+    (imp.to_nullable_functions?.size ?? 0) > 0 ||
+    (imp.left_constructors?.size ?? 0) > 0 ||
+    (imp.right_constructors?.size ?? 0) > 0 ||
+    (imp.direct_maybe_dictionaries?.size ?? 0) > 0 ||
+    (imp.direct_either_dictionaries?.size ?? 0) > 0 ||
+    (imp.tagged_type_names?.size ?? 0) > 0
   );
-  const has_r5_array = (
-    (services.imports.array_constructors?.size ?? 0) > 0 ||
-    (services.imports.array_view_functions?.size ?? 0) > 0
+  const has_r5_array = r5_hints !== undefined ? r5_hints.array : (
+    (imp.array_constructors?.size ?? 0) > 0 ||
+    (imp.array_view_functions?.size ?? 0) > 0
   ) && (
     services.source.includes(".map(") || services.source.includes(".fold(") ||
     services.source.includes("Foldable") || services.source.includes("to_array")
   );
-  const round5 = (
-      has_r5_task || has_r5_traverse || has_r5_match || has_r5_stm ||
-      has_r5_chain || has_r5_array
-    )
-    ? create_round5_fusions(services)
-    : undefined;
-  const prepared_cells = collect_prepared_cells();
-  const prepared_ops = collect_prepared_operations();
-  const named = collect_named();
+  const has_any_terminal = imp.terminal_functions.size > 0 ||
+    imp.terminal_namespaces.size > 0 ||
+    (imp.cell_runners?.size ?? 0) > 0 ||
+    (imp.cell_runner_namespaces?.size ?? 0) > 0 ||
+    (imp.operation_runners?.size ?? 0) > 0 ||
+    (imp.operation_runner_namespaces?.size ?? 0) > 0 ||
+    (imp.state_eval_functions?.size ?? 0) > 0 ||
+    (imp.state_eval_namespaces?.size ?? 0) > 0 ||
+    (imp.task_run_functions?.size ?? 0) > 0 ||
+    (imp.task_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0 ||
+    (imp.direct_reader_dictionaries?.size ?? 0) > 0 ||
+    (imp.direct_state_dictionaries?.size ?? 0) > 0 ||
+    (imp.cell_factories?.size ?? 0) > 0 ||
+    (imp.cell_namespaces?.size ?? 0) > 0;
+  const has_any_interp = imp.effect_names.size > 0 || imp.namespaces.size > 0;
+  const has_any_lift = (imp.applicative_objects?.size ?? 0) > 0 ||
+    (imp.applicative_namespaces?.size ?? 0) > 0 ||
+    (imp.collect_functions?.size ?? 0) > 0 ||
+    (imp.collect_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0;
+  const has_r5 = has_r5_task || has_r5_traverse || has_r5_match || has_r5_stm ||
+    has_r5_chain || has_r5_array;
+  if (!has_any_terminal && !has_any_interp && !has_any_lift && !has_r5) {
+    return {
+      lower(): { expression: Expression; direct: boolean } | undefined {
+        return undefined;
+      },
+      remove(): boolean {
+        return false;
+      },
+      hoist(): Statement[] | undefined {
+        return undefined;
+      },
+      has_removals(): boolean {
+        return false;
+      },
+      skip(): boolean {
+        return false;
+      },
+    };
+  }
+  const removed = new Set<Node>();
+  const hoisted_statements = new Map<Node, Statement[]>();
+  const round5 = has_r5 ? create_round5_fusions(services) : undefined;
+  const prepared_cells = ((imp.cell_runners?.size ?? 0) > 0 ||
+      (imp.cell_runner_namespaces?.size ?? 0) > 0 ||
+      imp.namespaces.size > 0)
+    ? collect_prepared_cells()
+    : new Map<Node, PreparedCellEntry>();
+  const prepared_ops = ((imp.operation_runners?.size ?? 0) > 0 ||
+      (imp.operation_runner_namespaces?.size ?? 0) > 0 ||
+      imp.namespaces.size > 0)
+    ? collect_prepared_operations()
+    : new Map<Node, PreparedOpsEntry>();
+  const named = has_any_terminal
+    ? collect_named()
+    : new Map<Node, NamedProgramCandidate>();
 
   function imported(
     expression: Expression,
@@ -2318,6 +2381,11 @@ export function create_terminal_transform(
             ) {
               const inner = cb.body as Expression;
               if (!cb.async && is_sync_non_thenable_expr(inner)) return inner;
+              if (!cb.async) {
+                const raw_id = services.fresh("task_raw");
+                target_stmts.push(variable(raw_id, inner, "const"));
+                return await_if_thenable_expr(raw_id);
+              }
               return node({ type: "AwaitExpression", argument: inner });
             }
             if (
@@ -6079,10 +6147,12 @@ export function create_terminal_transform(
           const r5_before = round5.lower_before(value);
           if (r5_before !== undefined) return r5_before;
         }
-        const fused = terminal_program(value);
-        if (fused !== undefined) return fused;
+        if (has_any_terminal) {
+          const fused = terminal_program(value);
+          if (fused !== undefined) return fused;
+        }
         if (
-          phase === "before" &&
+          phase === "before" && has_any_interp &&
           services.config.optimizations?.interpreter !== false
         ) {
           const eff = effect_lower(value);
@@ -6092,15 +6162,17 @@ export function create_terminal_transform(
           }
         }
         if (phase === "before") return undefined;
-        const lift = terminal_lift(value);
-        if (lift !== undefined) return { expression: lift, direct: false };
+        if (has_any_terminal || has_any_lift) {
+          const lift = terminal_lift(value);
+          if (lift !== undefined) return { expression: lift, direct: false };
+        }
         if (round5 !== undefined && (has_r5_traverse || has_r5_match)) {
           const r5_after = round5.lower_after(value);
           if (r5_after !== undefined) return r5_after;
         }
       }
       if (
-        phase === "after" &&
+        phase === "after" && has_any_interp &&
         services.config.optimizations?.interpreter !== false
       ) {
         const expression = effect_lower(value);
