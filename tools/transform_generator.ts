@@ -968,7 +968,8 @@ function direct_single_shot_spec(
     const name = arg.callee.name;
     if (
       services.imports.just_constructors?.has(name) ||
-      services.imports.nothing_constructors?.has(name)
+      services.imports.nothing_constructors?.has(name) ||
+      services.imports.from_nullable_functions?.has(name)
     ) {
       return {
         mode: "maybe",
@@ -1024,12 +1025,9 @@ function direct_single_shot(
     body.body.length >= 128
   ) return undefined;
   const mode = spec.mode;
-  const elide_names = mode === "maybe"
-    ? state.services.imports.just_constructors
-    : mode === "either"
-    ? state.services.imports.right_constructors
-    : state.services.imports.identity_constructors;
   const just_name = state.services.imports.just_constructors?.values().next()
+    .value;
+  const left_name = state.services.imports.left_constructors?.values().next()
     .value;
   const right_name = state.services.imports.right_constructors?.values().next()
     .value;
@@ -1038,6 +1036,8 @@ function direct_single_shot(
   let cached_dict: IdentifierReference | undefined;
   const get_dict = (): IdentifierReference | undefined =>
     cached_dict ??= spec.get_dictionary();
+  const left_callee = (): Expression =>
+    left_name !== undefined ? id(left_name) : member(get_dict()!, "Left");
   const right_callee = (): Expression =>
     right_name !== undefined ? id(right_name) : member(get_dict()!, "Right");
   const wrap_maybe = (value: Expression): Expression =>
@@ -1049,18 +1049,281 @@ function direct_single_shot(
       ? call(id(identity_name), [value])
       : call(get_dict()!, [value]);
 
-  const elided_inner = (expression: Expression): Expression | undefined => {
-    const inner_expr = unwrap(expression);
+  const typed_const = (
+    name: IdentifierReference,
+    init: Expression,
+    type: TSType,
+  ): Statement =>
+    node({
+      type: "VariableDeclaration",
+      kind: "const",
+      declarations: [
+        node({
+          type: "VariableDeclarator",
+          id: {
+            ...name,
+            typeAnnotation: node({
+              type: "TSTypeAnnotation",
+              typeAnnotation: type,
+            }),
+          },
+          init,
+        }),
+      ],
+    });
+
+  const negate_cond = (expression: Expression): Expression => {
+    const inner = unwrap(expression);
     if (
+      inner.type === "UnaryExpression" && inner.operator === "!" && inner.prefix
+    ) {
+      return inner.argument;
+    }
+    return node({
+      type: "UnaryExpression",
+      operator: "!",
+      prefix: true,
+      argument: expression,
+    });
+  };
+
+  type SingleCtorMatch = {
+    readonly ok: boolean;
+    readonly arg?: Expression;
+    readonly ok_type?: TSType;
+    readonly err_type?: TSType;
+  };
+
+  const match_single_ctor = (
+    expression: Expression,
+  ): SingleCtorMatch | undefined => {
+    const val = unwrap(expression);
+    if (val.type !== "CallExpression" || val.optional) return undefined;
+    const tparams = val.typeArguments?.params;
+    const callee = unwrap(val.callee);
+    if (
+      callee.type === "Identifier" && state.services.bindings.imported(callee)
+    ) {
+      const name = callee.name;
+      if (mode === "maybe") {
+        if (
+          state.services.imports.just_constructors?.has(name) &&
+          val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1)
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
+        if (
+          state.services.imports.nothing_constructors?.has(name) &&
+          val.arguments.length === 0 &&
+          (tparams === undefined || tparams.length === 1)
+        ) {
+          return { ok: false, ok_type: tparams?.[0] };
+        }
+      } else if (mode === "either") {
+        if (
+          state.services.imports.right_constructors?.has(name) &&
+          val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1 ||
+            tparams.length === 2)
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams !== undefined
+              ? (tparams.length === 2 ? tparams[1] : tparams[0])
+              : undefined,
+            err_type: tparams !== undefined && tparams.length === 2
+              ? tparams[0]
+              : undefined,
+          };
+        }
+        if (
+          state.services.imports.left_constructors?.has(name) &&
+          val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1 ||
+            tparams.length === 2)
+        ) {
+          return {
+            ok: false,
+            arg: val.arguments[0] as Expression,
+            err_type: tparams?.[0],
+            ok_type: tparams !== undefined && tparams.length === 2
+              ? tparams[1]
+              : undefined,
+          };
+        }
+      } else if (
+        state.services.imports.identity_constructors?.has(name) &&
+        val.arguments.length === 1 &&
+        val.arguments[0].type !== "SpreadElement" &&
+        (tparams === undefined || tparams.length === 1)
+      ) {
+        return {
+          ok: true,
+          arg: val.arguments[0] as Expression,
+          ok_type: tparams?.[0],
+        };
+      }
+    } else if (
+      callee.type === "MemberExpression" && !callee.computed &&
+      !callee.optional && callee.object.type === "Identifier" &&
+      callee.property.type === "Identifier" &&
+      state.services.bindings.imported(callee.object)
+    ) {
+      const obj = callee.object.name;
+      const prop = callee.property.name;
+      if (
+        mode === "maybe" &&
+        state.services.imports.direct_maybe_dictionaries?.has(obj)
+      ) {
+        if (
+          (prop === "Just" || prop === "pure") && val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1)
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams?.[0],
+          };
+        }
+        if (
+          (prop === "Nothing" || prop === "empty") &&
+          val.arguments.length === 0 &&
+          (tparams === undefined || tparams.length === 1)
+        ) {
+          return { ok: false, ok_type: tparams?.[0] };
+        }
+      } else if (
+        mode === "either" &&
+        state.services.imports.direct_either_dictionaries?.has(obj)
+      ) {
+        if (
+          (prop === "Right" || prop === "pure") && val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1 ||
+            tparams.length === 2)
+        ) {
+          return {
+            ok: true,
+            arg: val.arguments[0] as Expression,
+            ok_type: tparams !== undefined
+              ? (tparams.length === 2 ? tparams[1] : tparams[0])
+              : undefined,
+            err_type: tparams !== undefined && tparams.length === 2
+              ? tparams[0]
+              : undefined,
+          };
+        }
+        if (
+          prop === "Left" && val.arguments.length === 1 &&
+          val.arguments[0].type !== "SpreadElement" &&
+          (tparams === undefined || tparams.length === 1 ||
+            tparams.length === 2)
+        ) {
+          return {
+            ok: false,
+            arg: val.arguments[0] as Expression,
+            err_type: tparams?.[0],
+            ok_type: tparams !== undefined && tparams.length === 2
+              ? tparams[1]
+              : undefined,
+          };
+        }
+      } else if (
+        mode === "identity" &&
+        state.services.imports.direct_identity_dictionaries?.has(obj) &&
+        prop === "pure" && val.arguments.length === 1 &&
+        val.arguments[0].type !== "SpreadElement" &&
+        (tparams === undefined || tparams.length === 1)
+      ) {
+        return {
+          ok: true,
+          arg: val.arguments[0] as Expression,
+          ok_type: tparams?.[0],
+        };
+      }
+    }
+    return undefined;
+  };
+
+  type ElidedYield =
+    | {
+      readonly kind: "ok";
+      readonly expr: Expression;
+      readonly ok_type?: TSType;
+    }
+    | { readonly kind: "nullable"; readonly expr: Expression }
+    | {
+      readonly kind: "cond";
+      readonly test: Expression;
+      readonly ok_expr: Expression;
+      readonly ok_type?: TSType;
+      readonly err_expr?: Expression;
+      readonly err_type?: TSType;
+    };
+
+  const match_elided_yield = (
+    expression: Expression,
+  ): ElidedYield | undefined => {
+    const inner_expr = unwrap(expression);
+    const single = match_single_ctor(inner_expr);
+    if (single !== undefined && single.ok && single.arg !== undefined) {
+      if (mode === "either" && single.err_type !== undefined) return undefined;
+      return { kind: "ok", expr: single.arg, ok_type: single.ok_type };
+    }
+    if (
+      mode === "maybe" &&
       inner_expr.type === "CallExpression" &&
       !inner_expr.optional &&
       inner_expr.typeArguments == null &&
       inner_expr.callee.type === "Identifier" &&
-      elide_names?.has(inner_expr.callee.name) &&
+      state.services.imports.from_nullable_functions?.has(
+        inner_expr.callee.name,
+      ) &&
+      state.services.bindings.imported(inner_expr.callee) &&
       inner_expr.arguments.length === 1 &&
       inner_expr.arguments[0].type !== "SpreadElement"
     ) {
-      return inner_expr.arguments[0] as Expression;
+      return {
+        kind: "nullable",
+        expr: inner_expr.arguments[0] as Expression,
+      };
+    }
+    if (
+      (mode === "maybe" || mode === "either") &&
+      inner_expr.type === "ConditionalExpression" &&
+      !contains_yield_or_await(inner_expr.consequent) &&
+      !contains_yield_or_await(inner_expr.alternate)
+    ) {
+      const cons = match_single_ctor(inner_expr.consequent);
+      const alt = match_single_ctor(inner_expr.alternate);
+      if (cons !== undefined && alt !== undefined && cons.ok !== alt.ok) {
+        const ok_branch = cons.ok ? cons : alt;
+        const err_branch = cons.ok ? alt : cons;
+        if (
+          ok_branch.ok_type !== undefined && err_branch.ok_type !== undefined
+        ) return undefined;
+        if (
+          ok_branch.err_type !== undefined && err_branch.err_type !== undefined
+        ) return undefined;
+        return {
+          kind: "cond",
+          test: cons.ok ? inner_expr.test : negate_cond(inner_expr.test),
+          ok_expr: ok_branch.arg!,
+          ok_type: ok_branch.ok_type ?? err_branch.ok_type,
+          err_expr: err_branch.arg,
+          err_type: err_branch.err_type ?? ok_branch.err_type,
+        };
+      }
     }
     return undefined;
   };
@@ -1069,9 +1332,20 @@ function direct_single_shot(
   let yield_count = 0;
   let checked_yield_count = 0;
   let has_elision = false;
+  let has_elided_fail = false;
   let has_control_flow = false;
   let has_nested_yield = false;
   let first_loop_node: Node | undefined;
+
+  const record_yield = (arg: Expression): void => {
+    const elided = match_elided_yield(arg);
+    if (elided !== undefined) {
+      has_elision = true;
+      if (elided.kind !== "ok") has_elided_fail = true;
+    } else {
+      checked_yield_count += 1;
+    }
+  };
 
   function validate_expr(expression: Expression, nested: boolean): boolean {
     if (!contains_yield_or_await(expression)) return true;
@@ -1082,8 +1356,7 @@ function direct_single_shot(
       if (!validate_expr(target.argument, true)) return false;
       yield_count += 1;
       if (nested) has_nested_yield = true;
-      if (elided_inner(target.argument) !== undefined) has_elision = true;
-      else checked_yield_count += 1;
+      record_yield(target.argument);
       return true;
     }
     switch (target.type) {
@@ -1178,11 +1451,7 @@ function direct_single_shot(
           if (!validate_expr(statement.argument.argument, true)) return false;
           yield_count += 1;
           if (in_control) has_control_flow = true;
-          if (elided_inner(statement.argument.argument) !== undefined) {
-            has_elision = true;
-          } else {
-            checked_yield_count += 1;
-          }
+          record_yield(statement.argument.argument);
           return true;
         }
         if (in_control) has_control_flow = true;
@@ -1198,8 +1467,7 @@ function direct_single_shot(
           if (!validate_expr(inner, true)) return false;
           yield_count += 1;
           if (in_control) has_control_flow = true;
-          if (elided_inner(inner) !== undefined) has_elision = true;
-          else checked_yield_count += 1;
+          record_yield(inner);
           return true;
         }
         for (const decl of statement.declarations) {
@@ -1214,8 +1482,7 @@ function direct_single_shot(
           if (!validate_expr(inner, true)) return false;
           yield_count += 1;
           if (in_control) has_control_flow = true;
-          if (elided_inner(inner) !== undefined) has_elision = true;
-          else checked_yield_count += 1;
+          record_yield(inner);
           return true;
         }
         return validate_expr(statement.expression, true);
@@ -1385,15 +1652,18 @@ function direct_single_shot(
   ) return undefined;
 
   // Phase 2: Emit lowered statements.
-  const use_either_wrapper = mode === "either" && has_control_flow &&
-    checked_yield_count > 0;
+  const use_either_wrapper = mode === "either" &&
+    (has_elided_fail || (has_control_flow && checked_yield_count > 0));
+  const needs_either_err_var = use_either_wrapper && checked_yield_count > 0;
   const needs_dict = (mode === "maybe" &&
-    (checked_yield_count > 0 || just_name === undefined)) ||
-    (mode === "either" && (use_either_wrapper || right_name === undefined)) ||
+    (checked_yield_count > 0 || has_elided_fail || just_name === undefined)) ||
+    (mode === "either" &&
+      (use_either_wrapper || right_name === undefined ||
+        (has_elided_fail && left_name === undefined))) ||
     (mode === "identity" && identity_name === undefined);
   const dictionary = needs_dict ? get_dict() : undefined;
   if (needs_dict && dictionary === undefined) return undefined;
-  const either_err_var = use_either_wrapper
+  const either_err_var = needs_either_err_var
     ? state.services.fresh("either_err")
     : undefined;
   const checked_vars: IdentifierReference[] = [];
@@ -1503,8 +1773,99 @@ function direct_single_shot(
     target_stmts: Statement[],
   ): Expression => {
     const arg = lower_expr(raw_arg, target_stmts);
-    const elided = elided_inner(arg);
-    if (elided !== undefined) return elided;
+    const elided = match_elided_yield(arg);
+    if (elided !== undefined) {
+      const wrap_ok_typed = (
+        expr: Expression,
+        ok_type: TSType | undefined,
+      ): Expression => {
+        if (ok_type === undefined) return expr;
+        const ok_tmp = state.services.fresh(
+          mode === "maybe"
+            ? "maybe_ok"
+            : mode === "either"
+            ? "either_ok"
+            : "id_ok",
+        );
+        target_stmts.push(typed_const(ok_tmp, expr, ok_type));
+        return ok_tmp;
+      };
+      if (elided.kind === "ok") {
+        return wrap_ok_typed(elided.expr, elided.ok_type);
+      }
+      if (elided.kind === "nullable") {
+        const val = state.services.fresh("maybe_val");
+        target_stmts.push(variable("const", val, elided.expr));
+        target_stmts.push(
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "LogicalExpression",
+              operator: "||",
+              left: node({
+                type: "BinaryExpression",
+                operator: "===",
+                left: val,
+                right: literal(null),
+              }),
+              right: node({
+                type: "BinaryExpression",
+                operator: "===",
+                left: val,
+                right: void_zero(),
+              }),
+            }),
+            consequent: ret(
+              node({
+                type: "TSAsExpression",
+                expression: method(dictionary!, "empty", []),
+                typeAnnotation: node({ type: "TSNeverKeyword" }),
+              }),
+            ),
+            alternate: null,
+          }),
+        );
+        return val;
+      }
+      // elided.kind === "cond"
+      if (mode === "maybe") {
+        target_stmts.push(
+          node({
+            type: "IfStatement",
+            test: negate_cond(elided.test),
+            consequent: ret(
+              node({
+                type: "TSAsExpression",
+                expression: method(dictionary!, "empty", []),
+                typeAnnotation: node({ type: "TSNeverKeyword" }),
+              }),
+            ),
+            alternate: null,
+          }),
+        );
+        return wrap_ok_typed(elided.ok_expr, elided.ok_type);
+      }
+      // mode === "either" (use_either_wrapper is guaranteed true)
+      const fail_stmts: Statement[] = [];
+      let err_expr = elided.err_expr!;
+      if (elided.err_type !== undefined) {
+        const err_tmp = state.services.fresh("either_left");
+        fail_stmts.push(typed_const(err_tmp, err_expr, elided.err_type));
+        err_expr = err_tmp;
+      }
+      fail_stmts.push(ret(make_as_const_tuple("Left", err_expr)));
+      target_stmts.push(
+        node({
+          type: "IfStatement",
+          test: negate_cond(elided.test),
+          consequent: fail_stmts.length === 1
+            ? fail_stmts[0]
+            : block(fail_stmts),
+          alternate: null,
+        }),
+      );
+      return wrap_ok_typed(elided.ok_expr, elided.ok_type);
+    }
     if (mode === "identity") {
       return method(arg, "value", []);
     }
@@ -1975,8 +2336,9 @@ function direct_single_shot(
       case "ExpressionStatement": {
         if (yield_star(statement.expression)) {
           const stmts: Statement[] = [];
+          const elided = match_elided_yield(statement.expression.argument);
           const val = emit_yield_value(statement.expression.argument, stmts);
-          if (elided_inner(statement.expression.argument) !== undefined) {
+          if (elided !== undefined && elided.kind !== "nullable") {
             stmts.push(node({ type: "ExpressionStatement", expression: val }));
           }
           return stmts;
@@ -2144,6 +2506,30 @@ function direct_single_shot(
         }),
       }) as TSType,
     ]);
+    const left_expr: Expression = call(left_callee(), [
+      node({
+        type: "MemberExpression",
+        object: out_raw,
+        property: literal(1),
+        computed: true,
+        optional: false,
+      }),
+    ]);
+    const left_result: Expression = needs_either_err_var
+      ? (has_elided_fail
+        ? node({
+          type: "ConditionalExpression",
+          test: node({
+            type: "BinaryExpression",
+            operator: "!==",
+            left: either_err_var!,
+            right: void_zero(),
+          }),
+          consequent: either_err_var!,
+          alternate: left_expr,
+        })
+        : either_err_var!)
+      : left_expr;
     const final_expr: Expression = node({
       type: "TSAsExpression",
       expression: node({
@@ -2160,7 +2546,7 @@ function direct_single_shot(
           }),
           right: literal("Left"),
         }),
-        consequent: either_err_var!,
+        consequent: left_result,
         alternate: call(right_callee(), [
           node({
             type: "MemberExpression",
@@ -2173,8 +2559,9 @@ function direct_single_shot(
       }),
       typeAnnotation: either_type,
     });
-    return {
-      block: block([
+    const wrapper_stmts: Statement[] = [];
+    if (needs_either_err_var) {
+      wrapper_stmts.push(
         node({
           type: "VariableDeclaration",
           kind: "let",
@@ -2192,9 +2579,14 @@ function direct_single_shot(
             }),
           ],
         }),
-        variable("const", out_raw, call(arrow([], block(emitted)), [])),
-        ret(final_expr),
-      ]),
+      );
+    }
+    wrapper_stmts.push(
+      variable("const", out_raw, call(arrow([], block(emitted)), [])),
+      ret(final_expr),
+    );
+    return {
+      block: block(wrapper_stmts),
       yielded: true,
     };
   }

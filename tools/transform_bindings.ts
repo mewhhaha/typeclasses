@@ -5,7 +5,7 @@ import { value_visitor_keys } from "./transform_ast.ts";
 type Scope = {
   readonly owner: Node;
   readonly parent?: Scope;
-  bindings?: Map<string, Node>;
+  bindings?: Record<string, Node>;
 };
 
 export type BindingAnalysisObserver = {
@@ -34,10 +34,10 @@ export function create_binding_analysis(
   function set_binding(scope: Scope, name: string, declaration: Node): void {
     let bindings = scope.bindings;
     if (bindings === undefined) {
-      bindings = new Map();
+      bindings = Object.create(null) as Record<string, Node>;
       scope.bindings = bindings;
     }
-    bindings.set(name, declaration);
+    bindings[name] = declaration;
   }
   function declare(
     pattern: BindingPattern,
@@ -105,55 +105,42 @@ export function create_binding_analysis(
     }
   }
   function visit(current: Node, outer: Scope, function_scope: Scope): void {
-    if (names !== undefined && current.type === "Identifier") {
-      names.add(current.name);
+    const type = current.type;
+    if (type === "Identifier") {
+      if (names !== undefined) names.add(current.name);
+      if (on_node !== undefined) on_node(current);
+      scopes.set(current, outer);
+      return;
+    }
+    if (
+      type === "Literal" || type === "ThisExpression" || type === "Super" ||
+      type === "EmptyStatement" || type === "TemplateElement" ||
+      type === "PrivateIdentifier" || type === "DebuggerStatement"
+    ) {
+      if (on_node !== undefined) on_node(current);
+      if (!minimal) scopes.set(current, outer);
+      return;
     }
     if (on_node !== undefined) on_node(current);
     let scope = outer;
     let record_scope = !minimal;
-    switch (current.type) {
-      case "Identifier":
-        record_scope = true;
-        break;
+    switch (type) {
       case "FunctionDeclaration":
       case "TSDeclareFunction":
-      case "ClassDeclaration":
         record_scope = true;
         if (current.id !== null) declare(current.id, current, outer);
-        break;
-      case "TSEnumDeclaration":
-      case "TSImportEqualsDeclaration":
-        record_scope = true;
-        if (
-          current.type !== "TSImportEqualsDeclaration" ||
-          current.importKind !== "type"
-        ) declare(current.id, current, outer);
-        break;
-      case "TSModuleDeclaration":
-        record_scope = true;
-        if (!current.global && current.id.type === "Identifier") {
-          declare(current.id, current, outer);
+        scope = { owner: current, parent: outer };
+        function_scope = scope;
+        if (current.id !== null) declare(current.id, current, scope);
+        for (const parameter of current.params) {
+          if (parameter.type === "RestElement") {
+            declare(parameter.argument, parameter, scope);
+          } else if (parameter.type === "TSParameterProperty") {
+            declare(parameter.parameter, parameter, scope);
+          } else declare(parameter, parameter, scope);
         }
         break;
-      case "VariableDeclaration":
-      case "VariableDeclarator":
-      case "ImportDeclaration":
-      case "Program":
-      case "BlockStatement":
-      case "SwitchStatement":
-      case "CatchClause":
-      case "ForStatement":
-      case "ForOfStatement":
-      case "ForInStatement":
-      case "StaticBlock":
-      case "TSModuleBlock":
-        record_scope = true;
-        break;
-    }
-    switch (current.type) {
-      case "FunctionDeclaration":
       case "FunctionExpression":
-      case "TSDeclareFunction":
       case "TSEmptyBodyFunctionExpression":
       case "ArrowFunctionExpression":
         scope = { owner: current, parent: outer };
@@ -167,56 +154,85 @@ export function create_binding_analysis(
           } else declare(parameter, parameter, scope);
         }
         break;
+      case "ClassDeclaration":
+        record_scope = true;
+        if (current.id !== null) declare(current.id, current, outer);
+        scope = { owner: current, parent: outer };
+        if (current.id !== null) declare(current.id, current, scope);
+        break;
+      case "ClassExpression":
+        scope = { owner: current, parent: outer };
+        if (current.id !== null) declare(current.id, current, scope);
+        break;
+      case "TSEnumDeclaration":
+        record_scope = true;
+        declare(current.id, current, outer);
+        scope = { owner: current, parent: outer };
+        for (const member of current.body.members) {
+          if (member.id.type === "Identifier") {
+            set_binding(scope, member.id.name, member);
+          } else if (member.id.type === "Literal") {
+            set_binding(scope, member.id.value, member);
+          }
+        }
+        break;
+      case "TSImportEqualsDeclaration":
+        record_scope = true;
+        if (current.importKind !== "type") declare(current.id, current, outer);
+        break;
+      case "TSModuleDeclaration":
+        record_scope = true;
+        if (!current.global && current.id.type === "Identifier") {
+          declare(current.id, current, outer);
+        }
+        break;
       case "StaticBlock":
       case "TSModuleBlock":
+        record_scope = true;
         scope = { owner: current, parent: outer };
         function_scope = scope;
         break;
       case "BlockStatement":
       case "SwitchStatement":
-      case "CatchClause":
       case "ForStatement":
       case "ForOfStatement":
       case "ForInStatement":
-      case "ClassDeclaration":
-      case "ClassExpression":
-      case "TSEnumDeclaration":
+        record_scope = true;
         scope = { owner: current, parent: outer };
-        if (
-          (current.type === "ClassDeclaration" ||
-            current.type === "ClassExpression") && current.id !== null
-        ) declare(current.id, current, scope);
-        if (current.type === "TSEnumDeclaration") {
-          for (const member of current.body.members) {
-            if (member.id.type === "Identifier") {
-              set_binding(scope, member.id.name, member);
-            } else if (member.id.type === "Literal") {
-              set_binding(scope, member.id.value, member);
-            }
+        break;
+      case "CatchClause":
+        record_scope = true;
+        scope = { owner: current, parent: outer };
+        if (current.param !== null) {
+          declare(current.param, current.param, scope);
+        }
+        break;
+      case "VariableDeclaration": {
+        record_scope = true;
+        const target = current.kind === "var" ? function_scope : scope;
+        for (const declaration of current.declarations) {
+          declare(declaration.id, declaration, target);
+        }
+        break;
+      }
+      case "ImportDeclaration":
+        record_scope = true;
+        if (current.importKind !== "type") {
+          for (const specifier of current.specifiers) {
+            if (
+              specifier.type === "ImportSpecifier" &&
+              specifier.importKind === "type"
+            ) continue;
+            declare(specifier.local, current, scope);
           }
         }
         break;
+      case "VariableDeclarator":
+      case "Program":
+        record_scope = true;
+        break;
     }
     if (record_scope) scopes.set(current, scope);
-    if (current.type === "ImportDeclaration" && current.importKind !== "type") {
-      for (const specifier of current.specifiers) {
-        if (
-          specifier.type === "ImportSpecifier" &&
-          specifier.importKind === "type"
-        ) continue;
-        declare(specifier.local, current, scope);
-      }
-    }
-    if (current.type === "VariableDeclaration") {
-      let target = scope;
-      if (current.kind === "var") target = function_scope;
-      for (const declaration of current.declarations) {
-        declare(declaration.id, declaration, target);
-      }
-    }
-    if (current.type === "CatchClause" && current.param !== null) {
-      declare(current.param, current.param, scope);
-    }
     if (current === program && skip_statement !== undefined) {
       const body = program.body;
       for (let index = 0; index < body.length; index += 1) {
@@ -234,7 +250,7 @@ export function create_binding_analysis(
       }
       return;
     }
-    const keys = key_table[current.type];
+    const keys = key_table[type];
     if (keys === undefined || keys.length === 0) return;
     const record = current as unknown as Record<string, unknown>;
     for (let index = 0; index < keys.length; index += 1) {
@@ -276,11 +292,15 @@ export function create_binding_analysis(
     const cached = resolved.get(identifier);
     if (cached !== undefined) return cached;
     let scope = scopes.get(identifier);
+    const id_name = identifier.name;
     while (scope !== undefined) {
-      const declaration = scope.bindings?.get(identifier.name);
-      if (declaration !== undefined) {
-        resolved.set(identifier, declaration);
-        return declaration;
+      const bindings = scope.bindings;
+      if (bindings !== undefined) {
+        const declaration = bindings[id_name];
+        if (declaration !== undefined) {
+          resolved.set(identifier, declaration);
+          return declaration;
+        }
       }
       scope = scope.parent;
     }

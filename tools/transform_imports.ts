@@ -323,6 +323,8 @@ export type UnverifiedImports = {
   readonly task_from_fn_functions: Set<string>;
   readonly task_succeed_functions: Set<string>;
   readonly task_run_functions: Set<string>;
+  readonly task_run_exit_functions: Set<string>;
+  readonly task_is_cancellation_functions: Set<string>;
   readonly task_namespaces: Set<string>;
   readonly traversable_objects: Set<string>;
   readonly traversable_namespaces: Set<string>;
@@ -335,6 +337,10 @@ export type UnverifiedImports = {
     "maybe" | "either" | "validation" | "list"
   >;
   readonly validation_constructors: Set<string>;
+  readonly direct_validation_dictionaries: Set<string>;
+  readonly valid_constructors: Set<string>;
+  readonly invalid_constructors: Set<string>;
+  readonly invalid_messages_constructors: Set<string>;
   readonly collect_functions: Set<string>;
   readonly collect_namespaces: Set<string>;
   readonly applicative_objects: Set<string>;
@@ -541,6 +547,8 @@ export function scan_import_headers(
   const task_from_fn_functions = new Set<string>();
   const task_succeed_functions = new Set<string>();
   const task_run_functions = new Set<string>();
+  const task_run_exit_functions = new Set<string>();
+  const task_is_cancellation_functions = new Set<string>();
   const task_namespaces = new Set<string>();
   const traversable_objects = new Set<string>();
   const traversable_namespaces = new Set<string>();
@@ -553,6 +561,10 @@ export function scan_import_headers(
     "maybe" | "either" | "validation" | "list"
   >();
   const validation_constructors = new Set<string>();
+  const direct_validation_dictionaries = new Set<string>();
+  const valid_constructors = new Set<string>();
+  const invalid_constructors = new Set<string>();
+  const invalid_messages_constructors = new Set<string>();
   const collect_functions = new Set<string>();
   const collect_namespaces = new Set<string>();
   const applicative_objects = new Set<string>();
@@ -750,6 +762,14 @@ export function scan_import_headers(
         imported === "run_task"
       ) task_run_functions.add(local);
       if (
+        (loop_kind === "mod" || loop_kind === "task") &&
+        imported === "run_task_exit"
+      ) task_run_exit_functions.add(local);
+      if (
+        (loop_kind === "mod" || loop_kind === "task") &&
+        imported === "is_task_cancellation"
+      ) task_is_cancellation_functions.add(local);
+      if (
         (loop_kind === "mod" || loop_kind === "list") && imported === "List"
       ) {
         list_constructors.add(local);
@@ -767,12 +787,19 @@ export function scan_import_headers(
       if (
         (loop_kind === "mod" || loop_kind === "validation") &&
         (imported === "Validation" || imported === "Valid" ||
-          imported === "Invalid" || imported === "valid" ||
-          imported === "invalid")
+          imported === "Invalid" || imported === "InvalidMessages" ||
+          imported === "valid" || imported === "invalid")
       ) {
         validation_constructors.add(local);
         if (imported === "Validation") {
           tagged_type_names.set(local, "validation");
+          direct_validation_dictionaries.add(local);
+        } else if (imported === "Valid") {
+          valid_constructors.add(local);
+        } else if (imported === "Invalid") {
+          invalid_constructors.add(local);
+        } else if (imported === "InvalidMessages") {
+          invalid_messages_constructors.add(local);
         }
       }
       if (
@@ -979,6 +1006,8 @@ export function scan_import_headers(
     task_from_fn_functions,
     task_succeed_functions,
     task_run_functions,
+    task_run_exit_functions,
+    task_is_cancellation_functions,
     task_namespaces,
     traversable_objects,
     traversable_namespaces,
@@ -988,6 +1017,10 @@ export function scan_import_headers(
     match_namespaces,
     tagged_type_names,
     validation_constructors,
+    direct_validation_dictionaries,
+    valid_constructors,
+    invalid_constructors,
+    invalid_messages_constructors,
     collect_functions,
     collect_namespaces,
     applicative_objects,
@@ -1152,6 +1185,8 @@ export function create_import_shadow_tracker(
         headers.task_from_fn_functions.delete(name);
         headers.task_succeed_functions.delete(name);
         headers.task_run_functions.delete(name);
+        headers.task_run_exit_functions.delete(name);
+        headers.task_is_cancellation_functions.delete(name);
         headers.task_namespaces.delete(name);
         headers.traversable_objects.delete(name);
         headers.traversable_namespaces.delete(name);
@@ -1160,6 +1195,10 @@ export function create_import_shadow_tracker(
         headers.match_functions.delete(name);
         headers.match_namespaces.delete(name);
         headers.validation_constructors.delete(name);
+        headers.direct_validation_dictionaries.delete(name);
+        headers.valid_constructors.delete(name);
+        headers.invalid_constructors.delete(name);
+        headers.invalid_messages_constructors.delete(name);
         headers.collect_functions.delete(name);
         headers.collect_namespaces.delete(name);
         headers.applicative_objects.delete(name);
@@ -1226,6 +1265,9 @@ export function create_import_shadow_tracker(
           task_from_fn_functions: headers.task_from_fn_functions,
           task_succeed_functions: headers.task_succeed_functions,
           task_run_functions: headers.task_run_functions,
+          task_run_exit_functions: headers.task_run_exit_functions,
+          task_is_cancellation_functions:
+            headers.task_is_cancellation_functions,
           task_namespaces: headers.task_namespaces,
           traversable_objects: headers.traversable_objects,
           traversable_namespaces: headers.traversable_namespaces,
@@ -1236,6 +1278,11 @@ export function create_import_shadow_tracker(
           match_namespaces: headers.match_namespaces,
           tagged_type_names: headers.tagged_type_names,
           validation_constructors: headers.validation_constructors,
+          direct_validation_dictionaries:
+            headers.direct_validation_dictionaries,
+          valid_constructors: headers.valid_constructors,
+          invalid_constructors: headers.invalid_constructors,
+          invalid_messages_constructors: headers.invalid_messages_constructors,
           collect_functions: headers.collect_functions,
           collect_namespaces: headers.collect_namespaces,
           applicative_objects: headers.applicative_objects,

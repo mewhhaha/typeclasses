@@ -169,6 +169,8 @@ export type ImportedBindings = {
   readonly task_from_fn_functions?: ReadonlySet<string>;
   readonly task_succeed_functions?: ReadonlySet<string>;
   readonly task_run_functions?: ReadonlySet<string>;
+  readonly task_run_exit_functions?: ReadonlySet<string>;
+  readonly task_is_cancellation_functions?: ReadonlySet<string>;
   readonly task_namespaces?: ReadonlySet<string>;
   readonly traversable_objects?: ReadonlySet<string>;
   readonly traversable_namespaces?: ReadonlySet<string>;
@@ -181,6 +183,10 @@ export type ImportedBindings = {
     "maybe" | "either" | "validation" | "list"
   >;
   readonly validation_constructors?: ReadonlySet<string>;
+  readonly direct_validation_dictionaries?: ReadonlySet<string>;
+  readonly valid_constructors?: ReadonlySet<string>;
+  readonly invalid_constructors?: ReadonlySet<string>;
+  readonly invalid_messages_constructors?: ReadonlySet<string>;
   readonly collect_functions?: ReadonlySet<string>;
   readonly collect_namespaces?: ReadonlySet<string>;
   readonly applicative_objects?: ReadonlySet<string>;

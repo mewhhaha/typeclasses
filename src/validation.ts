@@ -434,26 +434,28 @@ function traverse_validation<from, to, result>(
   fn: (item: from) => Data<AsValidation<unknown>, to>,
   build: (items: Iterable<to>) => result,
 ): Data<AsValidation<unknown>, result> {
-  let semigroup: ValidationSemigroup<unknown> | undefined;
-  let error: unknown;
-  const values: to[] = [];
+  let sg: ValidationSemigroup<unknown> | undefined;
+  let err: unknown;
+  let buf: unknown[] | undefined;
+  const out: to[] = [];
   for (const item of items) {
-    const [tag, payload, current_semigroup] = fn(item).value();
-    if (tag === "invalid") {
-      if (semigroup === undefined) {
-        semigroup = current_semigroup;
-        error = payload;
+    const raw = fn(item).value();
+    if (raw[0] === "invalid") {
+      if (sg === undefined) {
+        sg = raw[2];
+        err = raw[1];
       } else {
-        assert_same_semigroup(semigroup, current_semigroup);
-        error = semigroup.concat(error, payload);
+        assert_same_semigroup(sg, raw[2]);
+        if (sg === array_validation_semigroup) {
+          buf ??= (err as readonly unknown[]).slice();
+          for (const e of raw[1] as readonly unknown[]) buf.push(e);
+        } else err = sg.concat(err, raw[1]);
       }
-    } else if (semigroup === undefined) {
-      values.push(payload);
-    }
+    } else if (sg === undefined) out.push(raw[1]);
   }
-  return (semigroup !== undefined
-    ? Invalid(error, semigroup)
-    : Valid(build(values))) as Data<AsValidation<unknown>, result>;
+  return (sg !== undefined
+    ? Invalid(buf ?? err, sg)
+    : Valid(build(out))) as Data<AsValidation<unknown>, result>;
 }
 
 function create_validation(): ValidationConstructor {
@@ -551,25 +553,23 @@ function create_validation(): ValidationConstructor {
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
     [applicative_lift_method](fn, rest) {
-      if (rest.length === 0) {
-        const [tag, payload] = this.value();
-        return (tag === "invalid" ? this : Valid(fn(payload))) as Validation<
-          unknown,
-          ReturnType<typeof fn>
-        >;
+      const first = this.value();
+      const len = rest.length;
+      if (len === 0) {
+        return (first[0] === "invalid"
+          ? this
+          : Valid(fn(first[1]))) as Validation<unknown, ReturnType<typeof fn>>;
       }
-      if (rest.length === 1) {
-        const left = this.value();
+      if (len === 1) {
         const right = rest[0].value();
-        if (left[0] === "valid") {
+        if (first[0] === "valid") {
           return (right[0] === "valid"
-            ? Valid(fn(left[1], right[1]))
+            ? Valid(fn(first[1], right[1]))
             : rest[0]) as Validation<unknown, ReturnType<typeof fn>>;
         }
-        if (right[0] === "invalid") {
-          return Invalid(concat_errors(left, right), left[2]);
-        }
-        return this as Validation<unknown, ReturnType<typeof fn>>;
+        return (right[0] === "invalid"
+          ? Invalid(concat_errors(first, right), first[2])
+          : this) as Validation<unknown, ReturnType<typeof fn>>;
       }
       return traverse_validation(
         [this, ...rest],
