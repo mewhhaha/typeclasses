@@ -84,9 +84,11 @@ export async function from_async_iterable<item>(
     items.push(item);
   }
 
-  return AsyncIterableT(async function* () {
+  const factory: TaggedAsyncFactory<item> = async function* () {
     yield* items;
-  });
+  };
+  factory[async_array] = items;
+  return AsyncIterableT(factory);
 }
 
 /** Asynchronously materialize a wrapped iterable into a mutable array. */
@@ -95,14 +97,40 @@ export async function to_array<item>(
 ): Promise<item[]> {
   const items: item[] = [];
   const factory = iterable.value();
-  const chunks = chunk_sources.get(factory);
+  const plan = pipeline_of(factory as RawAsyncIterableT<unknown>);
+  if (plan !== undefined) {
+    await drive_async_pipeline<item>(plan, undefined, items);
+    return items;
+  }
+  const snap = array_of(factory as RawAsyncIterableT<unknown>);
+  if (snap !== undefined) {
+    for (let i = 0; i < snap.length; i += 1) {
+      const value = snap[i];
+      items.push(
+        (is_promise_like(value) ? await value : value) as item,
+      );
+    }
+    return items;
+  }
+  const chunks = chunks_of(factory as RawAsyncIterableT<unknown>);
   if (chunks !== undefined) {
     for await (const chunk of chunks()) {
-      for (const item of chunk) {
-        if (is_promise_like(item)) items.push(await item as item);
-        else items.push(item as item);
+      for (let i = 0; i < chunk.length; i += 1) {
+        const value = chunk[i];
+        items.push(
+          (is_promise_like(value) ? await value : value) as item,
+        );
       }
     }
+    return items;
+  }
+  const synchronous = sync_of(factory as RawAsyncIterableT<unknown>);
+  if (synchronous !== undefined) {
+    const iter = synchronous();
+    if (is_canonical_array(iter)) {
+      return iter.slice() as item[];
+    }
+    for (const value of iter) items.push(value as item);
     return items;
   }
   for await (const item of factory()) items.push(item);
@@ -489,11 +517,17 @@ export async function fold_while<item, state>(
   ) => FoldStep<state> | PromiseLike<FoldStep<state>>,
 ): Promise<state> {
   let state = initial;
-  for await (const item of iterable.value()()) {
-    const [tag, next] = await fn(state, item);
-    state = next;
-    if (tag === "Done") return state;
-  }
+  await run_async_until<item>(iterable.value(), (item) => {
+    const step = fn(state, item);
+    if (is_promise_like(step)) {
+      return Promise.resolve(step).then(([tag, next]) => {
+        state = next;
+        return tag === "Done";
+      });
+    }
+    state = step[1];
+    return step[0] === "Done";
+  });
   return state;
 }
 
@@ -502,10 +536,21 @@ export async function find<item>(
   iterable: AsyncIterableT<item>,
   predicate: (item: item) => boolean | PromiseLike<boolean>,
 ): Promise<Maybe<item>> {
-  for await (const item of iterable.value()()) {
-    if (await predicate(item)) return Just(item);
-  }
-  return Nothing();
+  let found: Maybe<item> = Nothing();
+  await run_async_until<item>(iterable.value(), (item) => {
+    const matched = predicate(item);
+    if (is_promise_like(matched)) {
+      return Promise.resolve(matched).then((ok) => {
+        if (!ok) return false;
+        found = Just(item);
+        return true;
+      });
+    }
+    if (!matched) return false;
+    found = Just(item);
+    return true;
+  });
+  return found;
 }
 
 /** Test for a matching value with bounded demand. */
@@ -513,10 +558,21 @@ export async function some<item>(
   iterable: AsyncIterableT<item>,
   predicate: (item: item) => boolean | PromiseLike<boolean>,
 ): Promise<boolean> {
-  for await (const item of iterable.value()()) {
-    if (await predicate(item)) return true;
-  }
-  return false;
+  let found = false;
+  await run_async_until<item>(iterable.value(), (item) => {
+    const matched = predicate(item);
+    if (is_promise_like(matched)) {
+      return Promise.resolve(matched).then((ok) => {
+        if (!ok) return false;
+        found = true;
+        return true;
+      });
+    }
+    if (!matched) return false;
+    found = true;
+    return true;
+  });
+  return found;
 }
 
 type Stage =
@@ -534,27 +590,591 @@ type Stage =
   }
   | { readonly tag: "take"; readonly count: number };
 type Stages = { readonly stage: Stage; readonly previous?: Stages };
+type PipelineMeta = {
+  readonly ordered: readonly Stage[];
+  readonly has_take: boolean;
+  readonly has_zero_take: boolean;
+};
 type Pipeline = {
   readonly source: RawAsyncIterableT<unknown>;
   readonly stages: Stages;
-  ordered?: readonly Stage[];
+  meta?: PipelineMeta;
 };
-const pipelines = new WeakMap<RawAsyncIterableT<unknown>, Pipeline>();
-const sync_sources = new WeakMap<
-  RawAsyncIterableT<unknown>,
-  () => Iterable<unknown>
->();
-const chunk_sources = new WeakMap<
-  RawAsyncIterableT<unknown>,
-  () => AsyncIterable<readonly unknown[]>
->();
+const async_pipeline = Symbol("AsyncIterableT.pipeline");
+const async_array = Symbol("AsyncIterableT.array");
+const async_sync = Symbol("AsyncIterableT.sync");
+const async_chunks = Symbol("AsyncIterableT.chunks");
+type TaggedAsyncFactory<item = unknown> = RawAsyncIterableT<item> & {
+  [async_pipeline]?: Pipeline;
+  [async_array]?: readonly unknown[];
+  [async_sync]?: () => Iterable<unknown>;
+  [async_chunks]?: () => AsyncIterable<readonly unknown[]>;
+};
+
+function pipeline_of(
+  factory: RawAsyncIterableT<unknown>,
+): Pipeline | undefined {
+  return (factory as TaggedAsyncFactory)[async_pipeline];
+}
+function array_of(
+  factory: RawAsyncIterableT<unknown>,
+): readonly unknown[] | undefined {
+  return (factory as TaggedAsyncFactory)[async_array];
+}
+function sync_of(
+  factory: RawAsyncIterableT<unknown>,
+): (() => Iterable<unknown>) | undefined {
+  return (factory as TaggedAsyncFactory)[async_sync];
+}
+function chunks_of(
+  factory: RawAsyncIterableT<unknown>,
+): (() => AsyncIterable<readonly unknown[]>) | undefined {
+  return (factory as TaggedAsyncFactory)[async_chunks];
+}
+
+function pipeline_meta(plan: Pipeline): PipelineMeta {
+  if (plan.meta !== undefined) return plan.meta;
+  const ordered: Stage[] = [];
+  let link: Stages | undefined = plan.stages;
+  while (link !== undefined) {
+    ordered.push(link.stage);
+    link = link.previous;
+  }
+  ordered.reverse();
+  let has_take = false;
+  let has_zero_take = false;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const stage = ordered[index];
+    if (stage.tag === "take") {
+      has_take = true;
+      if (stage.count === 0) has_zero_take = true;
+    }
+  }
+  const meta: PipelineMeta = { ordered, has_take, has_zero_take };
+  plan.meta = meta;
+  return meta;
+}
+
+function init_remaining(ordered: readonly Stage[]): number[] {
+  const remaining = new Array<number>(ordered.length);
+  for (let index = 0; index < ordered.length; index += 1) {
+    const stage = ordered[index];
+    remaining[index] = stage.tag === "take" ? stage.count : Infinity;
+  }
+  return remaining;
+}
+
+function is_canonical_array(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value) &&
+    value[Symbol.iterator] === Array.prototype[Symbol.iterator];
+}
+
+async function drive_async_pipeline<item>(
+  plan: Pipeline,
+  on_item: ((item: item) => boolean | PromiseLike<boolean>) | undefined,
+  out?: item[],
+): Promise<void> {
+  const meta = pipeline_meta(plan);
+  if (meta.has_zero_take) return;
+  const ordered = meta.ordered;
+  const stage_count = ordered.length;
+  const remaining = meta.has_take ? init_remaining(ordered) : undefined;
+  const source = plan.source;
+
+  const finish_async = async (
+    pending: PromiseLike<unknown>,
+    start_index: number,
+    is_filter: boolean,
+    initial_stop: boolean,
+    initial_item?: unknown,
+  ): Promise<boolean> => {
+    let item = initial_item;
+    let keep = true;
+    let stop = initial_stop;
+    if (is_filter) {
+      keep = Boolean(await pending);
+    } else {
+      item = await pending;
+    }
+    if (keep) {
+      for (let index = start_index + 1; index < stage_count; index += 1) {
+        const operation = ordered[index];
+        switch (operation.tag) {
+          case "map_sync":
+            item = operation.fn(item);
+            break;
+          case "filter_map": {
+            const [tag, value] = operation.fn(item).value();
+            if (tag === "Nothing") keep = false;
+            else item = value;
+            break;
+          }
+          case "take":
+            remaining![index] -= 1;
+            if (remaining![index] === 0) stop = true;
+            break;
+          case "map":
+            item = operation.fn(item);
+            if (is_promise_like(item)) item = await item;
+            break;
+          case "filter": {
+            const result = operation.fn(item);
+            keep = typeof result === "boolean"
+              ? result
+              : is_promise_like(result)
+              ? await result
+              : Boolean(result);
+            break;
+          }
+        }
+        if (!keep) break;
+      }
+    }
+    if (keep) {
+      if (out !== undefined) out.push(item as item);
+      else {
+        const done = on_item!(item as item);
+        if (done === true || (is_promise_like(done) && await done)) return true;
+      }
+    }
+    return stop;
+  };
+
+  const snap = array_of(source);
+  if (snap !== undefined) {
+    for (let i = 0; i < snap.length; i += 1) {
+      let item = snap[i];
+      if (is_promise_like(item)) item = await item;
+      let keep = true;
+      let stop = false;
+      let pending_result: Promise<boolean> | undefined;
+      for (let index = 0; index < stage_count; index += 1) {
+        const operation = ordered[index];
+        switch (operation.tag) {
+          case "map_sync":
+            item = operation.fn(item);
+            break;
+          case "filter_map": {
+            const [tag, value] = operation.fn(item).value();
+            if (tag === "Nothing") keep = false;
+            else item = value;
+            break;
+          }
+          case "take":
+            remaining![index] -= 1;
+            if (remaining![index] === 0) stop = true;
+            break;
+          case "map":
+            item = operation.fn(item);
+            if (is_promise_like(item)) {
+              pending_result = finish_async(item, index, false, stop);
+            }
+            break;
+          case "filter": {
+            const result = operation.fn(item);
+            if (typeof result === "boolean") keep = result;
+            else if (is_promise_like(result)) {
+              pending_result = finish_async(result, index, true, stop, item);
+            } else keep = Boolean(result);
+            break;
+          }
+        }
+        if (pending_result !== undefined || !keep) break;
+      }
+      if (pending_result !== undefined) {
+        if (await pending_result) return;
+        continue;
+      }
+      if (keep) {
+        if (out !== undefined) out.push(item as item);
+        else {
+          const done = on_item!(item as item);
+          if (done === true || (is_promise_like(done) && await done)) return;
+        }
+      }
+      if (stop) return;
+    }
+    return;
+  }
+
+  const chunks = chunks_of(source);
+  if (chunks !== undefined) {
+    const chunk_iter = chunks()[Symbol.asyncIterator]();
+    let ended = false;
+    let failed = false;
+    try {
+      while (true) {
+        const next = await chunk_iter.next();
+        if (next.done) {
+          ended = true;
+          return;
+        }
+        const chunk = next.value;
+        for (let i = 0; i < chunk.length; i += 1) {
+          let item = chunk[i];
+          if (is_promise_like(item)) item = await item;
+          let keep = true;
+          let stop = false;
+          let pending_result: Promise<boolean> | undefined;
+          for (let index = 0; index < stage_count; index += 1) {
+            const operation = ordered[index];
+            switch (operation.tag) {
+              case "map_sync":
+                item = operation.fn(item);
+                break;
+              case "filter_map": {
+                const [tag, value] = operation.fn(item).value();
+                if (tag === "Nothing") keep = false;
+                else item = value;
+                break;
+              }
+              case "take":
+                remaining![index] -= 1;
+                if (remaining![index] === 0) stop = true;
+                break;
+              case "map":
+                item = operation.fn(item);
+                if (is_promise_like(item)) {
+                  pending_result = finish_async(item, index, false, stop);
+                }
+                break;
+              case "filter": {
+                const result = operation.fn(item);
+                if (typeof result === "boolean") keep = result;
+                else if (is_promise_like(result)) {
+                  pending_result = finish_async(
+                    result,
+                    index,
+                    true,
+                    stop,
+                    item,
+                  );
+                } else keep = Boolean(result);
+                break;
+              }
+            }
+            if (pending_result !== undefined || !keep) break;
+          }
+          if (pending_result !== undefined) {
+            if (await pending_result) return;
+            continue;
+          }
+          if (keep) {
+            if (out !== undefined) out.push(item as item);
+            else {
+              const done = on_item!(item as item);
+              if (done === true || (is_promise_like(done) && await done)) {
+                return;
+              }
+            }
+          }
+          if (stop) return;
+        }
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (!ended) await close_pipeline_source(undefined, chunk_iter, failed);
+    }
+  }
+
+  const synchronous = sync_of(source);
+  if (synchronous !== undefined) {
+    const iterable = synchronous();
+    if (is_canonical_array(iterable)) {
+      for (let i = 0; i < iterable.length; i += 1) {
+        let item = iterable[i];
+        let keep = true;
+        let stop = false;
+        let pending_result: Promise<boolean> | undefined;
+        for (let index = 0; index < stage_count; index += 1) {
+          const operation = ordered[index];
+          switch (operation.tag) {
+            case "map_sync":
+              item = operation.fn(item);
+              break;
+            case "filter_map": {
+              const [tag, value] = operation.fn(item).value();
+              if (tag === "Nothing") keep = false;
+              else item = value;
+              break;
+            }
+            case "take":
+              remaining![index] -= 1;
+              if (remaining![index] === 0) stop = true;
+              break;
+            case "map":
+              item = operation.fn(item);
+              if (is_promise_like(item)) {
+                pending_result = finish_async(item, index, false, stop);
+              }
+              break;
+            case "filter": {
+              const result = operation.fn(item);
+              if (typeof result === "boolean") keep = result;
+              else if (is_promise_like(result)) {
+                pending_result = finish_async(result, index, true, stop, item);
+              } else keep = Boolean(result);
+              break;
+            }
+          }
+          if (pending_result !== undefined || !keep) break;
+        }
+        if (pending_result !== undefined) {
+          if (await pending_result) return;
+          continue;
+        }
+        if (keep) {
+          if (out !== undefined) out.push(item as item);
+          else {
+            const done = on_item!(item as item);
+            if (done === true || (is_promise_like(done) && await done)) return;
+          }
+        }
+        if (stop) return;
+      }
+      return;
+    }
+    const sync = iterable[Symbol.iterator]();
+    let ended = false;
+    let failed = false;
+    try {
+      while (true) {
+        const next = sync.next();
+        if (next.done) {
+          ended = true;
+          return;
+        }
+        let item = next.value;
+        let keep = true;
+        let stop = false;
+        let pending_result: Promise<boolean> | undefined;
+        for (let index = 0; index < stage_count; index += 1) {
+          const operation = ordered[index];
+          switch (operation.tag) {
+            case "map_sync":
+              item = operation.fn(item);
+              break;
+            case "filter_map": {
+              const [tag, value] = operation.fn(item).value();
+              if (tag === "Nothing") keep = false;
+              else item = value;
+              break;
+            }
+            case "take":
+              remaining![index] -= 1;
+              if (remaining![index] === 0) stop = true;
+              break;
+            case "map":
+              item = operation.fn(item);
+              if (is_promise_like(item)) {
+                pending_result = finish_async(item, index, false, stop);
+              }
+              break;
+            case "filter": {
+              const result = operation.fn(item);
+              if (typeof result === "boolean") keep = result;
+              else if (is_promise_like(result)) {
+                pending_result = finish_async(result, index, true, stop, item);
+              } else keep = Boolean(result);
+              break;
+            }
+          }
+          if (pending_result !== undefined || !keep) break;
+        }
+        if (pending_result !== undefined) {
+          if (await pending_result) return;
+          continue;
+        }
+        if (keep) {
+          if (out !== undefined) out.push(item as item);
+          else {
+            const done = on_item!(item as item);
+            if (done === true || (is_promise_like(done) && await done)) return;
+          }
+        }
+        if (stop) return;
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (!ended) await close_pipeline_source(sync, undefined, failed);
+    }
+  }
+
+  const async_iter = source()[Symbol.asyncIterator]();
+  let ended = false;
+  let failed = false;
+  try {
+    while (true) {
+      const next = await async_iter.next();
+      if (next.done) {
+        ended = true;
+        return;
+      }
+      let item = next.value;
+      let keep = true;
+      let stop = false;
+      let pending_result: Promise<boolean> | undefined;
+      for (let index = 0; index < stage_count; index += 1) {
+        const operation = ordered[index];
+        switch (operation.tag) {
+          case "map_sync":
+            item = operation.fn(item);
+            break;
+          case "filter_map": {
+            const [tag, value] = operation.fn(item).value();
+            if (tag === "Nothing") keep = false;
+            else item = value;
+            break;
+          }
+          case "take":
+            remaining![index] -= 1;
+            if (remaining![index] === 0) stop = true;
+            break;
+          case "map":
+            item = operation.fn(item);
+            if (is_promise_like(item)) {
+              pending_result = finish_async(item, index, false, stop);
+            }
+            break;
+          case "filter": {
+            const result = operation.fn(item);
+            if (typeof result === "boolean") keep = result;
+            else if (is_promise_like(result)) {
+              pending_result = finish_async(result, index, true, stop, item);
+            } else keep = Boolean(result);
+            break;
+          }
+        }
+        if (pending_result !== undefined || !keep) break;
+      }
+      if (pending_result !== undefined) {
+        if (await pending_result) return;
+        continue;
+      }
+      if (keep) {
+        if (out !== undefined) out.push(item as item);
+        else {
+          const done = on_item!(item as item);
+          if (done === true || (is_promise_like(done) && await done)) return;
+        }
+      }
+      if (stop) return;
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (!ended) await close_pipeline_source(undefined, async_iter, failed);
+  }
+}
+
+async function run_async_until<item>(
+  factory: RawAsyncIterableT<item>,
+  on_item: (item: item) => boolean | PromiseLike<boolean>,
+): Promise<void> {
+  const plan = pipeline_of(factory as RawAsyncIterableT<unknown>);
+  if (plan !== undefined) {
+    await drive_async_pipeline(plan, on_item);
+    return;
+  }
+  const snap = array_of(factory as RawAsyncIterableT<unknown>);
+  if (snap !== undefined) {
+    for (let index = 0; index < snap.length; index += 1) {
+      let value = snap[index];
+      if (is_promise_like(value)) value = await value;
+      const done = on_item(value as item);
+      if (done === true || (is_promise_like(done) && await done)) return;
+    }
+    return;
+  }
+  const chunks = chunks_of(factory as RawAsyncIterableT<unknown>);
+  if (chunks !== undefined) {
+    const chunk_iter = chunks()[Symbol.asyncIterator]();
+    let ended = false;
+    let failed = false;
+    try {
+      while (true) {
+        const next = await chunk_iter.next();
+        if (next.done) {
+          ended = true;
+          return;
+        }
+        const chunk = next.value;
+        for (let index = 0; index < chunk.length; index += 1) {
+          let value = chunk[index];
+          if (is_promise_like(value)) value = await value;
+          const done = on_item(value as item);
+          if (done === true || (is_promise_like(done) && await done)) return;
+        }
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (!ended) await close_pipeline_source(undefined, chunk_iter, failed);
+    }
+  }
+  const synchronous = sync_of(factory as RawAsyncIterableT<unknown>);
+  if (synchronous !== undefined) {
+    const iterable = synchronous();
+    if (is_canonical_array(iterable)) {
+      for (let index = 0; index < iterable.length; index += 1) {
+        const done = on_item(iterable[index] as item);
+        if (done === true || (is_promise_like(done) && await done)) return;
+      }
+      return;
+    }
+    const sync = iterable[Symbol.iterator]();
+    let ended = false;
+    let failed = false;
+    try {
+      while (true) {
+        const next = sync.next();
+        if (next.done) {
+          ended = true;
+          return;
+        }
+        const done = on_item(next.value as item);
+        if (done === true || (is_promise_like(done) && await done)) return;
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (!ended) await close_pipeline_source(sync, undefined, failed);
+    }
+  }
+  const async_iter = factory()[Symbol.asyncIterator]();
+  let ended = false;
+  let failed = false;
+  try {
+    while (true) {
+      const next = await async_iter.next();
+      if (next.done) {
+        ended = true;
+        return;
+      }
+      const done = on_item(next.value);
+      if (done === true || (is_promise_like(done) && await done)) return;
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (!ended) await close_pipeline_source(undefined, async_iter, failed);
+  }
+}
 
 function pipeline<from, to = from>(
   value: AsyncIterableT<from>,
   stage: Stage,
 ): AsyncIterableT<to> {
   const current = value.value();
-  const previous = pipelines.get(current);
+  const previous = pipeline_of(current);
   let source: RawAsyncIterableT<unknown> = current;
   let stages: Stages = { stage };
   if (previous !== undefined) {
@@ -562,37 +1182,25 @@ function pipeline<from, to = from>(
     stages = { stage, previous: previous.stages };
   }
   const plan: Pipeline = { source, stages };
-  const factory = async function* (): AsyncGenerator<to> {
-    if (plan.ordered === undefined) {
-      const ordered: Stage[] = [];
-      let link: Stages | undefined = stages;
-      while (link !== undefined) {
-        ordered.push(link.stage);
-        link = link.previous;
-      }
-      plan.ordered = ordered.reverse();
-    }
-    const ordered = plan.ordered;
-    let remaining: number[] | undefined;
-    if (ordered.some((stage) => stage.tag === "take")) {
-      remaining = ordered.map((stage) => {
-        if (stage.tag === "take") return stage.count;
-        return Infinity;
-      });
-      if (remaining.includes(0)) return;
-    }
-    const synchronous = sync_sources.get(source);
+  const factory: TaggedAsyncFactory<to> = async function* (): AsyncGenerator<
+    to
+  > {
+    const meta = pipeline_meta(plan);
+    if (meta.has_zero_take) return;
+    const ordered = meta.ordered;
+    const remaining = meta.has_take ? init_remaining(ordered) : undefined;
+    const synchronous = sync_of(source);
     let sync: Iterator<unknown> | undefined;
-    let async: AsyncIterator<unknown> | undefined;
+    let async_iter: AsyncIterator<unknown> | undefined;
     if (synchronous !== undefined) sync = synchronous()[Symbol.iterator]();
-    else async = source()[Symbol.asyncIterator]();
+    else async_iter = source()[Symbol.asyncIterator]();
     let ended = false;
     let failed = false;
     try {
       while (true) {
         let next: IteratorResult<unknown>;
         if (sync !== undefined) next = sync.next();
-        else next = await async!.next();
+        else next = await async_iter!.next();
         if (next.done) {
           ended = true;
           return;
@@ -636,10 +1244,10 @@ function pipeline<from, to = from>(
       failed = true;
       throw error;
     } finally {
-      if (!ended) await close_pipeline_source(sync, async, failed);
+      if (!ended) await close_pipeline_source(sync, async_iter, failed);
     }
   };
-  pipelines.set(factory, plan);
+  factory[async_pipeline] = plan;
   return AsyncIterableT(factory);
 }
 
@@ -796,10 +1404,10 @@ async function close_iterators(
 export function from_sync_factory<item>(
   factory: () => Iterable<item>,
 ): AsyncIterableT<item> {
-  const source = async function* () {
+  const source: TaggedAsyncFactory<item> = async function* () {
     yield* factory();
   };
-  sync_sources.set(source, factory);
+  source[async_sync] = factory;
   return AsyncIterableT(source);
 }
 
@@ -829,10 +1437,10 @@ export function filter_map<from, to>(
 export function from_chunks<item>(
   factory: () => AsyncIterable<readonly item[]>,
 ): AsyncIterableT<Awaited<item>> {
-  const source = async function* () {
+  const source: TaggedAsyncFactory<Awaited<item>> = async function* () {
     for await (const chunk of factory()) yield* chunk;
   };
-  chunk_sources.set(source, factory);
+  source[async_chunks] = factory;
   return AsyncIterableT(source);
 }
 

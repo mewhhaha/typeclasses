@@ -61,15 +61,21 @@ type TaskStep =
   };
 type TaskPlan = TaskStep & { source: RawTask<unknown>; runs: number };
 const task_plan = Symbol("Task.plan");
+const task_sync = Symbol("Task.sync");
+type SyncTaskFn = (signal: AbortSignal | undefined) => unknown;
 type PlannedTask = RawTask<unknown> & {
   [task_plan]?: TaskPlan;
   [task_completed]?: unknown;
+  [task_sync]?: SyncTaskFn;
 };
 function plan_of(task: RawTask<unknown>): TaskPlan | undefined {
   return (task as PlannedTask)[task_plan];
 }
 function completed_of(task: RawTask<unknown>): unknown {
   return (task as PlannedTask)[task_completed];
+}
+function sync_fn_of(task: RawTask<unknown>): SyncTaskFn | undefined {
+  return (task as PlannedTask)[task_sync];
 }
 
 /** Excludes thenables so a Task has one unambiguous asynchronous layer. */
@@ -194,7 +200,7 @@ export function from_fn<item>(
 export function from_fn(
   run: (signal: AbortSignal | undefined) => unknown,
 ): Task<unknown> {
-  return Task((signal) => {
+  const raw: PlannedTask = (signal) => {
     if (signal?.aborted) {
       return Promise.reject(task_abort_error("Task.from_fn", signal));
     }
@@ -208,7 +214,9 @@ export function from_fn(
     }
 
     return await_with_signal(pending, signal, "Task.from_fn");
-  });
+  };
+  raw[task_sync] = run;
+  return Task(raw);
 }
 
 /** Adopts an already-running promise. Use `from_fn` when work must be deferred. */
@@ -287,6 +295,22 @@ export async function run_task<
     if (completed !== undefined) {
       return completed_item(completed) as RunTaskItem<value>;
     }
+    const sync_fn = sync_fn_of(task);
+    if (sync_fn !== undefined) {
+      const raw = sync_fn(options.signal);
+      if (is_thenable(raw)) {
+        const pending = raw instanceof Promise ? raw : Promise.resolve(raw);
+        return await await_with_signal(
+          pending,
+          options.signal,
+          "Task.from_fn",
+        ) as RunTaskItem<value>;
+      }
+      if (options.signal?.aborted) {
+        throw task_abort_error("Task.from_fn", options.signal);
+      }
+      return raw as RunTaskItem<value>;
+    }
     return await start_task(
       task,
       options.signal,
@@ -317,12 +341,34 @@ export async function run_task<
           let value: unknown;
           const completed = completed_of(task);
           if (completed !== undefined) value = completed_item(completed);
-          else {value = await start_task(
-              task,
-              options.signal,
-              "run_task",
-              options,
-            );}
+          else {
+            const sync_fn = sync_fn_of(task);
+            if (sync_fn !== undefined) {
+              const raw = sync_fn(options.signal);
+              if (is_thenable(raw)) {
+                const pending = raw instanceof Promise
+                  ? raw
+                  : Promise.resolve(raw);
+                value = await await_with_signal(
+                  pending,
+                  options.signal,
+                  "Task.from_fn",
+                );
+              } else {
+                if (options.signal?.aborted) {
+                  throw task_abort_error("Task.from_fn", options.signal);
+                }
+                value = raw;
+              }
+            } else {
+              value = await start_task(
+                task,
+                options.signal,
+                "run_task",
+                options,
+              );
+            }
+          }
           current = current[2](value) as Effect<
             TaskRequirements,
             unknown
@@ -531,7 +577,29 @@ MonadRec.instance(Task)({
         const completed = completed_of(task);
         if (completed !== undefined) {
           instruction = completed_item(completed) as typeof instruction;
-        } else instruction = await start_task(task, signal, "Task.tail_rec_m");
+        } else {
+          const sync_fn = sync_fn_of(task);
+          if (sync_fn !== undefined) {
+            const raw = sync_fn(signal);
+            if (is_thenable(raw)) {
+              const pending = raw instanceof Promise
+                ? raw
+                : Promise.resolve(raw);
+              instruction = await await_with_signal(
+                pending,
+                signal,
+                "Task.from_fn",
+              ) as typeof instruction;
+            } else {
+              if (signal?.aborted) {
+                throw task_abort_error("Task.from_fn", signal);
+              }
+              instruction = raw as typeof instruction;
+            }
+          } else {
+            instruction = await start_task(task, signal, "Task.tail_rec_m");
+          }
+        }
         const [tag, value] = instruction;
 
         switch (tag) {
@@ -868,12 +936,32 @@ export function traverse_task<input, output>(
           if (completed !== undefined) {
             results[index] = completed_item(completed) as output;
           } else {
-            results[index] = await start_task(
-              task,
-              signal,
-              "Task.traverse",
-              options,
-            );
+            const sync_fn = sync_fn_of(task);
+            if (sync_fn !== undefined) {
+              const raw = sync_fn(signal);
+              if (is_thenable(raw)) {
+                const pending = raw instanceof Promise
+                  ? raw
+                  : Promise.resolve(raw);
+                results[index] = await await_with_signal(
+                  pending,
+                  signal,
+                  "Task.from_fn",
+                ) as output;
+              } else {
+                if (signal?.aborted) {
+                  throw task_abort_error("Task.from_fn", signal);
+                }
+                results[index] = raw as output;
+              }
+            } else {
+              results[index] = await start_task(
+                task,
+                signal,
+                "Task.traverse",
+                options,
+              );
+            }
           }
         } catch (error) {
           if (!failed) {
@@ -995,9 +1083,24 @@ async function evaluate_task(
     if (signal?.aborted) throw task_abort_error("Task plan", signal);
     const src = plan.source;
     const completed = completed_of(src);
-    const value = completed !== undefined
-      ? completed_item(completed)
-      : await start_task(src, signal, "Task plan");
+    let value: unknown;
+    if (completed !== undefined) {
+      value = completed_item(completed);
+    } else {
+      const sync_fn = sync_fn_of(src);
+      if (sync_fn !== undefined) {
+        const raw = sync_fn(signal);
+        if (is_thenable(raw)) {
+          const pending = raw instanceof Promise ? raw : Promise.resolve(raw);
+          value = await await_with_signal(pending, signal, "Task.from_fn");
+        } else {
+          if (signal?.aborted) throw task_abort_error("Task.from_fn", signal);
+          value = raw;
+        }
+      } else {
+        value = await start_task(src, signal, "Task plan");
+      }
+    }
     if (signal?.aborted) throw task_abort_error("Task plan", signal);
     if (yield_every !== undefined && ++steps >= yield_every) {
       steps = 0;
@@ -1014,9 +1117,18 @@ async function evaluate_task(
     const next_plan = plan_of(next_raw);
     if (next_plan === undefined) {
       const next_completed = completed_of(next_raw);
-      return next_completed !== undefined
-        ? completed_item(next_completed)
-        : await start_task(next_raw, signal, "Task plan");
+      if (next_completed !== undefined) return completed_item(next_completed);
+      const next_sync = sync_fn_of(next_raw);
+      if (next_sync !== undefined) {
+        const raw = next_sync(signal);
+        if (is_thenable(raw)) {
+          const pending = raw instanceof Promise ? raw : Promise.resolve(raw);
+          return await await_with_signal(pending, signal, "Task.from_fn");
+        }
+        if (signal?.aborted) throw task_abort_error("Task.from_fn", signal);
+        return raw;
+      }
+      return await start_task(next_raw, signal, "Task plan");
     }
     plan = next_plan;
   }
@@ -1030,7 +1142,21 @@ async function evaluate_task(
     if (signal?.aborted) throw task_abort_error("Task plan", signal);
     const completed = completed_of(current);
     if (completed !== undefined) value = completed_item(completed);
-    else value = await start_task(current, signal, "Task plan");
+    else {
+      const sync_fn = sync_fn_of(current);
+      if (sync_fn !== undefined) {
+        const raw = sync_fn(signal);
+        if (is_thenable(raw)) {
+          const p = raw instanceof Promise ? raw : Promise.resolve(raw);
+          value = await await_with_signal(p, signal, "Task.from_fn");
+        } else {
+          if (signal?.aborted) throw task_abort_error("Task.from_fn", signal);
+          value = raw;
+        }
+      } else {
+        value = await start_task(current, signal, "Task plan");
+      }
+    }
     while (true) {
       if (signal?.aborted) throw task_abort_error("Task plan", signal);
       if (index === segment.frames.length) {
@@ -1091,9 +1217,29 @@ register_traversal(
         if (signal?.aborted) throw task_abort_error("Task.traverse", signal);
         const current = tasks[i];
         const completed = completed_of(current);
-        out[i] = completed !== undefined
-          ? completed_item(completed) as to
-          : await start_task(current, signal, "Task.traverse");
+        if (completed !== undefined) {
+          out[i] = completed_item(completed) as to;
+        } else {
+          const sync_fn = sync_fn_of(current);
+          if (sync_fn !== undefined) {
+            const raw = sync_fn(signal);
+            if (is_thenable(raw)) {
+              const p = raw instanceof Promise ? raw : Promise.resolve(raw);
+              out[i] = await await_with_signal(
+                p,
+                signal,
+                "Task.from_fn",
+              ) as to;
+            } else {
+              if (signal?.aborted) {
+                throw task_abort_error("Task.from_fn", signal);
+              }
+              out[i] = raw as to;
+            }
+          } else {
+            out[i] = await start_task(current, signal, "Task.traverse");
+          }
+        }
       }
       return task_item(build(out), "Task.traverse");
     });

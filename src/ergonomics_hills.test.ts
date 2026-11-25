@@ -988,3 +988,226 @@ Deno.test("round-4 runtime hills cover specialized traversals, dense collect, Ta
   );
   assert_equals([w_res, w_log.value()], ["done", [1, 2, 3, 4]]);
 });
+
+Deno.test("round-5 runtime hills cover AsyncIterableT push pipelines, Stm primitive/journal fast paths, Task sync from_fn, and Except dispatch", async () => {
+  const {
+    filter_map: async_filter_map,
+    find: async_find,
+    fold_while: async_fold_while,
+    from_async_iterable,
+    from_chunks,
+    from_sync_factory,
+    preview: async_preview,
+    some: async_some,
+    to_array: async_to_array,
+  } = await import("./async_iterable.ts");
+  const { Do } = await import("./typeclasses.ts");
+  const {
+    atomically,
+    new_tvar,
+    read_tvar,
+    Stm,
+    write_tvar,
+  } = await import("./stm.ts");
+  const { Task, traverse_task } = await import("./task.ts");
+  const { done, rec } = await import("./loop.ts");
+  const { fail, recover, run_except } = await import("./except.ts");
+  const { run } = await import("./effects.ts");
+
+  // AsyncIterableT: sync factory, chunks, and snapshot push pipelines (sync + async stages)
+  const sync_src = from_sync_factory(() => [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert_equals(
+    await async_to_array(
+      sync_src.filter((n) => n % 2 === 0).map((n) => n * 10).take(3),
+    ),
+    [20, 40, 60],
+  );
+  assert_equals(
+    await async_to_array(
+      sync_src
+        .filter((n) => n % 2 === 1)
+        .map((n) => n === 5 ? Promise.resolve(n * 100) : n * 10),
+    ),
+    [10, 30, 500, 70],
+  );
+  assert_equals(
+    await async_preview(
+      async_filter_map(sync_src, (n) => n % 2 === 0 ? Just(n + 1) : Nothing()),
+      2,
+    ),
+    [3, 5],
+  );
+  assert_equals(
+    (await async_find(
+      sync_src.map((n) => n * 3).filter((n) => n > 10),
+      (n) => n % 2 === 0,
+    )).value(),
+    ["Just", 12],
+  );
+  assert_equals(
+    await async_some(
+      sync_src.map((n) => n * 2),
+      async (n) => await Promise.resolve(n === 14),
+    ),
+    true,
+  );
+  assert_equals(
+    await async_fold_while(
+      sync_src.map((n) => n * 2),
+      0,
+      (acc, n) => acc + n >= 12 ? ["Done", acc + n] : ["Continue", acc + n],
+    ),
+    12,
+  );
+
+  // from_chunks fast path + early-exit generator cleanup
+  let chunks_closed = false;
+  const chunk_src = from_chunks(async function* () {
+    try {
+      yield [1, 2, 3];
+      yield [4, 5, 6];
+      yield [7, 8, 9];
+    } finally {
+      chunks_closed = true;
+    }
+  });
+  assert_equals(
+    await async_to_array(
+      chunk_src.filter((n) => n % 2 === 0).map((n) => n * 10),
+    ),
+    [20, 40, 60, 80],
+  );
+  chunks_closed = false;
+  assert_equals(
+    (await async_find(
+      chunk_src.map((n) => n * 2),
+      (n) => n === 6,
+    )).value(),
+    ["Just", 6],
+  );
+  assert_true(chunks_closed, "from_chunks early exit must close generator");
+
+  // from_async_iterable snapshot registered for fast array push pipeline
+  async function* gen_vals() {
+    yield 10;
+    yield 20;
+    yield 30;
+  }
+  const snap = await from_async_iterable(gen_vals());
+  assert_equals(
+    await async_to_array(snap.map((n) => n + 1).filter((n) => n > 15)),
+    [21, 31],
+  );
+
+  // Stm: primitive fast-path, cached read_tvar, Journal pooling, object isolation, lift 0/1/2/3
+  const counter = new_tvar(0);
+  const obj_var = new_tvar({ count: 1 });
+  assert_true(
+    read_tvar(counter) === read_tvar(counter),
+    "read_tvar should cache reader action per TVar",
+  );
+  for (let i = 0; i < 10; i += 1) {
+    const next = await atomically(
+      read_tvar(counter).bind((v) =>
+        write_tvar(counter, v + 1).map(() => v + 1)
+      ),
+    );
+    assert_equals(next, i + 1);
+  }
+  const read_obj = await atomically(read_tvar(obj_var));
+  read_obj.count = 999;
+  assert_equals((await atomically(read_tvar(obj_var))).count, 1);
+
+  const lifted_1 = await atomically(
+    Applicative.lift((a) => a * 2, read_tvar(counter)),
+  );
+  const lifted_2 = await atomically(
+    Applicative.lift((a, b) => a + b, read_tvar(counter), Stm.pure(5)),
+  );
+  const lifted_3 = await atomically(
+    Applicative.lift(
+      (a, b, c) => a + b + c,
+      read_tvar(counter),
+      Stm.pure(5),
+      Stm.pure(2),
+    ),
+  );
+  assert_equals([lifted_1, lifted_2, lifted_3], [20, 15, 17]);
+
+  const stm_do = await atomically(
+    Do(Stm, function* () {
+      const cur = yield* read_tvar(counter);
+      yield* write_tvar(counter, cur + 3);
+      return yield* read_tvar(counter);
+    }),
+  );
+  assert_equals(stm_do, 13);
+
+  // Task: sync from_fn fast-path across bind chains, tail_rec_m, traverse_task, throws & abort
+  let chain = from_fn(() => 0);
+  for (let i = 0; i < 100; i += 1) {
+    chain = chain.bind((n) => from_fn(() => n + 1));
+  }
+  assert_equals(await run_task(chain), 100);
+  assert_equals(
+    await run_task(
+      Task.tail_rec_m(
+        0,
+        (n) => from_fn(() => n >= 50 ? done(n) : rec(n + 1)),
+      ),
+    ),
+    50,
+  );
+  assert_equals(
+    await run_task(traverse_task([1, 2, 3, 4], 2, (n) => from_fn(() => n * 3))),
+    [3, 6, 9, 12],
+  );
+  assert_equals(
+    await run_task(
+      from_fn(() => 2).bind((n) => from_fn(() => Promise.resolve(n * 21))),
+    ),
+    42,
+  );
+  let sync_threw = false;
+  try {
+    await run_task(
+      from_fn((): number => {
+        throw new Error("sync-boom");
+      }),
+    );
+  } catch (e) {
+    sync_threw = e instanceof Error && e.message === "sync-boom";
+  }
+  assert_true(sync_threw, "sync throw in from_fn must reject run_task");
+
+  const controller = new AbortController();
+  controller.abort("cancelled-now");
+  let aborted_err = false;
+  try {
+    await run_task(from_fn(() => 123), { signal: controller.signal });
+  } catch {
+    aborted_err = true;
+  }
+  assert_true(aborted_err, "aborted signal must reject sync from_fn");
+
+  // Except: single-tag check in run_except & recover
+  const recovered = run(
+    run_except(
+      recover(
+        Program(function* () {
+          return yield* fail("bad-input" as const);
+        }),
+        (err) => Effect.pure(`fixed:${err}`),
+      ),
+    ),
+  );
+  assert_equals(recovered.value(), ["Right", "fixed:bad-input"]);
+  const handled_fail = run(
+    run_except(
+      Program(function* () {
+        return yield* fail("bad-tag" as const);
+      }),
+    ),
+  );
+  assert_equals(handled_fail.value(), ["Left", "bad-tag"]);
+});
