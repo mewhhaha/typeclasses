@@ -2,7 +2,6 @@ import {
   bind_from,
   type Effect,
   type Ensuring,
-  has_tag,
   map,
   type Operation,
   pure,
@@ -221,6 +220,12 @@ type Settled<error, item> =
   | readonly ["ok", item]
   | readonly ["error", error];
 
+function operation_tag(operation: unknown): unknown {
+  return typeof operation === "object" && operation !== null
+    ? (operation as readonly [unknown])[0]
+    : undefined;
+}
+
 function handle_recover<error, item, replacement>(
   effect: Effect<unknown, item>,
   on_error: (error: error) => Effect<replacement, item>,
@@ -231,14 +236,15 @@ function handle_recover<error, item, replacement>(
 
   const operation = effect[1];
   const resume = effect[2];
+  const tag = operation_tag(operation);
 
-  if (is_fails<error>(operation)) {
-    return on_error(operation[1]) as Effect<unknown, item>;
+  if (tag === "except.fail") {
+    return on_error((operation as Fails<error>)[1]) as Effect<unknown, item>;
   }
 
-  if (is_ensuring(operation)) {
+  if (tag === "effect.ensuring") {
     return handle_protected_recover<error, item, replacement>(
-      operation[1],
+      (operation as Ensuring)[1],
       resume,
       on_error,
     );
@@ -305,16 +311,20 @@ function handle_fails<error, item>(
 
   const operation = effect[1];
   const resume = effect[2];
+  const tag = operation_tag(operation);
 
-  if (is_fails<error>(operation)) {
+  if (tag === "except.fail") {
     // Dropping the continuation is the short circuit, and the reason this
     // capability cannot go through `handle_lift`, whose handler must always
     // produce a value for the program to resume with.
-    return pure(Left<error, item>(operation[1]));
+    return pure(Left<error, item>((operation as Fails<error>)[1]));
   }
 
-  if (is_ensuring(operation)) {
-    return handle_protected_fails<error, item>(operation[1], resume);
+  if (tag === "effect.ensuring") {
+    return handle_protected_fails<error, item>(
+      (operation as Ensuring)[1],
+      resume,
+    );
   }
 
   return suspend(
@@ -366,14 +376,6 @@ function handle_protected_fails<error, item>(
         return handle_fails<error, item>(resume(payload));
     }
   });
-}
-
-function is_fails<error>(operation: unknown): operation is Fails<error> {
-  return has_tag(operation, "except.fail");
-}
-
-function is_ensuring(operation: unknown): operation is Ensuring {
-  return has_tag(operation, "effect.ensuring");
 }
 
 function refuse_resume(): never {

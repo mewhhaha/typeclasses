@@ -38,6 +38,7 @@ const constructors = new Set([
   "from_iterable",
   "from_snapshot",
   "filter",
+  "filter_map",
   "take",
 ]);
 
@@ -45,12 +46,23 @@ type IterRootKind = "array" | "snapshot" | "factory";
 type IterStage =
   | { readonly tag: "map"; readonly fn: Expression }
   | { readonly tag: "filter"; readonly fn: Expression }
+  | { readonly tag: "filter_map"; readonly fn: Expression }
   | { readonly tag: "take"; readonly count: Expression };
 type IterRoot = { readonly kind: IterRootKind; readonly arg: Expression };
 type IterTerminal =
-  | { readonly kind: "to_array"; readonly pipeline: Expression }
+  | {
+    readonly kind: "to_array";
+    readonly pipeline: Expression;
+    readonly extra_take?: Expression;
+  }
   | {
     readonly kind: "fold";
+    readonly pipeline: Expression;
+    readonly init: Expression;
+    readonly step: Expression;
+  }
+  | {
+    readonly kind: "fold_while";
     readonly pipeline: Expression;
     readonly init: Expression;
     readonly step: Expression;
@@ -86,8 +98,8 @@ export function might_contain_iterable_maps(
     return false;
   }
   return /\.\s*(?:map|fold)\b/.test(source) ||
-    source.includes("to_array") || source.includes("compile_fold") ||
-    source.includes("Foldable");
+    source.includes("to_array") || source.includes("preview") ||
+    source.includes("compile_fold") || source.includes("Foldable");
 }
 
 /** @ignore */
@@ -104,11 +116,14 @@ export function create_iterable_map_fusion(
   const roots = new Set<string>();
   const root_namespaces = new Set<string>();
   const root_locals = new Map<string, IterRootKind>();
-  const stage_locals = new Map<string, "filter" | "take">();
+  const stage_locals = new Map<string, "filter" | "filter_map" | "take">();
   const to_array_locals = new Set<string>();
+  const preview_locals = new Set<string>();
   const compile_fold_locals = new Set<string>();
   const foldable_locals = new Set<string>();
   const foldable_namespaces = new Set<string>();
+  const just_locals = new Set<string>();
+  const nothing_locals = new Set<string>();
 
   for (const statement of program.body) {
     if (
@@ -119,6 +134,9 @@ export function create_iterable_map_fusion(
     const iterable = module === "iterable" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/iterable$/
         .test(specifier);
+    const maybe_mod = module === "maybe" ||
+      /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/maybe$/
+        .test(specifier);
     const root = module === "mod" || specifier === "@mewhhaha/typeclasses" ||
       /^jsr:@mewhhaha\/typeclasses(?:@[^/]+)?$/.test(specifier) ||
       library_specifiers.includes(specifier);
@@ -126,7 +144,7 @@ export function create_iterable_map_fusion(
       module === "foldable" ||
       /^(@mewhhaha\/typeclasses|jsr:@mewhhaha\/typeclasses(?:@[^/]+)?)\/(?:typeclasses|foldable)$/
         .test(specifier);
-    if (!iterable && !root && !foldable_mod) continue;
+    if (!iterable && !root && !foldable_mod && !maybe_mod) continue;
     for (const binding of statement.specifiers) {
       if (binding.type === "ImportNamespaceSpecifier") {
         if (iterable) namespaces.add(binding.local.name);
@@ -147,13 +165,20 @@ export function create_iterable_map_fusion(
           if (constructors.has(name)) functions.add(binding.local.name);
           const rk = root_kind_for(name);
           if (rk !== undefined) root_locals.set(binding.local.name, rk);
-          if (name === "filter" || name === "take") {
+          if (name === "filter" || name === "filter_map" || name === "take") {
             stage_locals.set(binding.local.name, name);
           }
           if (name === "to_array") to_array_locals.add(binding.local.name);
+          if (name === "preview") preview_locals.add(binding.local.name);
           if (name === "compile_fold") {
             compile_fold_locals.add(binding.local.name);
           }
+        }
+        if ((root || maybe_mod) && name === "Just") {
+          just_locals.add(binding.local.name);
+        }
+        if ((root || maybe_mod) && name === "Nothing") {
+          nothing_locals.add(binding.local.name);
         }
         if (root && name === "iterable") roots.add(binding.local.name);
         if (foldable_mod && name === "Foldable") {
@@ -368,6 +393,7 @@ export function create_iterable_map_fusion(
 
   function extract_inline_pipeline(
     expression: Expression,
+    allow_empty_stages = false,
   ):
     | { readonly root: IterRoot; readonly stages: readonly IterStage[] }
     | undefined {
@@ -376,7 +402,7 @@ export function create_iterable_map_fusion(
     while (true) {
       const root = match_inline_root(cursor);
       if (root !== undefined) {
-        if (stages.length === 0) return undefined;
+        if (!allow_empty_stages && stages.length === 0) return undefined;
         stages.reverse();
         return { root, stages };
       }
@@ -405,27 +431,28 @@ export function create_iterable_map_fusion(
           continue;
         }
       }
-      // Standalone form: filter(prev, fn) | take(prev, n)
+      // Standalone form: filter(prev, fn) | filter_map(prev, fn) | take(prev, n)
       if (
         cursor.arguments.length === 2 &&
         cursor.arguments[0].type !== "SpreadElement" &&
         cursor.arguments[1].type !== "SpreadElement"
       ) {
-        let stage_tag: "filter" | "take" | undefined;
+        let stage_tag: "filter" | "filter_map" | "take" | undefined;
         if (callee.type === "Identifier" && bindings.imported(callee)) {
           stage_tag = stage_locals.get(callee.name);
         } else if (
           static_member(callee) &&
           (callee.property.name === "filter" ||
+            callee.property.name === "filter_map" ||
             callee.property.name === "take") &&
           is_iterable_namespace(unwrap(callee.object))
         ) {
           stage_tag = callee.property.name;
         }
         if (stage_tag !== undefined) {
-          if (stage_tag === "filter") {
+          if (stage_tag === "filter" || stage_tag === "filter_map") {
             stages.push({
-              tag: "filter",
+              tag: stage_tag,
               fn: cursor.arguments[1] as Expression,
             });
           } else {
@@ -458,6 +485,19 @@ export function create_iterable_map_fusion(
         pipeline: current.arguments[0] as Expression,
       };
     }
+    // preview(pipeline, limit?)
+    if (
+      (current.arguments.length === 1 || current.arguments.length === 2) &&
+      is_iterable_named_call(callee, preview_locals, "preview")
+    ) {
+      return {
+        kind: "to_array",
+        pipeline: current.arguments[0] as Expression,
+        extra_take: current.arguments.length === 2
+          ? current.arguments[1] as Expression
+          : literal(100),
+      };
+    }
     // compile_fold(pipeline)(init, step)
     if (
       current.arguments.length === 2 &&
@@ -480,13 +520,14 @@ export function create_iterable_map_fusion(
     if (static_member(callee)) {
       const method = callee.property.name;
       const receiver = unwrap(callee.object);
-      // Foldable.fold(pipeline, init, step)
+      // Foldable.fold(pipeline, init, step) | Foldable.fold_while(pipeline, init, step)
       if (
-        method === "fold" && current.arguments.length === 3 &&
+        (method === "fold" || method === "fold_while") &&
+        current.arguments.length === 3 &&
         is_foldable_object(receiver)
       ) {
         return {
-          kind: "fold",
+          kind: method,
           pipeline: current.arguments[0] as Expression,
           init: current.arguments[1] as Expression,
           step: current.arguments[2] as Expression,
@@ -564,12 +605,63 @@ export function create_iterable_map_fusion(
     return substitute_two_idents(body, p0, acc_id, p1, val_id, bindings);
   }
 
+  function match_maybe_ctor(
+    expr: Expression,
+  ):
+    | { readonly ok: true; readonly arg: Expression }
+    | { readonly ok: false }
+    | undefined {
+    const val = unwrap(expr);
+    if (
+      val.type !== "CallExpression" || val.optional ||
+      val.typeArguments != null || val.callee.type !== "Identifier" ||
+      !bindings.imported(val.callee)
+    ) return undefined;
+    if (
+      just_locals.has(val.callee.name) && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) return { ok: true, arg: val.arguments[0] as Expression };
+    if (nothing_locals.has(val.callee.name) && val.arguments.length === 0) {
+      return { ok: false };
+    }
+    return undefined;
+  }
+
+  function match_fold_step_tuple(
+    expr: Expression,
+  ):
+    | { readonly tag: "Continue" | "Done"; readonly next: Expression }
+    | undefined {
+    const val = unwrap(expr);
+    if (
+      val.type !== "ArrayExpression" || val.elements.length !== 2 ||
+      val.elements[0] === null || val.elements[1] === null ||
+      val.elements[0].type === "SpreadElement" ||
+      val.elements[1].type === "SpreadElement"
+    ) return undefined;
+    const tag_el = unwrap(val.elements[0]);
+    if (
+      tag_el.type === "Literal" &&
+      (tag_el.value === "Continue" || tag_el.value === "Done")
+    ) {
+      return { tag: tag_el.value, next: val.elements[1] as Expression };
+    }
+    return undefined;
+  }
+
   function fuse_terminal(current: CallExpression): Expression | undefined {
     const term = match_terminal(current);
     if (term === undefined) return undefined;
-    const parsed = extract_inline_pipeline(term.pipeline);
+    const extra_take = term.kind === "to_array" ? term.extra_take : undefined;
+    const parsed = extract_inline_pipeline(
+      term.pipeline,
+      extra_take !== undefined,
+    );
     if (parsed === undefined) return undefined;
-    const { root, stages } = parsed;
+    const root = parsed.root;
+    const stages: readonly IterStage[] = extra_take !== undefined
+      ? [...parsed.stages, { tag: "take", count: extra_take }]
+      : parsed.stages;
     if (has_lexical_hazard(root.arg) || has_await_or_yield(root.arg)) {
       return undefined;
     }
@@ -579,7 +671,7 @@ export function create_iterable_map_fusion(
         return undefined;
       }
     }
-    if (term.kind === "fold") {
+    if (term.kind === "fold" || term.kind === "fold_while") {
       if (
         has_lexical_hazard(term.init) || has_await_or_yield(term.init) ||
         has_lexical_hazard(term.step) || has_await_or_yield(term.step)
@@ -642,6 +734,11 @@ export function create_iterable_map_fusion(
       }
       | {
         readonly tag: "filter";
+        readonly inline_cb?: Expression;
+        readonly fn_id?: IdentifierReference;
+      }
+      | {
+        readonly tag: "filter_map";
         readonly inline_cb?: Expression;
         readonly fn_id?: IdentifierReference;
       }
@@ -771,12 +868,18 @@ export function create_iterable_map_fusion(
           const annotated = annotate_unary_callback(stage.fn, !saw_map_stage);
           if (annotated === undefined) return undefined;
           const fn_id = make_fresh(
-            stage.tag === "map" ? "iter_map" : "iter_pred",
+            stage.tag === "map"
+              ? "iter_map"
+              : stage.tag === "filter_map"
+              ? "iter_fmap"
+              : "iter_pred",
           );
           setup_stmts.push(variable("const", fn_id, annotated));
           lowered_stages.push({ tag: stage.tag, fn_id });
         }
-        if (stage.tag === "map") saw_map_stage = true;
+        if (stage.tag === "map" || stage.tag === "filter_map") {
+          saw_map_stage = true;
+        }
       }
     }
 
@@ -798,7 +901,7 @@ export function create_iterable_map_fusion(
           }),
         ),
       );
-    } else if (term.kind === "fold") {
+    } else if (term.kind === "fold" || term.kind === "fold_while") {
       acc_id = make_fresh("iter_acc");
       const step_unwrapped = unwrap(term.step);
       let acc_type: TSType | undefined;
@@ -859,7 +962,8 @@ export function create_iterable_map_fusion(
 
     const needs_stop_flag = first_take_index >= 0 &&
       (first_take_index < lowered_stages.length - 1 ||
-        term.kind === "some" || term.kind === "find");
+        term.kind === "some" || term.kind === "find" ||
+        term.kind === "fold_while");
     const stop_id = needs_stop_flag ? make_fresh("iter_stop") : undefined;
 
     const loop_prefix: Statement[] = [];
@@ -934,6 +1038,111 @@ export function create_iterable_map_fusion(
             alternate: null,
           }),
         );
+      } else if (stage.tag === "filter_map") {
+        const next_val = make_fresh("iter_v");
+        const fail_branch: Statement = after_take && stop_id !== undefined
+          ? block([
+            node({
+              type: "IfStatement",
+              test: stop_id,
+              consequent: node({ type: "BreakStatement", label: null }),
+              alternate: null,
+            }),
+            node({ type: "ContinueStatement", label: null }),
+          ])
+          : node({ type: "ContinueStatement", label: null });
+        const inlined = stage.inline_cb !== undefined
+          ? inline_unary_expr(stage.inline_cb, current_val)!
+          : undefined;
+        let elided_fm = false;
+        if (inlined !== undefined) {
+          const direct = match_maybe_ctor(inlined);
+          if (direct !== undefined) {
+            if (direct.ok) {
+              loop_body.push(variable("const", next_val, direct.arg));
+              current_val = next_val;
+              elided_fm = true;
+            } else {
+              loop_body.push(fail_branch);
+              elided_fm = true;
+            }
+          } else {
+            const cond_node = unwrap(inlined);
+            if (cond_node.type === "ConditionalExpression") {
+              const c_yes = match_maybe_ctor(cond_node.consequent);
+              const c_no = match_maybe_ctor(cond_node.alternate);
+              if (
+                c_yes !== undefined && c_no !== undefined &&
+                c_yes.ok !== c_no.ok
+              ) {
+                const keep_test = c_yes.ok ? cond_node.test : node({
+                  type: "UnaryExpression",
+                  operator: "!",
+                  prefix: true,
+                  argument: cond_node.test,
+                });
+                const ok_expr = c_yes.ok
+                  ? c_yes.arg
+                  : (c_no as { readonly ok: true; readonly arg: Expression })
+                    .arg;
+                loop_body.push(
+                  node({
+                    type: "IfStatement",
+                    test: node({
+                      type: "UnaryExpression",
+                      operator: "!",
+                      prefix: true,
+                      argument: keep_test,
+                    }),
+                    consequent: fail_branch,
+                    alternate: null,
+                  }),
+                  variable("const", next_val, ok_expr),
+                );
+                current_val = next_val;
+                elided_fm = true;
+              }
+            }
+          }
+        }
+        if (!elided_fm) {
+          const fm_raw = make_fresh("iter_fm");
+          const step_call = inlined !== undefined
+            ? inlined
+            : call(stage.fn_id!, [current_val]);
+          loop_body.push(
+            variable("const", fm_raw, call(member(step_call, "value"), [])),
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "BinaryExpression",
+                operator: "===",
+                left: node({
+                  type: "MemberExpression",
+                  object: fm_raw,
+                  property: literal(0),
+                  computed: true,
+                  optional: false,
+                }),
+                right: literal("Nothing"),
+              }),
+              consequent: fail_branch,
+              alternate: null,
+            }),
+            variable(
+              "const",
+              next_val,
+              node({
+                type: "MemberExpression",
+                object: fm_raw,
+                property: literal(1),
+                computed: true,
+                optional: false,
+              }),
+            ),
+          );
+          current_val = next_val;
+        }
       } else {
         after_take = true;
         if (!needs_stop_flag && i === lowered_stages.length - 1) {
@@ -992,6 +1201,101 @@ export function create_iterable_map_fusion(
           }),
         }),
       );
+    } else if (term.kind === "fold_while") {
+      const inlined = step_fn_id === undefined
+        ? inline_binary_fold_expr(term.step, acc_id!, current_val)!
+        : undefined;
+      let elided_fw = false;
+      if (inlined !== undefined) {
+        const cond_node = unwrap(inlined);
+        if (cond_node.type === "ConditionalExpression") {
+          const c_yes = match_fold_step_tuple(cond_node.consequent);
+          const c_no = match_fold_step_tuple(cond_node.alternate);
+          if (
+            c_yes !== undefined && c_no !== undefined &&
+            c_yes.tag !== c_no.tag
+          ) {
+            const done_test = c_yes.tag === "Done" ? cond_node.test : node({
+              type: "UnaryExpression",
+              operator: "!",
+              prefix: true,
+              argument: cond_node.test,
+            });
+            const done_val = c_yes.tag === "Done" ? c_yes.next : c_no.next;
+            const cont_val = c_yes.tag === "Continue" ? c_yes.next : c_no.next;
+            loop_body.push(
+              node({
+                type: "IfStatement",
+                test: done_test,
+                consequent: block([
+                  node({
+                    type: "ExpressionStatement",
+                    expression: node({
+                      type: "AssignmentExpression",
+                      operator: "=",
+                      left: acc_id!,
+                      right: done_val,
+                    }),
+                  }),
+                  node({ type: "BreakStatement", label: null }),
+                ]),
+                alternate: null,
+              }),
+              node({
+                type: "ExpressionStatement",
+                expression: node({
+                  type: "AssignmentExpression",
+                  operator: "=",
+                  left: acc_id!,
+                  right: cont_val,
+                }),
+              }),
+            );
+            elided_fw = true;
+          }
+        }
+      }
+      if (!elided_fw) {
+        const fw_step = make_fresh("iter_step");
+        const step_expr = inlined !== undefined
+          ? inlined
+          : call(step_fn_id!, [acc_id!, current_val]);
+        loop_body.push(
+          variable("const", fw_step, step_expr),
+          node({
+            type: "ExpressionStatement",
+            expression: node({
+              type: "AssignmentExpression",
+              operator: "=",
+              left: acc_id!,
+              right: node({
+                type: "MemberExpression",
+                object: fw_step,
+                property: literal(1),
+                computed: true,
+                optional: false,
+              }),
+            }),
+          }),
+          node({
+            type: "IfStatement",
+            test: node({
+              type: "BinaryExpression",
+              operator: "===",
+              left: node({
+                type: "MemberExpression",
+                object: fw_step,
+                property: literal(0),
+                computed: true,
+                optional: false,
+              }),
+              right: literal("Done"),
+            }),
+            consequent: node({ type: "BreakStatement", label: null }),
+            alternate: null,
+          }),
+        );
+      }
     } else {
       const pred_test = pred_fn_id !== undefined
         ? call(pred_fn_id, [current_val])
@@ -1101,8 +1405,9 @@ export function create_iterable_map_fusion(
     }
 
     if (term.kind === "to_array") setup_stmts.push(ret(out_id!));
-    else if (term.kind === "fold") setup_stmts.push(ret(acc_id!));
-    else if (term.kind === "some") setup_stmts.push(ret(literal(false)));
+    else if (term.kind === "fold" || term.kind === "fold_while") {
+      setup_stmts.push(ret(acc_id!));
+    } else if (term.kind === "some") setup_stmts.push(ret(literal(false)));
     else setup_stmts.push(ret(id("undefined")));
 
     return call(arrow([], block(setup_stmts)), []);
@@ -1383,14 +1688,14 @@ function substitute_two_idents(
 
 function source_module(specifier: string): string | undefined {
   if (
-    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|mod|typeclasses|foldable)(?:\.ts)?$/
+    /^(?:\.\.?\/)+src\/(?:typeclasses\/)?(iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/
       .test(specifier)
   ) {
     return specifier.match(
-      /(iterable|mod|typeclasses|foldable)(?:\.ts)?$/,
+      /(iterable|maybe|mod|typeclasses|foldable)(?:\.ts)?$/,
     )?.[1];
   }
-  for (const module of ["iterable", "mod", "typeclasses"]) {
+  for (const module of ["iterable", "maybe", "mod", "typeclasses"]) {
     try {
       const url = new URL(`../src/${module}.ts`, import.meta.url);
       if (specifier === url.href || specifier === url.pathname) return module;

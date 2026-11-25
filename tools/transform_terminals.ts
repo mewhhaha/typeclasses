@@ -38,6 +38,10 @@ import type {
   TransformServices,
 } from "./transform_context.ts";
 import { create_span_scanner } from "./transform_imports.ts";
+import {
+  await_if_thenable_expr,
+  create_round5_fusions,
+} from "./transform_fusions.ts";
 
 type TerminalKind = "reader" | "state" | "writer";
 type Target = {
@@ -111,6 +115,11 @@ type YieldMatch =
     readonly kind: "operation";
     readonly slot: number;
     readonly send: OperationSend;
+  }
+  | {
+    readonly kind: "task";
+    readonly task_kind: "pure" | "from_fn" | "task_ctor" | "arbitrary";
+    readonly expr: Expression;
   };
 type ControlAnalysis = {
   readonly yield_count: number;
@@ -175,16 +184,131 @@ type NamedProgramCandidate = {
   readonly name: Node;
 };
 
+export type Round5TokenHints = {
+  readonly traverse: boolean;
+  readonly match: boolean;
+  readonly chain: boolean;
+  readonly array: boolean;
+};
+
 /** Terminal dispatch, primitive fusion, multi-cell fusion, and static Effect interpreter lowering. */
 export function create_terminal_transform(
   services: TransformServices,
   skip_statement?: (statement: Statement) => boolean,
+  r5_hints?: Round5TokenHints,
 ) {
+  const imp = services.imports;
+  const has_r5_task = services.task_dictionaries.size > 0 ||
+    (imp.task_run_functions?.size ?? 0) > 0 ||
+    (imp.task_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0;
+  const has_r5_traverse = r5_hints !== undefined
+    ? r5_hints.traverse
+    : services.source.includes("traverse") && (
+      (imp.traversable_objects?.size ?? 0) > 0 ||
+      (imp.traversable_namespaces?.size ?? 0) > 0 ||
+      (imp.traverse_sequential_functions?.size ?? 0) > 0 ||
+      (imp.traverse_sequential_namespaces?.size ?? 0) > 0 ||
+      (imp.array_constructors?.size ?? 0) > 0
+    );
+  const has_r5_match = r5_hints !== undefined
+    ? r5_hints.match
+    : services.source.includes("match") && (
+      (imp.match_functions?.size ?? 0) > 0 ||
+      (imp.match_namespaces?.size ?? 0) > 0 ||
+      (imp.tagged_type_names?.size ?? 0) > 0 ||
+      (imp.just_constructors?.size ?? 0) > 0 ||
+      (imp.nothing_constructors?.size ?? 0) > 0 ||
+      (imp.left_constructors?.size ?? 0) > 0 ||
+      (imp.right_constructors?.size ?? 0) > 0 ||
+      (imp.validation_constructors?.size ?? 0) > 0 ||
+      (imp.list_constructors?.size ?? 0) > 0 ||
+      (imp.nil_constructors?.size ?? 0) > 0 ||
+      (imp.cons_constructors?.size ?? 0) > 0
+    );
+  const has_r5_stm = (imp.stm_dictionaries?.size ?? 0) > 0 ||
+    (imp.stm_namespaces?.size ?? 0) > 0;
+  const has_r5_chain = r5_hints !== undefined ? r5_hints.chain : (
+    services.source.includes(".map(") || services.source.includes(".bind(") ||
+    services.source.includes("from_maybe") ||
+    services.source.includes("to_nullable")
+  ) && (
+    (imp.just_constructors?.size ?? 0) > 0 ||
+    (imp.nothing_constructors?.size ?? 0) > 0 ||
+    (imp.from_nullable_functions?.size ?? 0) > 0 ||
+    (imp.from_maybe_functions?.size ?? 0) > 0 ||
+    (imp.to_nullable_functions?.size ?? 0) > 0 ||
+    (imp.left_constructors?.size ?? 0) > 0 ||
+    (imp.right_constructors?.size ?? 0) > 0 ||
+    (imp.direct_maybe_dictionaries?.size ?? 0) > 0 ||
+    (imp.direct_either_dictionaries?.size ?? 0) > 0 ||
+    (imp.tagged_type_names?.size ?? 0) > 0
+  );
+  const has_r5_array = r5_hints !== undefined ? r5_hints.array : (
+    (imp.array_constructors?.size ?? 0) > 0 ||
+    (imp.array_view_functions?.size ?? 0) > 0
+  ) && (
+    services.source.includes(".map(") || services.source.includes(".fold(") ||
+    services.source.includes("Foldable") || services.source.includes("to_array")
+  );
+  const has_any_terminal = imp.terminal_functions.size > 0 ||
+    imp.terminal_namespaces.size > 0 ||
+    (imp.cell_runners?.size ?? 0) > 0 ||
+    (imp.cell_runner_namespaces?.size ?? 0) > 0 ||
+    (imp.operation_runners?.size ?? 0) > 0 ||
+    (imp.operation_runner_namespaces?.size ?? 0) > 0 ||
+    (imp.state_eval_functions?.size ?? 0) > 0 ||
+    (imp.state_eval_namespaces?.size ?? 0) > 0 ||
+    (imp.task_run_functions?.size ?? 0) > 0 ||
+    (imp.task_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0 ||
+    (imp.direct_reader_dictionaries?.size ?? 0) > 0 ||
+    (imp.direct_state_dictionaries?.size ?? 0) > 0 ||
+    (imp.cell_factories?.size ?? 0) > 0 ||
+    (imp.cell_namespaces?.size ?? 0) > 0;
+  const has_any_interp = imp.effect_names.size > 0 || imp.namespaces.size > 0;
+  const has_any_lift = (imp.applicative_objects?.size ?? 0) > 0 ||
+    (imp.applicative_namespaces?.size ?? 0) > 0 ||
+    (imp.collect_functions?.size ?? 0) > 0 ||
+    (imp.collect_namespaces?.size ?? 0) > 0 ||
+    imp.namespaces.size > 0;
+  const has_r5 = has_r5_task || has_r5_traverse || has_r5_match || has_r5_stm ||
+    has_r5_chain || has_r5_array;
+  if (!has_any_terminal && !has_any_interp && !has_any_lift && !has_r5) {
+    return {
+      lower(): { expression: Expression; direct: boolean } | undefined {
+        return undefined;
+      },
+      remove(): boolean {
+        return false;
+      },
+      hoist(): Statement[] | undefined {
+        return undefined;
+      },
+      has_removals(): boolean {
+        return false;
+      },
+      skip(): boolean {
+        return false;
+      },
+    };
+  }
   const removed = new Set<Node>();
   const hoisted_statements = new Map<Node, Statement[]>();
-  const prepared_cells = collect_prepared_cells();
-  const prepared_ops = collect_prepared_operations();
-  const named = collect_named();
+  const round5 = has_r5 ? create_round5_fusions(services) : undefined;
+  const prepared_cells = ((imp.cell_runners?.size ?? 0) > 0 ||
+      (imp.cell_runner_namespaces?.size ?? 0) > 0 ||
+      imp.namespaces.size > 0)
+    ? collect_prepared_cells()
+    : new Map<Node, PreparedCellEntry>();
+  const prepared_ops = ((imp.operation_runners?.size ?? 0) > 0 ||
+      (imp.operation_runner_namespaces?.size ?? 0) > 0 ||
+      imp.namespaces.size > 0)
+    ? collect_prepared_operations()
+    : new Map<Node, PreparedOpsEntry>();
+  const named = has_any_terminal
+    ? collect_named()
+    : new Map<Node, NamedProgramCandidate>();
 
   function imported(
     expression: Expression,
@@ -1399,6 +1523,8 @@ export function create_terminal_transform(
             for (const arg of matched.operation.arguments) {
               if (!validate_expr(arg, in_control, true)) return false;
             }
+          } else if (matched.kind === "task") {
+            if (!validate_expr(matched.expr, in_control, true)) return false;
           } else if (matched.send.payload !== undefined) {
             if (!validate_expr(matched.send.payload, in_control, true)) {
               return false;
@@ -1706,6 +1832,7 @@ export function create_terminal_transform(
         readonly init: Expression;
       }[];
       readonly wrap_dictionary?: Expression;
+      readonly async_task?: boolean;
       readonly except?: {
         readonly slot_index: number;
         readonly either_id: IdentifierReference;
@@ -1715,6 +1842,7 @@ export function create_terminal_transform(
     },
   ): Expression {
     const eager = options.eager_init;
+    const is_async_task = options.async_task === true;
     const except_info = options.except;
     const except_idx = except_info?.slot_index ?? -1;
 
@@ -1941,7 +2069,7 @@ export function create_terminal_transform(
           }
           const right_stmts: Statement[] = [];
           const right_val = lower_expr(expr.right, right_stmts);
-          if (except_info === undefined) {
+          if (except_info === undefined && !is_async_task) {
             const rhs_iife = call(
               arrow([], block([...right_stmts, ret(right_val)])),
               [],
@@ -2007,7 +2135,7 @@ export function create_terminal_transform(
           const cons_val = lower_expr(expr.consequent, cons_stmts);
           const alt_stmts: Statement[] = [];
           const alt_val = lower_expr(expr.alternate, alt_stmts);
-          if (except_info === undefined) {
+          if (except_info === undefined && !is_async_task) {
             const cons_expr = cons_stmts.length > 0
               ? call(arrow([], block([...cons_stmts, ret(cons_val)])), [])
               : cons_val;
@@ -2239,6 +2367,65 @@ export function create_terminal_transform(
       target_stmts: Statement[],
       discard_result: boolean,
     ): Expression {
+      if (matched.kind === "task") {
+        const lowered = lower_expr(matched.expr, target_stmts);
+        switch (matched.task_kind) {
+          case "pure":
+            return lowered;
+          case "from_fn": {
+            const cb = parentheses(lowered);
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.typeParameters == null && cb.returnType == null &&
+              cb.params.length === 0 && cb.body.type !== "BlockStatement"
+            ) {
+              const inner = cb.body as Expression;
+              if (!cb.async && is_sync_non_thenable_expr(inner)) return inner;
+              if (!cb.async) {
+                const raw_id = services.fresh("task_raw");
+                target_stmts.push(variable(raw_id, inner, "const"));
+                return await_if_thenable_expr(raw_id);
+              }
+              return node({ type: "AwaitExpression", argument: inner });
+            }
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.params.length === 0
+            ) {
+              return node({
+                type: "AwaitExpression",
+                argument: call(cb, []),
+              });
+            }
+            return node({
+              type: "AwaitExpression",
+              argument: call(lowered, [void_zero()]),
+            });
+          }
+          case "task_ctor": {
+            const cb = parentheses(lowered);
+            if (
+              cb.type === "ArrowFunctionExpression" && !cb.generator &&
+              cb.typeParameters == null && cb.returnType == null &&
+              cb.params.length === 0 && cb.body.type !== "BlockStatement"
+            ) {
+              return node({
+                type: "AwaitExpression",
+                argument: cb.body as Expression,
+              });
+            }
+            return node({
+              type: "AwaitExpression",
+              argument: call(lowered, [void_zero()]),
+            });
+          }
+          case "arbitrary":
+            return node({
+              type: "AwaitExpression",
+              argument: call(call(member(lowered, "value"), []), []),
+            });
+        }
+      }
       const slot = slots[matched.slot];
       if (matched.kind === "except") {
         const op = matched.operation;
@@ -3089,7 +3276,29 @@ export function create_terminal_transform(
       }
       const except_out = services.fresh("except_out");
       out_statements.push(
-        variable(except_out, call(arrow([], block(inner_stmts)), []), "const"),
+        variable(
+          except_out,
+          is_async_task
+            ? node({
+              type: "AwaitExpression",
+              argument: call(
+                node({
+                  type: "ArrowFunctionExpression",
+                  id: null,
+                  expression: false,
+                  generator: false,
+                  async: true,
+                  params: [],
+                  body: block(inner_stmts),
+                  typeParameters: null,
+                  returnType: null,
+                }),
+                [],
+              ),
+            })
+            : call(arrow([], block(inner_stmts)), []),
+          "const",
+        ),
       );
       emit_range_ensure(except_idx + 1, slots.length, out_statements);
       const either_id = except_info.either_id;
@@ -3211,6 +3420,22 @@ export function create_terminal_transform(
           ),
         );
       }
+    }
+    if (is_async_task) {
+      return call(
+        node({
+          type: "ArrowFunctionExpression",
+          id: null,
+          expression: false,
+          generator: false,
+          async: true,
+          params: thunk_params,
+          body: block(out_statements),
+          typeParameters: null,
+          returnType: null,
+        }),
+        thunk_args,
+      );
     }
     return call(arrow(thunk_params, block(out_statements)), thunk_args);
   }
@@ -3418,13 +3643,111 @@ export function create_terminal_transform(
     }
     return undefined;
   }
+  function is_run_task_callee(expression: Expression): boolean {
+    if (
+      expression.type === "Identifier" &&
+      services.imports.task_run_functions?.has(expression.name) &&
+      services.bindings.imported(expression)
+    ) return true;
+    return expression.type === "MemberExpression" && !expression.computed &&
+      !expression.optional && expression.object.type === "Identifier" &&
+      expression.property.type === "Identifier" &&
+      expression.property.name === "run_task" &&
+      services.bindings.imported(expression.object) &&
+      ((services.imports.task_namespaces?.has(expression.object.name) ??
+        false) ||
+        services.imports.namespaces.has(expression.object.name));
+  }
+  function is_task_dict_expr(expression: Expression): boolean {
+    return expression.type === "Identifier" &&
+      services.task_dictionaries.has(expression.name) &&
+      services.bindings.imported(expression);
+  }
+  function is_task_fn_expr(
+    expression: Expression,
+    set: ReadonlySet<string> | undefined,
+    prop: string,
+  ): boolean {
+    if (
+      set !== undefined && expression.type === "Identifier" &&
+      set.has(expression.name) && services.bindings.imported(expression)
+    ) return true;
+    return expression.type === "MemberExpression" && !expression.computed &&
+      !expression.optional && expression.object.type === "Identifier" &&
+      expression.property.type === "Identifier" &&
+      expression.property.name === prop &&
+      services.bindings.imported(expression.object) &&
+      ((services.imports.task_namespaces?.has(expression.object.name) ??
+        false) ||
+        services.imports.namespaces.has(expression.object.name));
+  }
+  function match_task_yield(expression: Expression): YieldMatch | undefined {
+    let val = parentheses(expression);
+    let lifted = false;
+    if (
+      val.type === "CallExpression" && !val.optional &&
+      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) {
+      if (effect_method(val.callee, "pure")) {
+        return {
+          kind: "task",
+          task_kind: "pure",
+          expr: val.arguments[0] as Expression,
+        };
+      }
+      if (effect_method(val.callee, "lift")) {
+        val = parentheses(val.arguments[0] as Expression);
+        lifted = true;
+      }
+    }
+    if (
+      val.type === "CallExpression" && !val.optional &&
+      val.typeArguments == null && val.arguments.length === 1 &&
+      val.arguments[0].type !== "SpreadElement"
+    ) {
+      const arg = val.arguments[0] as Expression;
+      if (
+        is_task_fn_expr(
+          val.callee,
+          services.imports.task_succeed_functions,
+          "succeed",
+        ) ||
+        (val.callee.type === "MemberExpression" && !val.callee.computed &&
+          !val.callee.optional && val.callee.property.type === "Identifier" &&
+          val.callee.property.name === "pure" &&
+          is_task_dict_expr(val.callee.object))
+      ) {
+        return { kind: "task", task_kind: "pure", expr: arg };
+      }
+      if (
+        is_task_fn_expr(
+          val.callee,
+          services.imports.task_from_fn_functions,
+          "from_fn",
+        )
+      ) {
+        return { kind: "task", task_kind: "from_fn", expr: arg };
+      }
+      if (is_task_dict_expr(val.callee)) {
+        return { kind: "task", task_kind: "task_ctor", expr: arg };
+      }
+    }
+    if (lifted) {
+      return { kind: "task", task_kind: "arbitrary", expr: val };
+    }
+    return undefined;
+  }
   function stacked_terminal_program(
     outer: CallExpression,
   ): { expression: Expression; direct: boolean } | undefined {
     if (
-      !plain_call(outer, 1) || target(outer.callee)?.imported !== "run" ||
+      !plain_call(outer, 1) ||
       services.config.optimizations?.terminal_body === false
     ) return undefined;
+    const is_run = target(outer.callee)?.imported === "run";
+    const is_async_task = !is_run && is_run_task_callee(outer.callee);
+    if (!is_run && !is_async_task) return undefined;
     type RawLayer =
       | {
         readonly kind: TerminalKind;
@@ -3531,7 +3854,8 @@ export function create_terminal_transform(
       const handler = target(cursor.callee);
       if (
         handler === undefined || handler.imported === "run" ||
-        handler.imported === "run_except"
+        handler.imported === "run_except" ||
+        is_direct_terminal(handler.imported)
       ) break;
       const kind = terminal_kind(handler.imported);
       const keyed = cursor.arguments.length === 3 ||
@@ -3573,7 +3897,10 @@ export function create_terminal_transform(
       l.kind === "except" || l.kind === "operations" || l.kind === "cells"
     );
     if (layers_outer_to_inner.length === 0) return undefined;
-    if (layers_outer_to_inner.length === 1 && !has_special_layer) {
+    if (
+      layers_outer_to_inner.length === 1 && !has_special_layer &&
+      !is_async_task
+    ) {
       return undefined;
     }
     const resolved_prog = resolve_program_arg(cursor);
@@ -3751,6 +4078,9 @@ export function create_terminal_transform(
             send,
           };
         }
+      }
+      if (is_async_task) {
+        return match_task_yield(expression);
       }
       return undefined;
     };
@@ -3957,6 +4287,7 @@ export function create_terminal_transform(
         (value) => wrap_range(value, 0, slots.length),
         {
           eager_init,
+          async_task: is_async_task,
           except: except_slot_index >= 0
             ? {
               slot_index: except_slot_index,
@@ -3979,10 +4310,12 @@ export function create_terminal_transform(
       services.config.optimizations?.terminal_body === false
     ) return undefined;
 
-    // Case A: Do(...).run(input), eval_state(Do(...), input), exec_state(Do(...), input)
+    // Case A: Do(...).run(input), eval_state(Do(...), input), exec_state(Do(...), input),
+    //         run_reader_terminal(Do(...), env), run_state_terminal(Do(...), init)
     let do_call: CallExpression | undefined;
     let run_input: Expression | undefined;
     let state_eval_mode: StateEvalName | undefined;
+    let expected_terminal_kind: "reader" | "state" | undefined;
     if (plain_call(outer, 2)) {
       const eval_kind = state_eval_target(outer.callee);
       if (eval_kind !== undefined) {
@@ -3996,6 +4329,29 @@ export function create_terminal_transform(
           state_eval_mode = eval_kind;
           if (lexical_hazard(run_input) || contains_await_yield(run_input)) {
             return undefined;
+          }
+        }
+      } else {
+        const direct_handler = target(outer.callee);
+        if (
+          direct_handler !== undefined &&
+          (direct_handler.imported === "run_reader_terminal" ||
+            direct_handler.imported === "run_state_terminal")
+        ) {
+          const target_expr = parentheses(outer.arguments[0] as Expression);
+          if (
+            target_expr.type === "CallExpression" &&
+            services.kind(target_expr) === "do"
+          ) {
+            do_call = target_expr;
+            run_input = outer.arguments[1] as Expression;
+            expected_terminal_kind =
+              direct_handler.imported === "run_reader_terminal"
+                ? "reader"
+                : "state";
+            if (lexical_hazard(run_input) || contains_await_yield(run_input)) {
+              return undefined;
+            }
           }
         }
       }
@@ -4112,6 +4468,9 @@ export function create_terminal_transform(
       }
     }
     if (state_eval_mode !== undefined && kind !== "state") return undefined;
+    if (
+      expected_terminal_kind !== undefined && kind !== expected_terminal_kind
+    ) return undefined;
 
     const match_yield = (expression: Expression): YieldMatch | undefined => {
       if (cell !== undefined) {
@@ -4696,23 +5055,40 @@ export function create_terminal_transform(
     if (stacked_fused !== undefined) return stacked_fused;
     const do_fused = do_reader_state_fusion(outer);
     if (do_fused !== undefined) return do_fused;
-    if (!plain_call(outer, 1) || target(outer.callee)?.imported !== "run") {
-      return undefined;
-    }
-    const handled = parentheses(outer.arguments[0] as Expression);
-    if (
-      handled.type !== "CallExpression" || handled.optional ||
-      handled.typeArguments != null ||
-      handled.arguments.some((argument) => argument.type === "SpreadElement") ||
-      (handled.arguments.length !== 2 && handled.arguments.length !== 3)
+    let handled: CallExpression;
+    let handler: Target | undefined;
+    let is_direct = false;
+    if (plain_call(outer, 1) && target(outer.callee)?.imported === "run") {
+      const inner = parentheses(outer.arguments[0] as Expression);
+      if (
+        inner.type !== "CallExpression" || inner.optional ||
+        inner.typeArguments != null ||
+        inner.arguments.some((argument) => argument.type === "SpreadElement") ||
+        (inner.arguments.length !== 2 && inner.arguments.length !== 3)
+      ) {
+        return undefined;
+      }
+      handled = inner;
+      handler = target(handled.callee);
+      if (
+        handler === undefined || handler.imported === "run" ||
+        handler.imported === "run_except" ||
+        is_direct_terminal(handler.imported)
+      ) return undefined;
+    } else if (
+      !outer.optional && outer.typeArguments == null &&
+      !outer.arguments.some((argument) => argument.type === "SpreadElement") &&
+      (outer.arguments.length === 2 || outer.arguments.length === 3)
     ) {
+      handler = target(outer.callee);
+      if (handler === undefined || !is_direct_terminal(handler.imported)) {
+        return undefined;
+      }
+      handled = outer;
+      is_direct = true;
+    } else {
       return undefined;
     }
-    const handler = target(handled.callee);
-    if (
-      handler === undefined || handler.imported === "run" ||
-      handler.imported === "run_except"
-    ) return undefined;
     const kind = terminal_kind(handler.imported);
 
     // Keyed cell terminal fusion:
@@ -4782,7 +5158,7 @@ export function create_terminal_transform(
             ) !== undefined;
           });
         if (!can_fuse) {
-          return {
+          return is_direct ? undefined : {
             expression: { ...handled, callee: runner(handler) },
             direct: false,
           };
@@ -4847,7 +5223,7 @@ export function create_terminal_transform(
           };
         }
       }
-      return {
+      return is_direct ? undefined : {
         expression: { ...handled, callee: runner(handler) },
         direct: false,
       };
@@ -4890,7 +5266,7 @@ export function create_terminal_transform(
             primitive_kind(operation.name) === kind;
         }) && (kind === "writer" || input_type(body, kind) !== undefined);
       if (!can_fuse) {
-        return {
+        return is_direct ? undefined : {
           expression: { ...handled, callee: runner(handler) },
           direct: false,
         };
@@ -4952,7 +5328,7 @@ export function create_terminal_transform(
         };
       }
     }
-    return {
+    return is_direct ? undefined : {
       expression: { ...handled, callee: runner(handler) },
       direct: false,
     };
@@ -4970,6 +5346,7 @@ export function create_terminal_transform(
     if (
       handler === undefined || handler.imported === "run" ||
       handler.imported === "run_except" ||
+      is_direct_terminal(handler.imported) ||
       handled.arguments.some((argument) => argument.type === "SpreadElement")
     ) return undefined;
     const types = handled.typeArguments?.params;
@@ -4986,6 +5363,8 @@ export function create_terminal_transform(
         if (types.length !== 4) return undefined;
         params = [types[0], types[1], types[3]];
         break;
+      default:
+        return undefined;
     }
     return {
       ...handled,
@@ -5434,14 +5813,16 @@ export function create_terminal_transform(
       owner: Node,
     ) => {
       if (expression == null || expression.type !== "CallExpression") return;
-      // 1. run(run_*(p, input)), run(run_except(p)), run(handle_operations(p, ...)), run(preparedOps(p)), or stacked run(...)
+      // 1. run(run_*(p, input)), run_task(run_*(p, input)), run(run_except(p)), ...
       if (
         plain_call(expression, 1) &&
-        target(expression.callee)?.imported === "run"
+        (target(expression.callee)?.imported === "run" ||
+          is_run_task_callee(expression.callee))
       ) {
+        const is_async_outer = is_run_task_callee(expression.callee);
         let cursor = parentheses(expression.arguments[0] as Expression);
         let steps = 0;
-        let saw_special = false;
+        let saw_special = is_async_outer;
         while (
           cursor.type === "CallExpression" && !cursor.optional &&
           cursor.typeArguments == null &&
@@ -5509,7 +5890,8 @@ export function create_terminal_transform(
           const handler = target(cursor.callee);
           if (
             handler === undefined || handler.imported === "run" ||
-            handler.imported === "run_except"
+            handler.imported === "run_except" ||
+            is_direct_terminal(handler.imported)
           ) break;
           const kind = terminal_kind(handler.imported);
           const keyed = cursor.arguments.length === 3 ||
@@ -5541,7 +5923,8 @@ export function create_terminal_transform(
               const handler = target(handled.callee);
               if (
                 handler === undefined || handler.imported === "run" ||
-                handler.imported === "run_except"
+                handler.imported === "run_except" ||
+                is_direct_terminal(handler.imported)
               ) return;
               const kind = terminal_kind(handler.imported);
               const is_keyed = handled.arguments.length === 3 ||
@@ -5568,6 +5951,84 @@ export function create_terminal_transform(
           }
         }
         return;
+      }
+      // 1b. Direct run_reader_terminal / run_state_terminal / run_writer_terminal
+      if (
+        !expression.optional && expression.typeArguments == null &&
+        !expression.arguments.some((a) => a.type === "SpreadElement") &&
+        (expression.arguments.length === 2 ||
+          expression.arguments.length === 3)
+      ) {
+        const direct_handler = target(expression.callee);
+        if (
+          direct_handler !== undefined &&
+          is_direct_terminal(direct_handler.imported)
+        ) {
+          const kind = terminal_kind(direct_handler.imported);
+          const keyed = expression.arguments.length === 3 ||
+            (kind === "writer" &&
+              resolve_cell(expression.arguments[0] as Expression, "writer") !==
+                undefined);
+          const arg_index = keyed ? 1 : 0;
+          const input_arg = keyed
+            ? expression.arguments[2]
+            : expression.arguments[1];
+          if (
+            input_arg !== undefined &&
+            (lexical_hazard(input_arg) || contains_await_yield(input_arg))
+          ) return;
+          const name = parentheses(
+            expression.arguments[arg_index] as Expression,
+          );
+          if (name.type === "Identifier") {
+            const key = services.bindings.resolve(name);
+            const candidate = candidates.get(key);
+            if (
+              candidate !== undefined && candidate.owner === owner &&
+              candidate.program.end < name.start
+            ) {
+              if (!keyed) {
+                const run_fn = candidate.program.arguments[0] as FunctionNode;
+                const match_op = (expr: Expression): YieldMatch | undefined => {
+                  const op = primitive(expr);
+                  return op !== undefined && primitive_kind(op.name) === kind
+                    ? { kind: "cell", slot: 0, operation: op }
+                    : undefined;
+                };
+                if (
+                  analyze_control_body(run_fn.body!, match_op) === undefined ||
+                  (kind !== "writer" &&
+                    input_type_in_block(run_fn.body!, kind) === undefined)
+                ) return;
+              } else {
+                const resolved_cell = resolve_cell(
+                  expression.arguments[0] as Expression,
+                  kind,
+                );
+                if (resolved_cell === undefined) return;
+                const run_fn = candidate.program.arguments[0] as FunctionNode;
+                const match_op = (expr: Expression): YieldMatch | undefined => {
+                  const op = cell_primitive(
+                    expr,
+                    resolved_cell.declaration,
+                    kind,
+                  );
+                  return op !== undefined
+                    ? { kind: "cell", slot: 0, operation: op }
+                    : undefined;
+                };
+                if (
+                  analyze_control_body(run_fn.body!, match_op) === undefined
+                ) {
+                  return;
+                }
+              }
+              allowed.add(name);
+              used.add(key);
+            }
+          }
+          return;
+        }
       }
       // 2. run_cells(p, { ... })
       if (
@@ -5679,14 +6140,39 @@ export function create_terminal_transform(
       phase: "before" | "after" = "after",
     ): { expression: Expression; direct: boolean } | undefined {
       if (services.config.optimizations?.terminal !== false) {
-        const fused = terminal_program(value);
-        if (fused !== undefined) return fused;
+        if (
+          phase === "before" && round5 !== undefined &&
+          (has_r5_task || has_r5_stm || has_r5_chain || has_r5_array)
+        ) {
+          const r5_before = round5.lower_before(value);
+          if (r5_before !== undefined) return r5_before;
+        }
+        if (has_any_terminal) {
+          const fused = terminal_program(value);
+          if (fused !== undefined) return fused;
+        }
+        if (
+          phase === "before" && has_any_interp &&
+          services.config.optimizations?.interpreter !== false
+        ) {
+          const eff = effect_lower(value);
+          if (eff !== undefined && eff.type === "CallExpression") {
+            const eff_fused = terminal_program(eff);
+            if (eff_fused !== undefined) return eff_fused;
+          }
+        }
         if (phase === "before") return undefined;
-        const lift = terminal_lift(value);
-        if (lift !== undefined) return { expression: lift, direct: false };
+        if (has_any_terminal || has_any_lift) {
+          const lift = terminal_lift(value);
+          if (lift !== undefined) return { expression: lift, direct: false };
+        }
+        if (round5 !== undefined && (has_r5_traverse || has_r5_match)) {
+          const r5_after = round5.lower_after(value);
+          if (r5_after !== undefined) return r5_after;
+        }
       }
       if (
-        phase === "after" &&
+        phase === "after" && has_any_interp &&
         services.config.optimizations?.interpreter !== false
       ) {
         const expression = effect_lower(value);
@@ -5939,15 +6425,50 @@ function primitive_kind(name: PrimitiveFunctionName): TerminalKind {
       return "writer";
   }
 }
+function is_sync_non_thenable_expr(expression: Expression): boolean {
+  const val = parentheses(expression);
+  switch (val.type) {
+    case "Literal":
+    case "TemplateLiteral":
+    case "BinaryExpression":
+    case "UnaryExpression":
+    case "UpdateExpression":
+    case "ArrayExpression":
+      return true;
+    case "ObjectExpression":
+      return val.properties.every((prop) =>
+        prop.type === "Property" && !prop.computed &&
+        !(prop.key.type === "Identifier" && prop.key.name === "then") &&
+        !(prop.key.type === "Literal" && prop.key.value === "then")
+      );
+    case "ConditionalExpression":
+      return is_sync_non_thenable_expr(val.consequent) &&
+        is_sync_non_thenable_expr(val.alternate);
+    default:
+      return false;
+  }
+}
+function is_direct_terminal(
+  name: TerminalFunctionName,
+): name is
+  | "run_reader_terminal"
+  | "run_state_terminal"
+  | "run_writer_terminal" {
+  return name === "run_reader_terminal" || name === "run_state_terminal" ||
+    name === "run_writer_terminal";
+}
 function terminal_kind(
   name: Exclude<TerminalFunctionName, "run" | "run_except">,
 ): TerminalKind {
   switch (name) {
     case "run_reader":
+    case "run_reader_terminal":
       return "reader";
     case "run_state":
+    case "run_state_terminal":
       return "state";
     case "run_writer":
+    case "run_writer_terminal":
       return "writer";
   }
 }

@@ -69,7 +69,10 @@ export type TerminalFunctionName =
   | "run_reader"
   | "run_state"
   | "run_writer"
-  | "run_except";
+  | "run_except"
+  | "run_reader_terminal"
+  | "run_state_terminal"
+  | "run_writer_terminal";
 export type PrimitiveFunctionName =
   | "ask"
   | "asks"
@@ -143,14 +146,41 @@ export type ImportedBindings = {
   readonly direct_maybe_dictionaries?: ReadonlySet<string>;
   readonly just_constructors?: ReadonlySet<string>;
   readonly nothing_constructors?: ReadonlySet<string>;
+  readonly from_nullable_functions?: ReadonlySet<string>;
+  readonly from_maybe_functions?: ReadonlySet<string>;
+  readonly to_nullable_functions?: ReadonlySet<string>;
   readonly direct_either_dictionaries?: ReadonlySet<string>;
   readonly left_constructors?: ReadonlySet<string>;
   readonly right_constructors?: ReadonlySet<string>;
   readonly direct_identity_dictionaries?: ReadonlySet<string>;
   readonly identity_constructors?: ReadonlySet<string>;
   readonly array_constructors?: ReadonlySet<string>;
+  readonly array_view_functions?: ReadonlySet<string>;
+  readonly array_to_array_functions?: ReadonlySet<string>;
+  readonly foldable_objects?: ReadonlySet<string>;
+  readonly foldable_namespaces?: ReadonlySet<string>;
+  readonly stm_dictionaries?: ReadonlySet<string>;
+  readonly stm_namespaces?: ReadonlySet<string>;
+  readonly list_constructors?: ReadonlySet<string>;
+  readonly nil_constructors?: ReadonlySet<string>;
+  readonly cons_constructors?: ReadonlySet<string>;
   readonly direct_reader_dictionaries?: ReadonlySet<string>;
   readonly direct_state_dictionaries?: ReadonlySet<string>;
+  readonly task_from_fn_functions?: ReadonlySet<string>;
+  readonly task_succeed_functions?: ReadonlySet<string>;
+  readonly task_run_functions?: ReadonlySet<string>;
+  readonly task_namespaces?: ReadonlySet<string>;
+  readonly traversable_objects?: ReadonlySet<string>;
+  readonly traversable_namespaces?: ReadonlySet<string>;
+  readonly traverse_sequential_functions?: ReadonlySet<string>;
+  readonly traverse_sequential_namespaces?: ReadonlySet<string>;
+  readonly match_functions?: ReadonlySet<string>;
+  readonly match_namespaces?: ReadonlySet<string>;
+  readonly tagged_type_names?: ReadonlyMap<
+    string,
+    "maybe" | "either" | "validation" | "list"
+  >;
+  readonly validation_constructors?: ReadonlySet<string>;
   readonly collect_functions?: ReadonlySet<string>;
   readonly collect_namespaces?: ReadonlySet<string>;
   readonly applicative_objects?: ReadonlySet<string>;

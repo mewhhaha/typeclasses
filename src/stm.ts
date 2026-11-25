@@ -26,6 +26,7 @@ const tvar_id = Symbol("TVar.id");
 const tvar_value = Symbol("TVar.value");
 const tvar_immutable = Symbol("TVar.immutable");
 const tvar_shape = Symbol("TVar.shape");
+const tvar_reader = Symbol("TVar.reader");
 let next_tvar_id = 0;
 let transaction_depth = 0;
 const immutable_values = new WeakSet<object>();
@@ -40,6 +41,7 @@ type TVarBox<item> = TVar<item> & {
   [tvar_value]: item;
   readonly [tvar_immutable]?: boolean;
   readonly [tvar_shape]?: SnapshotShape;
+  [tvar_reader]?: Stm<item>;
 };
 
 /** @ignore */
@@ -215,8 +217,37 @@ class Journal implements StmJournal {
   }
 }
 
+let reusable_journal: Journal | undefined;
+
 function create_journal(parent?: StmJournal): Journal {
+  if (parent === undefined && reusable_journal !== undefined) {
+    const journal = reusable_journal;
+    reusable_journal = undefined;
+    return journal;
+  }
   return new Journal(parent);
+}
+
+function release_journal(journal: Journal): void {
+  if (journal.escaped || journal.parent !== undefined) return;
+  journal.r0_k = undefined;
+  journal.r0_v = undefined;
+  journal.w0_k = undefined;
+  journal.w0_v = undefined;
+  journal.w0_exp = false;
+  if (journal.r_keys !== undefined) {
+    journal.r_keys.length = 0;
+    journal.r_vals!.length = 0;
+  }
+  if (journal.w_keys !== undefined) {
+    journal.w_keys.length = 0;
+    journal.w_vals!.length = 0;
+    journal.w_exp!.length = 0;
+  }
+  if (journal.reads_map !== undefined) journal.reads_map = undefined;
+  if (journal.writes_map !== undefined) journal.writes_map = undefined;
+  if (journal.exposed_map !== undefined) journal.exposed_map = undefined;
+  reusable_journal = journal;
 }
 
 function journal_of(journal: StmJournal): Journal | undefined {
@@ -315,12 +346,13 @@ export function new_tvar<item>(
   const variable: TVarBox<item> = {
     [tvar_brand]: undefined as unknown as (item: item) => item,
     [tvar_id]: id,
-    [tvar_value]: snapshot_value(
+    [tvar_value]: is_primitive_value(value) ? value : snapshot_value(
       value,
       `initial value for TVar ${id}`,
       options.shape,
     ),
     [tvar_shape]: options.shape,
+    [tvar_reader]: undefined,
   };
 
   return variable;
@@ -328,7 +360,13 @@ export function new_tvar<item>(
 
 /** Reads a TVar within a transaction. */
 export function read_tvar<item>(variable: TVar<item>): Stm<item> {
-  return trusted_stm((journal) => read_journal(journal, variable));
+  const box = variable as TVarBox<item>;
+  let cached = box[tvar_reader];
+  if (cached === undefined) {
+    cached = trusted_stm((journal) => read_journal(journal, variable));
+    box[tvar_reader] = cached;
+  }
+  return cached;
 }
 
 /** Stages a new TVar value within a transaction. */
@@ -411,6 +449,7 @@ export function atomically<item>(transaction: Stm<item>): item {
     return value;
   } finally {
     transaction_depth -= 1;
+    release_journal(journal);
   }
 }
 
@@ -422,7 +461,8 @@ Show.instance(Stm)({
 
 Functor.instance(Stm)({
   map(fn) {
-    return trusted_stm((journal) => fn(run_stm(this, journal)));
+    const raw = this.value();
+    return trusted_stm((journal) => fn(raw(journal)));
   },
 });
 
@@ -434,6 +474,20 @@ Applicative.instance(Stm)({
   [applicative_lift_method](fn, rest) {
     const first = this.value();
     const transactions = rest.map((current) => current.value());
+
+    if (transactions.length === 0) {
+      return trusted_stm((journal) => fn(first(journal)));
+    }
+    if (transactions.length === 1) {
+      const second = transactions[0];
+      return trusted_stm((journal) => fn(first(journal), second(journal)));
+    }
+    if (transactions.length === 2) {
+      const [second, third] = transactions;
+      return trusted_stm((journal) =>
+        fn(first(journal), second(journal), third(journal))
+      );
+    }
 
     return trusted_stm((journal) => {
       const values = [first(journal)];
@@ -447,19 +501,16 @@ Applicative.instance(Stm)({
   },
 
   ap(value) {
-    return trusted_stm((journal) => {
-      const fn = run_stm(this, journal);
-      return fn(run_stm(value, journal));
-    });
+    const first = this.value();
+    const second = value.value();
+    return trusted_stm((journal) => first(journal)(second(journal)));
   },
 });
 
 Monad.instance(Stm)({
   bind(fn) {
-    return trusted_stm((journal) => {
-      const value = run_stm(this, journal);
-      return run_stm(fn(value), journal);
-    });
+    const raw = this.value();
+    return trusted_stm((journal) => fn(raw(journal)).value()(journal));
   },
 });
 
@@ -509,6 +560,11 @@ function find_in_journal(
   return journal_miss;
 }
 
+function is_primitive_value(value: unknown): boolean {
+  return (typeof value !== "object" && typeof value !== "function") ||
+    value === null;
+}
+
 function read_journal<item>(
   journal: StmJournal,
   variable: TVar<item>,
@@ -518,9 +574,12 @@ function read_journal<item>(
   if (internal !== undefined) {
     const found = find_in_journal(internal, key, true);
     if (found !== journal_miss) return found as item;
-    const value = isolate_tvar(
+    const raw = (journal.parent === undefined
+      ? read_current(variable)
+      : lookup_journal(journal.parent, key, read_current(variable))) as item;
+    const value = is_primitive_value(raw) ? raw : isolate_tvar(
       variable,
-      lookup_journal(journal.parent, key, read_current(variable)) as item,
+      raw,
       `value read from TVar ${read_tvar_id(variable)}`,
     );
     internal.set_read(key, value);
@@ -535,9 +594,13 @@ function read_journal<item>(
   const reads = reads_of(journal);
   if (reads?.has(key)) return reads.get(key) as item;
 
-  const value = isolate_tvar(
+  const raw =
+    (journal.parent === undefined
+      ? read_current(variable)
+      : lookup_journal(journal.parent, key, read_current(variable))) as item;
+  const value = is_primitive_value(raw) ? raw : isolate_tvar(
     variable,
-    lookup_journal(journal.parent, key, read_current(variable)) as item,
+    raw,
     `value read from TVar ${read_tvar_id(variable)}`,
   );
   journal.reads.set(key, value);
@@ -550,7 +613,7 @@ function write_journal<item>(
   variable: TVar<item>,
   value: item,
 ): void {
-  const isolated = isolate_tvar(
+  const isolated = is_primitive_value(value) ? value : isolate_tvar(
     variable,
     value,
     `value written to TVar ${read_tvar_id(variable)}`,
@@ -564,6 +627,7 @@ function write_journal<item>(
 }
 
 function isolate_commit(variable: TVar<unknown>, value: unknown): unknown {
+  if (is_primitive_value(value)) return value;
   return isolate_tvar(
     variable,
     value,
