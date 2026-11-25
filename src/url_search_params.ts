@@ -1,5 +1,11 @@
 import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
+import {
   type As,
+  as_data,
   type Data,
   data,
   type type_data,
@@ -61,7 +67,7 @@ export function from_entries(
     params.append(name, value);
   }
 
-  return URLSearchParamsT(params) as URLSearchParamsT;
+  return as_data(URLSearchParamsT, params) as URLSearchParamsT;
 }
 
 /** Copy wrapped parameters into an ordered array of entries. */
@@ -79,45 +85,67 @@ Show.instance(URLSearchParamsT)({
 
 Eq.instance(URLSearchParamsT)({
   eq(right) {
-    const left_entries = [...this.value().entries()];
-    const right_entries = [...right.value().entries()];
-
-    if (left_entries.length !== right_entries.length) {
-      return false;
+    const left_params = this.value();
+    const right_params = right.value();
+    if (left_params === right_params) return true;
+    if (left_params.size !== right_params.size) return false;
+    const left_iter = left_params.entries();
+    const right_iter = right_params.entries();
+    while (true) {
+      const l = left_iter.next();
+      const r = right_iter.next();
+      if (l.done) return r.done === true;
+      if (r.done) return false;
+      if (l.value[0] !== r.value[0] || l.value[1] !== r.value[1]) return false;
     }
-
-    for (let index = 0; index < left_entries.length; index += 1) {
-      const [left_key, left_value] = left_entries[index];
-      const [right_key, right_value] = right_entries[index];
-
-      if (left_key !== right_key || left_value !== right_value) {
-        return false;
-      }
-    }
-
-    return true;
   },
 });
 
 Semigroup.instance(URLSearchParamsT)({
   concat(right) {
-    const out = new URLSearchParams(this.value());
-
-    for (const [name, value] of right.value()) {
-      out.append(name, value);
+    const left_params = this.value();
+    const right_params = right.value();
+    if (left_params.size === 0) {
+      return as_data(URLSearchParamsT, new URLSearchParams(right_params));
     }
-
-    return URLSearchParamsT(out);
+    const out = new URLSearchParams(left_params);
+    if (right_params.size !== 0) {
+      right_params.forEach((value, name) => {
+        out.append(name, value);
+      });
+    }
+    return as_data(URLSearchParamsT, out);
   },
 });
 
 Monoid.instance(URLSearchParamsT)({
   empty() {
-    return URLSearchParamsT(new URLSearchParams());
+    return as_data(URLSearchParamsT, new URLSearchParams());
   },
 });
 
 Foldable.instance(URLSearchParamsT)({
+  [some_method](predicate) {
+    for (const entry of this.value().entries()) {
+      if (predicate(entry)) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    for (const entry of this.value().entries()) {
+      if (predicate(entry)) return entry;
+    }
+    return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    let state = initial;
+    for (const entry of this.value().entries()) {
+      const step = fn(state, entry);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
+  },
   fold<item, output>(
     this: Data<AsURLSearchParams, item>,
     initial: output,

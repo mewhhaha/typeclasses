@@ -14,6 +14,22 @@ import {
 export type SourcePosition = { readonly line: number; readonly column: number };
 export type PositionLookup = (offset: number) => SourcePosition;
 
+type CommentWithLoc = Comment & {
+  loc: { start: SourcePosition; end: SourcePosition };
+};
+
+type PositionLookupMeta = {
+  readonly source: string;
+  readonly starts: readonly number[];
+  readonly non_lf: boolean;
+  readonly locator: FastSourceLocator;
+};
+
+const position_lookup_meta = /* @__PURE__ */ new WeakMap<
+  PositionLookup,
+  PositionLookupMeta
+>();
+
 export type SourceEdit =
   | {
     readonly kind: "replace";
@@ -51,8 +67,8 @@ const vlq_lookup = /* @__PURE__ */ (() => {
   return table;
 })();
 const vlq_small = /* @__PURE__ */ (() => {
-  const table = new Array<string>(128);
-  for (let value = -64; value <= 63; value += 1) {
+  const table = new Array<string>(512);
+  for (let value = -256; value <= 255; value += 1) {
     let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
     let out = "";
     do {
@@ -61,10 +77,19 @@ const vlq_small = /* @__PURE__ */ (() => {
       if (vlq > 0) digit |= 32;
       out += vlq_chars[digit];
     } while (vlq > 0);
-    table[value + 64] = out;
+    table[value + 256] = out;
   }
   return table;
 })();
+
+const AACA_RUNS: readonly string[] = /* @__PURE__ */ (() => {
+  const arr = new Array<string>(65);
+  arr[0] = "";
+  for (let i = 1; i <= 64; i += 1) arr[i] = "AACA;".repeat(i);
+  return arr;
+})();
+
+const EMPTY_COMMENTS: readonly CommentWithLoc[] = [];
 
 const safe_unwrapped_expressions = new Set([
   "CallExpression",
@@ -103,6 +128,35 @@ const cached_ts_nomap = /* @__PURE__ */ make_nomap_language(
 const cached_tsx_nomap = /* @__PURE__ */ make_nomap_language(
   tsx_language({ quotes: "double", comments: [] }),
 );
+
+const RESET_COMMENT_PROGRAM = {
+  type: "Program",
+  body: [],
+  sourceType: "module",
+  loc: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } },
+} as unknown as Node;
+
+type CommentedLanguage = {
+  readonly comments: CommentWithLoc[];
+  readonly language: ReturnType<typeof ts_language>;
+};
+
+function make_commented_language(
+  tsx: boolean,
+  source_map: boolean,
+): CommentedLanguage {
+  const comments: CommentWithLoc[] = [];
+  let language = tsx
+    ? tsx_language({ quotes: "double", comments })
+    : ts_language({ quotes: "double", comments });
+  if (!source_map) language = make_nomap_language(language);
+  return { comments, language };
+}
+
+let commented_ts_map: CommentedLanguage | undefined;
+let commented_ts_nomap: CommentedLanguage | undefined;
+let commented_tsx_map: CommentedLanguage | undefined;
+let commented_tsx_nomap: CommentedLanguage | undefined;
 
 function build_line_starts(source: string, non_lf: boolean): number[] {
   const starts = [0];
@@ -175,14 +229,16 @@ export function create_source_positions(
       source.includes("\u2029"));
   const starts = build_line_starts(source, non_lf);
   const locator = create_locator_from_starts(starts);
-  return (offset: number) => {
+  const lookup: PositionLookup = (offset: number) => {
     locator.lookup(offset);
     return { line: locator.line, column: locator.column };
   };
+  position_lookup_meta.set(lookup, { source, starts, non_lf, locator });
+  return lookup;
 }
 
 function encode_vlq(value: number): string {
-  if (value >= -64 && value <= 63) return vlq_small[value + 64];
+  if (value >= -256 && value <= 255) return vlq_small[value + 256];
   let vlq = value < 0 ? ((-value) << 1) + 1 : value << 1;
   let out = "";
   do {
@@ -231,38 +287,6 @@ function attach_locations(
   visit(root);
 }
 
-function comments_in_range(
-  comments: readonly Comment[],
-  start: number,
-  end: number,
-  get_position: () => PositionLookup,
-): (Comment & { loc: { start: SourcePosition; end: SourcePosition } })[] {
-  if (comments.length === 0 || end <= start) return [];
-  let low = 0;
-  let high = comments.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if (comments[mid].start < start) low = mid + 1;
-    else high = mid;
-  }
-  const result: (Comment & {
-    loc: { start: SourcePosition; end: SourcePosition };
-  })[] = [];
-  let position: PositionLookup | undefined;
-  for (let index = low; index < comments.length; index += 1) {
-    const comment = comments[index];
-    if (comment.start >= end) break;
-    if (comment.end <= end) {
-      position ??= get_position();
-      result.push({
-        ...comment,
-        loc: { start: position(comment.start), end: position(comment.end) },
-      });
-    }
-  }
-  return result;
-}
-
 function needs_asi_parens(
   source: string,
   start: number,
@@ -305,20 +329,50 @@ export function splice_edits(
   source_map: boolean,
   position_lookup?: PositionLookup,
 ): { readonly code: string; readonly map: TransformSourceMap | null } {
-  const ordered = [...edits].sort((left, right) => {
-    const left_start = left.kind === "insert" ? left.at : left.start;
-    const right_start = right.kind === "insert" ? right.at : right.start;
-    if (left_start !== right_start) return left_start - right_start;
-    if (left.kind === "insert" && right.kind !== "insert") return -1;
-    if (left.kind !== "insert" && right.kind === "insert") return 1;
-    return 0;
-  });
+  let ordered: readonly SourceEdit[] = edits;
+  if (edits.length > 1) {
+    let is_sorted = true;
+    let prev = edits[0];
+    let prev_start = prev.kind === "insert" ? prev.at : prev.start;
+    for (let i = 1; i < edits.length; i += 1) {
+      const cur = edits[i];
+      const cur_start = cur.kind === "insert" ? cur.at : cur.start;
+      if (
+        cur_start < prev_start ||
+        (cur_start === prev_start && cur.kind === "insert" &&
+          prev.kind !== "insert")
+      ) {
+        is_sorted = false;
+        break;
+      }
+      prev = cur;
+      prev_start = cur_start;
+    }
+    if (!is_sorted) {
+      ordered = [...edits].sort((left, right) => {
+        const left_start = left.kind === "insert" ? left.at : left.start;
+        const right_start = right.kind === "insert" ? right.at : right.start;
+        if (left_start !== right_start) return left_start - right_start;
+        if (left.kind === "insert" && right.kind !== "insert") return -1;
+        if (left.kind !== "insert" && right.kind === "insert") return 1;
+        return 0;
+      });
+    }
+  }
 
-  const base = basename(file_name);
-  const has_non_lf = source.includes("\r") || source.includes("\u2028") ||
-    source.includes("\u2029");
-  let cached_starts: number[] | undefined;
-  let fast_locator: FastSourceLocator | undefined;
+  const base = source_map ? basename(file_name) : "";
+  const lookup_meta = position_lookup !== undefined
+    ? position_lookup_meta.get(position_lookup)
+    : undefined;
+  const reused_meta = lookup_meta !== undefined && lookup_meta.source === source
+    ? lookup_meta
+    : undefined;
+  const has_non_lf = reused_meta !== undefined
+    ? reused_meta.non_lf
+    : (source.includes("\r") || source.includes("\u2028") ||
+      source.includes("\u2029"));
+  let cached_starts: readonly number[] | undefined = reused_meta?.starts;
+  let fast_locator: FastSourceLocator | undefined = reused_meta?.locator;
   let position = position_lookup;
   function get_locator(): FastSourceLocator {
     if (fast_locator === undefined) {
@@ -344,19 +398,30 @@ export function splice_edits(
   const names: string[] = [];
   const name_indices = new Map<string, number>();
 
-  let current_gen_col = 0;
-  let out_gen_col = 0;
-  let out_src = 0;
-  let out_orig_line = 0;
-  let out_orig_col = 0;
   let out_name = 0;
-  let line_has_seg = false;
+
+  const fast_sink: FastPrintSink = {
+    source_map,
+    locator: fast_locator,
+    emit_segment(abs_gen_col, abs_orig_line, abs_orig_col) {
+      emit_segment(abs_gen_col, abs_orig_line, abs_orig_col);
+    },
+    emit_newline,
+    gen_col: 0,
+    out_gen_col: 0,
+    out_orig_line: 0,
+    out_orig_col: 0,
+    line_has_seg: false,
+    code_chunks,
+    mapping_parts,
+    has_non_lf,
+  };
 
   function emit_newline(): void {
     mapping_parts.push(";");
-    current_gen_col = 0;
-    out_gen_col = 0;
-    line_has_seg = false;
+    fast_sink.gen_col = 0;
+    fast_sink.out_gen_col = 0;
+    fast_sink.line_has_seg = false;
   }
 
   function emit_segment(
@@ -365,31 +430,29 @@ export function splice_edits(
     abs_orig_col: number,
     abs_name?: number,
   ): void {
-    let segment = "";
-    if (line_has_seg) segment = ",";
-    segment += encode_vlq(abs_gen_col - out_gen_col) +
-      encode_vlq(-out_src) +
-      encode_vlq(abs_orig_line - out_orig_line) +
-      encode_vlq(abs_orig_col - out_orig_col);
+    let segment = (fast_sink.line_has_seg ? "," : "") +
+      encode_vlq(abs_gen_col - fast_sink.out_gen_col) +
+      "A" +
+      encode_vlq(abs_orig_line - fast_sink.out_orig_line) +
+      encode_vlq(abs_orig_col - fast_sink.out_orig_col);
     if (abs_name !== undefined) {
       segment += encode_vlq(abs_name - out_name);
       out_name = abs_name;
     }
     mapping_parts.push(segment);
-    out_gen_col = abs_gen_col;
-    out_src = 0;
-    out_orig_line = abs_orig_line;
-    out_orig_col = abs_orig_col;
-    line_has_seg = true;
+    fast_sink.out_gen_col = abs_gen_col;
+    fast_sink.out_orig_line = abs_orig_line;
+    fast_sink.out_orig_col = abs_orig_col;
+    fast_sink.line_has_seg = true;
   }
 
   function emit_unmapped_segment(abs_gen_col: number): void {
-    let segment = "";
-    if (line_has_seg) segment = ",";
-    segment += encode_vlq(abs_gen_col - out_gen_col);
-    mapping_parts.push(segment);
-    out_gen_col = abs_gen_col;
-    line_has_seg = true;
+    mapping_parts.push(
+      (fast_sink.line_has_seg ? "," : "") +
+        encode_vlq(abs_gen_col - fast_sink.out_gen_col),
+    );
+    fast_sink.out_gen_col = abs_gen_col;
+    fast_sink.line_has_seg = true;
   }
 
   function emit_plain_text(text: string): void {
@@ -398,7 +461,7 @@ export function splice_edits(
     if (!source_map) return;
     let index = text.indexOf("\n");
     if (index < 0) {
-      current_gen_col += text.length;
+      fast_sink.gen_col += text.length;
       return;
     }
     let last = 0;
@@ -407,7 +470,7 @@ export function splice_edits(
       last = index + 1;
       index = text.indexOf("\n", last);
     }
-    current_gen_col = text.length - last;
+    fast_sink.gen_col = text.length - last;
   }
 
   function emit_untouched(start: number, end: number): void {
@@ -420,15 +483,142 @@ export function splice_edits(
     fast_locator!.lookup(start);
     let orig_line = fast_locator!.line - 1;
     const orig_col = fast_locator!.column;
+
+    if (!has_non_lf && cached_starts !== undefined) {
+      const starts = cached_starts;
+      const next_line_start = starts[orig_line + 1];
+      if (next_line_start === undefined || end < next_line_start) {
+        emit_segment(fast_sink.gen_col, orig_line, orig_col);
+        fast_sink.gen_col += end - start;
+        return;
+      }
+      if (next_line_start - 1 > start) {
+        emit_segment(fast_sink.gen_col, orig_line, orig_col);
+      }
+      emit_newline();
+      fast_locator!.lookup(end);
+      const end_line = fast_locator!.line - 1;
+      const end_col = fast_locator!.column;
+      orig_line += 1;
+
+      if (orig_line < end_line && fast_sink.out_orig_col !== 0) {
+        while (orig_line < end_line) {
+          if (starts[orig_line + 1] - starts[orig_line] > 1) {
+            emit_segment(0, orig_line, 0);
+            emit_newline();
+            orig_line += 1;
+            break;
+          }
+          emit_newline();
+          orig_line += 1;
+        }
+      }
+
+      if (orig_line < end_line) {
+        let cur_orig_line = fast_sink.out_orig_line;
+        let aaca_run = 0;
+        let buf = "";
+        while (orig_line < end_line) {
+          if (starts[orig_line + 1] - starts[orig_line] > 1) {
+            const d_line = orig_line - cur_orig_line;
+            if (d_line === 1) {
+              aaca_run += 1;
+              cur_orig_line = orig_line;
+              orig_line += 1;
+              continue;
+            }
+            if (aaca_run > 0) {
+              while (aaca_run >= 64) {
+                buf += AACA_RUNS[64];
+                aaca_run -= 64;
+              }
+              if (aaca_run > 0) {
+                buf += AACA_RUNS[aaca_run];
+                aaca_run = 0;
+              }
+            }
+            if (d_line === 2) {
+              buf += "AAEA;";
+            } else if (d_line === 3) {
+              buf += "AAGA;";
+            } else {
+              buf += "AA" + encode_vlq(d_line) + "A;";
+            }
+            cur_orig_line = orig_line;
+            orig_line += 1;
+          } else {
+            if (aaca_run > 0) {
+              while (aaca_run >= 64) {
+                buf += AACA_RUNS[64];
+                aaca_run -= 64;
+              }
+              if (aaca_run > 0) {
+                buf += AACA_RUNS[aaca_run];
+                aaca_run = 0;
+              }
+            }
+            const next_line = orig_line + 1;
+            if (
+              next_line < end_line &&
+              starts[next_line + 1] - starts[next_line] > 1 &&
+              next_line - cur_orig_line === 2
+            ) {
+              buf += ";AAEA;";
+              cur_orig_line = next_line;
+              orig_line = next_line + 1;
+            } else {
+              buf += ";";
+              orig_line = next_line;
+            }
+          }
+          if (buf.length >= 8192) {
+            mapping_parts.push(buf);
+            buf = "";
+          }
+        }
+        if (aaca_run > 0) {
+          while (aaca_run >= 64) {
+            buf += AACA_RUNS[64];
+            aaca_run -= 64;
+          }
+          if (aaca_run > 0) buf += AACA_RUNS[aaca_run];
+        }
+        if (buf.length > 0) mapping_parts.push(buf);
+        fast_sink.out_orig_line = cur_orig_line;
+        fast_sink.gen_col = 0;
+        fast_sink.out_gen_col = 0;
+        fast_sink.line_has_seg = false;
+      }
+
+      if (end_col > 0) {
+        if (fast_sink.out_orig_col === 0) {
+          const d_line = end_line - fast_sink.out_orig_line;
+          if (d_line === 1) {
+            mapping_parts.push("AACA");
+          } else if (d_line === 2) {
+            mapping_parts.push("AAEA");
+          } else {
+            mapping_parts.push("AA" + encode_vlq(d_line) + "A");
+          }
+          fast_sink.out_orig_line = end_line;
+          fast_sink.line_has_seg = true;
+        } else {
+          emit_segment(0, end_line, 0);
+        }
+        fast_sink.gen_col = end_col;
+      }
+      return;
+    }
+
     let cursor = 0;
     let nl = text.indexOf("\n");
     if (nl < 0) {
-      emit_segment(current_gen_col, orig_line, orig_col);
-      current_gen_col += text.length;
+      emit_segment(fast_sink.gen_col, orig_line, orig_col);
+      fast_sink.gen_col += text.length;
       return;
     }
     if (nl > 0) {
-      emit_segment(current_gen_col, orig_line, orig_col);
+      emit_segment(fast_sink.gen_col, orig_line, orig_col);
     }
     emit_newline();
     cursor = nl + 1;
@@ -437,8 +627,14 @@ export function splice_edits(
     let aaca_run = 0;
     const flush_aaca = () => {
       if (aaca_run > 0) {
-        mapping_parts.push("AACA;".repeat(aaca_run));
-        aaca_run = 0;
+        while (aaca_run >= 64) {
+          mapping_parts.push(AACA_RUNS[64]);
+          aaca_run -= 64;
+        }
+        if (aaca_run > 0) {
+          mapping_parts.push(AACA_RUNS[aaca_run]);
+          aaca_run = 0;
+        }
       }
     };
     while (cursor < text.length) {
@@ -446,26 +642,27 @@ export function splice_edits(
       if (nl < 0) {
         flush_aaca();
         if (
-          out_src === 0 && out_orig_col === 0 && orig_line === out_orig_line + 1
+          fast_sink.out_orig_col === 0 &&
+          orig_line === fast_sink.out_orig_line + 1
         ) {
           mapping_parts.push("AACA");
-          out_orig_line = orig_line;
-          line_has_seg = true;
+          fast_sink.out_orig_line = orig_line;
+          fast_sink.line_has_seg = true;
         } else {
           emit_segment(0, orig_line, 0);
         }
-        current_gen_col = text.length - cursor;
+        fast_sink.gen_col = text.length - cursor;
         return;
       }
       if (
-        nl > cursor && out_src === 0 && out_orig_col === 0 &&
-        orig_line === out_orig_line + 1
+        nl > cursor && fast_sink.out_orig_col === 0 &&
+        orig_line === fast_sink.out_orig_line + 1
       ) {
         aaca_run += 1;
-        out_orig_line = orig_line;
-        current_gen_col = 0;
-        out_gen_col = 0;
-        line_has_seg = false;
+        fast_sink.out_orig_line = orig_line;
+        fast_sink.gen_col = 0;
+        fast_sink.out_gen_col = 0;
+        fast_sink.line_has_seg = false;
         cursor = nl + 1;
         orig_line += 1;
         continue;
@@ -486,7 +683,7 @@ export function splice_edits(
     edit_mappings: string,
     edit_names: readonly string[],
   ): void {
-    const start_col = current_gen_col;
+    const start_col = fast_sink.gen_col;
     const mapped_names = edit_names.length > 0
       ? edit_names.map((name) => {
         let idx = name_indices.get(name);
@@ -586,7 +783,7 @@ export function splice_edits(
 
       const nl = edit_code.indexOf("\n", text_cursor);
       if (nl < 0) {
-        current_gen_col = col_offset + (edit_code.length - text_cursor);
+        fast_sink.gen_col = col_offset + (edit_code.length - text_cursor);
         break;
       }
       text_cursor = nl + 1;
@@ -596,73 +793,95 @@ export function splice_edits(
 
   function print_node(
     target: Node,
-    edit_comments: ReturnType<typeof comments_in_range>,
+    edit_comments: readonly CommentWithLoc[],
   ) {
-    let language: ReturnType<typeof ts_language>;
     if (edit_comments.length === 0) {
-      language = lang === "tsx"
+      const language = lang === "tsx"
         ? (source_map ? cached_tsx_map : cached_tsx_nomap)
         : (source_map ? cached_ts_map : cached_ts_nomap);
-    } else {
-      language = lang === "tsx"
-        ? tsx_language({ quotes: "double", comments: edit_comments })
-        : ts_language({ quotes: "double", comments: edit_comments });
-      if (!source_map) make_nomap_language(language);
+      if (!source_map) {
+        return print(target, language, { indent: "  " });
+      }
+      return print(target, language, {
+        indent: "  ",
+        sourceMapSource: base,
+      });
     }
-    if (!source_map) {
-      return print(target, language, { indent: "  " });
+    const entry = lang === "tsx"
+      ? (source_map
+        ? (commented_tsx_map ??= make_commented_language(true, true))
+        : (commented_tsx_nomap ??= make_commented_language(true, false)))
+      : (source_map
+        ? (commented_ts_map ??= make_commented_language(false, true))
+        : (commented_ts_nomap ??= make_commented_language(false, false)));
+    const buf = entry.comments;
+    buf.length = 0;
+    for (let i = 0; i < edit_comments.length; i += 1) {
+      buf.push(edit_comments[i]);
     }
-    return print(target, language, {
-      indent: "  ",
-      sourceMapSource: base,
-    });
+    try {
+      // Reset esrap's closed-over comment_index back to 0 without recreating
+      // the ~150-visitor language table.
+      print(
+        RESET_COMMENT_PROGRAM,
+        entry.language,
+        {
+          sourceMapEncodeMappings: false,
+        } as Parameters<typeof print>[2],
+      );
+      if (!source_map) {
+        return print(target, entry.language, { indent: "  " });
+      }
+      return print(target, entry.language, {
+        indent: "  ",
+        sourceMapSource: base,
+      });
+    } finally {
+      buf.length = 0;
+    }
   }
 
-  const fast_sink: FastPrintSink = {
-    source_map,
-    locator: fast_locator,
-    emit_segment(abs_gen_col, abs_orig_line, abs_orig_col) {
-      emit_segment(abs_gen_col, abs_orig_line, abs_orig_col);
-    },
-    emit_newline,
-    get_gen_col: () => current_gen_col,
-    set_gen_col: (c) => {
-      current_gen_col = c;
-    },
-    get_line_has_seg: () => line_has_seg,
-    get_out_orig_line: () => out_orig_line,
-    get_out_orig_col: () => out_orig_col,
-    get_out_gen_col: () => out_gen_col,
-    push_code: (text) => {
-      code_chunks.push(text);
-    },
-  };
+  const comment_count = comments.length;
+  let comment_cursor = 0;
 
-  function try_fast_print(target: Node): boolean {
-    const saved_code_len = code_chunks.length;
-    const saved_map_len = mapping_parts.length;
-    const saved_gen_col = current_gen_col;
-    const saved_out_gen_col = out_gen_col;
-    const saved_out_src = out_src;
-    const saved_out_orig_line = out_orig_line;
-    const saved_out_orig_col = out_orig_col;
-    const saved_out_name = out_name;
-    const saved_line_has_seg = line_has_seg;
-    if (try_print_fast(target, fast_sink, lang)) return true;
-    code_chunks.length = saved_code_len;
-    mapping_parts.length = saved_map_len;
-    current_gen_col = saved_gen_col;
-    out_gen_col = saved_out_gen_col;
-    out_src = saved_out_src;
-    out_orig_line = saved_out_orig_line;
-    out_orig_col = saved_out_orig_col;
-    out_name = saved_out_name;
-    line_has_seg = saved_line_has_seg;
-    return false;
+  function next_comments_in_range(
+    start: number,
+    end: number,
+  ): readonly CommentWithLoc[] {
+    if (comment_count === 0 || end <= start) return EMPTY_COMMENTS;
+    while (
+      comment_cursor < comment_count && comments[comment_cursor].start < start
+    ) {
+      comment_cursor += 1;
+    }
+    if (
+      comment_cursor >= comment_count || comments[comment_cursor].start >= end
+    ) {
+      return EMPTY_COMMENTS;
+    }
+    let result: CommentWithLoc[] | undefined;
+    let idx = comment_cursor;
+    let pos_fn: PositionLookup | undefined;
+    while (idx < comment_count) {
+      const comment = comments[idx];
+      if (comment.start >= end) break;
+      if (comment.end <= end) {
+        pos_fn ??= get_position();
+        result ??= [];
+        result.push({
+          ...comment,
+          loc: { start: pos_fn(comment.start), end: pos_fn(comment.end) },
+        });
+      }
+      idx += 1;
+    }
+    comment_cursor = idx;
+    return result ?? EMPTY_COMMENTS;
   }
 
   let cursor = 0;
-  for (const edit of ordered) {
+  for (let edit_idx = 0; edit_idx < ordered.length; edit_idx += 1) {
+    const edit = ordered[edit_idx];
     const start = edit.kind === "insert" ? edit.at : edit.start;
     if (start > cursor) {
       emit_untouched(cursor, start);
@@ -674,9 +893,9 @@ export function splice_edits(
     if (edit.kind === "insert") {
       const prog = synthetic_program(edit.statements);
       if (edit.prefix) emit_plain_text(edit.prefix);
-      if (!try_fast_print(prog)) {
+      if (!try_print_fast(prog, fast_sink, lang, "program")) {
         if (source_map) attach_locations(prog, get_position(), false);
-        const printed = print_node(prog, []);
+        const printed = print_node(prog, EMPTY_COMMENTS);
         code_chunks.push(printed.code);
         if (source_map) {
           stitch_edit_map(
@@ -690,28 +909,29 @@ export function splice_edits(
       cursor = edit.at;
       continue;
     }
-    const edit_comments = comments_in_range(
-      comments,
-      edit.start,
-      edit.end,
-      get_position,
-    );
-    const target = edit.kind === "replace_statements"
-      ? synthetic_program(edit.statements)
-      : edit.node;
+    const edit_comments = comment_count === 0
+      ? EMPTY_COMMENTS
+      : next_comments_in_range(edit.start, edit.end);
+    const is_stmts = edit.kind === "replace_statements";
+    const target = is_stmts ? synthetic_program(edit.statements) : edit.node;
+    const print_mode = is_stmts
+      ? "program"
+      : edit.is_expression === true
+      ? "expression"
+      : undefined;
     if (edit_comments.length === 0) {
-      const fast_wrap = edit.kind === "replace" &&
+      const fast_wrap = !is_stmts &&
         edit.is_expression === true &&
         !safe_unwrapped_expressions.has(edit.node.type);
       if (fast_wrap) emit_plain_text("(");
-      if (try_fast_print(target)) {
+      if (try_print_fast(target, fast_sink, lang, print_mode)) {
         if (fast_wrap) emit_plain_text(")");
         cursor = edit.end;
         continue;
       }
       if (fast_wrap) {
         code_chunks.pop();
-        if (source_map) current_gen_col -= 1;
+        if (source_map) fast_sink.gen_col -= 1;
       }
     }
     if (source_map || edit_comments.length > 0) {
@@ -719,7 +939,7 @@ export function splice_edits(
     }
     const printed = print_node(target, edit_comments);
     let wrap = false;
-    if (edit.kind === "replace" && edit.is_expression) {
+    if (!is_stmts && edit.is_expression) {
       if (
         !safe_unwrapped_expressions.has(edit.node.type) ||
         needs_asi_parens(source, edit.start, printed.code)

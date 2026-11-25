@@ -5,6 +5,9 @@ import {
   type Data,
   data,
   install_instance,
+  tagged_payload,
+  tagged_tag,
+  tagged_value,
   type type_data,
   type type_item,
   union,
@@ -39,7 +42,7 @@ import {
 } from "./typeclasses/traversable.ts";
 import { type Either, Left, Right } from "./either.ts";
 import { inspect } from "./inspect.ts";
-import { loop_done, loop_rec } from "./loop.ts";
+import { loop_done } from "./loop.ts";
 
 /** @ignore */
 export const maybe_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -92,6 +95,29 @@ export const Nothing: MaybeConstructor["Nothing"] =
 
 const nothing_singleton = /* @__PURE__ */ Nothing<never>();
 
+type TaggedMaybe<item = unknown> = {
+  readonly [tagged_tag]?: PropertyKey;
+  readonly [tagged_payload]?: item;
+  readonly [tagged_value]?: () => RawMaybe<item>;
+  value(): RawMaybe<item>;
+};
+
+const maybe_none = /* @__PURE__ */ Symbol();
+
+function unwrap_just<item>(value: Maybe<item>): item | typeof maybe_none {
+  const tagged = value as unknown as TaggedMaybe<item>;
+  const value_fn = tagged.value;
+  if (value_fn !== undefined && value_fn === tagged[tagged_value]) {
+    return tagged[tagged_tag] === "Just"
+      ? tagged[tagged_payload] as item
+      : maybe_none;
+  }
+  const raw = value_fn.call(tagged);
+  return raw[0] === "Just" ? raw[1] : maybe_none;
+}
+
+const wrap_just = <item>(value: item): Maybe<item> => Just(value);
+
 /** Convert null or undefined to Nothing and every other value to Just. */
 export function from_nullable<item>(
   value: item | null | undefined,
@@ -101,14 +127,8 @@ export function from_nullable<item>(
 
 /** Haskell `toNullable :: Maybe a -> a | null`. */
 export function to_nullable<item>(value: Maybe<item>): item | null {
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Just":
-      return payload;
-    case "Nothing":
-      return null;
-  }
+  const item = unwrap_just(value);
+  return item === maybe_none ? null : item;
 }
 
 /** Haskell `fromMaybe :: a -> Maybe a -> a`. */
@@ -116,14 +136,8 @@ export function from_maybe<item>(
   fallback: item,
   value: Maybe<item>,
 ): item {
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Just":
-      return payload;
-    case "Nothing":
-      return fallback;
-  }
+  const item = unwrap_just(value);
+  return item === maybe_none ? fallback : item;
 }
 
 /** Haskell `maybe :: b -> (a -> b) -> Maybe a -> b`. */
@@ -132,14 +146,8 @@ export function maybe<item, result>(
   fn: (value: item) => result,
   value: Maybe<item>,
 ): result {
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Just":
-      return fn(payload);
-    case "Nothing":
-      return fallback;
-  }
+  const item = unwrap_just(value);
+  return item === maybe_none ? fallback : fn(item);
 }
 
 /** Haskell `maybeToEither :: e -> Maybe a -> Either e a`. */
@@ -147,14 +155,10 @@ export function to_either<error, item>(
   error: error,
   value: Maybe<item>,
 ): Either<error, item> {
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Just":
-      return Right<error, item>(payload);
-    case "Nothing":
-      return Left<error, item>(error);
-  }
+  const item = unwrap_just(value);
+  return item === maybe_none
+    ? Left<error, item>(error)
+    : Right<error, item>(item);
 }
 
 function empty_maybe<item>(this: AsMaybe): Data<AsMaybe, item> {
@@ -166,41 +170,25 @@ function lift_just<result>(
   first: unknown,
   rest: readonly Maybe<unknown>[],
 ): Maybe<result> {
-  switch (rest.length) {
-    case 0:
-      return Just(fn(first));
-    case 1: {
-      if (is_Nothing_value(rest[0])) {
-        return same_context(rest[0]);
-      }
-
-      const [tag, payload] = rest[0].value();
-
-      switch (tag) {
-        case "Nothing":
-          return same_context(rest[0]);
-        case "Just":
-          return Just(fn(first, payload));
-      }
-    }
+  const len = rest.length;
+  if (len === 0) return Just(fn(first));
+  if (len === 1) {
+    const a = unwrap_just(rest[0]);
+    return a === maybe_none ? same_context(rest[0]) : Just(fn(first, a));
+  }
+  if (len === 2) {
+    const a = unwrap_just(rest[0]);
+    if (a === maybe_none) return same_context(rest[0]);
+    const b = unwrap_just(rest[1]);
+    return b === maybe_none ? same_context(rest[1]) : Just(fn(first, a, b));
   }
 
-  const values = [first];
-
-  for (const current of rest) {
-    if (is_Nothing_value(current)) {
-      return same_context(current);
-    }
-
-    const [tag, payload] = current.value();
-
-    switch (tag) {
-      case "Nothing":
-        return same_context(current);
-      case "Just":
-        values.push(payload);
-        break;
-    }
+  const values = new Array<unknown>(len + 1);
+  values[0] = first;
+  for (let i = 0; i < len; i += 1) {
+    const current = unwrap_just(rest[i]);
+    if (current === maybe_none) return same_context(rest[i]);
+    values[i + 1] = current;
   }
 
   return Just(fn(...values));
@@ -208,10 +196,6 @@ function lift_just<result>(
 
 function nothing_value<item>(): Maybe<item> {
   return nothing_singleton as Maybe<item>;
-}
-
-function is_Nothing_value(value: unknown): value is Maybe<never> {
-  return value === nothing_singleton;
 }
 
 /** Keep a Just value when it satisfies `predicate`, narrowing its type. */
@@ -228,18 +212,8 @@ export function filter<item>(
   value: Maybe<item>,
   predicate: (item: item) => boolean,
 ): Maybe<item> {
-  if (is_Nothing_value(value)) {
-    return nothing_value();
-  }
-
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Nothing":
-      return nothing_value();
-    case "Just":
-      return predicate(payload) ? value : nothing_value();
-  }
+  const item = unwrap_just(value);
+  return item !== maybe_none && predicate(item) ? value : nothing_value();
 }
 
 /** Return the present value, evaluating the fallback only for Nothing. */
@@ -247,18 +221,8 @@ export function get_or_else<item, fallback>(
   value: Maybe<item>,
   fallback: () => fallback,
 ): item | fallback {
-  if (is_Nothing_value(value)) {
-    return fallback();
-  }
-
-  const [tag, payload] = value.value();
-
-  switch (tag) {
-    case "Just":
-      return payload;
-    case "Nothing":
-      return fallback();
-  }
+  const item = unwrap_just(value);
+  return item === maybe_none ? fallback() : item;
 }
 
 // Keep dictionary construction and instance installation in one removable unit.
@@ -277,72 +241,37 @@ function create_maybe(): MaybeConstructor {
 
   instance(show_typeclass)({
     show() {
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Just":
-          return "Just(" + inspect(payload) + ")";
-        case "Nothing":
-          return "Nothing";
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none ? "Nothing" : "Just(" + inspect(item) + ")";
     },
   });
 
   instance(eq_typeclass)({
     eq(right) {
-      const [left_tag, left_payload] = this.value();
-      const [right_tag, right_payload] = right.value();
-
-      switch (left_tag) {
-        case "Nothing":
-          return right_tag === "Nothing";
-        case "Just":
-          switch (right_tag) {
-            case "Nothing":
-              return false;
-            case "Just":
-              return Object.is(left_payload, right_payload);
-          }
-      }
+      if (this === right) return true;
+      const a = unwrap_just(this);
+      const b = unwrap_just(right);
+      return a === maybe_none
+        ? b === maybe_none
+        : b !== maybe_none && Object.is(a, b);
     },
   });
 
   instance(ord_typeclass)({
     compare(right) {
-      const [left_tag, left_payload] = this.value();
-      const [right_tag, right_payload] = right.value();
-
-      switch (left_tag) {
-        case "Nothing":
-          if (right_tag === "Nothing") {
-            return "eq";
-          }
-
-          return "lt";
-        case "Just":
-          if (right_tag === "Nothing") {
-            return "gt";
-          }
-
-          return compare_unknown(left_payload, right_payload);
-      }
+      if (this === right) return "eq";
+      const a = unwrap_just(this);
+      const b = unwrap_just(right);
+      if (a === maybe_none) return b === maybe_none ? "eq" : "lt";
+      if (b === maybe_none) return "gt";
+      return compare_unknown(a, b);
     },
   });
 
   instance(functor_typeclass)({
     map(fn) {
-      if (is_Nothing_value(this)) {
-        return same_context(this);
-      }
-
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Nothing":
-          return same_context(this);
-        case "Just":
-          return Just(fn(payload));
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none ? same_context(this) : Just(fn(item));
     },
   });
 
@@ -353,45 +282,17 @@ function create_maybe(): MaybeConstructor {
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
     [applicative_lift_method](fn, rest) {
-      if (is_Nothing_value(this)) {
-        return same_context(this);
-      }
-
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Nothing":
-          return same_context(this);
-        case "Just":
-          return lift_just(fn, payload, rest);
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none
+        ? same_context(this)
+        : lift_just(fn, item, rest);
     },
 
     ap(value) {
-      if (is_Nothing_value(this)) {
-        return same_context(this);
-      }
-
-      const [fn_tag, fn] = this.value();
-
-      switch (fn_tag) {
-        case "Nothing":
-          return same_context(this);
-        case "Just": {
-          if (is_Nothing_value(value)) {
-            return same_context(value);
-          }
-
-          const [maybe_tag, maybe] = value.value();
-
-          switch (maybe_tag) {
-            case "Nothing":
-              return same_context(value);
-            case "Just":
-              return Just(fn(maybe));
-          }
-        }
-      }
+      const fn = unwrap_just(this);
+      if (fn === maybe_none) return same_context(this);
+      const item = unwrap_just(value);
+      return item === maybe_none ? same_context(value) : Just(fn(item));
     },
   });
 
@@ -399,8 +300,7 @@ function create_maybe(): MaybeConstructor {
     this: Data<AsMaybe, item>,
     right: Data<AsMaybe, item>,
   ): Data<AsMaybe, item> {
-    if (is_Nothing_value(this)) return right;
-    return this.value()[0] === "Just" ? same_context(this) : right;
+    return unwrap_just(this) === maybe_none ? right : same_context(this);
   }
 
   instance(alternative_typeclass)({
@@ -418,18 +318,8 @@ function create_maybe(): MaybeConstructor {
 
   instance(monad_typeclass)({
     bind(fn) {
-      if (is_Nothing_value(this)) {
-        return same_context(this);
-      }
-
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Nothing":
-          return same_context(this);
-        case "Just":
-          return fn(payload);
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none ? same_context(this) : fn(item);
     },
   });
 
@@ -440,60 +330,27 @@ function create_maybe(): MaybeConstructor {
       let state = initial;
 
       while (true) {
-        const current = step(state);
-        const [maybe_tag, loop_step] = current.value();
-
-        switch (maybe_tag) {
-          case "Nothing":
-            return Nothing();
-          case "Just": {
-            const [loop_tag, value] = loop_step;
-
-            switch (loop_tag) {
-              case loop_done:
-                return Just(value);
-              case loop_rec:
-                state = value;
-                break;
-            }
-            break;
-          }
-        }
+        const loop_step = unwrap_just(step(state));
+        if (loop_step === maybe_none) return nothing_value();
+        if (loop_step[0] === loop_done) return Just(loop_step[1]);
+        state = loop_step[1];
       }
     },
   });
 
   instance(foldable_typeclass)({
     fold(initial, fn) {
-      if (is_Nothing_value(this)) {
-        return initial;
-      }
-
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Nothing":
-          return initial;
-        case "Just":
-          return fn(initial, payload);
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none ? initial : fn(initial, item);
     },
   });
 
   instance(traversable_typeclass)({
     traverse(applicative, fn) {
-      if (is_Nothing_value(this)) {
-        return applicative_pure(applicative, nothing_value());
-      }
-
-      const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "Nothing":
-          return applicative_pure(applicative, nothing_value());
-        case "Just":
-          return functor_map(fn(payload), (value) => Just(value));
-      }
+      const item = unwrap_just(this);
+      return item === maybe_none
+        ? applicative_pure(applicative, nothing_value())
+        : functor_map(fn(item), wrap_just);
     },
   });
   return Maybe;

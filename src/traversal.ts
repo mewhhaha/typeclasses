@@ -1,6 +1,12 @@
-import type { Data } from "./typeclass.ts";
-import { Applicative } from "./typeclasses/applicative.ts";
-import { Functor } from "./typeclasses/functor.ts";
+import {
+  type Data,
+  tagged_payload,
+  tagged_tag,
+  tagged_value,
+} from "./typeclass.ts";
+import { Applicative, applicative_pure } from "./typeclasses/applicative.ts";
+import { custom_iterable } from "./internal.ts";
+import { functor_map } from "./typeclasses/functor.ts";
 import {
   do_runner_method,
   type FastDoSpec,
@@ -17,23 +23,70 @@ type TraverseItems<dictionary extends Applicative<dictionary>> = <
   build: (items: Iterable<to>) => result,
 ) => Data<dictionary, result>;
 
+type SequentialTraverse<dictionary extends Applicative<dictionary>> = <
+  from,
+  to,
+>(
+  items: readonly from[],
+  fn: (item: from) => Data<dictionary, to>,
+) => Data<dictionary, to[]>;
+
 const specializations = new WeakMap<object, unknown>();
+const sequential_specializations = new WeakMap<object, unknown>();
 
 /** @ignore Register a concrete dictionary's traversal without a module cycle. */
 export function register_traversal<dictionary extends Applicative<dictionary>>(
   dictionary: dictionary,
   traverse: TraverseItems<dictionary>,
+  sequential?: SequentialTraverse<dictionary>,
 ): void {
   specializations.set(dictionary, traverse);
+  if (sequential !== undefined) {
+    sequential_specializations.set(dictionary, sequential);
+  }
 }
 
 type Tree<item> =
-  | { readonly tag: "leaf"; readonly item: item }
-  | {
-    readonly tag: "branch";
-    readonly left: Tree<item>;
-    readonly right: Tree<item>;
-  };
+  | readonly [item]
+  | readonly [Tree<item>, Tree<item>];
+
+type TaggedItem<to> = {
+  readonly [tagged_tag]?: PropertyKey;
+  readonly [tagged_payload]?: to;
+  readonly [tagged_value]?: () => readonly [string, to];
+  value(): readonly [string, to];
+};
+
+const traversal_failed = /* @__PURE__ */ Symbol();
+
+function unwrap_fast<to>(
+  current: unknown,
+  mode: 0 | 1 | 2,
+): to | typeof traversal_failed {
+  const tagged = current as TaggedItem<to>;
+  if (mode === 2) return tagged.value() as unknown as to;
+  const fail_tag = mode === 0 ? "Nothing" : "Left";
+  const value_fn = tagged.value;
+  if (value_fn !== undefined && value_fn === tagged[tagged_value]) {
+    return tagged[tagged_tag] === fail_tag
+      ? traversal_failed
+      : tagged[tagged_payload] as to;
+  }
+  const raw = value_fn.call(tagged);
+  return raw[0] === fail_tag ? traversal_failed : raw[1];
+}
+
+function make_leaf<item>(item: item): Tree<item> {
+  return [item];
+}
+
+function make_branch<item>(left: Tree<item>, right: Tree<item>): Tree<item> {
+  return [left, right];
+}
+
+function identity_array<item>(out: Iterable<item>): item[] {
+  return out as item[];
+}
 
 /** Traverse finite inputs in order with logarithmic construction depth. */
 export function traverse_items<
@@ -45,7 +98,7 @@ export function traverse_items<
   applicative: applicative,
   fn: (item: from) => Data<applicative, to>,
 ): Data<applicative, to[]> {
-  return traverse_items_into(items, applicative, fn, (items) => [...items]);
+  return traverse_items_into(items, applicative, fn, identity_array);
 }
 
 /** Traverse into a final collection without an intermediate output array. */
@@ -69,65 +122,59 @@ export function traverse_items_into<
     readonly pure?: unknown;
   };
   const spec = dict[do_runner_method];
-  if (spec !== undefined && dict.pure === spec[4]) {
+  if (Array.isArray(spec) && dict.pure === spec[4]) {
     const [mode, wrap] = spec;
-    const fail_tag = mode === 0 ? "Nothing" : "Left";
     let failed: Data<applicative, unknown> | undefined;
     const out: to[] = [];
-    const step = (current: Data<applicative, to>) => {
-      if (mode === 2) out.push(current.value() as to);
-      else if (failed === undefined) {
-        const raw = current.value() as readonly [string, to];
-        if (raw[0] === fail_tag) failed = current;
-        else out.push(raw[1]);
+    for (const item of items) {
+      const current = fn(item);
+      if (failed === undefined) {
+        const val = unwrap_fast<to>(current, mode);
+        if (val === traversal_failed) failed = current;
+        else out.push(val);
       }
-    };
-    if (Array.isArray(items)) {
-      for (let i = 0; i < items.length; i += 1) step(fn(items[i]));
-    } else {
-      for (const item of items) step(fn(item));
     }
     return (failed ?? wrap(build(out))) as Data<applicative, result>;
   }
-  // Binary carry combines adjacent groups, without buffering the input first.
   const pending: (Data<applicative, Tree<to>> | undefined)[] = [];
-  for (const item of items) {
-    let action = Functor.map(
-      fn(item),
-      (item): Tree<to> => ({ tag: "leaf", item }),
-    );
+  const push = (action: Data<applicative, Tree<to>>) => {
     let level = 0;
     while (pending[level] !== undefined) {
-      action = merge(pending[level]!, action);
+      action = Applicative.lift(make_branch, pending[level]!, action);
       pending[level] = undefined;
       level += 1;
     }
     pending[level] = action;
+  };
+  let iterable: Iterable<from> = items;
+  if (Array.isArray(items) && items.length === 1) {
+    const custom = custom_iterable(items);
+    if (custom === undefined) {
+      const first = fn(items[0]);
+      if (items.length <= 1) return functor_map(first, (v) => build([v]));
+      pending[0] = functor_map(first, make_leaf);
+      for (let i = 1; i < items.length; i += 1) {
+        push(functor_map(fn(items[i]), make_leaf));
+      }
+      iterable = [];
+    } else {
+      iterable = custom;
+    }
   }
+  // Binary carry combines adjacent groups, without buffering the input first.
+  for (const item of iterable) push(functor_map(fn(item), make_leaf));
   let result: Data<applicative, Tree<to>> | undefined;
   for (let level = pending.length - 1; level >= 0; level -= 1) {
     const action = pending[level];
-    if (action === undefined) continue;
-    if (result === undefined) result = action;
-    else result = merge(result, action);
+    if (action !== undefined) {
+      result = result === undefined
+        ? action
+        : Applicative.lift(make_branch, result, action);
+    }
   }
-  if (result === undefined) return Applicative.pure(applicative, build([]));
-  return Functor.map(result, (tree) => build(tree_items(tree)));
-
-  function merge(
-    left: Data<applicative, Tree<to>>,
-    right: Data<applicative, Tree<to>>,
-  ): Data<applicative, Tree<to>> {
-    return Applicative.lift(
-      (left, right): Tree<to> => ({
-        tag: "branch",
-        left,
-        right,
-      }),
-      left,
-      right,
-    );
-  }
+  return result === undefined
+    ? applicative_pure(applicative, build([]))
+    : functor_map(result, (tree) => build(tree_to_array(tree)));
 }
 
 /**
@@ -144,61 +191,62 @@ export function traverse_sequential<
   monad: Monad<monad>,
   fn: (item: from) => Data<monad, to>,
 ): Data<monad, to[]> {
+  const specialized = sequential_specializations.get(monad) as
+    | SequentialTraverse<monad>
+    | undefined;
+  if (specialized !== undefined) return specialized(items, fn);
   const dict = monad as unknown as {
     readonly [do_runner_method]?: FastDoSpec;
     readonly bind?: unknown;
     readonly pure?: unknown;
   };
   const spec = dict[do_runner_method];
-  if (spec !== undefined && dict.bind === spec[3] && dict.pure === spec[4]) {
+  if (Array.isArray(spec) && dict.bind === spec[3] && dict.pure === spec[4]) {
     const [mode, wrap] = spec;
-    const fail_tag = mode === 0 ? "Nothing" : "Left";
-    const out = new Array<to>(items.length);
-    for (let i = 0; i < items.length; i += 1) {
+    const len = items.length;
+    const out = new Array<to>(len);
+    for (let i = 0; i < len; i += 1) {
       const current = fn(items[i]);
-      if (mode === 2) out[i] = current.value() as to;
-      else {
-        const raw = current.value() as readonly [string, to];
-        if (raw[0] === fail_tag) return current as unknown as Data<monad, to[]>;
-        out[i] = raw[1];
+      const val = unwrap_fast<to>(current, mode);
+      if (val === traversal_failed) {
+        return current as unknown as Data<monad, to[]>;
       }
+      out[i] = val;
     }
     return wrap(out) as Data<monad, to[]>;
   }
   type Chain = { readonly item: to; readonly previous?: Chain };
-  let result = Applicative.pure<monad, Chain | undefined>(
+  const len = items.length;
+  let result = applicative_pure<monad, Chain | undefined>(
     monad as monad,
     undefined,
   );
-  for (const item of items) {
+  for (let i = 0; i < len; i += 1) {
+    const item = items[i];
     result = Monad.bind(
       result,
       (previous) =>
-        Functor.map(fn(item), (item): Chain => ({ item, previous })),
+        functor_map(fn(item), (value): Chain => ({ item: value, previous })),
     );
   }
-  return Functor.map(result, (chain) => {
-    const out: to[] = [];
+  return functor_map(result, (chain) => {
+    const out = new Array<to>(len);
+    let index = len;
     while (chain !== undefined) {
-      out.push(chain.item);
+      out[--index] = chain.item;
       chain = chain.previous;
     }
-    out.reverse();
     return out;
   });
 }
 
-function* tree_items<item>(tree: Tree<item>): Generator<item> {
-  const pending = [tree];
+function tree_to_array<item>(tree: Tree<item>): item[] {
+  const pending: Tree<item>[] = [tree];
+  const out: item[] = [];
   while (pending.length > 0) {
     const current = pending.pop()!;
-    switch (current.tag) {
-      case "leaf":
-        yield current.item;
-        break;
-      case "branch":
-        pending.push(current.right, current.left);
-        break;
-    }
+    if (current.length === 1) out.push(current[0]);
+    else pending.push(current[1], current[0]);
   }
+  return out;
 }

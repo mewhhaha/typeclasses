@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -88,12 +88,12 @@ export const Traversable: TraversableTypeclass = /* @__PURE__ */ typeclass(
       applicative: applicative | Data<applicative, unknown>,
       fn: (value: from) => Data<applicative, to>,
     ): Data<applicative, Data<dictionary, to>> {
-      return call_typeclass_method(
-        this.instance_for(value).traverse<applicative, from, to>,
-        value,
-        applicative as applicative,
-        fn,
-      );
+      return (instance_for_token(traversable_typeclass, value)
+        .traverse<applicative, from, to>).call(
+          value,
+          applicative as applicative,
+          fn,
+        );
     },
 
     sequence<
@@ -104,15 +104,16 @@ export const Traversable: TraversableTypeclass = /* @__PURE__ */ typeclass(
       value: Data<dictionary, Data<applicative, item>>,
       applicative: applicative | Data<applicative, unknown>,
     ): Data<applicative, Data<dictionary, item>> {
-      return call_typeclass_method(
-        this.instance_for(value)
-          .traverse<applicative, Data<applicative, item>, item>,
-        value,
-        applicative as applicative,
-        (value: Data<applicative, item>) => {
-          return value;
-        },
-      );
+      return (instance_for_token(traversable_typeclass, value)
+        .traverse<applicative, Data<applicative, item>, item>).call(
+          value,
+          applicative as applicative,
+          sequence_identity,
+        );
     },
   },
 );
+
+function sequence_identity<value>(value: value): value {
+  return value;
+}

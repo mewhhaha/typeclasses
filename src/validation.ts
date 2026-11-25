@@ -53,17 +53,8 @@ export type ValidationSemigroup<error> = {
 };
 
 const array_validation_semigroup: ValidationSemigroup<readonly unknown[]> = {
-  concat(left, right) {
-    if (left.length === 0) {
-      return right;
-    }
-
-    if (right.length === 0) {
-      return left;
-    }
-
-    return [...left, ...right];
-  },
+  concat: (left, right) =>
+    left.length === 0 ? right : right.length === 0 ? left : [...left, ...right],
 };
 const validation_semigroup_ids = new WeakMap<object, number>();
 let next_validation_semigroup_id = 1;
@@ -208,26 +199,16 @@ function validation_with_semigroup<error>(
 
   Object.setPrototypeOf(dictionary, Validation);
   const configured_invalid = Object.assign(
-    function construct_configured_invalid<item = never>(
-      error: error,
-    ): Validation<error, item> {
-      return dictionary<item>([
-        "invalid",
+    <item = never>(error: error): Validation<error, item> =>
+      dictionary<item>(["invalid", error, semigroup]) as Validation<
         error,
-        semigroup,
-      ]) as Validation<error, item>;
-    },
+        item
+      >,
     { is: Invalid.is },
   );
   const configured_valid = Object.assign(
-    function construct_configured_valid<item>(
-      item: item,
-    ): Validation<error, item> {
-      return dictionary<item>([
-        "valid",
-        item,
-      ]) as Validation<error, item>;
-    },
+    <item>(item: item): Validation<error, item> =>
+      dictionary<item>(["valid", item]) as Validation<error, item>,
     { is: Valid.is },
   );
   Object.defineProperties(dictionary, {
@@ -236,13 +217,9 @@ function validation_with_semigroup<error>(
     from_either: {
       value<item>(value: Either<error, item>): Validation<error, item> {
         const [tag, payload] = value.value();
-
-        switch (tag) {
-          case "Left":
-            return configured_invalid<item>(payload);
-          case "Right":
-            return configured_valid(payload);
-        }
+        return tag === "Left"
+          ? configured_invalid<item>(payload)
+          : configured_valid(payload);
       },
     },
     from_nullable: {
@@ -250,11 +227,9 @@ function validation_with_semigroup<error>(
         value: item | null | undefined,
         on_null: () => error,
       ): Validation<error, NonNullable<item>> {
-        if (value === null || value === undefined) {
-          return configured_invalid<NonNullable<item>>(on_null());
-        }
-
-        return configured_valid(value as NonNullable<item>);
+        return value == null
+          ? configured_invalid<NonNullable<item>>(on_null())
+          : configured_valid(value as NonNullable<item>);
       },
     },
   });
@@ -271,26 +246,24 @@ export function validation_to_either<error, item>(
   validation: Validation<error, item>,
 ): Either<error, item> {
   const [tag, payload] = validation.value();
-
-  switch (tag) {
-    case "invalid":
-      return Left<error, item>(payload);
-    case "valid":
-      return Right<error, item>(payload);
-  }
+  return tag === "invalid"
+    ? Left<error, item>(payload)
+    : Right<error, item>(payload);
 }
 
 /** Construct a failed Validation that accumulates string message arrays. */
 export function InvalidMessages<item = never>(
   first: string,
   ...rest: string[]
+): Validation<readonly string[], item>;
+export function InvalidMessages<item = never>(
+  first: string,
 ): Validation<readonly string[], item> {
-  return Messages.Invalid([first, ...rest]);
+  return Invalid<readonly string[], item>(
+    arguments.length === 1 ? [first] : Array.from(arguments),
+    array_validation_semigroup as ValidationSemigroup<readonly string[]>,
+  );
 }
-
-const Messages =
-  /* @__PURE__ */ (() =>
-    validation_with_semigroup(array_semigroup<string>()))();
 
 /** Map a validation error while explicitly selecting the target semigroup. */
 export function map_error<error, next_error, item>(
@@ -299,14 +272,9 @@ export function map_error<error, next_error, item>(
   semigroup: ValidationSemigroup<next_error>,
 ): Validation<next_error, item> {
   const [tag, payload] = validation.value();
-  const configured = validation_with_semigroup(semigroup);
-
-  switch (tag) {
-    case "invalid":
-      return configured.Invalid(fn(payload));
-    case "valid":
-      return configured.Valid(payload);
-  }
+  return tag === "invalid"
+    ? Invalid<next_error, item>(fn(payload), semigroup)
+    : same_context(validation);
 }
 
 function is_invalid<error, item>(
@@ -326,26 +294,16 @@ function is_invalid<error, item>(
   | Invalid<error>
   | WrappedData<AsValidation<unknown>, Invalid<unknown>, unknown> {
   if (!Array.isArray(value)) {
-    if (!is_data(value)) return false;
     if (
-      (value as unknown as AsValidation<unknown>)[kind] !== Validation[kind]
+      !is_data(value) ||
+      (value as unknown as AsValidation<unknown>)[kind] !== Validation[kind] ||
+      !Array.isArray(value = value.value())
     ) return false;
-    value = value.value();
-    if (!Array.isArray(value)) return false;
   }
-
-  const [tag, , semigroup] = value;
-
-  if (tag !== "invalid" || value.length !== 3) {
-    return false;
-  }
-
-  if (typeof semigroup !== "object" || semigroup === null) {
-    return false;
-  }
-
-  return typeof (semigroup as ValidationSemigroup<unknown>).concat ===
-    "function";
+  const sg = value[2];
+  return value[0] === "invalid" && value.length === 3 &&
+    typeof sg === "object" && sg !== null &&
+    typeof (sg as ValidationSemigroup<unknown>).concat === "function";
 }
 
 function construct_invalid<error, item = never>(
@@ -357,10 +315,6 @@ function construct_invalid<error, item = never>(
     error,
     semigroup,
   ]);
-}
-
-function array_semigroup<item>(): ValidationSemigroup<readonly item[]> {
-  return array_validation_semigroup as ValidationSemigroup<readonly item[]>;
 }
 
 function concat_errors(left: Invalid<unknown>, right: Invalid<unknown>) {
@@ -385,76 +339,94 @@ function assert_same_semigroup(
 function validation_semigroup_id(
   semigroup: ValidationSemigroup<unknown>,
 ): number {
-  const existing = validation_semigroup_ids.get(semigroup);
-
-  if (existing !== undefined) {
-    return existing;
+  let id = validation_semigroup_ids.get(semigroup);
+  if (id === undefined) {
+    validation_semigroup_ids.set(
+      semigroup,
+      id = next_validation_semigroup_id++,
+    );
   }
-
-  const id = next_validation_semigroup_id;
-  next_validation_semigroup_id += 1;
-  validation_semigroup_ids.set(semigroup, id);
   return id;
 }
 
 function errors_equal(left: unknown, right: unknown) {
+  if (Object.is(left, right)) return true;
   if (Array.isArray(left) && Array.isArray(right)) {
-    if (left.length !== right.length) {
-      return false;
+    const len = left.length;
+    if (len !== right.length) return false;
+    for (let i = 0; i < len; i += 1) {
+      if (!Object.is(left[i], right[i])) return false;
     }
-
-    return left.every((error, index) => {
-      return Object.is(error, right[index]);
-    });
+    return true;
   }
-
-  return Object.is(left, right);
+  return false;
 }
 
 function compare_errors(left: unknown, right: unknown) {
   if (Array.isArray(left) && Array.isArray(right)) {
-    const length = Math.min(left.length, right.length);
-
+    const l = left.length, r = right.length;
+    const length = l < r ? l : r;
     for (let index = 0; index < length; index += 1) {
       const order = compare_unknown(left[index], right[index]);
-
-      if (order !== "eq") {
-        return order;
-      }
+      if (order !== "eq") return order;
     }
-
-    return compare_unknown(left.length, right.length);
+    return l < r ? "lt" : l > r ? "gt" : "eq";
   }
 
   return compare_unknown(left, right);
 }
+
+type ValidationErrAcc = {
+  sg?: ValidationSemigroup<unknown>;
+  err?: unknown;
+  buf?: unknown[];
+};
+
+function push_invalid_error(
+  acc: ValidationErrAcc,
+  raw: Invalid<unknown>,
+): void {
+  if (acc.sg === undefined) {
+    acc.sg = raw[2];
+    acc.err = raw[1];
+    return;
+  }
+  assert_same_semigroup(acc.sg, raw[2]);
+  if (acc.sg === array_validation_semigroup) {
+    acc.buf ??= (acc.err as readonly unknown[]).slice();
+    const errs = raw[1] as readonly unknown[];
+    if (errs.length === 1) acc.buf.push(errs[0]);
+    else for (let i = 0; i < errs.length; i += 1) acc.buf.push(errs[i]);
+  } else acc.err = acc.sg.concat(acc.err, raw[1]);
+}
+
+const wrap_valid = <item>(value: item): Validation<never, item> => Valid(value);
 
 function traverse_validation<from, to, result>(
   items: Iterable<from>,
   fn: (item: from) => Data<AsValidation<unknown>, to>,
   build: (items: Iterable<to>) => result,
 ): Data<AsValidation<unknown>, result> {
-  let sg: ValidationSemigroup<unknown> | undefined;
-  let err: unknown;
-  let buf: unknown[] | undefined;
-  const out: to[] = [];
-  for (const item of items) {
-    const raw = fn(item).value();
-    if (raw[0] === "invalid") {
-      if (sg === undefined) {
-        sg = raw[2];
-        err = raw[1];
-      } else {
-        assert_same_semigroup(sg, raw[2]);
-        if (sg === array_validation_semigroup) {
-          buf ??= (err as readonly unknown[]).slice();
-          for (const e of raw[1] as readonly unknown[]) buf.push(e);
-        } else err = sg.concat(err, raw[1]);
-      }
-    } else if (sg === undefined) out.push(raw[1]);
+  const acc: ValidationErrAcc = {};
+  let out: to[];
+  if (Array.isArray(items)) {
+    const len = items.length;
+    out = new Array<to>(len);
+    for (let i = 0; i < len; i += 1) {
+      const raw = fn(items[i]).value();
+      if (raw[0] === "invalid") push_invalid_error(acc, raw);
+      else if (acc.sg === undefined) out[i] = raw[1];
+    }
+  } else {
+    out = [];
+    for (const item of items) {
+      const raw = fn(item).value();
+      if (raw[0] === "invalid") push_invalid_error(acc, raw);
+      else if (acc.sg === undefined) out.push(raw[1]);
+    }
   }
-  return (sg !== undefined
-    ? Invalid(buf ?? err, sg)
+  return (acc.sg !== undefined
+    ? Invalid(acc.buf ?? acc.err, acc.sg)
     : Valid(build(out))) as Data<AsValidation<unknown>, result>;
 }
 
@@ -464,85 +436,49 @@ function create_validation(): ValidationConstructor {
     union(["valid", $slot], ["invalid", $slot, $slot]),
   ) as unknown as ValidationConstructor;
 
-  Object.defineProperty(Validation, "with_error", {
-    value: validation_with_error,
-  });
-
-  Object.defineProperty(Validation, "with_semigroup", {
-    value: validation_with_semigroup,
-  });
-
   const Invalid: InvalidConstructor = Object.assign(construct_invalid, {
     is: is_invalid,
   });
-  Object.defineProperty(Validation, "Invalid", { value: Invalid });
+  Object.defineProperties(Validation, {
+    with_error: { value: validation_with_error },
+    with_semigroup: { value: validation_with_semigroup },
+    Invalid: { value: Invalid },
+  });
   Show.instance(Validation)({
     show() {
       const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "valid":
-          return "Valid(" + inspect(payload) + ")";
-        case "invalid":
-          return "Invalid(" + inspect(payload) + ")";
-      }
+      return (tag === "valid" ? "Valid(" : "Invalid(") + inspect(payload) + ")";
     },
   });
 
   Eq.instance(Validation)({
     eq(right) {
+      if (this === right) return true;
       const [left_tag, left_payload] = this.value();
       const [right_tag, right_payload] = right.value();
-
-      switch (left_tag) {
-        case "valid":
-          if (right_tag === "valid") {
-            return Object.is(left_payload, right_payload);
-          }
-
-          return false;
-        case "invalid":
-          if (right_tag === "valid") {
-            return false;
-          }
-
-          return errors_equal(left_payload, right_payload);
-      }
+      if (left_tag !== right_tag) return false;
+      return left_tag === "valid"
+        ? Object.is(left_payload, right_payload)
+        : errors_equal(left_payload, right_payload);
     },
   });
 
   Ord.instance(Validation)({
     compare(right) {
+      if (this === right) return "eq";
       const [left_tag, left_payload] = this.value();
       const [right_tag, right_payload] = right.value();
-
-      switch (left_tag) {
-        case "invalid":
-          if (right_tag === "valid") {
-            return "lt";
-          }
-
-          return compare_errors(left_payload, right_payload);
-        case "valid":
-          if (right_tag === "invalid") {
-            return "gt";
-          }
-
-          return compare_unknown(left_payload, right_payload);
-      }
+      if (left_tag !== right_tag) return left_tag === "invalid" ? "lt" : "gt";
+      return left_tag === "invalid"
+        ? compare_errors(left_payload, right_payload)
+        : compare_unknown(left_payload, right_payload);
     },
   });
 
   Functor.instance(Validation)({
     map(fn) {
       const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "invalid":
-          return same_context(this);
-        case "valid":
-          return Valid(fn(payload));
-      }
+      return tag === "invalid" ? same_context(this) : Valid(fn(payload));
     },
   });
 
@@ -571,72 +507,48 @@ function create_validation(): ValidationConstructor {
           ? Invalid(concat_errors(first, right), first[2])
           : this) as Validation<unknown, ReturnType<typeof fn>>;
       }
-      return traverse_validation(
-        [this, ...rest],
-        (current) => current,
-        (values) => fn(...(values as unknown[])),
-      );
+      const acc: ValidationErrAcc = {};
+      const values = new Array<unknown>(len + 1);
+      if (first[0] === "invalid") push_invalid_error(acc, first);
+      else values[0] = first[1];
+      for (let i = 0; i < len; i += 1) {
+        const raw = rest[i].value();
+        if (raw[0] === "invalid") push_invalid_error(acc, raw);
+        else if (acc.sg === undefined) values[i + 1] = raw[1];
+      }
+      return (acc.sg !== undefined
+        ? Invalid(acc.buf ?? acc.err, acc.sg)
+        : Valid(fn(...values))) as Validation<unknown, ReturnType<typeof fn>>;
     },
 
     ap(value) {
       const fn = this.value();
       const validation = value.value();
-      const [fn_tag, fn_payload, fn_semigroup] = fn;
-      const [validation_tag, validation_payload, validation_semigroup] =
-        validation;
 
-      switch (fn_tag) {
-        case "invalid":
-          if (validation_tag === "invalid") {
-            return Invalid(
-              concat_errors(fn, validation),
-              fn_semigroup,
-            );
-          }
-
-          return Invalid(fn_payload, fn_semigroup);
-        case "valid":
-          if (validation_tag === "invalid") {
-            return Invalid(
-              validation_payload,
-              validation_semigroup,
-            );
-          }
-
-          return Valid(fn_payload(validation_payload));
+      if (fn[0] === "invalid") {
+        return validation[0] === "invalid"
+          ? Invalid(concat_errors(fn, validation), fn[2])
+          : same_context(this);
       }
+      return validation[0] === "invalid"
+        ? same_context(value)
+        : Valid(fn[1](validation[1]));
     },
   });
 
   Foldable.instance(Validation)({
     fold(initial, fn) {
       const [tag, payload] = this.value();
-
-      switch (tag) {
-        case "invalid":
-          return initial;
-        case "valid":
-          return fn(initial, payload);
-      }
+      return tag === "invalid" ? initial : fn(initial, payload);
     },
   });
 
   Traversable.instance(Validation)({
     traverse(applicative, fn) {
-      const [tag, payload, semigroup] = this.value();
-
-      switch (tag) {
-        case "invalid":
-          return Applicative.pure(
-            applicative,
-            Invalid(
-              payload,
-              semigroup,
-            ),
-          );
-        case "valid":
-          return Functor.map(fn(payload), (value) => Valid(value));
-      }
+      const [tag, payload] = this.value();
+      return tag === "invalid"
+        ? Applicative.pure(applicative, same_context(this))
+        : Functor.map(fn(payload), wrap_valid);
     },
   });
 

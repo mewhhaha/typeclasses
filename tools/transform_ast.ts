@@ -30,6 +30,16 @@ export function literal(value: string | number | boolean | null): Expression {
   if (value === null) {
     return node({ type: "Literal", value: null, raw: "null" });
   }
+  if (typeof value === "boolean") {
+    return node({ type: "Literal", value, raw: value ? "true" : "false" });
+  }
+  if (typeof value === "number") {
+    return node({
+      type: "Literal",
+      value,
+      raw: Number.isFinite(value) ? String(value) : "null",
+    });
+  }
   return node({ type: "Literal", value, raw: JSON.stringify(value) });
 }
 
@@ -203,7 +213,172 @@ export function walk_values(
   parent?: Node,
 ): void {
   if (visit(root, parent) === false) return;
-  const keys = value_visitor_keys[root.type];
+  const type = root.type;
+  switch (type) {
+    case "Literal":
+    case "ThisExpression":
+    case "Super":
+    case "TemplateElement":
+    case "PrivateIdentifier":
+    case "EmptyStatement":
+    case "DebuggerStatement":
+      return;
+    case "Identifier":
+      if (
+        "decorators" in root && root.decorators !== undefined &&
+        root.decorators.length > 0
+      ) {
+        const decs = root.decorators;
+        for (let i = 0; i < decs.length; i += 1) {
+          walk_values(decs[i], visit, root);
+        }
+      }
+      return;
+    case "MemberExpression":
+      walk_values(root.object, visit, root);
+      walk_values(root.property, visit, root);
+      return;
+    case "CallExpression":
+    case "NewExpression": {
+      walk_values(root.callee, visit, root);
+      const args = root.arguments;
+      for (let i = 0; i < args.length; i += 1) {
+        walk_values(args[i], visit, root);
+      }
+      return;
+    }
+    case "BinaryExpression":
+    case "LogicalExpression":
+    case "AssignmentExpression":
+      walk_values(root.left, visit, root);
+      walk_values(root.right, visit, root);
+      return;
+    case "ExpressionStatement":
+      walk_values(root.expression, visit, root);
+      return;
+    case "ReturnStatement":
+    case "YieldExpression":
+      if (root.argument !== null) walk_values(root.argument, visit, root);
+      return;
+    case "UnaryExpression":
+    case "UpdateExpression":
+    case "AwaitExpression":
+    case "SpreadElement":
+    case "ThrowStatement":
+      walk_values(root.argument, visit, root);
+      return;
+    case "BreakStatement":
+    case "ContinueStatement":
+      if (root.label !== null) walk_values(root.label, visit, root);
+      return;
+    case "VariableDeclaration": {
+      const decls = root.declarations;
+      for (let i = 0; i < decls.length; i += 1) {
+        walk_values(decls[i], visit, root);
+      }
+      return;
+    }
+    case "VariableDeclarator":
+      walk_values(root.id, visit, root);
+      if (root.init !== null) walk_values(root.init, visit, root);
+      return;
+    case "BlockStatement":
+    case "Program": {
+      const body = root.body;
+      for (let i = 0; i < body.length; i += 1) {
+        walk_values(body[i], visit, root);
+      }
+      return;
+    }
+    case "IfStatement":
+      walk_values(root.test, visit, root);
+      walk_values(root.consequent, visit, root);
+      if (root.alternate !== null) walk_values(root.alternate, visit, root);
+      return;
+    case "ConditionalExpression":
+      walk_values(root.test, visit, root);
+      walk_values(root.consequent, visit, root);
+      walk_values(root.alternate, visit, root);
+      return;
+    case "ArrowFunctionExpression": {
+      const params = root.params;
+      for (let i = 0; i < params.length; i += 1) {
+        walk_values(params[i], visit, root);
+      }
+      walk_values(root.body, visit, root);
+      return;
+    }
+    case "FunctionDeclaration":
+    case "FunctionExpression": {
+      if (root.id !== null) walk_values(root.id, visit, root);
+      const params = root.params;
+      for (let i = 0; i < params.length; i += 1) {
+        walk_values(params[i], visit, root);
+      }
+      if (root.body !== null) walk_values(root.body, visit, root);
+      return;
+    }
+    case "Property":
+      walk_values(root.key, visit, root);
+      walk_values(root.value, visit, root);
+      return;
+    case "ObjectExpression": {
+      const props = root.properties;
+      for (let i = 0; i < props.length; i += 1) {
+        walk_values(props[i], visit, root);
+      }
+      return;
+    }
+    case "ArrayExpression": {
+      const els = root.elements;
+      for (let i = 0; i < els.length; i += 1) {
+        const el = els[i];
+        if (el !== null) walk_values(el, visit, root);
+      }
+      return;
+    }
+    case "SequenceExpression": {
+      const exprs = root.expressions;
+      for (let i = 0; i < exprs.length; i += 1) {
+        walk_values(exprs[i], visit, root);
+      }
+      return;
+    }
+    case "TemplateLiteral": {
+      const quasis = root.quasis;
+      for (let i = 0; i < quasis.length; i += 1) {
+        walk_values(quasis[i], visit, root);
+      }
+      const exprs = root.expressions;
+      for (let i = 0; i < exprs.length; i += 1) {
+        walk_values(exprs[i], visit, root);
+      }
+      return;
+    }
+    case "ChainExpression":
+    case "ParenthesizedExpression":
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+    case "TSNonNullExpression":
+    case "TSInstantiationExpression":
+    case "TSTypeAssertion":
+      walk_values(root.expression, visit, root);
+      return;
+    case "ExportDefaultDeclaration":
+      walk_values(root.declaration, visit, root);
+      return;
+    case "ExportNamedDeclaration":
+      if (
+        root.declaration !== null && root.specifiers.length === 0 &&
+        root.source === null &&
+        (root.attributes === undefined || root.attributes.length === 0)
+      ) {
+        walk_values(root.declaration, visit, root);
+        return;
+      }
+      break;
+  }
+  const keys = value_visitor_keys[type];
   if (keys === undefined || keys.length === 0) return;
   const record = root as unknown as Record<string, unknown>;
   for (let index = 0; index < keys.length; index += 1) {

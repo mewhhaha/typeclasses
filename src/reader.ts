@@ -16,7 +16,6 @@ import {
   is_effect,
   is_lift_of,
   type Lift,
-  pure,
   suspend,
   type TaggedOperation,
 } from "./effects.ts";
@@ -34,6 +33,7 @@ import {
   Monad,
   Show,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 
 /** @ignore */
 export const reader_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -97,7 +97,7 @@ function identity_environment<environment>(
 
 /** Reads the current environment. */
 export function ask<environment>(): Reader<environment, environment> {
-  return Reader(identity_environment<environment>);
+  return Reader(identity_environment) as Reader<environment, environment>;
 }
 
 /** Selects a value from the current environment. */
@@ -219,26 +219,31 @@ function make_reader_cell<key extends PropertyKey, environment>(
 
     [applicative_lift_method](fn, rest) {
       const first = this.value();
-      const reads = rest.map((current) => current.value());
+      const len = rest.length;
 
-      if (reads.length === 0) {
+      if (len === 0) {
         return wrap((environment: environment) => fn(first(environment)));
       }
-      if (reads.length === 1) {
-        const second = reads[0];
+      if (len === 1) {
+        const second = rest[0].value();
         return wrap((environment: environment) =>
           fn(first(environment), second(environment))
         );
       }
-      if (reads.length === 2) {
-        const [second, third] = reads;
+      if (len === 2) {
+        const second = rest[0].value();
+        const third = rest[1].value();
         return wrap((environment: environment) =>
           fn(first(environment), second(environment), third(environment))
         );
       }
-      return wrap((environment: environment) =>
-        fn(first(environment), ...reads.map((read) => read(environment)))
-      );
+      const reads = rest.map((current) => current.value());
+      return wrap((environment: environment) => {
+        const values = new Array<unknown>(len + 1);
+        values[0] = first(environment);
+        for (let i = 0; i < len; i += 1) values[i + 1] = reads[i](environment);
+        return fn(...values);
+      });
     },
 
     ap(value) {
@@ -253,14 +258,7 @@ function make_reader_cell<key extends PropertyKey, environment>(
 
   Monad.instance(dictionary)({
     bind(fn) {
-      const read = this.value();
-
-      return wrap(
-        bind_reader_computation(
-          read,
-          (value) => fn(value).value(),
-        ),
-      );
+      return wrap(bind_reader_computation(this.value(), fn));
     },
   });
 
@@ -354,26 +352,24 @@ export function run_reader<
   value: NoInfer<environment> & ReaderCellEnvironment<requirements, key>,
 ): Effect<WithoutReaderCell<requirements, key>, item>;
 export function run_reader(
-  ...args:
-    | readonly [Effect<unknown, unknown>, unknown]
-    | readonly [
-      AsReaderCell<PropertyKey, unknown>,
-      Effect<unknown, unknown>,
-      unknown,
-    ]
+  first: Effect<unknown, unknown> | AsReaderCell<PropertyKey, unknown>,
+  second: unknown,
+  third?: unknown,
 ): Effect<unknown, unknown> {
-  if (args.length === 2) {
-    const [effect, environment] = args;
-
-    return run_reader_effect(effect, reader_kind, environment);
+  if (arguments.length === 2) {
+    return run_reader_effect(
+      first as Effect<unknown, unknown>,
+      reader_kind,
+      second,
+    );
   }
 
-  const [cell, effect, environment] = args;
-
   return run_reader_effect(
-    effect,
-    cell[kind] as AsReader<unknown>[typeof kind],
-    environment,
+    second as Effect<unknown, unknown>,
+    (first as AsReaderCell<PropertyKey, unknown>)[
+      kind
+    ] as AsReader<unknown>[typeof kind],
+    third,
   );
 }
 
@@ -386,7 +382,7 @@ function run_reader_effect(
 
   while (true) {
     if (current[0] === "pure") {
-      return pure(current[1]);
+      return current;
     }
 
     if (is_lift_of(current[1], runtime_kind)) {
@@ -450,30 +446,29 @@ export function run_reader_terminal<
     & TerminalReaderCellEnvironment<requirements, key>,
 ): item;
 export function run_reader_terminal(
-  ...args:
-    | readonly [
-      Reader<unknown, unknown> | Effect<unknown, unknown>,
-      unknown,
-    ]
-    | readonly [
-      AsReaderCell<PropertyKey, unknown>,
-      | ReaderCellValue<PropertyKey, unknown, unknown>
-      | Effect<unknown, unknown>,
-      unknown,
-    ]
+  first:
+    | Reader<unknown, unknown>
+    | Effect<unknown, unknown>
+    | AsReaderCell<PropertyKey, unknown>,
+  second: unknown,
+  third?: unknown,
 ): unknown {
-  if (args.length === 2) {
-    const [effect, environment] = args;
-
-    return run_reader_kind(effect, reader_kind, environment);
+  if (arguments.length === 2) {
+    return run_reader_kind(
+      first as Reader<unknown, unknown> | Effect<unknown, unknown>,
+      reader_kind,
+      second,
+    );
   }
 
-  const [cell, effect, environment] = args;
-
   return run_reader_kind(
-    effect,
-    cell[kind] as AsReader<unknown>[typeof kind],
-    environment,
+    second as
+      | ReaderCellValue<PropertyKey, unknown, unknown>
+      | Effect<unknown, unknown>,
+    (first as AsReaderCell<PropertyKey, unknown>)[
+      kind
+    ] as AsReader<unknown>[typeof kind],
+    third,
   );
 }
 
@@ -542,30 +537,29 @@ Applicative.instance(Reader)({
 
   [applicative_lift_method](fn, rest) {
     const first = this.value();
-    const readers = rest.map((current) => current.value());
+    const len = rest.length;
 
-    if (readers.length === 0) {
+    if (len === 0) {
       return Reader((environment: unknown) => fn(first(environment)));
     }
-    if (readers.length === 1) {
-      const second = readers[0];
+    if (len === 1) {
+      const second = rest[0].value();
       return Reader((environment: unknown) =>
         fn(first(environment), second(environment))
       );
     }
-    if (readers.length === 2) {
-      const [second, third] = readers;
+    if (len === 2) {
+      const second = rest[0].value();
+      const third = rest[1].value();
       return Reader((environment: unknown) =>
         fn(first(environment), second(environment), third(environment))
       );
     }
+    const readers = rest.map((current) => current.value());
     return Reader((environment: unknown) => {
-      const values = [first(environment)];
-
-      for (const reader of readers) {
-        values.push(reader(environment));
-      }
-
+      const values = new Array<unknown>(len + 1);
+      values[0] = first(environment);
+      for (let i = 0; i < len; i += 1) values[i + 1] = readers[i](environment);
       return fn(...values);
     });
   },
@@ -581,42 +575,79 @@ Applicative.instance(Reader)({
 
 Monad.instance(Reader)({
   bind(fn) {
-    return Reader(
-      bind_reader_computation(
-        this.value(),
-        (value) => fn(value).value(),
-      ),
-    );
+    return Reader(bind_reader_computation(this.value(), fn));
   },
 });
 
 function register_reader_traversal(dictionary: unknown): void {
+  const dict = dictionary as AsReader<unknown> & {
+    (v: RawReader<unknown, unknown>): Data<AsReader<unknown>, unknown>;
+  };
+  const d_kind = dict[kind];
+  const c_bind = dict.bind;
+  const c_pure = dict.pure;
+  const reader_do: CustomDoRunner = (first_value, first_iterator, run) => {
+    const first = first_value as Data<AsReader<unknown>, unknown>;
+    if (
+      first[kind] !== d_kind || first.bind !== c_bind || first.pure !== c_pure
+    ) return undefined;
+    const first_raw = first.value();
+    let first_claimed = false;
+    return dict((environment: unknown) => {
+      const v0 = first_raw(environment);
+      let iter: Generator<unknown, unknown, unknown>;
+      let next: IteratorResult<unknown, unknown>;
+      if (!first_claimed) {
+        first_claimed = true;
+        iter = first_iterator;
+        next = iter.next(v0);
+      } else {
+        iter = run();
+        const skipped = iter.next();
+        if (skipped.done) return skipped.value;
+        next = iter.next(v0);
+      }
+      while (!next.done) {
+        const val = (next.value as Data<AsReader<unknown>, unknown>).value()(
+          environment,
+        );
+        next = iter.next(val);
+      }
+      return next.value;
+    });
+  };
+  Object.defineProperty(dictionary as object, do_runner_method, {
+    value: reader_do,
+  });
   register_traversal(
-    dictionary as AsReader<unknown>,
+    dict,
     <from, to, result>(
       items: Iterable<from>,
       fn: (item: from) => Data<AsReader<unknown>, to>,
       build: (items: Iterable<to>) => result,
     ): Data<AsReader<unknown>, result> => {
-      let fns: RawReader<unknown, to>[];
-      if (Array.isArray(items)) {
-        fns = new Array<RawReader<unknown, to>>(items.length);
-        for (let i = 0; i < items.length; i += 1) {
-          fns[i] = fn(items[i]).value() as RawReader<unknown, to>;
-        }
-      } else {
-        fns = [];
-        for (const item of items) {
-          fns.push(fn(item).value() as RawReader<unknown, to>);
-        }
+      const fns: RawReader<unknown, to>[] = [];
+      for (const item of items) {
+        fns.push(fn(item).value() as RawReader<unknown, to>);
       }
-      return (dictionary as (
-        v: RawReader<unknown, result>,
-      ) => Data<AsReader<unknown>, result>)((environment: unknown) => {
+      return dict((environment: unknown) => {
         const out = new Array<to>(fns.length);
         for (let i = 0; i < fns.length; i += 1) out[i] = fns[i](environment);
         return build(out);
-      });
+      }) as Data<AsReader<unknown>, result>;
+    },
+    <from, to>(
+      items: readonly from[],
+      fn: (item: from) => Data<AsReader<unknown>, to>,
+    ): Data<AsReader<unknown>, to[]> => {
+      const snapshot = items.slice();
+      return dict((environment: unknown) => {
+        const out = new Array<to>(snapshot.length);
+        for (let i = 0; i < snapshot.length; i += 1) {
+          out[i] = fn(snapshot[i]).value()(environment) as to;
+        }
+        return out;
+      }) as Data<AsReader<unknown>, to[]>;
     },
   );
 }

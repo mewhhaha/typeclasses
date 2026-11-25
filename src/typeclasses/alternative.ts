@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -54,10 +54,8 @@ export const Alternative: AlternativeTypeclass = /* @__PURE__ */ typeclass(
     >(
       witness: dictionary | Data<dictionary, unknown>,
     ): Data<dictionary, item> {
-      return call_typeclass_method(
-        this.instance_for(witness).empty<item>,
-        witness as dictionary,
-      );
+      return (instance_for_token(alternative_typeclass, witness)
+        .empty<item>).call(witness as dictionary);
     },
 
     alt<
@@ -67,11 +65,8 @@ export const Alternative: AlternativeTypeclass = /* @__PURE__ */ typeclass(
       left: Data<dictionary, item>,
       right: Data<dictionary, item>,
     ): Data<dictionary, item> {
-      return call_typeclass_method(
-        this.instance_for(left).alt<item>,
-        left,
-        right,
-      );
+      return (instance_for_token(alternative_typeclass, left)
+        .alt<item>).call(left, right);
     },
   },
 );

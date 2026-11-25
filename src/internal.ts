@@ -29,3 +29,15 @@ export function is_kind_of<dictionary extends Dictionary>(
   return typeof value === "object" && value !== null &&
     (value as Dictionary)[kind] === dictionary[kind];
 }
+
+const array_iterator = Array.prototype[Symbol.iterator];
+
+/** @ignore Return a single-read iterable wrapper when an array overrides Symbol.iterator. */
+export function custom_iterable<item>(
+  items: readonly item[],
+): Iterable<item> | undefined {
+  const iter = items[Symbol.iterator];
+  return iter === array_iterator
+    ? undefined
+    : { [Symbol.iterator]: () => Reflect.apply(iter, items, []) };
+}

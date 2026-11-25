@@ -1,7 +1,7 @@
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -33,6 +33,6 @@ export const Show: ShowTypeclass = /* @__PURE__ */ typeclass(show_typeclass, {
   show<dictionary extends Show<dictionary>>(
     value: Data<dictionary, unknown>,
   ): string {
-    return call_typeclass_method(this.instance_for(value).show, value);
+    return instance_for_token(show_typeclass, value).show.call(value);
   },
 });

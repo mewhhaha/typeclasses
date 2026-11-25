@@ -1,8 +1,8 @@
 import type { LoopStep } from "../loop.ts";
 import {
-  call_typeclass_method,
   type Data,
   type Dictionary,
+  instance_for_token,
   type Typeclass,
   typeclass,
   type TypeclassDictionary,
@@ -51,12 +51,12 @@ export const MonadRec: MonadRecTypeclass = /* @__PURE__ */ typeclass(
       initial: state,
       step: (state: state) => Data<dictionary, LoopStep<state, output>>,
     ): Data<dictionary, output> {
-      return call_typeclass_method(
-        this.instance_for(dictionary).tail_rec_m<state, output>,
-        dictionary as unknown as dictionary,
-        initial,
-        step,
-      );
+      return (instance_for_token(monad_rec_typeclass, dictionary)
+        .tail_rec_m<state, output>).call(
+          dictionary as unknown as dictionary,
+          initial,
+          step,
+        );
     },
   },
 );

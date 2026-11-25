@@ -1,7 +1,6 @@
 import { traverse_items_into } from "../traversal.ts";
 import {
   type As,
-  call_typeclass_method,
   type Data,
   type Dictionary,
   dictionary_of,
@@ -15,7 +14,11 @@ import {
   typeclass,
   type TypeclassDictionary,
 } from "../typeclass.ts";
-import { Functor, type Functor as FunctorDictionary } from "./functor.ts";
+import {
+  Functor,
+  type Functor as FunctorDictionary,
+  functor_map,
+} from "./functor.ts";
 
 /** Runtime token for the Applicative typeclass. */
 export const applicative_typeclass = /* @__PURE__ */ Symbol("Applicative");
@@ -108,15 +111,7 @@ export const Applicative: ApplicativeTypeclass = /* @__PURE__ */ typeclass(
       };
     },
 
-    pure<
-      dictionary extends Applicative<dictionary>,
-      item,
-    >(
-      witness: dictionary | Data<dictionary, unknown>,
-      item: item,
-    ): Data<dictionary, item> {
-      return applicative_pure<dictionary, item>(witness, item);
-    },
+    pure: applicative_pure,
 
     lift: applicative_lift,
     collect,
@@ -129,11 +124,8 @@ export const Applicative: ApplicativeTypeclass = /* @__PURE__ */ typeclass(
       value: Data<dictionary, (value: NoInfer<from>) => to>,
       item: Data<dictionary, from>,
     ): Data<dictionary, to> {
-      return call_typeclass_method(
-        this.instance_for(value).ap<from, to>,
-        value,
-        item,
-      );
+      return (instance_for_token(applicative_typeclass, value)
+        .ap<from, to>).call(value, item);
     },
   },
 );
@@ -178,64 +170,53 @@ function applicative_lift<
 ): Data<dictionary, result> {
   const apply = fn as (...values: unknown[]) => result;
   const remaining_values = rest as unknown as Data<dictionary, unknown>[];
-  const instance = Applicative.instance_for(first);
+  const instance = instance_for_token(applicative_typeclass, first);
   const lift = instance[applicative_lift_method];
+  const len = remaining_values.length;
 
   if (lift !== undefined) {
-    for (const current of remaining_values) {
-      if (current[kind] !== first[kind]) {
+    const first_kind = first[kind];
+    for (let i = 0; i < len; i += 1) {
+      if (remaining_values[i][kind] !== first_kind) {
         throw new TypeError("lift requires values from the same dictionary");
       }
     }
 
-    return call_typeclass_method(lift, first, apply, remaining_values);
+    return (lift<result>).call(
+      first as Data<dictionary, unknown>,
+      apply,
+      remaining_values,
+    );
   }
 
-  const values = [
-    first as Data<dictionary, unknown>,
-    ...remaining_values,
-  ];
-
-  if (values.length === 1) {
-    return values[0].map((value) => {
-      return apply(value);
-    });
+  if (len === 0) {
+    return first.map((value) => apply(value));
   }
 
-  if (values.length === 2) {
-    const combined = values[0].map((left) => {
-      return (right: unknown) => {
-        return apply(left, right);
-      };
-    });
-
-    return combined.ap(values[1]);
+  if (len === 1) {
+    return first.map((left) => (right: unknown) => apply(left, right))
+      .ap(remaining_values[0]);
   }
 
-  if (values.length === 3) {
-    const combined = values[0].map((left) => {
-      return (middle: unknown) => {
-        return (right: unknown) => {
-          return apply(left, middle, right);
-        };
-      };
-    });
-
-    return combined.ap(values[1]).ap(values[2]);
+  if (len === 2) {
+    return first.map((left) => (middle: unknown) => (right: unknown) =>
+      apply(left, middle, right)
+    ).ap(remaining_values[0]).ap(remaining_values[1]);
   }
 
   type Prefix = { readonly item: unknown; readonly previous?: Prefix };
-  let combined = values[0].map((item): Prefix => ({ item }));
-  for (let index = 1; index < values.length; index += 1) {
-    const append = combined.map((previous) => {
-      return (item: unknown): Prefix => ({ item, previous });
-    });
-    combined = append.ap(values[index]);
+  const total = len + 1;
+  let combined = first.map((item): Prefix => ({ item }));
+  for (let index = 0; index < len; index += 1) {
+    combined = combined.map((previous) => (item: unknown): Prefix => ({
+      item,
+      previous,
+    })).ap(remaining_values[index]);
   }
-  return Functor.map(combined, (prefix) => {
-    const items = new Array<unknown>(values.length);
+  return functor_map(combined, (prefix) => {
+    const items = new Array<unknown>(total);
     let current: Prefix | undefined = prefix;
-    for (let index = items.length - 1; index >= 0; index -= 1) {
+    for (let index = total - 1; index >= 0; index -= 1) {
       items[index] = current!.item;
       current = current!.previous;
     }
@@ -270,6 +251,12 @@ type InferCollect<values> = [keyof values] extends [never] ? never
     ? unknown
   : never;
 
+const enum_own = Object.prototype.propertyIsEnumerable;
+
+function collect_dense_build(items: Iterable<unknown>): unknown[] {
+  return Array.isArray(items) ? items : [...items];
+}
+
 /** Infer the dictionary from a nonempty tuple or record of contextual values. */
 export function collect<
   const values extends
@@ -297,21 +284,23 @@ export function collect(
       ? dictionary_or_values
       : explicit_values) as Record<PropertyKey, Data<CollectRuntime, unknown>>;
   const tuple = Array.isArray(values);
-  const enum_own = Object.prototype.propertyIsEnumerable;
   const length = tuple ? (values as unknown as readonly unknown[]).length : 0;
   let dense = tuple && Object.keys(values).length === length &&
     Object.getOwnPropertySymbols(values).length === 0;
-  if (dense) {
-    for (let i = 0; i < length; i += 1) {
-      if (!enum_own.call(values, i)) {
-        dense = false;
-        break;
-      }
-    }
+  for (let i = 0; dense && i < length; i += 1) {
+    dense = enum_own.call(values, i);
   }
-  const keys = dense
-    ? undefined
-    : Reflect.ownKeys(values).filter((key) => enum_own.call(values, key));
+  let keys: PropertyKey[] | undefined;
+  if (!dense) {
+    const raw = Reflect.ownKeys(values);
+    let write = 0;
+    for (let i = 0; i < raw.length; i += 1) {
+      const k = raw[i];
+      if (enum_own.call(values, k)) raw[write++] = k;
+    }
+    raw.length = write;
+    keys = raw;
+  }
   let selected = dictionary_or_values as CollectRuntime;
   if (explicit_values === undefined) {
     const first = dense
@@ -338,25 +327,30 @@ export function collect(
       values as unknown as readonly Data<CollectRuntime, unknown>[],
       selected,
       check,
-      (items) => (Array.isArray(items) ? items : [...items]),
+      collect_dense_build,
     );
   }
+  const key_list = keys!;
   return traverse_items_into(
-    keys!,
+    key_list,
     selected,
     (key) => check(values[key]),
     (items) => {
       const out: Record<PropertyKey, unknown> | unknown[] = tuple
         ? new Array(length)
         : {};
-      let index = 0;
-      for (const value of items) {
-        Object.defineProperty(out, keys![index++], {
-          value,
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
+      const list = collect_dense_build(items);
+      for (let i = 0; i < list.length; i += 1) {
+        const k = key_list[i];
+        const v = list[i];
+        if (k in out) {
+          Object.defineProperty(out, k, {
+            value: v,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        } else (out as Record<PropertyKey, unknown>)[k] = v;
       }
       return out;
     },

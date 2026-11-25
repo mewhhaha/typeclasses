@@ -37,6 +37,7 @@ import {
   Monad,
   Show,
 } from "./typeclasses.ts";
+import { type CustomDoRunner, do_runner_method } from "./typeclasses/monad.ts";
 
 /** @ignore */
 export const state_identity: unique symbol = /* @__PURE__ */ Symbol(
@@ -93,7 +94,7 @@ function read_state<state>(state: state): readonly [state, state] {
 
 /** Reads the current state. */
 export function get<state>(): State<state, state> {
-  return State(read_state<state>);
+  return State(read_state) as State<state, state>;
 }
 
 /** Replaces the current state. */
@@ -221,24 +222,25 @@ function make_state_cell<key extends PropertyKey, state>(
 
     [applicative_lift_method](fn, rest) {
       const first = this.value();
-      const stateful_values = rest.map((current) => current.value());
+      const len = rest.length;
 
-      if (stateful_values.length === 0) {
+      if (len === 0) {
         return wrap((current: state) => {
           const [value, next] = first(current);
           return [fn(value), next] as const;
         });
       }
-      if (stateful_values.length === 1) {
-        const second = stateful_values[0];
+      if (len === 1) {
+        const second = rest[0].value();
         return wrap((current: state) => {
           const [a, next] = first(current);
           const [b, final] = second(next);
           return [fn(a, b), final] as const;
         });
       }
-      if (stateful_values.length === 2) {
-        const [second, third] = stateful_values;
+      if (len === 2) {
+        const second = rest[0].value();
+        const third = rest[1].value();
         return wrap((current: state) => {
           const [a, next] = first(current);
           const [b, after] = second(next);
@@ -246,14 +248,16 @@ function make_state_cell<key extends PropertyKey, state>(
           return [fn(a, b, c), final] as const;
         });
       }
+      const stateful_values = rest.map((current) => current.value());
       return wrap((current: state) => {
         const [first_value, first_state] = first(current);
-        const values = [first_value];
+        const values = new Array<unknown>(len + 1);
+        values[0] = first_value;
         let current_state = first_state;
 
-        for (const stateful of stateful_values) {
-          const [value, next_state] = stateful(current_state);
-          values.push(value);
+        for (let i = 0; i < len; i += 1) {
+          const [value, next_state] = stateful_values[i](current_state);
+          values[i + 1] = value;
           current_state = next_state;
         }
 
@@ -276,14 +280,7 @@ function make_state_cell<key extends PropertyKey, state>(
 
   Monad.instance(dictionary)({
     bind(fn) {
-      const stateful = this.value();
-
-      return wrap(
-        bind_state_computation(
-          stateful,
-          (value) => fn(value).value(),
-        ),
-      );
+      return wrap(bind_state_computation(this.value(), fn));
     },
   });
 
@@ -414,22 +411,24 @@ export function run_state<
   readonly [item, state & StateCellItem<requirements, key>]
 >;
 export function run_state(
-  ...args:
-    | readonly [Effect<unknown, unknown>, unknown]
-    | readonly [AsCell<PropertyKey, unknown>, Effect<unknown, unknown>, unknown]
+  first: Effect<unknown, unknown> | AsCell<PropertyKey, unknown>,
+  second: unknown,
+  third?: unknown,
 ): Effect<unknown, unknown> {
-  if (args.length === 2) {
-    const [effect, initial] = args;
-
-    return run_state_effect(effect, state_kind, initial);
+  if (arguments.length === 2) {
+    return run_state_effect(
+      first as Effect<unknown, unknown>,
+      state_kind,
+      second,
+    );
   }
 
-  const [cell, effect, initial] = args;
-
   return run_state_effect(
-    effect,
-    cell[kind] as AsState<unknown>[typeof kind],
-    initial,
+    second as Effect<unknown, unknown>,
+    (first as AsCell<PropertyKey, unknown>)[
+      kind
+    ] as AsState<unknown>[typeof kind],
+    third,
   );
 }
 
@@ -476,29 +475,29 @@ export function run_state_terminal<
   initial: NoInfer<state> & TerminalStateCellItem<requirements, key>,
 ): readonly [item, state];
 export function run_state_terminal(
-  ...args:
-    | readonly [
-      State<unknown, unknown> | Effect<unknown, unknown>,
-      unknown,
-    ]
-    | readonly [
-      AsCell<PropertyKey, unknown>,
-      CellValue<PropertyKey, unknown, unknown> | Effect<unknown, unknown>,
-      unknown,
-    ]
+  first:
+    | State<unknown, unknown>
+    | Effect<unknown, unknown>
+    | AsCell<PropertyKey, unknown>,
+  second: unknown,
+  third?: unknown,
 ): readonly [unknown, unknown] {
-  if (args.length === 2) {
-    const [effect, initial] = args;
-
-    return run_state_kind(effect, state_kind, initial);
+  if (arguments.length === 2) {
+    return run_state_kind(
+      first as State<unknown, unknown> | Effect<unknown, unknown>,
+      state_kind,
+      second,
+    );
   }
 
-  const [cell, effect, initial] = args;
-
   return run_state_kind(
-    effect,
-    cell[kind] as AsState<unknown>[typeof kind],
-    initial,
+    second as
+      | CellValue<PropertyKey, unknown, unknown>
+      | Effect<unknown, unknown>,
+    (first as AsCell<PropertyKey, unknown>)[
+      kind
+    ] as AsState<unknown>[typeof kind],
+    third,
   );
 }
 
@@ -594,24 +593,25 @@ Applicative.instance(State)({
 
   [applicative_lift_method](fn, rest) {
     const first = this.value();
-    const stateful_values = rest.map((current) => current.value());
+    const len = rest.length;
 
-    if (stateful_values.length === 0) {
+    if (len === 0) {
       return State((state: unknown) => {
         const [value, next] = first(state);
         return [fn(value), next] as const;
       });
     }
-    if (stateful_values.length === 1) {
-      const second = stateful_values[0];
+    if (len === 1) {
+      const second = rest[0].value();
       return State((state: unknown) => {
         const [a, next] = first(state);
         const [b, final] = second(next);
         return [fn(a, b), final] as const;
       });
     }
-    if (stateful_values.length === 2) {
-      const [second, third] = stateful_values;
+    if (len === 2) {
+      const second = rest[0].value();
+      const third = rest[1].value();
       return State((state: unknown) => {
         const [a, next] = first(state);
         const [b, after] = second(next);
@@ -619,14 +619,16 @@ Applicative.instance(State)({
         return [fn(a, b, c), final] as const;
       });
     }
+    const stateful_values = rest.map((current) => current.value());
     return State((state: unknown) => {
       const [first_value, first_state] = first(state);
-      const values = [first_value];
+      const values = new Array<unknown>(len + 1);
+      values[0] = first_value;
       let current_state = first_state;
 
-      for (const stateful of stateful_values) {
-        const [value, next_state] = stateful(current_state);
-        values.push(value);
+      for (let i = 0; i < len; i += 1) {
+        const [value, next_state] = stateful_values[i](current_state);
+        values[i + 1] = value;
         current_state = next_state;
       }
 
@@ -648,38 +650,64 @@ Applicative.instance(State)({
 
 Monad.instance(State)({
   bind(fn) {
-    return State(
-      bind_state_computation(
-        this.value(),
-        (value) => fn(value).value(),
-      ),
-    );
+    return State(bind_state_computation(this.value(), fn));
   },
 });
 
 function register_state_traversal(dictionary: unknown): void {
+  const dict = dictionary as AsState<unknown> & {
+    (v: RawState<unknown, unknown>): Data<AsState<unknown>, unknown>;
+  };
+  const d_kind = dict[kind];
+  const c_bind = dict.bind;
+  const c_pure = dict.pure;
+  const state_do: CustomDoRunner = (first_value, first_iterator, run) => {
+    const first = first_value as Data<AsState<unknown>, unknown>;
+    if (
+      first[kind] !== d_kind || first.bind !== c_bind || first.pure !== c_pure
+    ) return undefined;
+    const first_raw = first.value();
+    let first_claimed = false;
+    return dict((initial: unknown) => {
+      const [v0, s0] = first_raw(initial);
+      let current_state = s0;
+      let iter: Generator<unknown, unknown, unknown>;
+      let next: IteratorResult<unknown, unknown>;
+      if (!first_claimed) {
+        first_claimed = true;
+        iter = first_iterator;
+        next = iter.next(v0);
+      } else {
+        iter = run();
+        const skipped = iter.next();
+        if (skipped.done) return [skipped.value, current_state] as const;
+        next = iter.next(v0);
+      }
+      while (!next.done) {
+        const [val, next_state] =
+          (next.value as Data<AsState<unknown>, unknown>)
+            .value()(current_state);
+        current_state = next_state;
+        next = iter.next(val);
+      }
+      return [next.value, current_state] as const;
+    });
+  };
+  Object.defineProperty(dictionary as object, do_runner_method, {
+    value: state_do,
+  });
   register_traversal(
-    dictionary as AsState<unknown>,
+    dict,
     <from, to, result>(
       items: Iterable<from>,
       fn: (item: from) => Data<AsState<unknown>, to>,
       build: (items: Iterable<to>) => result,
     ): Data<AsState<unknown>, result> => {
-      let fns: RawState<unknown, to>[];
-      if (Array.isArray(items)) {
-        fns = new Array<RawState<unknown, to>>(items.length);
-        for (let i = 0; i < items.length; i += 1) {
-          fns[i] = fn(items[i]).value() as RawState<unknown, to>;
-        }
-      } else {
-        fns = [];
-        for (const item of items) {
-          fns.push(fn(item).value() as RawState<unknown, to>);
-        }
+      const fns: RawState<unknown, to>[] = [];
+      for (const item of items) {
+        fns.push(fn(item).value() as RawState<unknown, to>);
       }
-      return (dictionary as (
-        v: RawState<unknown, result>,
-      ) => Data<AsState<unknown>, result>)((initial: unknown) => {
+      return dict((initial: unknown) => {
         const out = new Array<to>(fns.length);
         let current = initial;
         for (let i = 0; i < fns.length; i += 1) {
@@ -688,7 +716,23 @@ function register_state_traversal(dictionary: unknown): void {
           current = next;
         }
         return [build(out), current] as const;
-      });
+      }) as Data<AsState<unknown>, result>;
+    },
+    <from, to>(
+      items: readonly from[],
+      fn: (item: from) => Data<AsState<unknown>, to>,
+    ): Data<AsState<unknown>, to[]> => {
+      const snapshot = items.slice();
+      return dict((initial: unknown) => {
+        const out = new Array<to>(snapshot.length);
+        let current = initial;
+        for (let i = 0; i < snapshot.length; i += 1) {
+          const [value, next] = fn(snapshot[i]).value()(current);
+          out[i] = value as to;
+          current = next;
+        }
+        return [out, current] as const;
+      }) as Data<AsState<unknown>, to[]>;
     },
   );
 }

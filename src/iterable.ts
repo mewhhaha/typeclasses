@@ -5,10 +5,13 @@ import {
   type As,
   type Data,
   data,
+  tagged_payload,
+  tagged_tag,
+  tagged_value,
   type type_data,
   type type_item,
 } from "./typeclass.ts";
-import { traverse_items } from "./traversal.ts";
+import { traverse_items_into } from "./traversal.ts";
 import { inspect } from "./inspect.ts";
 import {
   Alternative,
@@ -90,26 +93,21 @@ export function from_array<item>(
 export function from_iterable<item>(
   iterable: Iterable<item>,
 ): IterableT<item> {
-  const items = [...iterable];
-  const factory: TaggedIterableFactory<item> = () => items;
-  factory[iterable_array] = items;
-  return IterableT(factory);
+  return from_array([...iterable]);
+}
+
+function push_array_item<item>(out: item[], value: item): item[] {
+  out.push(value);
+  return out;
 }
 
 /** Materialize a wrapped iterable into a mutable array. */
 export function to_array<item>(iterable: IterableT<item>): item[] {
   const factory = iterable.value();
-  const plan = pipeline_of(factory);
-  if (plan !== undefined) {
-    const out: item[] = [];
-    push_pipeline<item>(plan, (value) => {
-      out.push(value);
-      return false;
-    });
-    return out;
-  }
   const items = fast_array_of(factory);
-  return items !== undefined ? (items.slice() as item[]) : [...factory()];
+  return items !== undefined
+    ? (items.slice() as item[])
+    : fold_factory(factory, [] as item[], push_array_item);
 }
 
 /** Lazily keep matching items, preserving type-guard narrowing. */
@@ -132,6 +130,12 @@ export function filter<item>(
   });
 }
 
+function assert_take_count(count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new RangeError("take count must be a nonnegative safe integer");
+  }
+}
+
 /**
  * Yield at most count items without reading ahead, closing upstream on early
  * exit. Count must be a nonnegative safe integer; zero never opens the source.
@@ -140,9 +144,7 @@ export function take<item>(
   iterable: IterableT<item>,
   count: number,
 ): IterableT<item> {
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new RangeError("take count must be a nonnegative safe integer");
-  }
+  assert_take_count(count);
   return pipeline(iterable, { tag: "take", count });
 }
 
@@ -162,7 +164,7 @@ function filter_method<item>(
 }
 
 function empty_iterable<item>(this: AsIterable): Data<AsIterable, item> {
-  return IterableT(function* () {});
+  return from_array<item>([]);
 }
 
 function lift_iterable_two<output>(
@@ -206,17 +208,14 @@ function lift_iterable_many<output>(
     ...rest.map((current) => current.value()),
   ];
 
-  return IterableT(function* () {
-    yield* iterate_iterable_product(fn, sources, 0, []);
-  });
+  return IterableT(() => iterate_iterable_product(fn, sources));
 }
 
 function* iterate_iterable_product<output>(
   fn: (...values: unknown[]) => output,
   sources: readonly RawIterableT<unknown>[],
-  _index: number,
-  values: unknown[],
 ): Generator<output> {
+  const values: unknown[] = [];
   const iterators: Iterator<unknown>[] = [];
   let depth = 0;
   let failed = false;
@@ -264,8 +263,8 @@ type Pipeline = {
   readonly stages: Stages;
   meta?: PipelineMeta;
 };
-const iterable_pipeline = Symbol("IterableT.pipeline");
-const iterable_array = Symbol("IterableT.array");
+const iterable_pipeline = Symbol();
+const iterable_array = Symbol();
 type TaggedIterableFactory<item = unknown> = RawIterableT<item> & {
   [iterable_pipeline]?: Pipeline;
   [iterable_array]?: readonly unknown[];
@@ -324,7 +323,22 @@ export function preview<item>(
   iterable: IterableT<item>,
   limit = 100,
 ): item[] {
-  return to_array(take(iterable, limit));
+  assert_take_count(limit);
+  if (limit === 0) return [];
+  const factory = iterable.value();
+  const items = fast_array_of(factory);
+  if (items !== undefined) {
+    const count = items.length < limit ? items.length : limit;
+    const out = new Array<item>(count);
+    for (let i = 0; i < count; i += 1) out[i] = items[i] as item;
+    return out;
+  }
+  const out: item[] = [];
+  run_pipeline_until(factory, (value) => {
+    out.push(value);
+    return out.length >= limit;
+  });
+  return out;
 }
 
 /** Explicit live array view; mutations are visible on the next traversal. */
@@ -335,24 +349,22 @@ export const from_snapshot = from_iterable;
 function pipeline_meta(plan: Pipeline): PipelineMeta {
   if (plan.meta !== undefined) return plan.meta;
   const ordered: Stage[] = [];
-  let link: Stages | undefined = plan.stages;
-  while (link !== undefined) {
-    ordered.push(link.stage);
-    link = link.previous;
-  }
-  ordered.reverse();
   let has_take = false;
   let has_zero_take = false;
-  for (let index = 0; index < ordered.length; index += 1) {
-    const stage = ordered[index];
+  for (
+    let link: Stages | undefined = plan.stages;
+    link !== undefined;
+    link = link.previous
+  ) {
+    const stage = link.stage;
+    ordered.push(stage);
     if (stage.tag === "take") {
       has_take = true;
       if (stage.count === 0) has_zero_take = true;
     }
   }
-  const meta: PipelineMeta = { ordered, has_take, has_zero_take };
-  plan.meta = meta;
-  return meta;
+  ordered.reverse();
+  return (plan.meta = { ordered, has_take, has_zero_take });
 }
 
 function init_remaining(ordered: readonly Stage[]): number[] {
@@ -381,15 +393,102 @@ function eval_stages(
         if (--remaining![index] === 0) state.stop = true;
         break;
       case "filter_map": {
-        const [tag, payload] = op.fn(value).value();
-        if (tag === "Nothing") return false;
-        value = payload;
+        const res = op.fn(value) as unknown as {
+          readonly [tagged_tag]?: PropertyKey;
+          readonly [tagged_payload]?: unknown;
+          readonly [tagged_value]?: () => readonly [string, unknown];
+          value(): readonly [string, unknown];
+        };
+        const value_fn = res.value;
+        if (value_fn !== undefined && value_fn === res[tagged_value]) {
+          if (res[tagged_tag] === "Nothing") return false;
+          value = res[tagged_payload];
+        } else {
+          const raw = value_fn.call(res);
+          if (raw[0] === "Nothing") return false;
+          value = raw[1];
+        }
         break;
       }
     }
   }
   state.value = value;
   return true;
+}
+
+function fold_pipeline<item, state>(
+  plan: Pipeline,
+  initial: state,
+  reduce: (state: state, item: item) => state,
+): state {
+  const meta = pipeline_meta(plan);
+  if (meta.has_zero_take) return initial;
+  let acc = initial;
+  const items = fast_array_of(plan.source);
+  const ordered = meta.ordered;
+  if (items !== undefined) {
+    const last = ordered[ordered.length - 1];
+    const has_tail_take = last.tag === "take";
+    let rem = has_tail_take ? last.count : Infinity;
+    const core = has_tail_take ? ordered.length - 1 : ordered.length;
+    if (core === 0) {
+      for (let i = 0; i < items.length && i < rem; i += 1) {
+        acc = reduce(acc, items[i] as item);
+      }
+      return acc;
+    }
+    const s0 = ordered[0];
+    if (core === 1) {
+      if (s0.tag === "map") {
+        const f0 = s0.fn;
+        for (let i = 0; i < items.length && i < rem; i += 1) {
+          acc = reduce(acc, f0(items[i]) as item);
+        }
+        return acc;
+      }
+      if (s0.tag === "filter") {
+        const f0 = s0.fn;
+        for (let i = 0; i < items.length; i += 1) {
+          const v = items[i];
+          if (f0(v)) {
+            acc = reduce(acc, v as item);
+            if (--rem === 0) break;
+          }
+        }
+        return acc;
+      }
+    }
+    if (core === 2) {
+      const s1 = ordered[1];
+      if (s0.tag === "map" && s1.tag === "filter") {
+        const f0 = s0.fn, f1 = s1.fn;
+        for (let i = 0; i < items.length; i += 1) {
+          const m = f0(items[i]);
+          if (f1(m)) {
+            acc = reduce(acc, m as item);
+            if (--rem === 0) break;
+          }
+        }
+        return acc;
+      }
+      if (s0.tag === "filter" && s1.tag === "map") {
+        const f0 = s0.fn, f1 = s1.fn;
+        for (let i = 0; i < items.length; i += 1) {
+          const v = items[i];
+          if (f0(v)) {
+            acc = reduce(acc, f1(v) as item);
+            if (--rem === 0) break;
+          }
+        }
+        return acc;
+      }
+    }
+  }
+  push_pipeline<item>(plan, (value) => {
+    acc = reduce(acc, value);
+    return false;
+  });
+  return acc;
 }
 
 function push_pipeline<item>(
@@ -400,39 +499,6 @@ function push_pipeline<item>(
   if (meta.has_zero_take) return;
   const items = fast_array_of(plan.source);
   const ordered = meta.ordered;
-  const n = ordered.length;
-  if (items !== undefined) {
-    if (n === 1) {
-      const s0 = ordered[0];
-      if (s0.tag === "map" || s0.tag === "filter") {
-        const is_map = s0.tag === "map";
-        const fn = s0.fn;
-        for (let i = 0; i < items.length; i += 1) {
-          const v = items[i];
-          if (is_map ? visit(fn(v) as item) : (fn(v) && visit(v as item))) {
-            return;
-          }
-        }
-        return;
-      }
-    } else if (n === 2) {
-      const [s0, s1] = ordered;
-      if (s0.tag === "map" && s1.tag === "filter") {
-        for (let i = 0; i < items.length; i += 1) {
-          const m = s0.fn(items[i]);
-          if (s1.fn(m) && visit(m as item)) return;
-        }
-        return;
-      }
-      if (s0.tag === "filter" && s1.tag === "map") {
-        for (let i = 0; i < items.length; i += 1) {
-          const v = items[i];
-          if (s0.fn(v) && visit(s1.fn(v) as item)) return;
-        }
-        return;
-      }
-    }
-  }
   const remaining = meta.has_take ? init_remaining(ordered) : undefined;
   const state: StageState = { value: undefined, stop: false };
   if (items !== undefined) {
@@ -483,39 +549,32 @@ export function filter_map<from, to>(
  * loop without generator yields or iterator-result boxes, retaining IteratorClose
  * on early exit.
  */
+function fold_factory<item, state>(
+  factory: RawIterableT<item>,
+  initial: state,
+  reduce: (state: state, item: item) => state,
+): state {
+  const plan = pipeline_of(factory);
+  if (plan !== undefined) return fold_pipeline(plan, initial, reduce);
+  const items = fast_array_of(factory);
+  let state = initial;
+  if (items !== undefined) {
+    for (let i = 0; i < items.length; i += 1) {
+      state = reduce(state, items[i] as item);
+    }
+    return state;
+  }
+  for (const item of factory()) state = reduce(state, item);
+  return state;
+}
+
+/** Compile a reusable fold function for an `IterableT` pipeline. */
 export function compile_fold<item>(iterable: IterableT<item>): <state>(
   initial: state,
   reduce: (state: state, item: item) => state,
 ) => state {
   const factory = iterable.value();
-  const plan = pipeline_of(factory);
-  if (plan !== undefined) {
-    const meta = pipeline_meta(plan);
-    if (meta.has_zero_take) return (initial) => initial;
-    return (initial, reduce) => {
-      let state = initial;
-      push_pipeline<item>(plan, (value) => {
-        state = reduce(state, value);
-        return false;
-      });
-      return state;
-    };
-  }
-  const items = fast_array_of(factory);
-  if (items !== undefined) {
-    return (initial, reduce) => {
-      let state = initial;
-      for (let index = 0; index < items.length; index += 1) {
-        state = reduce(state, items[index] as item);
-      }
-      return state;
-    };
-  }
-  return (initial, reduce) => {
-    let state = initial;
-    for (const item of factory()) state = reduce(state, item);
-    return state;
-  };
+  return (initial, reduce) => fold_factory(factory, initial, reduce);
 }
 
 function run_pipeline_until<item>(
@@ -560,14 +619,27 @@ function create_iterable(): AsIterable {
 
   Eq.instance(IterableT)({
     eq(right) {
-      const left_iterator = this.value()()[Symbol.iterator]();
+      const left_factory = this.value();
+      const right_factory = right.value();
+      const left_items = fast_array_of(left_factory);
+      const right_items = fast_array_of(right_factory);
+      if (left_items !== undefined && right_items !== undefined) {
+        if (left_items === right_items) return true;
+        const len = left_items.length;
+        if (len !== right_items.length) return false;
+        for (let i = 0; i < len; i += 1) {
+          if (!Object.is(left_items[i], right_items[i])) return false;
+        }
+        return true;
+      }
+      const left_iterator = left_factory()[Symbol.iterator]();
       let right_iterator: Iterator<unknown> | undefined;
 
       let left_done = false;
       let right_done = false;
 
       try {
-        right_iterator = right.value()()[Symbol.iterator]();
+        right_iterator = right_factory()[Symbol.iterator]();
         while (true) {
           const left = left_iterator.next();
           left_done = left.done === true;
@@ -603,9 +675,7 @@ function create_iterable(): AsIterable {
 
   Applicative.instance(IterableT)({
     pure(value) {
-      return IterableT(function* () {
-        yield value;
-      });
+      return from_array([value]);
     },
 
     // The specialized ladder avoids the generic applicative_lift fallback's intermediates.
@@ -614,11 +684,7 @@ function create_iterable(): AsIterable {
 
       switch (rest.length) {
         case 0:
-          return IterableT(function* () {
-            for (const value of first()) {
-              yield fn(value);
-            }
-          });
+          return Functor.map(this, fn);
         case 1:
           return lift_iterable_two(fn, first, rest[0].value());
         case 2:
@@ -634,16 +700,11 @@ function create_iterable(): AsIterable {
     },
 
     ap(values) {
-      const fns = this.value();
-      const items = values.value();
-
-      return IterableT(function* () {
-        for (const fn of fns()) {
-          for (const item of items()) {
-            yield fn(item);
-          }
-        }
-      });
+      return lift_iterable_two(
+        (fn, item) => (fn as (x: unknown) => unknown)(item),
+        this.value(),
+        values.value(),
+      ) as never;
     },
   });
 
@@ -687,24 +748,18 @@ function create_iterable(): AsIterable {
   Foldable.instance(IterableT)({
     [some_method](predicate) {
       let matched = false;
-      run_pipeline_until(this.value(), (item) => {
-        if (predicate(item)) {
-          matched = true;
-          return true;
-        }
-        return false;
-      });
+      run_pipeline_until(
+        this.value(),
+        (item) => predicate(item) ? (matched = true) : false,
+      );
       return matched;
     },
     [find_method](predicate) {
       let found: unknown;
-      run_pipeline_until(this.value(), (item) => {
-        if (predicate(item)) {
-          found = item;
-          return true;
-        }
-        return false;
-      });
+      run_pipeline_until(
+        this.value(),
+        (item) => predicate(item) ? (found = item, true) : false,
+      );
       return found as never;
     },
 
@@ -719,15 +774,17 @@ function create_iterable(): AsIterable {
     },
 
     fold(initial, fn) {
-      return compile_fold(this)(initial, fn);
+      return fold_factory(this.value(), initial, fn);
     },
   });
 
   Traversable.instance(IterableT)({
     traverse(applicative, fn) {
-      return Functor.map(
-        traverse_items(this.value()(), applicative, fn),
-        (items) => IterableT(() => items),
+      return traverse_items_into(
+        this.value()(),
+        applicative,
+        fn,
+        from_array as <item>(items: Iterable<item>) => IterableT<item>,
       );
     },
   });

@@ -1,4 +1,9 @@
 import {
+  find_method,
+  fold_while_method,
+  some_method,
+} from "./typeclasses/foldable.ts";
+import {
   type As,
   as_data,
   type Data,
@@ -49,7 +54,10 @@ export const ArrayBufferT: AsArrayBuffer = data<AsArrayBuffer>(
 
 /** Copy byte-like input into a wrapped `ArrayBuffer`. */
 export function from_bytes(bytes: ArrayLike<number>): ArrayBufferT {
-  return as_data(ArrayBufferT, Uint8Array.from(bytes).buffer);
+  const copy = bytes instanceof Uint8Array
+    ? new Uint8Array(bytes)
+    : Uint8Array.from(bytes);
+  return as_data(ArrayBufferT, copy.buffer);
 }
 
 /** Copy a wrapped buffer into a new `Uint8Array`. */
@@ -65,10 +73,13 @@ Show.instance(ArrayBufferT)({
 
 Eq.instance(ArrayBufferT)({
   eq(right) {
-    return bytes_equal(
-      new Uint8Array(this.value()),
-      new Uint8Array(right.value()),
-    );
+    const left_buf = this.value();
+    const right_buf = right.value();
+    if (left_buf === right_buf) return true;
+    const len = left_buf.byteLength;
+    if (len !== right_buf.byteLength) return false;
+    if (len === 0) return true;
+    return buffers_equal(left_buf, right_buf, len);
   },
 });
 
@@ -92,31 +103,83 @@ Monoid.instance(ArrayBufferT)({
 });
 
 Foldable.instance(ArrayBufferT)({
+  [some_method](predicate) {
+    const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
+      if (predicate(bytes[i])) return true;
+    }
+    return false;
+  },
+  [find_method](predicate) {
+    const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
+      const byte = bytes[i];
+      if (predicate(byte)) return byte;
+    }
+    return undefined;
+  },
+  [fold_while_method](initial, fn) {
+    const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
+    let state = initial;
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
+      const step = fn(state, bytes[i]);
+      state = step[1];
+      if (step[0] === "Done") return state;
+    }
+    return state;
+  },
   fold<item, output>(
     this: Data<AsArrayBuffer, item>,
     initial: output,
     fn: (state: output, item: number) => output,
   ) {
+    const bytes = new Uint8Array(this.value());
+    const len = bytes.length;
     let state = initial;
 
-    for (const byte of new Uint8Array(this.value())) {
-      state = fn(state, byte);
+    for (let i = 0; i < len; i += 1) {
+      if (bytes.length !== len) {
+        throw new TypeError("ArrayBuffer was detached during fold");
+      }
+      state = fn(state, bytes[i]);
     }
 
     return state;
   },
 });
 
-function bytes_equal(left: Uint8Array, right: Uint8Array) {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) {
-      return false;
+function buffers_equal(
+  left_buf: ArrayBuffer,
+  right_buf: ArrayBuffer,
+  len: number,
+): boolean {
+  const words = len >>> 2;
+  if (words > 0) {
+    const left_u32 = new Uint32Array(left_buf, 0, words);
+    const right_u32 = new Uint32Array(right_buf, 0, words);
+    for (let i = 0; i < words; i += 1) {
+      if (left_u32[i] !== right_u32[i]) return false;
     }
   }
-
+  const tail_start = words << 2;
+  if (tail_start < len) {
+    const left_u8 = new Uint8Array(left_buf);
+    const right_u8 = new Uint8Array(right_buf);
+    for (let i = tail_start; i < len; i += 1) {
+      if (left_u8[i] !== right_u8[i]) return false;
+    }
+  }
   return true;
 }

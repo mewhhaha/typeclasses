@@ -186,7 +186,7 @@ export type DataConstructor<dictionary extends Dictionary> = <
 /** Placeholder used to declare one payload position in a union variant. */
 export const $slot = Symbol("Data.slot");
 
-const union_definition = Symbol("Data.union");
+const union_definition = Symbol();
 
 /** The type of the union payload placeholder. */
 export type Slot = typeof $slot;
@@ -250,15 +250,14 @@ export function define_union<
   identity: identity & UniqueSymbol<identity>,
   ...variants: schema
 ): UnionDictionary<AsUnion<schema, identity>> {
-  const dictionary = tagged_data_from_union<AsUnion<schema, identity>>(
+  return data<AsUnion<schema, identity>>(
+    identity,
     union(
       ...variants as unknown as UnionVariantsShape,
     ) as unknown as UnionDefinition<
       TaggedUnionShape<AsUnion<schema, identity>>
     >,
   );
-  dictionary[kind] = identity;
-  return dictionary;
 }
 
 /** A flat record or tuple description with generic and fixed payload slots. */
@@ -301,7 +300,7 @@ export type UnionVariantShape = readonly [PropertyKey, ...readonly Slot[]];
 /** @ignore */
 export type UnionVariantsShape = readonly UnionVariantShape[];
 
-const union_shape = Symbol("Data.union_shape");
+const union_shape = Symbol();
 
 /** @ignore */
 export type UnionShapeFromVariants<variants extends UnionVariantsShape> = {
@@ -399,7 +398,9 @@ export function data<dictionary extends Dictionary>(
   }
 
   if (is_union_definition(construct_dictionary)) {
-    const target = tagged_data_from_union(construct_dictionary);
+    const target = tagged_data<dictionary>(
+      construct_dictionary[union_definition],
+    );
     target[kind] = runtime_kind;
     return target;
   }
@@ -412,13 +413,8 @@ export function data<dictionary extends Dictionary>(
 
   raw_detach_function_prototype(target);
   target[kind] = runtime_kind;
-  const wrap_data = as_data_cached(target);
   const context: DataConstructorContext<dictionary> = {
-    data<item extends DataItem<dictionary, unknown>>(
-      value: ContextData<dictionary, item>,
-    ) {
-      return wrap_data<item>(value);
-    },
+    data: as_data_cached(target) as DataWrapper<dictionary>,
   };
 
   return target;
@@ -426,13 +422,16 @@ export function data<dictionary extends Dictionary>(
 
 type TaggedData = readonly [PropertyKey, ...readonly unknown[]];
 
-const tagged_data_constructor_cache = Symbol("Data.tagged_constructors");
-const tagged_data_singleton_cache = Symbol("Data.tagged_singletons");
-const tagged_data_singleton_tags = Symbol("Data.tagged_singleton_tags");
-const tagged_payload = Symbol("Data.tagged_payload");
-const tagged_first_payload = Symbol("Data.tagged_first_payload");
-const tagged_second_payload = Symbol("Data.tagged_second_payload");
-const instance_method_owners = Symbol("Data.instance_method_owners");
+/** @ignore */
+export const tagged_tag: unique symbol = Symbol();
+/** @ignore */
+export const tagged_payload: unique symbol = Symbol();
+/** @ignore */
+export const tagged_value: unique symbol = Symbol();
+const tagged_length = Symbol();
+const tagged_first_payload = Symbol();
+const tagged_second_payload = Symbol();
+const instance_method_owners = Symbol();
 const same_dictionary_methods = new Set<PropertyKey>([
   "alt",
   "ap",
@@ -443,18 +442,6 @@ const same_dictionary_methods = new Set<PropertyKey>([
 ]);
 const runtime_kind_ids = new WeakMap<WeakKey, number>();
 let next_runtime_kind_id = 0;
-
-type TaggedDataDictionary<dictionary extends object> = object & {
-  [tagged_data_constructor_cache]?: Map<
-    PropertyKey,
-    TaggedVariantFactory<dictionary>
-  >;
-  [tagged_data_singleton_cache]?: Map<
-    PropertyKey,
-    WrappedData<dictionary, TaggedData, unknown>
-  >;
-  [tagged_data_singleton_tags]?: Set<PropertyKey>;
-};
 
 type TaggedVariantFactory<dictionary extends object> = {
   readonly empty: () => WrappedData<dictionary, TaggedData, unknown>;
@@ -511,10 +498,6 @@ export type TaggedPayload<value, tag extends PropertyKey> = value extends
   : never;
 
 type TaggedVariants = ReadonlyMap<PropertyKey, number>;
-
-type TaggedDataOptions<dictionary extends Dictionary> = {
-  readonly variants?: TaggedVariants;
-};
 
 /** @ignore */
 export type TaggedMember<
@@ -574,78 +557,114 @@ export type TaggedDictionary<
   >;
 };
 
+function get_tagged_singleton<dictionary extends object>(
+  singletons: Map<PropertyKey, WrappedData<dictionary, TaggedData, unknown>>,
+  tag: PropertyKey,
+  factory: TaggedVariantFactory<dictionary>,
+): WrappedData<dictionary, TaggedData, unknown> {
+  let singleton = singletons.get(tag);
+  if (singleton === undefined) {
+    singleton = factory.empty();
+    singletons.set(tag, singleton);
+  }
+  return singleton;
+}
+
 function tagged_data<dictionary extends Dictionary>(
-  options: TaggedDataOptions<dictionary> = {},
+  shape: UnionVariantsShape,
 ): dictionary {
-  const runtime_kind = Symbol("Data.dictionary") as dictionary[typeof kind];
-  const variants = options.variants;
-  const singleton_tags = tagged_singleton_tags(variants);
+  const variants = new Map<PropertyKey, number>();
+  for (const variant of shape) {
+    const tag = variant[0];
+    if (variants.has(tag)) {
+      throw new TypeError("Duplicate union tag " + String(tag));
+    }
+    variants.set(tag, variant.length);
+  }
+
+  const constructors = new Map<PropertyKey, TaggedVariantFactory<dictionary>>();
+  const singletons = new Map<
+    PropertyKey,
+    WrappedData<dictionary, TaggedData, unknown>
+  >();
+  const get_factory = (tag: PropertyKey) => {
+    let factory = constructors.get(tag);
+    if (factory === undefined) {
+      constructors.set(
+        tag,
+        factory = create_tagged_variant_factory(target, tag),
+      );
+    }
+    return factory;
+  };
 
   const target = function <item>(
     value: ContextData<dictionary, item>,
   ): Data<dictionary, item> {
     const tagged = parse_tagged_value(value, variants);
     const tag = tagged[0];
-
-    if (tagged.length === 1 && singleton_tags.has(tag)) {
-      let singleton = singletons.get(tag);
-
-      if (singleton === undefined) {
-        singleton = construct_tagged(tagged);
-        singletons.set(tag, singleton);
-      }
-
-      return singleton as Data<dictionary, item>;
+    const factory = get_factory(tag);
+    if (tagged.length === 1) {
+      return get_tagged_singleton(singletons, tag, factory) as Data<
+        dictionary,
+        item
+      >;
     }
-
-    return construct_tagged(tagged) as Data<dictionary, item>;
+    return factory.from_value(tagged) as Data<dictionary, item>;
   } as unknown as dictionary;
 
   raw_detach_function_prototype(target);
-  target[kind] = runtime_kind;
-
-  const tagged_dictionary = target as TaggedDataDictionary<dictionary>;
-  const constructors = new Map<
-    PropertyKey,
-    TaggedVariantFactory<
-      dictionary
-    >
-  >();
-  const singletons = new Map<
-    PropertyKey,
-    WrappedData<
-      dictionary,
-      TaggedData,
-      unknown
-    >
-  >();
-
-  tagged_dictionary[tagged_data_constructor_cache] = constructors;
-  tagged_dictionary[tagged_data_singleton_cache] = singletons;
-  tagged_dictionary[tagged_data_singleton_tags] = singleton_tags;
   raw_cache_data_constructor(
     target,
     target as unknown as <value, item = unknown>(
       value: value,
     ) => WrappedData<dictionary, value, item>,
   );
-  install_tagged_variants(target, variants);
+  for (const [tag, length] of variants) {
+    const name = tagged_constructor_name(tag);
+    if (name in target || name === "__proto__") {
+      throw new TypeError(
+        "Union constructor conflicts with property " + String(name),
+      );
+    }
+    const factory = get_factory(tag);
+    let singleton: WrappedData<dictionary, TaggedData, unknown> | undefined;
+    const construct = function <item = unknown>(): Data<dictionary, item> {
+      switch (arguments.length) {
+        case 0:
+          return (length !== 1
+            ? factory.empty()
+            : singleton ??= get_tagged_singleton(
+              singletons,
+              tag,
+              factory,
+            )) as Data<dictionary, item>;
+        case 1:
+          return factory.one(arguments[0]) as Data<dictionary, item>;
+        case 2:
+          return factory.two(arguments[0], arguments[1]) as Data<
+            dictionary,
+            item
+          >;
+        default:
+          return factory.many(Array.from(arguments)) as Data<dictionary, item>;
+      }
+    };
+    Object.defineProperty(construct, "is", {
+      value: tagged_guard(target, tag, length),
+    });
+    Object.defineProperty(target, name, {
+      configurable: true,
+      value: construct,
+    });
+  }
 
   return target;
-
-  function construct_tagged(
-    value: TaggedData,
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    const tag = value[0];
-    const construct_variant = tagged_variant_factory(target, tag);
-
-    return construct_variant.from_value(value);
-  }
 }
 
 function parse_tagged_value<dictionary extends Dictionary>(
   value: ContextData<dictionary, unknown>,
-  variants: TaggedVariants | undefined,
+  variants: TaggedVariants,
 ): TaggedData {
   if (!Array.isArray(value)) {
     throw new TypeError(
@@ -654,13 +673,7 @@ function parse_tagged_value<dictionary extends Dictionary>(
   }
 
   const tagged = value as unknown as TaggedData;
-
-  if (variants === undefined) {
-    return tagged;
-  }
-
   const tag = tagged[0];
-
   const expected_length = variants.get(tag);
 
   if (expected_length === undefined) {
@@ -679,9 +692,11 @@ function parse_tagged_value<dictionary extends Dictionary>(
 }
 
 function describe_runtime_value(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
+  return value === null
+    ? "null"
+    : Array.isArray(value)
+    ? "array"
+    : typeof value;
 }
 
 function is_union_definition<dictionary extends Dictionary>(
@@ -693,136 +708,8 @@ function is_union_definition<dictionary extends Dictionary>(
       >
     >,
 ): value is UnionDefinition<TaggedUnionShape<dictionary>> {
-  if (typeof value !== "object") {
-    return false;
-  }
-
-  if (value === null) {
-    return false;
-  }
-
-  return union_definition in value;
-}
-
-function tagged_data_from_union<dictionary extends Dictionary>(
-  definition: UnionDefinition<TaggedUnionShape<dictionary>>,
-): UnionDictionary<dictionary> {
-  return tagged_data<dictionary>({
-    variants: tagged_variants_from_union(definition[union_definition]),
-  }) as UnionDictionary<dictionary>;
-}
-
-function tagged_variants_from_union(
-  shape: UnionVariantsShape,
-): TaggedVariants {
-  const variants = new Map<PropertyKey, number>();
-
-  for (const variant of shape) {
-    const tag = variant[0];
-    if (variants.has(tag)) {
-      throw new TypeError("Duplicate union tag " + String(tag));
-    }
-    variants.set(tag, variant.length);
-  }
-
-  return variants;
-}
-
-function tagged_variant<
-  dictionary extends Dictionary,
-  const tag extends PropertyKey,
->(
-  dictionary: dictionary,
-  tag: tag,
-  expected_length: number,
-): TaggedVariant<dictionary, tag> {
-  const factory = tagged_variant_factory(dictionary, tag);
-  const tagged_dictionary = dictionary as TaggedDataDictionary<dictionary>;
-  const singleton_tags = tagged_dictionary[tagged_data_singleton_tags];
-  const singletons = tagged_dictionary[tagged_data_singleton_cache];
-  const is_singleton = singleton_tags !== undefined && singleton_tags.has(tag);
-  let singleton = singletons?.get(tag);
-
-  const construct = function construct_tagged_variant<item = unknown>(): Data<
-    dictionary,
-    item
-  > {
-    switch (arguments.length) {
-      case 0:
-        if (!is_singleton) {
-          return factory.empty() as Data<dictionary, item>;
-        }
-
-        if (singleton === undefined) {
-          singleton = singletons?.get(tag);
-
-          if (singleton === undefined) {
-            singleton = factory.empty();
-            singletons?.set(tag, singleton);
-          }
-        }
-
-        return singleton as Data<dictionary, item>;
-      case 1:
-        return factory.one(arguments[0]) as Data<dictionary, item>;
-      case 2:
-        return factory.two(arguments[0], arguments[1]) as Data<
-          dictionary,
-          item
-        >;
-      default:
-        return factory.many(payloads_from_arguments(arguments)) as Data<
-          dictionary,
-          item
-        >;
-    }
-  } as TaggedVariant<dictionary, tag>;
-
-  Object.defineProperty(construct, "is", {
-    value: tagged_guard(dictionary, tag, expected_length),
-  });
-
-  return construct;
-}
-
-function tagged_singleton_tags(
-  variants: TaggedVariants | undefined,
-): Set<PropertyKey> {
-  const singletons = new Set<PropertyKey>();
-
-  if (variants === undefined) {
-    return singletons;
-  }
-
-  for (const [tag, length] of variants) {
-    if (length === 1) {
-      singletons.add(tag);
-    }
-  }
-
-  return singletons;
-}
-
-function install_tagged_variants<dictionary extends Dictionary>(
-  dictionary: dictionary,
-  variants: TaggedVariants | undefined,
-): void {
-  if (variants === undefined) {
-    return;
-  }
-
-  for (const [tag, length] of variants) {
-    const name = tagged_constructor_name(tag);
-    if (name in dictionary || name === "__proto__") {
-      throw new TypeError(
-        "Union constructor conflicts with property " + String(name),
-      );
-    }
-    Object.defineProperty(dictionary, name, {
-      configurable: true,
-      value: tagged_variant(dictionary, tag, length),
-    });
-  }
+  return typeof value === "object" && value !== null &&
+    union_definition in value;
 }
 
 function tagged_constructor_name(tag: PropertyKey): PropertyKey {
@@ -841,47 +728,32 @@ function tagged_guard(
   expected_length: number,
 ): (value: unknown) => boolean {
   return function is_tagged(value: unknown): boolean {
-    if (!Array.isArray(value)) {
-      if (!raw_is_data(value)) return false;
-      if ((value as unknown as Dictionary)[kind] !== dictionary[kind]) {
-        return false;
-      }
-      value = value.value();
-      if (!Array.isArray(value)) return false;
+    if (Array.isArray(value)) {
+      return value.length === expected_length && value[0] === tag;
     }
-    return value.length === expected_length && value[0] === tag;
+    if (!raw_is_data(value)) return false;
+    const tagged = value as unknown as {
+      [kind]?: unknown;
+      [tagged_tag]?: PropertyKey;
+      [tagged_length]?: number;
+      [tagged_value]?: () => unknown;
+      value(): unknown;
+    };
+    if (tagged[kind] !== dictionary[kind]) return false;
+    const own_length = tagged[tagged_length];
+    if (own_length !== undefined && own_length >= 0) {
+      const value_fn = tagged.value;
+      if (value_fn !== undefined && value_fn === tagged[tagged_value]) {
+        return own_length === expected_length && tagged[tagged_tag] === tag;
+      }
+      const raw = value_fn.call(tagged);
+      return Array.isArray(raw) && raw.length === expected_length &&
+        raw[0] === tag;
+    }
+    const raw = tagged.value();
+    return Array.isArray(raw) && raw.length === expected_length &&
+      raw[0] === tag;
   };
-}
-
-function payloads_from_arguments(args: IArguments): unknown[] {
-  const payloads = new Array<unknown>(args.length);
-
-  for (let index = 0; index < args.length; index += 1) {
-    payloads[index] = args[index];
-  }
-
-  return payloads;
-}
-
-function tagged_variant_factory<dictionary extends object>(
-  dictionary: dictionary,
-  tag: PropertyKey,
-): TaggedVariantFactory<dictionary> {
-  const tagged_dictionary = dictionary as TaggedDataDictionary<dictionary>;
-  const constructors = tagged_dictionary[tagged_data_constructor_cache];
-
-  if (constructors === undefined) {
-    throw new TypeError("Expected a tagged data dictionary");
-  }
-
-  let factory = constructors.get(tag);
-
-  if (factory === undefined) {
-    factory = create_tagged_variant_factory(dictionary, tag);
-    constructors.set(tag, factory);
-  }
-
-  return factory;
 }
 
 function create_tagged_variant_factory<dictionary extends object>(
@@ -891,6 +763,8 @@ function create_tagged_variant_factory<dictionary extends object>(
   const empty_value = [tag] as TaggedData;
   const empty_prototype = tagged_data_prototype(
     dictionary,
+    tag,
+    1,
     function value(): TaggedData {
       return empty_value;
     },
@@ -900,6 +774,8 @@ function create_tagged_variant_factory<dictionary extends object>(
   );
   const one_prototype = tagged_data_prototype(
     dictionary,
+    tag,
+    2,
     function value(this: TaggedOnePayload): TaggedData {
       return [tag, this[tagged_payload]];
     },
@@ -909,6 +785,8 @@ function create_tagged_variant_factory<dictionary extends object>(
   );
   const many_prototype = tagged_data_prototype(
     dictionary,
+    tag,
+    -1,
     function value(this: TaggedManyPayload): TaggedData {
       return [tag, ...this[tagged_payload]];
     },
@@ -918,6 +796,8 @@ function create_tagged_variant_factory<dictionary extends object>(
   );
   const two_prototype = tagged_data_prototype(
     dictionary,
+    tag,
+    3,
     function value(this: TaggedTwoPayload): TaggedData {
       return [tag, this[tagged_first_payload], this[tagged_second_payload]];
     },
@@ -955,82 +835,57 @@ function create_tagged_variant_factory<dictionary extends object>(
 
   return {
     empty() {
-      return construct_empty();
+      return Object.create(empty_prototype) as WrappedData<
+        dictionary,
+        TaggedData,
+        unknown
+      >;
     },
 
     many(payloads) {
-      return construct_many(payloads);
+      return new (TaggedMany as unknown as {
+        new (payload: readonly unknown[]): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(payloads);
     },
 
     one(payload) {
-      return construct_one(payload);
+      return new (TaggedOne as unknown as {
+        new (payload: unknown): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(payload);
     },
 
     two(first, second) {
-      return construct_two(first, second);
+      return new (TaggedTwo as unknown as {
+        new (
+          first: unknown,
+          second: unknown,
+        ): WrappedData<
+          dictionary,
+          TaggedData,
+          unknown
+        >;
+      })(first, second);
     },
 
     from_value(value) {
-      switch (value.length) {
-        case 1:
-          return this.empty();
-        case 2:
-          return this.one(value[1]);
-        case 3:
-          return this.two(value[1], value[2]);
-        default:
-          return this.many(value.slice(1));
-      }
+      const n = value.length;
+      return n === 1
+        ? this.empty()
+        : n === 2
+        ? this.one(value[1])
+        : n === 3
+        ? this.two(value[1], value[2])
+        : this.many(value.slice(1));
     },
   };
-
-  function construct_empty(): WrappedData<dictionary, TaggedData, unknown> {
-    return Object.create(empty_prototype) as WrappedData<
-      dictionary,
-      TaggedData,
-      unknown
-    >;
-  }
-
-  function construct_one(
-    payload: unknown,
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedOne as unknown as {
-      new (payload: unknown): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(payload);
-  }
-
-  function construct_many(
-    payloads: readonly unknown[],
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedMany as unknown as {
-      new (payload: readonly unknown[]): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(payloads);
-  }
-
-  function construct_two(
-    first: unknown,
-    second: unknown,
-  ): WrappedData<dictionary, TaggedData, unknown> {
-    return new (TaggedTwo as unknown as {
-      new (
-        first: unknown,
-        second: unknown,
-      ): WrappedData<
-        dictionary,
-        TaggedData,
-        unknown
-      >;
-    })(first, second);
-  }
 }
 
 function tagged_data_prototype<
@@ -1038,6 +893,8 @@ function tagged_data_prototype<
   receiver extends object,
 >(
   dictionary: dictionary,
+  tag: PropertyKey,
+  length: number,
   value: (this: receiver) => TaggedData,
   match: (
     this: receiver,
@@ -1058,6 +915,15 @@ function tagged_data_prototype<
     },
     [Symbol.iterator]: {
       value: tagged_data_iterator,
+    },
+    [tagged_tag]: {
+      value: tag,
+    },
+    [tagged_length]: {
+      value: length,
+    },
+    [tagged_value]: {
+      value,
     },
   });
   raw_define_data_interop(prototype);
@@ -1119,8 +985,21 @@ export function call_typeclass_method<self, args extends unknown[], result>(
   method: (this: self, ...args: args) => result,
   self: self,
   ...args: args
-): result {
-  return method.call(self, ...args);
+): result;
+export function call_typeclass_method(
+  method: (this: unknown, ...args: unknown[]) => unknown,
+  self: unknown,
+  a?: unknown,
+  b?: unknown,
+): unknown {
+  const n = arguments.length;
+  return n === 3
+    ? method.call(self, a)
+    : n === 4
+    ? method.call(self, a, b)
+    : n === 2
+    ? method.call(self)
+    : method.apply(self, [].slice.call(arguments, 2));
 }
 
 /** Attach a typeclass implementation to a data dictionary. */
@@ -1134,10 +1013,10 @@ export function install_instance<implementation extends object>(
     [key: PropertyKey]: unknown;
   };
   let owners = target[instance_method_owners];
-
   if (owners === undefined) {
-    owners = new Map();
-    Object.defineProperty(target, instance_method_owners, { value: owners });
+    Object.defineProperty(target, instance_method_owners, {
+      value: owners = new Map(),
+    });
   }
 
   const installed = Object.create(Object.getPrototypeOf(implementation));
@@ -1150,22 +1029,17 @@ export function install_instance<implementation extends object>(
     const existing = target[method];
 
     if (
-      owner !== undefined && owner !== token && existing !== descriptor.value
+      existing !== descriptor.value &&
+      (owner !== undefined ? owner !== token : method in target)
     ) {
       throw new TypeError(
         `Cannot install ${describe_property_key(token)} method ${
           describe_property_key(method)
-        }; it is already owned by ${describe_property_key(owner)}`,
-      );
-    }
-
-    if (
-      owner === undefined && method in target && existing !== descriptor.value
-    ) {
-      throw new TypeError(
-        `Cannot install ${describe_property_key(token)} method ${
-          describe_property_key(method)
-        }; the dictionary already defines that property`,
+        }; ${
+          owner !== undefined
+            ? "it is already owned by " + describe_property_key(owner)
+            : "the dictionary already defines that property"
+        }`,
       );
     }
 
@@ -1235,32 +1109,29 @@ function same_dictionary_method(
   method: (...args: unknown[]) => unknown,
   name: PropertyKey,
 ): (...args: unknown[]) => unknown {
-  return function (this: Dictionary, ...args: unknown[]): unknown {
-    const right = args[0];
-
+  return function (this: Dictionary, right?: unknown): unknown {
     if (
-      typeof right === "object" && right !== null && kind in right &&
-      right[kind as keyof typeof right] !== this[kind]
+      typeof right === "object" && right !== null &&
+      (right as Dictionary)[kind] !== this[kind] && kind in right
     ) {
       throw new TypeError(
         `${
           describe_property_key(name)
         } requires values from the same dictionary; left ${
           describe_runtime_kind(this[kind])
-        }, right ${describe_runtime_kind(right[kind as keyof typeof right])}`,
+        }, right ${describe_runtime_kind((right as Dictionary)[kind])}`,
       );
     }
 
-    return method.apply(this, args);
+    if (arguments.length === 1) return method.call(this, right);
+    return method.apply(this, arguments as unknown as unknown[]);
   };
 }
 
 function describe_property_key(key: PropertyKey): string {
-  if (typeof key === "symbol") {
-    return key.description === undefined ? key.toString() : key.description;
-  }
-
-  return String(key);
+  return typeof key === "symbol"
+    ? (key.description ?? key.toString())
+    : String(key);
 }
 
 function describe_runtime_kind(runtime_kind: unknown): string {
@@ -1270,24 +1141,20 @@ function describe_runtime_kind(runtime_kind: unknown): string {
       return `dictionary Symbol.for(${JSON.stringify(registered)})`;
     }
   }
-  const weak = (typeof runtime_kind === "object" && runtime_kind !== null) ||
-    typeof runtime_kind === "function" ||
-    typeof runtime_kind === "symbol";
-  if (!weak) {
-    let description = String(runtime_kind);
-    if (typeof runtime_kind === "string") {
-      description = JSON.stringify(runtime_kind);
-    }
-    return `dictionary ${typeof runtime_kind} ${description}`;
+  const t = typeof runtime_kind;
+  if (
+    (t !== "object" || runtime_kind === null) && t !== "function" &&
+    t !== "symbol"
+  ) {
+    return `dictionary ${t} ${
+      t === "string" ? JSON.stringify(runtime_kind) : String(runtime_kind)
+    }`;
   }
-  let identifier = runtime_kind_ids.get(runtime_kind as WeakKey);
-
-  if (identifier === undefined) {
-    identifier = ++next_runtime_kind_id;
-    runtime_kind_ids.set(runtime_kind as WeakKey, identifier);
+  let id = runtime_kind_ids.get(runtime_kind as WeakKey);
+  if (id === undefined) {
+    runtime_kind_ids.set(runtime_kind as WeakKey, id = ++next_runtime_kind_id);
   }
-
-  return `dictionary #${identifier.toString()}`;
+  return `dictionary #${id}`;
 }
 
 type TypeclassInstance<
@@ -1356,11 +1223,6 @@ export function typeclass<token extends PropertyKey, methods extends object>(
     methods,
   );
 
-  Object.defineProperty(definition, "token", {
-    enumerable: true,
-    value: token,
-  });
-
   // Derived operations belong to their definition. Binding once keeps them
   // usable as ordinary functions without changing generic call signatures.
   for (const key of Reflect.ownKeys(methods)) {
@@ -1376,8 +1238,13 @@ export function typeclass<token extends PropertyKey, methods extends object>(
   }
 
   Object.defineProperties(definition, {
+    token: { enumerable: true, value: token },
     instance: { value: definition.instance.bind(definition) },
-    instance_for: { value: definition.instance_for.bind(definition) },
+    instance_for: {
+      value: <receiver extends { [key in token]: object }>(
+        receiver: receiver,
+      ) => instance_for_token(token, receiver),
+    },
   });
 
   return definition;
