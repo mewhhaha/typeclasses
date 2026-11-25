@@ -5,6 +5,7 @@ import {
   tagged_value,
 } from "./typeclass.ts";
 import { Applicative, applicative_pure } from "./typeclasses/applicative.ts";
+import { custom_iterable } from "./internal.ts";
 import { functor_map } from "./typeclasses/functor.ts";
 import {
   do_runner_method,
@@ -100,8 +101,6 @@ export function traverse_items<
   return traverse_items_into(items, applicative, fn, identity_array);
 }
 
-const array_iterator = Array.prototype[Symbol.iterator];
-
 /** Traverse into a final collection without an intermediate output array. */
 export function traverse_items_into<
   applicative extends Applicative<applicative>,
@@ -149,8 +148,8 @@ export function traverse_items_into<
   };
   let iterable: Iterable<from> = items;
   if (Array.isArray(items) && items.length === 1) {
-    const iter = items[Symbol.iterator];
-    if (iter === array_iterator) {
+    const custom = custom_iterable(items);
+    if (custom === undefined) {
       const first = fn(items[0]);
       if (items.length <= 1) return functor_map(first, (v) => build([v]));
       pending[0] = functor_map(first, make_leaf);
@@ -159,7 +158,7 @@ export function traverse_items_into<
       }
       iterable = [];
     } else {
-      iterable = { [Symbol.iterator]: () => iter.call(items) };
+      iterable = custom;
     }
   }
   // Binary carry combines adjacent groups, without buffering the input first.

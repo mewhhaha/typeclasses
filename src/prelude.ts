@@ -4,6 +4,7 @@ import { MapT } from "./map.ts";
 import { SetT } from "./set.ts";
 import { as_data, type Data, type DataItem, kind } from "./typeclass.ts";
 import { traverse_items_into } from "./traversal.ts";
+import { custom_iterable } from "./internal.ts";
 import { foldable_typeclass, some_method } from "./typeclasses/foldable.ts";
 import { do_runner_method, type FastDoSpec } from "./typeclasses/monad.ts";
 import { semigroup_typeclass } from "./typeclasses/semigroup.ts";
@@ -677,10 +678,8 @@ export function to_array<
 ): DataItem<dictionary, item>[] {
   if (is_canonical_array_fold(value)) {
     const src = value.value() as readonly DataItem<dictionary, item>[];
-    const iter = src[Symbol.iterator];
-    if (iter !== Array.prototype[Symbol.iterator]) {
-      return [...{ [Symbol.iterator]: () => iter.call(src) }];
-    }
+    const custom = custom_iterable(src);
+    if (custom !== undefined) return [...custom];
     const out = new Array<DataItem<dictionary, item>>(src.length);
     for (let i = 0; i < src.length; i += 1) out[i] = src[i];
     return out;

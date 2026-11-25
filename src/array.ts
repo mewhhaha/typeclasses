@@ -11,6 +11,7 @@ import {
   type type_item,
 } from "./typeclass.ts";
 import { traverse_items_into } from "./traversal.ts";
+import { custom_iterable } from "./internal.ts";
 import { inspect } from "./inspect.ts";
 import { loop_done, type LoopStep, rec } from "./loop.ts";
 import {
@@ -338,15 +339,10 @@ function create_array(): AsArray {
   ): Data<AsArray, item> {
     const left = this.value();
     const right_value = right.value();
-    const def = Array.prototype[Symbol.iterator];
-    const li = left[Symbol.iterator];
-    const ri = right_value[Symbol.iterator];
-    if (li !== def || ri !== def) {
-      const it = (a: readonly item[], f: () => Iterator<item>) => ({
-        [Symbol.iterator]: () => f.call(a),
-      });
-      return ArrayT([...it(left, li), ...it(right_value, ri)]);
-    }
+    const cl = custom_iterable(left);
+    if (cl !== undefined) return ArrayT([...cl, ...right_value]);
+    const cr = custom_iterable(right_value);
+    if (cr !== undefined) return ArrayT([...left.slice(), ...cr]);
     const n = left.length;
     const out = new Array<item>(n + right_value.length);
     for (let i = 0; i < n; i += 1) out[i] = left[i];

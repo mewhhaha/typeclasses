@@ -3346,5 +3346,57 @@ Deno.test("Codex Wave 2 review regressions (STM, Writer, Task, AsyncIterableT, F
     );
     assert_equals(g4_res.map((a) => a.value()), [[10]]);
     assert_equals(g4.get_reads(), 1);
+
+    // 6. Array concat consumes left iterator before reading right getter, and Reflect.apply works when .call is overwritten
+    let concat_state = 1;
+    const left_ord = [0] as number[];
+    const right_ord = [0] as number[];
+    Object.defineProperty(left_ord, Symbol.iterator, {
+      configurable: true,
+      get() {
+        const fn = function* () {
+          concat_state = 2;
+          yield 10;
+        };
+        (fn as unknown as { call: unknown }).call = undefined;
+        return fn;
+      },
+    });
+    Object.defineProperty(right_ord, Symbol.iterator, {
+      configurable: true,
+      get() {
+        const seen = concat_state;
+        const fn = function* () {
+          yield seen * 100;
+        };
+        (fn as unknown as { call: unknown }).call = undefined;
+        return fn;
+      },
+    });
+    assert_equals(
+      ArrayT(left_ord).concat(ArrayT(right_ord)).value(),
+      [10, 200],
+    );
+
+    const no_call_arr = [1] as number[];
+    const no_call_iter = function* () {
+      yield 77;
+    };
+    (no_call_iter as unknown as { call: unknown }).call = undefined;
+    Object.defineProperty(no_call_arr, Symbol.iterator, {
+      configurable: true,
+      value: no_call_iter,
+    });
+    assert_equals(prelude_to_array(ArrayT(no_call_arr)), [77]);
+    assert_equals(
+      ArrayT([1]).concat(ArrayT(no_call_arr)).value(),
+      [1, 77],
+    );
+    assert_equals(
+      list_to_array(
+        Traversable.traverse(ArrayT(no_call_arr), List, (n) => List.pure(n)),
+      ).map((a) => a.value()),
+      [[77]],
+    );
   }
 });

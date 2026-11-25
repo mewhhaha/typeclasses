@@ -503,6 +503,59 @@ export function create_round5_fusions(
     }
   }
 
+  function structural_return_type(fn_ref: IdentifierReference): TSType {
+    const infer_r = services.fresh("TFR");
+    return node({
+      type: "TSParenthesizedType",
+      typeAnnotation: node({
+        type: "TSConditionalType",
+        checkType: node({
+          type: "TSTypeQuery",
+          exprName: fn_ref,
+          typeArguments: null,
+        }),
+        extendsType: node({
+          type: "TSFunctionType",
+          typeParameters: null,
+          params: Array.from<BindingPattern>([
+            node({
+              type: "RestElement",
+              argument: id("args"),
+              typeAnnotation: node({
+                type: "TSTypeAnnotation",
+                typeAnnotation: node({
+                  type: "TSArrayType",
+                  elementType: node({ type: "TSNeverKeyword" }),
+                }),
+              }),
+            }) as unknown as BindingPattern,
+          ]),
+          returnType: node({
+            type: "TSTypeAnnotation",
+            typeAnnotation: node({
+              type: "TSInferType",
+              typeParameter: node({
+                type: "TSTypeParameter",
+                name: infer_r,
+                constraint: null,
+                default: null,
+                in: false,
+                out: false,
+                const: false,
+              }),
+            }),
+          }),
+        }),
+        trueType: node({
+          type: "TSTypeReference",
+          typeName: infer_r,
+          typeArguments: null,
+        }),
+        falseType: node({ type: "TSNeverKeyword" }),
+      }),
+    });
+  }
+
   function invoke_task_cb(
     fn_expr: Expression,
     cb: Expression,
@@ -522,47 +575,31 @@ export function create_round5_fusions(
       fn_ref = services.fresh("task_cb");
       target_stmts.push(variable(fn_ref, fn_expr, "const"));
     }
+    const sig_param_type: TSType = sig_arg.type === "Identifier"
+      ? node({
+        type: "TSTypeQuery",
+        exprName: sig_arg,
+        typeArguments: null,
+      })
+      : node({ type: "TSUndefinedKeyword" });
     const fn_cast: Expression = node({
       type: "TSAsExpression",
       expression: fn_ref,
       typeAnnotation: node({
         type: "TSFunctionType",
         typeParameters: null,
-        params: [
+        params: Array.from<BindingPattern>([
           {
             ...id("signal"),
             typeAnnotation: node({
               type: "TSTypeAnnotation",
-              typeAnnotation: node({
-                type: "TSUnionType",
-                types: Array.from<TSType>([
-                  node({
-                    type: "TSTypeReference",
-                    typeName: id("AbortSignal"),
-                    typeArguments: null,
-                  }),
-                  node({ type: "TSUndefinedKeyword" }),
-                ]),
-              }),
+              typeAnnotation: sig_param_type,
             }),
           } as BindingPattern,
-        ],
+        ]),
         returnType: node({
           type: "TSTypeAnnotation",
-          typeAnnotation: node({
-            type: "TSTypeReference",
-            typeName: id("ReturnType"),
-            typeArguments: node({
-              type: "TSTypeParameterInstantiation",
-              params: Array.from<TSType>([
-                node({
-                  type: "TSTypeQuery",
-                  exprName: fn_ref,
-                  typeArguments: null,
-                }),
-              ]),
-            }),
-          }),
+          typeAnnotation: structural_return_type(fn_ref),
         }),
       }),
     });
@@ -2029,20 +2066,7 @@ export function create_round5_fusions(
               ],
               returnType: node({
                 type: "TSTypeAnnotation",
-                typeAnnotation: node({
-                  type: "TSTypeReference",
-                  typeName: id("ReturnType"),
-                  typeArguments: node({
-                    type: "TSTypeParameterInstantiation",
-                    params: Array.from<TSType>([
-                      node({
-                        type: "TSTypeQuery",
-                        exprName: h_ref,
-                        typeArguments: null,
-                      }),
-                    ]),
-                  }),
-                }),
+                typeAnnotation: structural_return_type(h_ref),
               }),
             }),
           });
