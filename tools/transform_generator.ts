@@ -938,36 +938,115 @@ function is_trivial_pure_expr(expression: Expression): boolean {
 }
 
 type DirectSingleShotMode = "maybe" | "either" | "identity";
+type DirectSingleShotSpec = {
+  readonly mode: DirectSingleShotMode;
+  readonly inferred: boolean;
+  readonly get_dictionary: () => IdentifierReference | undefined;
+};
 
-function direct_single_shot_mode(
+function direct_single_shot_spec(
   explicit: Expression | undefined,
+  first_yield: YieldExpression | undefined,
   services: TransformServices,
-): DirectSingleShotMode | undefined {
-  if (explicit?.type !== "Identifier") return undefined;
-  if (services.imports.direct_maybe_dictionaries?.has(explicit.name)) {
-    return "maybe";
+): DirectSingleShotSpec | undefined {
+  if (explicit !== undefined) {
+    if (explicit.type !== "Identifier") return undefined;
+    if (services.imports.direct_maybe_dictionaries?.has(explicit.name)) {
+      return { mode: "maybe", inferred: false, get_dictionary: () => explicit };
+    }
+    if (services.imports.direct_either_dictionaries?.has(explicit.name)) {
+      return {
+        mode: "either",
+        inferred: false,
+        get_dictionary: () => explicit,
+      };
+    }
+    if (services.imports.direct_identity_dictionaries?.has(explicit.name)) {
+      return {
+        mode: "identity",
+        inferred: false,
+        get_dictionary: () => explicit,
+      };
+    }
+    return undefined;
   }
-  if (services.imports.direct_either_dictionaries?.has(explicit.name)) {
-    return "either";
-  }
-  if (services.imports.direct_identity_dictionaries?.has(explicit.name)) {
-    return "identity";
-  }
-  return undefined;
+  if (!first_yield?.delegate || first_yield.argument === null) return undefined;
+  const infer_from_expr = (
+    expression: Expression,
+  ): DirectSingleShotSpec | undefined => {
+    const arg = unwrap(expression);
+    if (arg.type === "ConditionalExpression") {
+      const left = infer_from_expr(arg.consequent);
+      const right = infer_from_expr(arg.alternate);
+      if (left !== undefined && right !== undefined) {
+        return left.mode === right.mode ? left : undefined;
+      }
+      return left ?? right;
+    }
+    if (
+      arg.type !== "CallExpression" || arg.optional ||
+      arg.callee.type !== "Identifier" ||
+      !services.bindings.imported(arg.callee)
+    ) return undefined;
+    const name = arg.callee.name;
+    if (
+      services.imports.just_constructors?.has(name) ||
+      services.imports.nothing_constructors?.has(name)
+    ) {
+      return {
+        mode: "maybe",
+        inferred: true,
+        get_dictionary() {
+          const existing = services.imports.direct_maybe_dictionaries?.values()
+            .next().value;
+          if (existing !== undefined) return id(existing);
+          return services.import_from_module?.(name, "maybe", "Maybe");
+        },
+      };
+    }
+    if (
+      services.imports.right_constructors?.has(name) ||
+      services.imports.left_constructors?.has(name)
+    ) {
+      return {
+        mode: "either",
+        inferred: true,
+        get_dictionary() {
+          const existing = services.imports.direct_either_dictionaries?.values()
+            .next().value;
+          if (existing !== undefined) return id(existing);
+          return services.import_from_module?.(name, "either", "Either");
+        },
+      };
+    }
+    if (services.imports.identity_constructors?.has(name)) {
+      return {
+        mode: "identity",
+        inferred: true,
+        get_dictionary() {
+          const existing = services.imports.direct_identity_dictionaries
+            ?.values().next().value;
+          if (existing !== undefined) return id(existing);
+          return services.import_from_module?.(name, "identity", "Identity");
+        },
+      };
+    }
+    return undefined;
+  };
+  return infer_from_expr(first_yield.argument);
 }
 
 function direct_single_shot(
   body: BlockStatement | FunctionBody,
   state: State,
-  mode: DirectSingleShotMode,
+  spec: DirectSingleShotSpec,
   force_direct: boolean,
 ): Result | undefined {
   if (
     state.kind !== "do" ||
-    state.dictionary?.type !== "Identifier" ||
     body.body.length >= 128
   ) return undefined;
-  const dictionary = state.dictionary;
+  const mode = spec.mode;
   const elide_names = mode === "maybe"
     ? state.services.imports.just_constructors
     : mode === "either"
@@ -979,16 +1058,19 @@ function direct_single_shot(
     .value;
   const identity_name = state.services.imports.identity_constructors?.values()
     .next().value;
+  let cached_dict: IdentifierReference | undefined;
+  const get_dict = (): IdentifierReference | undefined =>
+    cached_dict ??= spec.get_dictionary();
   const right_callee = (): Expression =>
-    right_name !== undefined ? id(right_name) : member(dictionary, "Right");
+    right_name !== undefined ? id(right_name) : member(get_dict()!, "Right");
   const wrap_maybe = (value: Expression): Expression =>
     just_name !== undefined
       ? call(id(just_name), [value])
-      : method(dictionary, "pure", [value]);
+      : method(get_dict()!, "pure", [value]);
   const wrap_identity = (value: Expression): Expression =>
     identity_name !== undefined
       ? call(id(identity_name), [value])
-      : call(dictionary, [value]);
+      : call(get_dict()!, [value]);
 
   const elided_inner = (expression: Expression): Expression | undefined => {
     const inner_expr = unwrap(expression);
@@ -1322,12 +1404,18 @@ function direct_single_shot(
   if (yield_count === 0) return undefined;
   if (
     !force_direct && !has_control_flow && !has_nested_yield &&
-    yield_count === 1 && !has_elision
+    yield_count === 1 && (!has_elision || spec.inferred)
   ) return undefined;
 
   // Phase 2: Emit lowered statements.
   const use_either_wrapper = mode === "either" && has_control_flow &&
     checked_yield_count > 0;
+  const needs_dict = (mode === "maybe" &&
+    (checked_yield_count > 0 || just_name === undefined)) ||
+    (mode === "either" && (use_either_wrapper || right_name === undefined)) ||
+    (mode === "identity" && identity_name === undefined);
+  const dictionary = needs_dict ? get_dict() : undefined;
+  if (needs_dict && dictionary === undefined) return undefined;
   const either_err_var = use_either_wrapper
     ? state.services.fresh("either_err")
     : undefined;
@@ -1464,7 +1552,7 @@ function direct_single_shot(
           consequent: ret(
             node({
               type: "TSAsExpression",
-              expression: method(dictionary, "empty", []),
+              expression: method(dictionary!, "empty", []),
               typeAnnotation: node({ type: "TSNeverKeyword" }),
             }),
           ),
@@ -2066,7 +2154,7 @@ function direct_single_shot(
     const either_type: TSType = type_ref("ReturnType", [
       node({
         type: "TSTypeQuery",
-        exprName: dictionary,
+        exprName: dictionary!,
         typeArguments: node({
           type: "TSTypeParameterInstantiation",
           params: Array.from([
@@ -2135,6 +2223,406 @@ function direct_single_shot(
   }
 
   return { block: block(emitted), yielded: true };
+}
+
+function direct_array_dictionary(
+  explicit: Expression | undefined,
+  first_yield: YieldExpression | undefined,
+  services: TransformServices,
+): IdentifierReference | undefined {
+  const ctors = services.imports.array_constructors;
+  if (ctors === undefined || ctors.size === 0) return undefined;
+  if (explicit !== undefined) {
+    return explicit.type === "Identifier" && ctors.has(explicit.name)
+      ? explicit
+      : undefined;
+  }
+  if (!first_yield?.delegate || first_yield.argument === null) return undefined;
+  const arg = unwrap(first_yield.argument);
+  if (arg.type !== "CallExpression" || arg.optional) return undefined;
+  if (arg.callee.type === "Identifier" && ctors.has(arg.callee.name)) {
+    return arg.callee;
+  }
+  if (
+    arg.callee.type === "MemberExpression" && !arg.callee.computed &&
+    !arg.callee.optional && arg.callee.object.type === "Identifier" &&
+    ctors.has(arg.callee.object.name) &&
+    arg.callee.property.type === "Identifier" &&
+    (arg.callee.property.name === "empty" ||
+      arg.callee.property.name === "pure")
+  ) {
+    return arg.callee.object;
+  }
+  return undefined;
+}
+
+function direct_array_comprehension(
+  body: BlockStatement | FunctionBody,
+  array_dict: IdentifierReference,
+  services: TransformServices,
+): Result | undefined {
+  if (body.body.length >= 128) return undefined;
+  const ctors = services.imports.array_constructors;
+  if (ctors === undefined || ctors.size === 0) return undefined;
+
+  type ArrayLiteralMatch =
+    | { readonly kind: "empty" }
+    | { readonly kind: "elements"; readonly elements: readonly Expression[] };
+
+  const match_array_literal = (
+    expression: Expression,
+  ): ArrayLiteralMatch | undefined => {
+    const inner = unwrap(expression);
+    if (inner.type !== "CallExpression" || inner.optional) return undefined;
+    if (
+      inner.callee.type === "Identifier" && ctors.has(inner.callee.name) &&
+      inner.typeArguments == null && inner.arguments.length === 1 &&
+      inner.arguments[0].type !== "SpreadElement"
+    ) {
+      const arg = unwrap(inner.arguments[0] as Expression);
+      if (
+        arg.type === "ArrayExpression" &&
+        arg.elements.every((el) => el !== null && el.type !== "SpreadElement")
+      ) {
+        if (arg.elements.length === 0) return { kind: "empty" };
+        return { kind: "elements", elements: arg.elements as Expression[] };
+      }
+    }
+    if (
+      inner.callee.type === "MemberExpression" && !inner.callee.computed &&
+      !inner.callee.optional && inner.callee.object.type === "Identifier" &&
+      ctors.has(inner.callee.object.name) &&
+      inner.callee.property.type === "Identifier"
+    ) {
+      if (
+        inner.callee.property.name === "empty" && inner.arguments.length === 0
+      ) {
+        return { kind: "empty" };
+      }
+      if (
+        inner.callee.property.name === "pure" && inner.typeArguments == null &&
+        inner.arguments.length === 1 &&
+        inner.arguments[0].type !== "SpreadElement"
+      ) {
+        return {
+          kind: "elements",
+          elements: [inner.arguments[0] as Expression],
+        };
+      }
+    }
+    return undefined;
+  };
+
+  const always_terminates = (list: readonly Statement[]): boolean => {
+    for (let i = 0; i < list.length; i += 1) {
+      const stmt = list[i];
+      if (stmt.type === "ReturnStatement" || stmt.type === "ThrowStatement") {
+        return true;
+      }
+      if (
+        stmt.type === "BlockStatement" &&
+        always_terminates(stmt.body as Statement[])
+      ) return true;
+      if (
+        stmt.type === "IfStatement" && stmt.alternate !== null &&
+        always_terminates(body_of(stmt.consequent)) &&
+        always_terminates(body_of(stmt.alternate))
+      ) return true;
+    }
+    return false;
+  };
+
+  const out_id = services.fresh("array_out");
+  let yield_count = 0;
+  let push_count = 0;
+  let branch_copies = 0;
+  let aborted = false;
+
+  const emit_list = (list: readonly Statement[]): Statement[] => {
+    if (aborted) return [];
+    const emitted: Statement[] = [];
+    for (let index = 0; index < list.length; index += 1) {
+      if (aborted) return [];
+      const stmt = list[index];
+      if (
+        stmt.type === "ExpressionStatement" && "directive" in stmt &&
+        stmt.directive != null
+      ) {
+        emitted.push(stmt);
+        continue;
+      }
+      const yielded = read_yield(stmt);
+      if (yielded !== undefined) {
+        if (contains_yield_or_await(yielded.expression)) {
+          aborted = true;
+          return [];
+        }
+        yield_count += 1;
+        const lit = match_array_literal(yielded.expression);
+        if (yielded.terminal) {
+          if (lit?.kind === "empty") return emitted;
+          if (lit?.kind === "elements") {
+            push_count += lit.elements.length;
+            emitted.push(
+              node({
+                type: "ExpressionStatement",
+                expression: call(member(out_id, "push"), [...lit.elements]),
+              }),
+            );
+            return emitted;
+          }
+          push_count += 1;
+          const raw_id = services.fresh("array_raw");
+          const idx_id = services.fresh("array_i");
+          emitted.push(
+            variable("const", raw_id, method(yielded.expression, "value", [])),
+          );
+          emitted.push(
+            node({
+              type: "ForStatement",
+              init: variable("let", idx_id, literal(0)),
+              test: binary("<", idx_id, member(raw_id, "length")),
+              update: node({
+                type: "AssignmentExpression",
+                operator: "+=",
+                left: idx_id,
+                right: literal(1),
+              }),
+              body: block([
+                node({
+                  type: "ExpressionStatement",
+                  expression: call(member(out_id, "push"), [
+                    node({
+                      type: "MemberExpression",
+                      object: raw_id,
+                      property: idx_id,
+                      computed: true,
+                      optional: false,
+                    }),
+                  ]),
+                }),
+              ]),
+            }),
+          );
+          return emitted;
+        }
+        const rest = list.slice(index + 1);
+        if (lit?.kind === "empty") return emitted;
+        if (lit?.kind === "elements" && lit.elements.length === 1) {
+          if (yielded.name !== undefined) {
+            const decl_kind = stmt.type === "VariableDeclaration" &&
+                stmt.kind === "let"
+              ? "let"
+              : "const";
+            emitted.push(variable(decl_kind, yielded.name, lit.elements[0]));
+          } else if (!is_trivial_pure_expr(lit.elements[0])) {
+            emitted.push(
+              node({
+                type: "ExpressionStatement",
+                expression: lit.elements[0],
+              }),
+            );
+          }
+          emitted.push(...emit_list(rest));
+          return emitted;
+        }
+        const raw_id = services.fresh("array_raw");
+        const idx_id = services.fresh("array_i");
+        const raw_init: Expression = lit?.kind === "elements"
+          ? node({ type: "ArrayExpression", elements: [...lit.elements] })
+          : method(yielded.expression, "value", []);
+        emitted.push(variable("const", raw_id, raw_init));
+        const loop_body: Statement[] = [];
+        if (yielded.name !== undefined) {
+          const decl_kind = stmt.type === "VariableDeclaration" &&
+              stmt.kind === "let"
+            ? "let"
+            : "const";
+          loop_body.push(
+            variable(
+              decl_kind,
+              yielded.name,
+              node({
+                type: "MemberExpression",
+                object: raw_id,
+                property: idx_id,
+                computed: true,
+                optional: false,
+              }),
+            ),
+          );
+        }
+        loop_body.push(...emit_list(rest));
+        emitted.push(
+          node({
+            type: "ForStatement",
+            init: variable("let", idx_id, literal(0)),
+            test: binary("<", idx_id, member(raw_id, "length")),
+            update: node({
+              type: "AssignmentExpression",
+              operator: "+=",
+              left: idx_id,
+              right: literal(1),
+            }),
+            body: block(loop_body),
+          }),
+        );
+        return emitted;
+      }
+      if (stmt.type === "ReturnStatement") {
+        if (stmt.argument !== null && contains_yield_or_await(stmt.argument)) {
+          aborted = true;
+          return [];
+        }
+        push_count += 1;
+        emitted.push(
+          node({
+            type: "ExpressionStatement",
+            expression: call(member(out_id, "push"), [
+              stmt.argument ?? void_zero(),
+            ]),
+          }),
+        );
+        return emitted;
+      }
+      if (stmt.type === "ThrowStatement") {
+        if (contains_yield_or_await(stmt.argument)) {
+          aborted = true;
+          return [];
+        }
+        emitted.push(stmt);
+        return emitted;
+      }
+      if (stmt.type === "IfStatement") {
+        if (contains_yield_or_await(stmt.test)) {
+          aborted = true;
+          return [];
+        }
+        if (!contains(stmt, true)) {
+          emitted.push(stmt);
+          continue;
+        }
+        const rest = list.slice(index + 1);
+        const cons_list = body_of(stmt.consequent);
+        const cons_term = always_terminates(cons_list);
+        if (stmt.alternate === null) {
+          if (cons_term) {
+            const cons_emitted = emit_list(cons_list);
+            const rem_emitted = emit_list(rest);
+            if (cons_emitted.length === 0) {
+              if (rem_emitted.length > 0) {
+                emitted.push(
+                  node({
+                    type: "IfStatement",
+                    test: node({
+                      type: "UnaryExpression",
+                      operator: "!",
+                      prefix: true,
+                      argument: stmt.test,
+                    }),
+                    consequent: block(rem_emitted),
+                    alternate: null,
+                  }),
+                );
+              } else if (!is_trivial_pure_expr(stmt.test)) {
+                emitted.push(
+                  node({ type: "ExpressionStatement", expression: stmt.test }),
+                );
+              }
+            } else {
+              emitted.push(
+                node({
+                  type: "IfStatement",
+                  test: stmt.test,
+                  consequent: block(cons_emitted),
+                  alternate: rem_emitted.length > 0 ? block(rem_emitted) : null,
+                }),
+              );
+            }
+            return emitted;
+          }
+          if (rest.length > 0 && (branch_copies += 1) > 4) {
+            aborted = true;
+            return [];
+          }
+          const yes = emit_list([...cons_list, ...rest]);
+          const no = emit_list(rest);
+          emitted.push(
+            node({
+              type: "IfStatement",
+              test: stmt.test,
+              consequent: block(yes),
+              alternate: no.length > 0 ? block(no) : null,
+            }),
+          );
+          return emitted;
+        }
+        const alt_list = body_of(stmt.alternate);
+        const alt_term = always_terminates(alt_list);
+        if (
+          !cons_term && !alt_term && rest.length > 0 && (branch_copies += 1) > 4
+        ) {
+          aborted = true;
+          return [];
+        }
+        const yes = emit_list(cons_term ? cons_list : [...cons_list, ...rest]);
+        const no = emit_list(alt_term ? alt_list : [...alt_list, ...rest]);
+        if (yes.length === 0 && no.length > 0) {
+          emitted.push(
+            node({
+              type: "IfStatement",
+              test: node({
+                type: "UnaryExpression",
+                operator: "!",
+                prefix: true,
+                argument: stmt.test,
+              }),
+              consequent: block(no),
+              alternate: null,
+            }),
+          );
+        } else {
+          emitted.push(
+            node({
+              type: "IfStatement",
+              test: stmt.test,
+              consequent: block(yes),
+              alternate: no.length > 0 ? block(no) : null,
+            }),
+          );
+        }
+        return emitted;
+      }
+      if (contains(stmt, true)) {
+        aborted = true;
+        return [];
+      }
+      emitted.push(stmt);
+    }
+    push_count += 1;
+    emitted.push(
+      node({
+        type: "ExpressionStatement",
+        expression: call(member(out_id, "push"), [void_zero()]),
+      }),
+    );
+    return emitted;
+  };
+
+  const lowered = emit_list(body.body as Statement[]);
+  if (aborted || yield_count === 0 || push_count === 0) return undefined;
+  return {
+    block: block([
+      variable(
+        "const",
+        out_id,
+        node({ type: "ArrayExpression", elements: Array.from<Expression>([]) }),
+      ),
+      ...lowered,
+      ret(call(array_dict, [out_id])),
+    ]),
+    yielded: true,
+  };
 }
 
 function flat(
@@ -2731,11 +3219,11 @@ export function lower_generator(
         "var-scoped generator locals are not supported; use let or const.",
       );
     }
-    const direct_mode = kind === "do"
-      ? direct_single_shot_mode(explicit, services)
+    const direct_spec = kind === "do"
+      ? direct_single_shot_spec(explicit, analysis.first_yield, services)
       : undefined;
-    if (direct_mode !== undefined && (analysis.capture || analysis.prefix)) {
-      const direct = direct_single_shot(run.body, state, direct_mode, true);
+    if (direct_spec !== undefined && (analysis.capture || analysis.prefix)) {
+      const direct = direct_single_shot(run.body, state, direct_spec, true);
       if (direct !== undefined) return expr(direct.block);
     }
     if (analysis.capture) {
@@ -2784,9 +3272,15 @@ export function lower_generator(
     if (explicit && explicit.type !== "Identifier") {
       state.dictionary = services.fresh("dictionary");
     }
+    const array_dict = kind === "do"
+      ? direct_array_dictionary(explicit, first_yield, services)
+      : undefined;
     let result = flat(run.body, state) ??
-      (direct_mode !== undefined
-        ? direct_single_shot(run.body, state, direct_mode, false)
+      (direct_spec !== undefined
+        ? direct_single_shot(run.body, state, direct_spec, false)
+        : undefined) ??
+      (array_dict !== undefined
+        ? direct_array_comprehension(run.body, array_dict, services)
         : undefined);
     if (!result) {
       let yield_count = 0;

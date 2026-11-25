@@ -13,6 +13,7 @@ export type BindingAnalysisObserver = {
   readonly on_node?: (node: Node) => void;
   readonly minimal?: boolean;
   readonly skip_statement?: (statement: Statement) => boolean;
+  readonly record_top_level_scopes?: boolean;
 };
 
 /** Lexical value bindings, including declarations which shadow during the TDZ. */
@@ -27,6 +28,7 @@ export function create_binding_analysis(
   const on_node = observer?.on_node;
   const minimal = observer?.minimal === true;
   const skip_statement = observer?.skip_statement;
+  const record_top_level_scopes = observer?.record_top_level_scopes === true;
   const key_table = minimal ? value_visitor_keys : visitorKeys;
 
   function set_binding(scope: Scope, name: string, declaration: Node): void {
@@ -77,11 +79,15 @@ export function create_binding_analysis(
       case "FunctionDeclaration":
       case "TSDeclareFunction":
       case "ClassDeclaration":
-        if (target.id !== null) declare(target.id, target, root);
+        if (target.id !== null) {
+          declare(target.id, target, root);
+          if (record_top_level_scopes) scopes.set(target, root);
+        }
         break;
       case "VariableDeclaration":
         for (const declaration of target.declarations) {
           declare(declaration.id, declaration, root);
+          if (record_top_level_scopes) scopes.set(declaration, root);
         }
         break;
       case "TSEnumDeclaration":

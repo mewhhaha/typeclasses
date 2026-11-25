@@ -89,7 +89,11 @@ export type StateEvalName = "eval_state" | "exec_state";
 export type OperationRunnerName = "handle_operations" | "prepare_operations";
 export type OperationHelperName = "operation" | "send" | "pure";
 export type CellFactoryKind = "reader" | "state" | "writer";
-export type CellRunnerName = "run_cells" | "prepare_cells";
+export type CellRunnerName =
+  | "run_cells"
+  | "prepare_cells"
+  | "handle_cells"
+  | "prepare_handle_cells";
 export type ImportedBindings = {
   readonly do_names: ReadonlySet<string>;
   readonly program_names: ReadonlySet<string>;
@@ -138,6 +142,7 @@ export type ImportedBindings = {
   >;
   readonly direct_maybe_dictionaries?: ReadonlySet<string>;
   readonly just_constructors?: ReadonlySet<string>;
+  readonly nothing_constructors?: ReadonlySet<string>;
   readonly direct_either_dictionaries?: ReadonlySet<string>;
   readonly left_constructors?: ReadonlySet<string>;
   readonly right_constructors?: ReadonlySet<string>;
@@ -146,6 +151,11 @@ export type ImportedBindings = {
   readonly array_constructors?: ReadonlySet<string>;
   readonly direct_reader_dictionaries?: ReadonlySet<string>;
   readonly direct_state_dictionaries?: ReadonlySet<string>;
+  readonly collect_functions?: ReadonlySet<string>;
+  readonly collect_namespaces?: ReadonlySet<string>;
+  readonly applicative_objects?: ReadonlySet<string>;
+  readonly applicative_namespaces?: ReadonlySet<string>;
+  readonly iterable_locals?: ReadonlySet<string>;
   readonly effect_helper_shadowed: boolean;
   readonly program_module?: string;
 };

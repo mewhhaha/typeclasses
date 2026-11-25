@@ -927,3 +927,349 @@ Deno.test("round-3 post-plugin fusion covers direct single-shot loops, run_excep
       t1_result.code,
   );
 });
+
+Deno.test("round-4 post-plugin fusion covers ArrayT comprehensions, IterableT terminal loops, inferred single-shot Do, collect/lift, handle_cells, and iterable span skipping", async () => {
+  const root = new URL("../src/", import.meta.url).href;
+  const untouched_tail = Array.from(
+    { length: 40 },
+    (_, i) =>
+      `export function r4_untouched_${i}(x: number) { return x + ${i}; }`,
+  ).join("\n");
+  const source = [
+    `import { Do, Applicative, Foldable, collect } from ${
+      JSON.stringify(root + "typeclasses.ts")
+    };`,
+    `import { ArrayT } from ${JSON.stringify(root + "array.ts")};`,
+    `import { Just, Maybe, Nothing } from ${
+      JSON.stringify(root + "maybe.ts")
+    };`,
+    `import { Either, Left, Right } from ${
+      JSON.stringify(root + "either.ts")
+    };`,
+    `import { Identity, identity } from ${
+      JSON.stringify(root + "identity.ts")
+    };`,
+    `import { from_array, from_factory, from_iterable, to_array, compile_fold, filter, take } from ${
+      JSON.stringify(root + "iterable.ts")
+    };`,
+    `import { Program, run } from ${JSON.stringify(root + "effects.ts")};`,
+    `import { reader } from ${JSON.stringify(root + "reader.ts")};`,
+    `import { state } from ${JSON.stringify(root + "state.ts")};`,
+    `import { writer_cell } from ${JSON.stringify(root + "writer.ts")};`,
+    `import { fail, run_except } from ${JSON.stringify(root + "except.ts")};`,
+    `import { handle_cells, prepare_handle_cells, provide_reader, provide_state, provide_writer } from ${
+      JSON.stringify(root + "handlers.ts")
+    };`,
+    // P1: Direct Do(ArrayT) comprehensions (explicit & inferred, guards, elision)
+    "export function array_comp_2d(xs: ArrayT<number>, ys: ArrayT<number>) {",
+    "  return Do(ArrayT, function* () {",
+    "    const x = yield* xs;",
+    "    const y = yield* ys;",
+    "    if ((x + y) % 2 !== 0) return yield* ArrayT.empty<number>();",
+    "    return x * 10 + y;",
+    "  });",
+    "}",
+    "export function array_comp_3d_inferred() {",
+    "  return Do(function* () {",
+    "    const a = yield* ArrayT([1, 2]);",
+    "    const b = yield* ArrayT([10, 20]);",
+    "    if (a === 2 && b === 10) return yield* ArrayT.empty<number>();",
+    "    return yield* ArrayT([a + b, a * b]);",
+    "  });",
+    "}",
+    // P2: Full IterableT terminal pipeline fusion
+    "export function iter_filter_map_to_array(xs: number[]) {",
+    "  return to_array(from_array(xs).filter((x) => x % 2 === 0).map((x) => x * 3 + 1));",
+    "}",
+    "export function iter_live_growth(xs: number[]) {",
+    "  return to_array(from_array(xs).filter((x) => { if (x === 2) xs.push(4); return x % 2 === 0; }).map((x) => x * 10));",
+    "}",
+    "export function iter_map_filter_take_fold(xs: number[], limit: number) {",
+    "  return Foldable.fold(from_array(xs).map((x) => x * 2).filter((x) => x > 4).take(limit), 0, (acc, x) => acc + x);",
+    "}",
+    "export function iter_mid_take_filter(xs: number[], limit: number) {",
+    "  return to_array(filter(take(from_array(xs), limit), (x) => x % 2 === 0));",
+    "}",
+    "export function iter_snapshot_take_zero(xs: number[]) {",
+    "  let reads = 0;",
+    "  const out = to_array(from_factory(function* () { reads += 1; yield 1; yield 2; }).map((x) => x + 1).take(0));",
+    "  const snap = to_array(from_iterable(xs).map((x) => x + 10).take(2));",
+    "  return { reads, out, snap };",
+    "}",
+    "export function iter_some_closes() {",
+    "  let closed = false;",
+    "  const hit = Foldable.some(from_factory(function* () { try { yield 1; yield 2; yield 3; } finally { closed = true; } }).map((x) => x * 10), (x) => x === 20);",
+    "  return { hit, closed };",
+    "}",
+    "export function iter_find_typeguard(xs: (string | number)[]) {",
+    "  const found: string | undefined = Foldable.find(from_array(xs).filter((x): x is string => typeof x === 'string'), (s) => s.length > 2);",
+    "  return found;",
+    "}",
+    "export function iter_compile_fold_call(xs: number[]) {",
+    "  return compile_fold(from_array(xs).filter((x) => x > 0).map((x) => x * 2))(0, (acc, x) => acc + x);",
+    "}",
+    // P3a: Inferred-dictionary direct single-shot Do loops
+    "export function inferred_maybe_loop(n: number, fail_at: number) {",
+    "  return Do(function* () {",
+    "    let sum = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      const step = yield* (i === fail_at ? Nothing<number>() : Just(i));",
+    "      sum += step;",
+    "    }",
+    "    return sum;",
+    "  });",
+    "}",
+    "export function inferred_either_loop(n: number) {",
+    "  return Do(function* () {",
+    "    let total = 0;",
+    "    const seed = yield* Right<string, number>(1);",
+    "    for (let i = seed; i <= n; i += 1) {",
+    "      const v = yield* (i > 10 ? Left<string, number>('too-big') : Right<string, number>(i * 2));",
+    "      total += v;",
+    "    }",
+    "    return total;",
+    "  });",
+    "}",
+    "export function inferred_identity_loop(n: number) {",
+    "  return Do(function* () {",
+    "    let sum = 0;",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      sum += yield* identity(i);",
+    "    }",
+    "    return sum;",
+    "  });",
+    "}",
+    // P3b: Direct collect & Applicative.lift fusion
+    "export const collect_eval_log: string[] = [];",
+    "function track<T>(label: string, val: T): T { collect_eval_log.push(label); return val; }",
+    "export function collect_maybe_tuple(a: Maybe<number>, b: Maybe<string>, c: Maybe<boolean>) {",
+    "  return collect(Maybe, [track('a', a), track('b', b), track('c', c)]);",
+    "}",
+    "export function collect_either_record(a: Either<'e1', number>, b: Either<'e2', string>) {",
+    "  const out: Either<'e1' | 'e2', { readonly a: number; readonly b: string }> = collect(Either, { a, b });",
+    "  return out;",
+    "}",
+    "export function collect_inferred_just(x: number) {",
+    "  return collect([Just(x), Just(x + 1)]);",
+    "}",
+    "export function collect_identity_tuple(a: Identity<number>, b: Identity<number>) {",
+    "  return collect(Identity, [a, b]);",
+    "}",
+    "export function lift_just_fused(x: number, y: number) {",
+    "  return Applicative.lift((a: number, b: number) => a * b, Just(x), Just(y));",
+    "}",
+    // P4: handle_cells & prepare_handle_cells fusion
+    'const r4_cfg = reader<{ readonly mul: number }>()("r4_cfg");',
+    'const r4_cnt = state<number>()("r4_cnt");',
+    'const r4_log = writer_cell("r4_log", ArrayT<string>([]));',
+    "export function handle_cells_fused(n: number) {",
+    "  return run(handle_cells(Program(function* () {",
+    "    const { mul } = yield* r4_cfg.ask();",
+    "    for (let i = 1; i <= n; i += 1) {",
+    "      yield* r4_cnt.modify((c) => c + i * mul);",
+    "      yield* r4_log.tell(ArrayT([`i:${i}`]));",
+    "    }",
+    "    return yield* r4_cnt.get();",
+    "  }), {",
+    "    cfg: provide_reader(r4_cfg, { mul: 2 }),",
+    "    cnt: provide_state(r4_cnt, 0),",
+    "    log: provide_writer(r4_log),",
+    "  }));",
+    "}",
+    "export function except_outer_handle_cells_inner(fail_at: number) {",
+    "  return run(run_except(handle_cells(Program(function* () {",
+    "    for (let i = 1; i <= 5; i += 1) {",
+    "      if (i === fail_at) return yield* fail('aborted' as const);",
+    "      yield* r4_cnt.modify((c) => c + i);",
+    "      yield* r4_log.tell(ArrayT([`step:${i}`]));",
+    "    }",
+    "    return yield* r4_cnt.get();",
+    "  }), {",
+    "    cnt: provide_state(r4_cnt, 0),",
+    "    log: provide_writer(r4_log),",
+    "  })));",
+    "}",
+    "export function handle_cells_outer_except_inner(fail_at: number) {",
+    "  return run(handle_cells(run_except(Program(function* () {",
+    "    for (let i = 1; i <= 5; i += 1) {",
+    "      if (i === fail_at) return yield* fail('stopped' as const);",
+    "      yield* r4_cnt.modify((c) => c + i);",
+    "      yield* r4_log.tell(ArrayT([`keep:${i}`]));",
+    "    }",
+    "    return yield* r4_cnt.get();",
+    "  })), {",
+    "    cnt: provide_state(r4_cnt, 0),",
+    "    log: provide_writer(r4_log),",
+    "  }));",
+    "}",
+    "let prep_init_count = 0;",
+    "const prepared_handle = prepare_handle_cells({",
+    "  cfg: provide_reader(r4_cfg, { mul: (prep_init_count += 1, 3) }),",
+    "  cnt: provide_state(r4_cnt, 10),",
+    "});",
+    "export function handle_cells_prepared(n: number) {",
+    "  return run(prepared_handle(Program(function* () {",
+    "    const { mul } = yield* r4_cfg.ask();",
+    "    yield* r4_cnt.modify((c) => c + n * mul);",
+    "    return yield* r4_cnt.get();",
+    "  })));",
+    "}",
+    "export function get_prep_init_count() { return prep_init_count; }",
+    untouched_tail,
+  ].join("\n");
+
+  const result = transform_do_program_source(source, "round4_fusion.ts");
+  assert_equals(result.diagnostics, []);
+  assert_true(
+    !/\bDo\(/.test(result.code) &&
+      !/\bProgram\(/.test(result.code) &&
+      !/\bto_array\(/.test(result.code) &&
+      !/\bFoldable\./.test(result.code) &&
+      !/\bcompile_fold\(/.test(result.code) &&
+      !/\bcollect\(/.test(result.code) &&
+      !/\bApplicative\.lift\(/.test(result.code) &&
+      !/\bhandle_cells\(/.test(result.code) &&
+      !/\brun_except\(/.test(result.code),
+    "expected all Round 4 constructs to fuse completely\n\n" + result.code,
+  );
+  assert_true(
+    result.code.includes(untouched_tail),
+    "expected T1/T2 span skipping & surgical splice to preserve untouched tail verbatim",
+  );
+  assert_true(result.map !== null, "expected V3 source map");
+
+  // Strict TypeScript check on generated code!
+  const temp_file = await Deno.makeTempFile({
+    prefix: "typeclasses-round4-check-",
+    suffix: ".ts",
+  });
+  try {
+    await Deno.writeTextFile(temp_file, result.code);
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ["check", temp_file],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!check.success) {
+      throw new Error(
+        "Generated Round 4 TypeScript failed deno check:\n" +
+          new TextDecoder().decode(check.stderr) + "\n\n" + result.code,
+      );
+    }
+  } finally {
+    await Deno.remove(temp_file);
+  }
+
+  // Execute generated code and verify every semantic invariant!
+  const compiled = executable_typescript(result.code, "round4_fusion.ts");
+  const mod = await import(
+    "data:application/javascript," + encodeURIComponent(compiled)
+  );
+  const { ArrayT } = await import("../src/array.ts");
+  const { Just, Nothing } = await import("../src/maybe.ts");
+  const { Left, Right } = await import("../src/either.ts");
+  const { identity } = await import("../src/identity.ts");
+
+  // P1 checks
+  assert_equals(
+    mod.array_comp_2d(ArrayT([1, 2, 3]), ArrayT([1, 2])).value(),
+    [11, 22, 31],
+  );
+  assert_equals(mod.array_comp_3d_inferred().value(), [11, 10, 21, 20, 22, 40]);
+
+  // P2 checks
+  assert_equals(mod.iter_filter_map_to_array([1, 2, 3, 4, 5]), [7, 13]);
+  assert_equals(mod.iter_live_growth([1, 2, 3]), [20, 40]);
+  assert_equals(mod.iter_map_filter_take_fold([1, 2, 3, 4, 5, 6], 2), 14);
+  assert_equals(mod.iter_map_filter_take_fold([1, 2, 3, 4, 5, 6], 0), 0);
+  let range_err = false;
+  try {
+    mod.iter_map_filter_take_fold([1, 2, 3], -1);
+  } catch (e) {
+    range_err = e instanceof RangeError;
+  }
+  assert_true(range_err, "take(-1) must throw RangeError");
+  assert_equals(mod.iter_mid_take_filter([1, 2, 3, 4, 5], 2), [2]);
+  assert_equals(mod.iter_mid_take_filter([1, 3, 4, 6], 2), []);
+  assert_equals(mod.iter_snapshot_take_zero([5, 6, 7]), {
+    reads: 0,
+    out: [],
+    snap: [15, 16],
+  });
+  assert_equals(mod.iter_some_closes(), { hit: true, closed: true });
+  assert_equals(mod.iter_find_typeguard([1, "hi", 2, "world", "ok"]), "world");
+  assert_equals(mod.iter_compile_fold_call([-2, 3, 0, 5]), 16);
+
+  // P3a checks
+  assert_equals(mod.inferred_maybe_loop(5, 0).value(), ["Just", 15]);
+  assert_equals(mod.inferred_maybe_loop(5, 3).value(), ["Nothing"]);
+  assert_equals(mod.inferred_either_loop(5).value(), ["Right", 30]);
+  assert_equals(mod.inferred_either_loop(12).value(), ["Left", "too-big"]);
+  assert_equals(mod.inferred_identity_loop(5).value(), 15);
+
+  // P3b checks
+  mod.collect_eval_log.length = 0;
+  assert_equals(
+    mod.collect_maybe_tuple(Just(1), Just("x"), Just(true)).value(),
+    ["Just", [1, "x", true]],
+  );
+  assert_equals(mod.collect_eval_log, ["a", "b", "c"]);
+  mod.collect_eval_log.length = 0;
+  assert_equals(
+    mod.collect_maybe_tuple(Nothing(), Just("x"), Just(true)).value(),
+    ["Nothing"],
+  );
+  assert_equals(mod.collect_eval_log, ["a", "b", "c"]);
+  assert_equals(
+    mod.collect_either_record(Right(1), Right("ok")).value(),
+    ["Right", { a: 1, b: "ok" }],
+  );
+  assert_equals(
+    mod.collect_either_record(Left("e1"), Left("e2")).value(),
+    ["Left", "e1"],
+  );
+  assert_equals(mod.collect_inferred_just(7).value(), ["Just", [7, 8]]);
+  assert_equals(
+    mod.collect_identity_tuple(identity(3), identity(4)).value(),
+    [3, 4],
+  );
+  assert_equals(mod.lift_just_fused(6, 7).value(), ["Just", 42]);
+
+  // P4 checks
+  const hc = mod.handle_cells_fused(3);
+  assert_equals(hc.result, 12);
+  assert_equals(hc.states, { cnt: 12 });
+  assert_equals(hc.logs.log.value(), ["i:1", "i:2", "i:3"]);
+
+  const eo_ok = mod.except_outer_handle_cells_inner(0).value();
+  assert_equals(eo_ok[0], "Right");
+  if (eo_ok[0] === "Right") {
+    assert_equals(eo_ok[1].result, 15);
+    assert_equals(eo_ok[1].states, { cnt: 15 });
+    assert_equals(eo_ok[1].logs.log.value(), [
+      "step:1",
+      "step:2",
+      "step:3",
+      "step:4",
+      "step:5",
+    ]);
+  }
+  assert_equals(
+    mod.except_outer_handle_cells_inner(3).value(),
+    ["Left", "aborted"],
+  );
+
+  const ho_err = mod.handle_cells_outer_except_inner(3);
+  assert_equals(ho_err.result.value(), ["Left", "stopped"]);
+  assert_equals(ho_err.states, { cnt: 3 });
+  assert_equals(ho_err.logs.log.value(), ["keep:1", "keep:2"]);
+
+  const hp1 = mod.handle_cells_prepared(4);
+  const hp2 = mod.handle_cells_prepared(5);
+  assert_equals(hp1.result, 22);
+  assert_equals(hp1.states, { cnt: 22 });
+  assert_equals(hp2.result, 25);
+  assert_equals(hp2.states, { cnt: 25 });
+  assert_equals(mod.get_prep_init_count(), 1);
+  assert_equals(mod.r4_untouched_39(1), 40);
+});
